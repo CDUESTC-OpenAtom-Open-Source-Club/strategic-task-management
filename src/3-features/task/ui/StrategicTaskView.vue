@@ -1,10 +1,20 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Plus, View, Download, Delete, ArrowDown, Check, Loading } from '@element-plus/icons-vue'
+import {
+  Plus,
+  View,
+  Download,
+  Delete,
+  ArrowDown,
+  Check,
+  Loading,
+  Upload
+} from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import AppAvatar from '@/shared/ui/avatar/AppAvatar.vue'
 import IndicatorMilestoneTimeline from '@/features/indicator/ui/IndicatorMilestoneTimeline.vue'
 import { DistributionApprovalProgressDrawer } from '@/features/approval'
+import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
 import { resolveMilestoneDisplayState } from '@/shared/lib/utils/milestoneDisplay'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
 import type { StrategicIndicator } from '@/shared/types'
@@ -157,7 +167,6 @@ const {
   getCategoryText,
   getDisplayedReportedProgress,
   getCurrentActorUserId,
-  getCurrentCycleId,
   getCurrentScopeIndicatorsForMilestones,
   getIndicatorCategoryLabel,
   getIndicatorMappedTaskType,
@@ -325,6 +334,7 @@ type StrategicExportRow = StrategicIndicator & {
 const strategicExporting = ref(false)
 const strategicBatchExportDialogVisible = ref(false)
 const selectedStrategicExportDepartments = ref<string[]>([])
+const strategicImportDialogVisible = ref(false)
 
 const allStrategicExportDepartmentsSelected = computed({
   get: () =>
@@ -496,6 +506,44 @@ const handleExportSelectedStrategicDepartments = async () => {
     strategicExporting.value = false
   }
 }
+
+const currentStrategicImportOrgId = computed(
+  () => currentDepartmentOrgId.value ?? resolveDepartmentIdByName(selectedDepartment.value) ?? null
+)
+
+const currentStrategicImportCycleId = computed(() => {
+  const selectedPlan = currentPlan.value as {
+    cycleId?: number | string
+    cycle_id?: number | string
+  } | null
+  const directCycleId = selectedPlan?.cycleId ?? selectedPlan?.cycle_id
+  const numericDirectCycleId = Number(directCycleId)
+  if (Number.isFinite(numericDirectCycleId) && numericDirectCycleId > 0) {
+    return numericDirectCycleId
+  }
+
+  const cycle = timeContext.cycles.find(item => Number(item.year) === timeContext.currentYear) as
+    | { cycleId?: number | string; id?: number | string }
+    | undefined
+  const numericCycleId = Number(cycle?.cycleId ?? cycle?.id)
+  return Number.isFinite(numericCycleId) && numericCycleId > 0 ? numericCycleId : null
+})
+
+const openStrategicImportDialog = () => {
+  if (!selectedDepartment.value || !currentStrategicImportOrgId.value) {
+    ElMessage.warning('请先选择要导入的职能部门')
+    return
+  }
+  if (!currentStrategicImportCycleId.value) {
+    ElMessage.warning('当前周期信息不可用，暂不能导入')
+    return
+  }
+  strategicImportDialogVisible.value = true
+}
+
+const handleStrategicImportCommitted = async () => {
+  await refreshCurrentDepartmentView({ showLoading: true, force: true, reloadIndicators: true })
+}
 </script>
 
 <template>
@@ -619,6 +667,9 @@ const handleExportSelectedStrategicDepartments = async () => {
           >
             <el-icon><Download /></el-icon>
             导出
+          </el-button>
+          <el-button size="small" :icon="Upload" @click="openStrategicImportDialog">
+            导入
           </el-button>
           <!-- 视图切换按钮 -->
           <el-button-group style="margin-left: 16px">
@@ -1677,6 +1728,15 @@ const handleExportSelectedStrategicDepartments = async () => {
         </el-button>
       </template>
     </el-dialog>
+
+    <BusinessImportDialog
+      v-model:visible="strategicImportDialogVisible"
+      type="strategic-task"
+      :target-org-id="currentStrategicImportOrgId"
+      :target-org-name="selectedDepartment"
+      :cycle-id="currentStrategicImportCycleId"
+      @committed="handleStrategicImportCommitted"
+    />
 
     <el-dialog
       v-model="approvalSetupDialogVisible"

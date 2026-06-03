@@ -10,7 +10,8 @@ import {
   RefreshLeft,
   Timer,
   Delete,
-  Download
+  Download,
+  Upload
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import type { StrategicIndicator } from '@/shared/types'
@@ -27,6 +28,7 @@ import {
 } from '@/shared/lib/export/excel'
 import IndicatorMilestoneTimeline from '@/features/indicator/ui/IndicatorMilestoneTimeline.vue'
 import { DistributionApprovalProgressDrawer } from '@/features/approval'
+import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
 import {
   useIndicatorDistributeView,
   type IndicatorDistributeViewProps
@@ -299,6 +301,7 @@ interface DistributionExportRow {
 const distributionExporting = ref(false)
 const distributionBatchExportDialogVisible = ref(false)
 const selectedDistributionExportColleges = ref<string[]>([])
+const distributionImportDialogVisible = ref(false)
 
 const allDistributionExportCollegesSelected = computed({
   get: () =>
@@ -494,6 +497,52 @@ const handleExportSelectedDistributionColleges = async () => {
     distributionExporting.value = false
   }
 }
+
+const currentDistributionImportOrgId = computed(() =>
+  selectedCollege.value ? getOrgIdByDeptName(selectedCollege.value) : null
+)
+
+const currentDistributionImportCycleId = computed(() => {
+  const selectedPlan = currentSelectedCollegePlan.value as {
+    cycleId?: number | string
+    cycle_id?: number | string
+  } | null
+  const departmentPlan = currentDepartmentPlan.value as {
+    cycleId?: number | string
+    cycle_id?: number | string
+  } | null
+  const directCycleId =
+    selectedPlan?.cycleId ??
+    selectedPlan?.cycle_id ??
+    departmentPlan?.cycleId ??
+    departmentPlan?.cycle_id
+  const numericDirectCycleId = Number(directCycleId)
+  if (Number.isFinite(numericDirectCycleId) && numericDirectCycleId > 0) {
+    return numericDirectCycleId
+  }
+
+  const cycle = timeContext.cycles.find(item => Number(item.year) === timeContext.currentYear) as
+    | { cycleId?: number | string; id?: number | string }
+    | undefined
+  const numericCycleId = Number(cycle?.cycleId ?? cycle?.id)
+  return Number.isFinite(numericCycleId) && numericCycleId > 0 ? numericCycleId : null
+})
+
+const openDistributionImportDialog = () => {
+  if (!selectedCollege.value || !currentDistributionImportOrgId.value) {
+    ElMessage.warning('请先选择要导入的学院')
+    return
+  }
+  if (!currentDistributionImportCycleId.value) {
+    ElMessage.warning('当前周期信息不可用，暂不能导入')
+    return
+  }
+  distributionImportDialogVisible.value = true
+}
+
+const handleDistributionImportCommitted = async () => {
+  await refreshDistributionData()
+}
 </script>
 
 <template>
@@ -656,6 +705,7 @@ const handleExportSelectedDistributionColleges = async () => {
                 <el-icon><Download /></el-icon>
                 导出
               </el-button>
+              <el-button :icon="Upload" @click="openDistributionImportDialog">导入</el-button>
               <!-- 
                 按钮显示逻辑：
                 - 草稿态且暂无指标 → 只显示"新增指标"
@@ -1445,6 +1495,15 @@ const handleExportSelectedDistributionColleges = async () => {
         </el-button>
       </template>
     </el-dialog>
+
+    <BusinessImportDialog
+      v-model:visible="distributionImportDialogVisible"
+      type="distribution"
+      :target-org-id="currentDistributionImportOrgId"
+      :target-org-name="selectedCollege"
+      :cycle-id="currentDistributionImportCycleId"
+      @committed="handleDistributionImportCommitted"
+    />
 
     <!-- 任务审批进度抽屉 -->
     <el-dialog
