@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import {
   Plus,
   View,
@@ -11,6 +12,17 @@ import {
   Edit,
   Refresh
 } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import type { StrategicIndicator } from '@/shared/types'
+import {
+  buildAttachmentCell,
+  buildExportFileName,
+  exportRowsToExcel,
+  formatMilestones,
+  formatProgress,
+  type ExcelExportColumn,
+  type ExcelRowTone
+} from '@/shared/lib/export/excel'
 import IndicatorMilestoneTimeline from '@/features/indicator/ui/IndicatorMilestoneTimeline.vue'
 import { ApprovalProgressDrawer } from '@/features/approval'
 import {
@@ -280,6 +292,86 @@ const {
   withdrawTooltip,
   writePlanReportUiState
 } = useIndicatorListView(props)
+
+const indicatorListExporting = ref(false)
+
+const indicatorListExportColumns: ExcelExportColumn<StrategicIndicator>[] = [
+  { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
+  { header: '来源部门', width: 18, getValue: row => row.ownerDept || '-' },
+  { header: '责任部门', width: 18, getValue: row => row.responsibleDept || '-' },
+  { header: '战略任务', width: 28, getValue: row => row.taskContent || '-' },
+  { header: '核心指标', width: 32, getValue: row => row.name || '-' },
+  { header: '指标类型', width: 12, align: 'center', getValue: row => row.type1 || '-' },
+  { header: '任务类别', width: 12, align: 'center', getValue: row => row.type2 || '-' },
+  { header: '备注', width: 24, getValue: row => row.remark || '-' },
+  { header: '权重', width: 10, align: 'center', getValue: row => Number(row.weight || 0) },
+  {
+    header: '进度',
+    width: 24,
+    getValue: row => formatProgress(getDisplayProgress(row), getDisplayedReportedProgress(row))
+  },
+  { header: '填报说明', width: 28, getValue: row => row.pendingRemark || '-' },
+  {
+    header: '里程碑',
+    width: 34,
+    getValue: row => formatMilestones(getSortedMilestones(row.milestones))
+  },
+  {
+    header: '附件',
+    width: 42,
+    getValue: row => buildAttachmentCell(resolveIndicatorAttachmentItems(row))
+  }
+]
+
+const getIndicatorListExportRows = (): StrategicIndicator[] => {
+  const source =
+    currentPlanIndicators.value.length > 0 ? currentPlanIndicators.value : indicators.value
+  return [...source].sort((left, right) => {
+    const leftType = String(left.type2 || '')
+    const rightType = String(right.type2 || '')
+    if (leftType !== rightType) {
+      return leftType === '发展性' ? -1 : 1
+    }
+    return String(left.taskContent || '').localeCompare(String(right.taskContent || ''))
+  })
+}
+
+const getIndicatorListExportRowTone = (row: StrategicIndicator): ExcelRowTone => {
+  if (String(row.type2 || '').includes('发展')) {
+    return 'development'
+  }
+  if (String(row.type2 || '').includes('基础')) {
+    return 'basic'
+  }
+  return 'default'
+}
+
+const handleExportIndicatorList = async () => {
+  const rows = getIndicatorListExportRows()
+  if (rows.length === 0) {
+    ElMessage.warning('暂无可导出的指标数据')
+    return
+  }
+
+  indicatorListExporting.value = true
+  try {
+    const scopeName = effectiveViewingDept.value || authStore.userDepartment || '当前部门'
+    await exportRowsToExcel(
+      {
+        sheetName: scopeName,
+        rows,
+        columns: indicatorListExportColumns,
+        getRowTone: getIndicatorListExportRowTone
+      },
+      buildExportFileName('指标填报与管理', scopeName)
+    )
+    ElMessage.success('导出成功')
+  } catch {
+    ElMessage.error('导出失败，请稍后重试')
+  } finally {
+    indicatorListExporting.value = false
+  }
+}
 </script>
 
 <template>
@@ -291,7 +383,7 @@ const {
         <p class="page-desc">管理和查看所有战略考核指标</p>
       </div>
       <div class="page-actions">
-        <el-button>
+        <el-button :loading="indicatorListExporting" @click="handleExportIndicatorList">
           <el-icon><Download /></el-icon>
           导出
         </el-button>

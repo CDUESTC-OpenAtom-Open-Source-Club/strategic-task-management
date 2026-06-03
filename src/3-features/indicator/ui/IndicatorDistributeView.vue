@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue'
 import {
   Plus,
   Promotion,
@@ -8,8 +9,22 @@ import {
   Search,
   RefreshLeft,
   Timer,
-  Delete
+  Delete,
+  Download
 } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import type { StrategicIndicator } from '@/shared/types'
+import {
+  buildAttachmentCell,
+  buildExportFileName,
+  exportRowsToExcel,
+  exportSheetsToExcel,
+  formatMilestones,
+  formatProgress,
+  type ExcelExportColumn,
+  type ExcelExportSheet,
+  type ExcelRowTone
+} from '@/shared/lib/export/excel'
 import IndicatorMilestoneTimeline from '@/features/indicator/ui/IndicatorMilestoneTimeline.vue'
 import { DistributionApprovalProgressDrawer } from '@/features/approval'
 import {
@@ -258,6 +273,227 @@ const {
   withdrawButtonType,
   withdrawButtonVisible
 } = useIndicatorDistributeView(props)
+
+type DistributionExportChild = Partial<StrategicIndicator> & {
+  id?: string | number
+  name?: string
+  remark?: string
+  weight?: number
+  type1?: string | null
+  indicatorType1?: string | null
+  progress?: number | string | null
+  milestones?: unknown[]
+  pendingAttachments?: unknown
+  pendingAttachmentDetails?: unknown[]
+}
+
+interface DistributionExportRow {
+  exportCollege: string
+  type: 'child' | 'new-child'
+  taskTitle: string
+  indicator: StrategicIndicator
+  child: DistributionExportChild
+  parentIndicatorId: string
+}
+
+const distributionExporting = ref(false)
+const distributionBatchExportDialogVisible = ref(false)
+const selectedDistributionExportColleges = ref<string[]>([])
+
+const allDistributionExportCollegesSelected = computed({
+  get: () =>
+    colleges.value.length > 0 &&
+    selectedDistributionExportColleges.value.length === colleges.value.length,
+  set: checked => {
+    selectedDistributionExportColleges.value = checked ? [...colleges.value] : []
+  }
+})
+
+const distributionExportCollegesIndeterminate = computed(
+  () =>
+    selectedDistributionExportColleges.value.length > 0 &&
+    selectedDistributionExportColleges.value.length < colleges.value.length
+)
+
+const distributionExportColumns: ExcelExportColumn<DistributionExportRow>[] = [
+  { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
+  { header: '学院', width: 20, getValue: row => row.exportCollege },
+  { header: '战略任务', width: 28, getValue: row => row.taskTitle || '-' },
+  { header: '核心指标', width: 32, getValue: row => row.indicator.name || '-' },
+  { header: '子指标名称', width: 32, getValue: row => row.child.name || '-' },
+  {
+    header: '指标类型',
+    width: 12,
+    align: 'center',
+    getValue: row => getDistributionChildTypeText(row.child)
+  },
+  { header: '备注', width: 24, getValue: row => row.child.remark || '-' },
+  { header: '权重', width: 10, align: 'center', getValue: row => Number(row.child.weight || 0) },
+  {
+    header: '进度',
+    width: 24,
+    getValue: row =>
+      formatProgress(
+        row.child.progress ?? 0,
+        row.type === 'child' ? getDisplayedReportedProgress(row.child as StrategicIndicator) : null
+      )
+  },
+  { header: '里程碑', width: 34, getValue: row => formatMilestones(row.child.milestones) },
+  {
+    header: '附件',
+    width: 42,
+    getValue: row =>
+      buildAttachmentCell(
+        row.child.pendingAttachmentDetails?.length
+          ? row.child.pendingAttachmentDetails
+          : row.child.pendingAttachments
+      )
+  }
+]
+
+const getDistributionChildTypeText = (child: DistributionExportChild): string => {
+  const normalized = normalizeIndicatorTypeLabel(child.type1 || child.indicatorType1 || '')
+  return normalized || '-'
+}
+
+const matchesDistributionExportCollege = (
+  indicator: StrategicIndicator,
+  college: string
+): boolean => {
+  const responsibleDept = (indicator as StrategicIndicator & { responsibleDept?: unknown })
+    .responsibleDept
+  if (Array.isArray(responsibleDept)) {
+    return responsibleDept.some(dept => isSameDepartment(String(dept), college))
+  }
+  return isSameDepartment(String(responsibleDept || ''), college)
+}
+
+const getDistributionExportRowsByCollege = (college: string): DistributionExportRow[] => {
+  const data: DistributionExportRow[] = []
+
+  receivedParentIndicators.value.forEach(indicator => {
+    const indicatorId = String(indicator.id)
+    const children = strategicStore.indicators.filter(candidate => {
+      if (String(candidate.parentIndicatorId) !== indicatorId || candidate.isStrategic) {
+        return false
+      }
+      return matchesDistributionExportCollege(candidate, college)
+    })
+
+    const draftChildren = (newChildIndicators[indicatorId] || []).filter(child =>
+      Array.isArray(child.college) ? child.college.includes(college) : false
+    )
+
+    children.forEach(child => {
+      data.push({
+        exportCollege: college,
+        type: 'child',
+        taskTitle: indicator.taskContent || '',
+        indicator,
+        child,
+        parentIndicatorId: indicatorId
+      })
+    })
+
+    draftChildren.forEach(child => {
+      data.push({
+        exportCollege: college,
+        type: 'new-child',
+        taskTitle: indicator.taskContent || '',
+        indicator,
+        child,
+        parentIndicatorId: indicatorId
+      })
+    })
+  })
+
+  return data
+}
+
+const getDistributionExportRowTone = (row: DistributionExportRow): ExcelRowTone => {
+  if (row.type === 'new-child') {
+    return 'draft'
+  }
+
+  const taskCategory = normalizeTaskTypeToCategory(resolveIndicatorTaskType(row.indicator))
+  if (taskCategory.includes('发展')) {
+    return 'development'
+  }
+  if (taskCategory.includes('基础')) {
+    return 'basic'
+  }
+  return 'default'
+}
+
+const buildDistributionExportSheet = (
+  college: string,
+  rows = getDistributionExportRowsByCollege(college)
+): ExcelExportSheet<DistributionExportRow> => ({
+  sheetName: college || '当前学院',
+  rows,
+  columns: distributionExportColumns,
+  emptyMessage: '当前学院暂无可导出的子指标数据',
+  getRowTone: getDistributionExportRowTone
+})
+
+const handleExportCurrentDistributionCollege = async () => {
+  const college = selectedCollege.value
+  if (!college) {
+    ElMessage.warning('请先选择学院')
+    return
+  }
+
+  const rows = getDistributionExportRowsByCollege(college)
+  if (rows.length === 0) {
+    ElMessage.warning('当前学院暂无可导出的数据')
+    return
+  }
+
+  distributionExporting.value = true
+  try {
+    await exportRowsToExcel(
+      buildDistributionExportSheet(college, rows),
+      buildExportFileName('指标下发与管理', college)
+    )
+    ElMessage.success('导出成功')
+  } catch {
+    ElMessage.error('导出失败，请稍后重试')
+  } finally {
+    distributionExporting.value = false
+  }
+}
+
+const openDistributionBatchExportDialog = () => {
+  selectedDistributionExportColleges.value = [...colleges.value]
+  distributionBatchExportDialogVisible.value = true
+}
+
+const handleExportSelectedDistributionColleges = async () => {
+  const selectedColleges = selectedDistributionExportColleges.value
+  if (selectedColleges.length === 0) {
+    ElMessage.warning('请选择要导出的学院')
+    return
+  }
+
+  distributionExporting.value = true
+  try {
+    await exportSheetsToExcel(
+      selectedColleges.map(
+        college => buildDistributionExportSheet(college) as ExcelExportSheet<unknown>
+      ),
+      buildExportFileName(
+        '指标下发与管理',
+        selectedColleges.length === 1 ? selectedColleges[0] : '多学院'
+      )
+    )
+    distributionBatchExportDialogVisible.value = false
+    ElMessage.success('导出成功')
+  } catch {
+    ElMessage.error('导出失败，请稍后重试')
+  } finally {
+    distributionExporting.value = false
+  }
+}
 </script>
 
 <template>
@@ -281,6 +517,19 @@ const {
     >
       当前处于历史快照模式（{{ timeContext.currentYear }}年），数据为只读状态
     </el-alert>
+
+    <div class="distribution-export-bar">
+      <el-button
+        type="primary"
+        plain
+        :loading="distributionExporting"
+        :disabled="colleges.length === 0"
+        @click="openDistributionBatchExportDialog"
+      >
+        <el-icon><Download /></el-icon>
+        全部导出
+      </el-button>
+    </div>
 
     <div class="distribution-layout">
       <!-- 左侧：学院侧边栏 -->
@@ -399,61 +648,70 @@ const {
                 基础性权重合计: {{ collegeTotalWeight }} / 100
               </el-tag>
             </div>
-            <div v-if="isFunctionalDept && !timeContext.isReadOnly" class="header-actions">
+            <div class="header-actions">
+              <el-button
+                :loading="distributionExporting"
+                @click="handleExportCurrentDistributionCollege"
+              >
+                <el-icon><Download /></el-icon>
+                导出
+              </el-button>
               <!-- 
                 按钮显示逻辑：
                 - 草稿态且暂无指标 → 只显示"新增指标"
                 - 有指标时 → 审批入口始终可见
                 - 编辑/下发按钮仅在草稿态显示
               -->
-              <template v-if="collegeOverallStatus.label === '暂无指标' && canEditChild">
-                <el-button @click="openCopyIndicatorsDialog">复制学院指标</el-button>
-                <el-button type="primary" @click="openAddIndicatorForm">
-                  <el-icon><Plus /></el-icon>
-                  新增指标
-                </el-button>
-              </template>
-              <template v-else>
-                <div class="approval-entry-wrapper">
-                  <span
-                    v-if="canCurrentUserApproveCurrentPlan"
-                    class="approval-entry-dot"
-                    aria-hidden="true"
-                  ></span>
-                  <el-button :type="distributionApprovalButtonType" @click="handleOpenApproval">
-                    <el-icon><Check /></el-icon>
-                    {{ distributionApprovalButtonText }}
-                  </el-button>
-                </div>
-                <template v-if="currentCollegePlanActionState === 'draft' && canEditChild">
+              <template v-if="isFunctionalDept && !timeContext.isReadOnly">
+                <template v-if="collegeOverallStatus.label === '暂无指标' && canEditChild">
                   <el-button @click="openCopyIndicatorsDialog">复制学院指标</el-button>
                   <el-button type="primary" @click="openAddIndicatorForm">
                     <el-icon><Plus /></el-icon>
                     新增指标
                   </el-button>
-                  <el-button
-                    :type="distributionSubmitButtonType"
-                    :loading="isBatchDistributing"
-                    :aria-disabled="Boolean(distributionSubmitButtonDisabledReason)"
-                    :class="{ 'is-disabled': Boolean(distributionSubmitButtonDisabledReason) }"
-                    :title="distributionSubmitButtonDisabledReason"
-                    @click="handleBatchDistribute(selectedCollege)"
-                  >
-                    <el-icon><Promotion /></el-icon>
-                    {{ distributionSubmitButtonText }}
-                  </el-button>
                 </template>
-                <template v-else-if="withdrawButtonVisible">
-                  <el-button
-                    :type="withdrawButtonType"
-                    :loading="isBatchDistributing"
-                    :disabled="withdrawButtonDisabled"
-                    :title="withdrawButtonDisabledReason"
-                    @click="handleBatchWithdraw(selectedCollege)"
-                  >
-                    <el-icon><Promotion /></el-icon>
-                    撤回
-                  </el-button>
+                <template v-else>
+                  <div class="approval-entry-wrapper">
+                    <span
+                      v-if="canCurrentUserApproveCurrentPlan"
+                      class="approval-entry-dot"
+                      aria-hidden="true"
+                    ></span>
+                    <el-button :type="distributionApprovalButtonType" @click="handleOpenApproval">
+                      <el-icon><Check /></el-icon>
+                      {{ distributionApprovalButtonText }}
+                    </el-button>
+                  </div>
+                  <template v-if="currentCollegePlanActionState === 'draft' && canEditChild">
+                    <el-button @click="openCopyIndicatorsDialog">复制学院指标</el-button>
+                    <el-button type="primary" @click="openAddIndicatorForm">
+                      <el-icon><Plus /></el-icon>
+                      新增指标
+                    </el-button>
+                    <el-button
+                      :type="distributionSubmitButtonType"
+                      :loading="isBatchDistributing"
+                      :aria-disabled="Boolean(distributionSubmitButtonDisabledReason)"
+                      :class="{ 'is-disabled': Boolean(distributionSubmitButtonDisabledReason) }"
+                      :title="distributionSubmitButtonDisabledReason"
+                      @click="handleBatchDistribute(selectedCollege)"
+                    >
+                      <el-icon><Promotion /></el-icon>
+                      {{ distributionSubmitButtonText }}
+                    </el-button>
+                  </template>
+                  <template v-else-if="withdrawButtonVisible">
+                    <el-button
+                      :type="withdrawButtonType"
+                      :loading="isBatchDistributing"
+                      :disabled="withdrawButtonDisabled"
+                      :title="withdrawButtonDisabledReason"
+                      @click="handleBatchWithdraw(selectedCollege)"
+                    >
+                      <el-icon><Promotion /></el-icon>
+                      撤回
+                    </el-button>
+                  </template>
                 </template>
               </template>
             </div>
@@ -1148,6 +1406,45 @@ const {
         </div>
       </div>
     </el-drawer>
+
+    <el-dialog
+      v-model="distributionBatchExportDialogVisible"
+      title="选择导出学院"
+      width="520px"
+      :close-on-click-modal="!distributionExporting"
+    >
+      <div class="export-dialog-body">
+        <el-checkbox
+          v-model="allDistributionExportCollegesSelected"
+          :indeterminate="distributionExportCollegesIndeterminate"
+        >
+          全选学院
+        </el-checkbox>
+        <el-checkbox-group
+          v-model="selectedDistributionExportColleges"
+          class="export-selection-list"
+        >
+          <el-checkbox v-for="college in colleges" :key="college" :value="college">
+            {{ college }}
+          </el-checkbox>
+        </el-checkbox-group>
+      </div>
+      <template #footer>
+        <el-button
+          :disabled="distributionExporting"
+          @click="distributionBatchExportDialogVisible = false"
+        >
+          取消
+        </el-button>
+        <el-button
+          type="primary"
+          :loading="distributionExporting"
+          @click="handleExportSelectedDistributionColleges"
+        >
+          导出
+        </el-button>
+      </template>
+    </el-dialog>
 
     <!-- 任务审批进度抽屉 -->
     <el-dialog

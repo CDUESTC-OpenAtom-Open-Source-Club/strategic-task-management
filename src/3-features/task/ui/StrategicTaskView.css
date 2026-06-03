@@ -593,6 +593,7 @@
   transform: translateY(-50%);
   display: flex;
   align-items: center;
+  gap: var(--spacing-sm);
 }
 
 /* Excel工具栏 */
@@ -626,6 +627,24 @@
 .update-time {
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+.export-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.export-selection-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--spacing-sm);
+  max-height: 320px;
+  overflow-y: auto;
+  padding: var(--spacing-sm);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-page);
 }
 
 /* Excel表格容器 */
@@ -1968,7 +1987,6 @@
   overflow: visible;
 }
 
-
 .approval-entry-action {
   position: relative;
   z-index: 2;
@@ -2022,7 +2040,6 @@
   transform: translateY(-1px);
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14);
 }
-
 
 .approval-status-chip--warning {
   color: #b45309;
@@ -2486,6 +2503,35 @@
 
 /* 响应式调整 */
 @media (max-width: 768px) {
+  .excel-header {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    align-items: stretch;
+  }
+
+  .excel-title {
+    text-align: left;
+  }
+
+  .excel-header-status {
+    position: static;
+    transform: none;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .excel-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .excel-toolbar .toolbar-left,
+  .excel-toolbar .toolbar-right {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
   .card-navigation {
     flex-direction: column;
     gap: var(--spacing-md);

@@ -1,9 +1,24 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue'
 import { Plus, View, Download, Delete, ArrowDown, Check, Loading } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import AppAvatar from '@/shared/ui/avatar/AppAvatar.vue'
 import IndicatorMilestoneTimeline from '@/features/indicator/ui/IndicatorMilestoneTimeline.vue'
 import { DistributionApprovalProgressDrawer } from '@/features/approval'
 import { resolveMilestoneDisplayState } from '@/shared/lib/utils/milestoneDisplay'
+import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
+import type { StrategicIndicator } from '@/shared/types'
+import {
+  buildAttachmentCell,
+  buildExportFileName,
+  exportRowsToExcel,
+  exportSheetsToExcel,
+  formatMilestones,
+  formatProgress,
+  type ExcelExportColumn,
+  type ExcelExportSheet,
+  type ExcelRowTone
+} from '@/shared/lib/export/excel'
 import {
   useStrategicTaskView,
   type StrategicTaskViewProps
@@ -302,6 +317,185 @@ const {
   updateEditTime,
   viewMode
 } = useStrategicTaskView(props)
+
+type StrategicExportRow = StrategicIndicator & {
+  exportDepartment: string
+}
+
+const strategicExporting = ref(false)
+const strategicBatchExportDialogVisible = ref(false)
+const selectedStrategicExportDepartments = ref<string[]>([])
+
+const allStrategicExportDepartmentsSelected = computed({
+  get: () =>
+    functionalDepartments.value.length > 0 &&
+    selectedStrategicExportDepartments.value.length === functionalDepartments.value.length,
+  set: checked => {
+    selectedStrategicExportDepartments.value = checked ? [...functionalDepartments.value] : []
+  }
+})
+
+const strategicExportDepartmentsIndeterminate = computed(
+  () =>
+    selectedStrategicExportDepartments.value.length > 0 &&
+    selectedStrategicExportDepartments.value.length < functionalDepartments.value.length
+)
+
+const strategicExportColumns: ExcelExportColumn<StrategicExportRow>[] = [
+  { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
+  { header: '部门', width: 18, getValue: row => row.exportDepartment },
+  { header: '战略任务', width: 28, getValue: row => row.taskContent || '-' },
+  { header: '核心指标', width: 32, getValue: row => row.name || '-' },
+  { header: '指标类型', width: 12, align: 'center', getValue: row => row.type1 || '-' },
+  {
+    header: '任务类别',
+    width: 12,
+    align: 'center',
+    getValue: row => getCategoryText(row.type2)
+  },
+  { header: '备注', width: 24, getValue: row => row.remark || '-' },
+  { header: '权重', width: 10, align: 'center', getValue: row => Number(row.weight || 0) },
+  {
+    header: '进度',
+    width: 24,
+    getValue: row => formatProgress(row.progress, getDisplayedReportedProgress(row))
+  },
+  {
+    header: '里程碑',
+    width: 34,
+    getValue: row => formatMilestones(getSortedMilestones(row.milestones))
+  },
+  {
+    header: '附件',
+    width: 42,
+    getValue: row =>
+      buildAttachmentCell(
+        (row as StrategicIndicator & { pendingAttachmentDetails?: unknown[] })
+          .pendingAttachmentDetails?.length
+          ? (row as StrategicIndicator & { pendingAttachmentDetails?: unknown[] })
+              .pendingAttachmentDetails
+          : row.pendingAttachments
+      )
+  }
+]
+
+const getStrategicExportRowsByDepartment = (department: string): StrategicExportRow[] => {
+  const rows = normalizedIndicators.value
+    .filter(
+      indicator =>
+        resolveIndicatorYear(indicator, timeContext.currentYear) === timeContext.currentYear
+    )
+    .filter(
+      indicator =>
+        indicator.ownerDept === '战略发展部' &&
+        indicator.responsibleDept === department &&
+        indicator.isStrategic === true &&
+        isIndicatorInCurrentPlanScope(indicator)
+    )
+    .map(indicator => ({
+      ...indicator,
+      type2: getIndicatorCategoryLabel(indicator),
+      exportDepartment: department
+    }))
+
+  return rows.sort((left, right) => {
+    const leftRank = getStrategicTaskTypeRank(left)
+    const rightRank = getStrategicTaskTypeRank(right)
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank
+    }
+    return String(left.taskContent || '').localeCompare(String(right.taskContent || ''))
+  })
+}
+
+const getStrategicTaskTypeRank = (indicator: StrategicIndicator): number => {
+  const taskType = getIndicatorMappedTaskType(indicator)
+  if (isDevelopmentTaskType(taskType)) {
+    return 0
+  }
+  if (isBasicTaskType(taskType)) {
+    return 1
+  }
+  return 2
+}
+
+const getStrategicExportRowTone = (row: StrategicExportRow): ExcelRowTone => {
+  const category = getCategoryText(row.type2)
+  if (category.includes('发展')) {
+    return 'development'
+  }
+  if (category.includes('基础')) {
+    return 'basic'
+  }
+  return 'default'
+}
+
+const buildStrategicExportSheet = (
+  department: string,
+  rows = getStrategicExportRowsByDepartment(department)
+): ExcelExportSheet<StrategicExportRow> => ({
+  sheetName: department || '当前部门',
+  rows,
+  columns: strategicExportColumns,
+  emptyMessage: '当前部门暂无可导出的战略任务指标',
+  getRowTone: getStrategicExportRowTone
+})
+
+const handleExportCurrentStrategicDepartment = async () => {
+  const department = selectedDepartment.value
+  if (!department) {
+    ElMessage.warning('请先选择部门')
+    return
+  }
+
+  const rows = getStrategicExportRowsByDepartment(department)
+  if (rows.length === 0) {
+    ElMessage.warning('当前部门暂无可导出的数据')
+    return
+  }
+
+  strategicExporting.value = true
+  try {
+    await exportRowsToExcel(
+      buildStrategicExportSheet(department, rows),
+      buildExportFileName('战略任务指标总表', department)
+    )
+    ElMessage.success('导出成功')
+  } catch {
+    ElMessage.error('导出失败，请稍后重试')
+  } finally {
+    strategicExporting.value = false
+  }
+}
+
+const openStrategicBatchExportDialog = () => {
+  selectedStrategicExportDepartments.value = [...functionalDepartments.value]
+  strategicBatchExportDialogVisible.value = true
+}
+
+const handleExportSelectedStrategicDepartments = async () => {
+  const departments = selectedStrategicExportDepartments.value
+  if (departments.length === 0) {
+    ElMessage.warning('请选择要导出的部门')
+    return
+  }
+
+  strategicExporting.value = true
+  try {
+    await exportSheetsToExcel(
+      departments.map(
+        department => buildStrategicExportSheet(department) as ExcelExportSheet<unknown>
+      ),
+      buildExportFileName('战略任务指标总表', departments.length === 1 ? departments[0] : '多部门')
+    )
+    strategicBatchExportDialogVisible.value = false
+    ElMessage.success('导出成功')
+  } catch {
+    ElMessage.error('导出失败，请稍后重试')
+  } finally {
+    strategicExporting.value = false
+  }
+}
 </script>
 
 <template>
@@ -355,6 +549,16 @@ const {
       <div class="excel-header">
         <h2 class="excel-title">战略任务指标总表</h2>
         <div class="excel-header-status">
+          <el-button
+            type="primary"
+            plain
+            size="small"
+            :loading="strategicExporting"
+            @click="openStrategicBatchExportDialog"
+          >
+            <el-icon><Download /></el-icon>
+            全部导出
+          </el-button>
           <el-tag :type="overallStatus.type" size="small">
             计划状态: {{ isInitialDataLoading ? '加载中...' : overallStatus.label }}
           </el-tag>
@@ -408,7 +612,11 @@ const {
               {{ approvalEntryButtonText }}
             </el-button>
           </div>
-          <el-button size="small">
+          <el-button
+            size="small"
+            :loading="strategicExporting"
+            @click="handleExportCurrentStrategicDepartment"
+          >
             <el-icon><Download /></el-icon>
             导出
           </el-button>
@@ -1428,6 +1636,45 @@ const {
       <template #footer>
         <el-button @click="closeDistributeDialog">取消</el-button>
         <el-button type="primary" @click="confirmDistribute">确认下发</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="strategicBatchExportDialogVisible"
+      title="选择导出部门"
+      width="520px"
+      :close-on-click-modal="!strategicExporting"
+    >
+      <div class="export-dialog-body">
+        <el-checkbox
+          v-model="allStrategicExportDepartmentsSelected"
+          :indeterminate="strategicExportDepartmentsIndeterminate"
+        >
+          全选部门
+        </el-checkbox>
+        <el-checkbox-group
+          v-model="selectedStrategicExportDepartments"
+          class="export-selection-list"
+        >
+          <el-checkbox v-for="dept in functionalDepartments" :key="dept" :value="dept">
+            {{ dept }}
+          </el-checkbox>
+        </el-checkbox-group>
+      </div>
+      <template #footer>
+        <el-button
+          :disabled="strategicExporting"
+          @click="strategicBatchExportDialogVisible = false"
+        >
+          取消
+        </el-button>
+        <el-button
+          type="primary"
+          :loading="strategicExporting"
+          @click="handleExportSelectedStrategicDepartments"
+        >
+          导出
+        </el-button>
       </template>
     </el-dialog>
 
