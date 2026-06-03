@@ -1,4 +1,4 @@
-import { computed, ref, watch, type ComputedRef } from 'vue'
+import { computed, nextTick, onMounted, ref, watch, type ComputedRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 const APPROVAL_ROUTE_QUERY_KEYS = [
@@ -88,6 +88,7 @@ export function useApprovalRouteAutopen<T extends string>(
     try {
       await options.onAutoOpen()
     } finally {
+      await nextTick()
       await clearApprovalRouteQuery()
     }
   }
@@ -105,9 +106,14 @@ export function useApprovalRouteAutopen<T extends string>(
       }
 
       approvalRouteAutopenConsumed.value = false
-    },
-    { immediate: true }
+    }
   )
+
+  onMounted(() => {
+    if (shouldAutoOpenApprovalFromRoute.value) {
+      void maybeAutoOpenApprovalFromRoute()
+    }
+  })
 
   return {
     routeApprovalEntityType,

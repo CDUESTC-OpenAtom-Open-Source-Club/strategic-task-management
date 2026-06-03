@@ -377,7 +377,8 @@ const {
           <el-button
             :type="distributeButtonType"
             size="small"
-            :disabled="distributeButtonDisabled"
+            :aria-disabled="distributeButtonDisabled"
+            :class="{ 'is-disabled': distributeButtonDisabled }"
             :title="distributeButtonDisabledReason"
             @click.stop="handleDistributeOrWithdraw"
           >
@@ -488,7 +489,14 @@ const {
             </div>
           </el-popover>
           <el-tag
-            :type="departmentTotalWeight === 100 ? 'success' : 'danger'"
+            :type="
+              departmentTotalWeight > 100
+                ? 'danger'
+                : departmentTotalWeight === 100
+                  ? 'success'
+                  : 'info'
+            "
+            :class="{ 'weight-tag--overlimit': departmentTotalWeight > 100 }"
             size="small"
             style="margin-right: 12px"
           >

@@ -1386,7 +1386,8 @@ export function useApprovalProgressState(
   function buildWorkflowNodeCandidates(
     candidates: ApproverCandidateResponse[] | undefined,
     operatorName?: string,
-    markApproved: boolean = false
+    markApproved: boolean = false,
+    markRejected: boolean = false
   ): WorkflowNode['approverCandidates'] {
     const resolvedOperatorName = normalizeDisplayName(operatorName)
     const candidateList = Array.isArray(candidates)
@@ -1402,7 +1403,9 @@ export function useApprovalProgressState(
                 ? workflowUserAvatarCache.value[String(candidate.userId)] || undefined
                 : undefined,
               approved:
-                markApproved && resolvedOperatorName ? displayName === resolvedOperatorName : false
+                markApproved && resolvedOperatorName ? displayName === resolvedOperatorName : false,
+              rejected:
+                markRejected && resolvedOperatorName ? displayName === resolvedOperatorName : false
             }
           })
           .filter(candidate => candidate.displayName)
@@ -1417,6 +1420,18 @@ export function useApprovalProgressState(
       candidateList.unshift({
         displayName: resolvedOperatorName,
         approved: true
+      })
+    }
+
+    if (
+      markRejected &&
+      resolvedOperatorName &&
+      candidateList.length > 0 &&
+      !candidateList.some(candidate => candidate.displayName === resolvedOperatorName)
+    ) {
+      candidateList.unshift({
+        displayName: resolvedOperatorName,
+        rejected: true
       })
     }
 
@@ -1460,6 +1475,7 @@ export function useApprovalProgressState(
 
     const resolvedOperatorName = resolveWorkflowTaskOperatorName(task)
     const shouldMarkApprovedCandidate = isWorkflowTaskApproved(task)
+    const shouldMarkRejectedCandidate = isWorkflowTaskRejected(task)
     const runtimeScopedRoleCodes = resolveExpectedApproverRoleCodesByStepName(
       task.currentStepName || task.taskName
     )
@@ -1477,7 +1493,8 @@ export function useApprovalProgressState(
       return buildWorkflowNodeCandidates(
         runtimeScopedCandidates,
         resolvedOperatorName || runtimeAssigneeName,
-        shouldMarkApprovedCandidate
+        shouldMarkApprovedCandidate,
+        shouldMarkRejectedCandidate
       )
     }
 
@@ -1526,7 +1543,8 @@ export function useApprovalProgressState(
           }
         ],
         resolvedOperatorName,
-        shouldMarkApprovedCandidate
+        shouldMarkApprovedCandidate,
+        shouldMarkRejectedCandidate
       )
     }
 
@@ -1534,7 +1552,8 @@ export function useApprovalProgressState(
       return buildWorkflowNodeCandidates(
         previewCandidates,
         resolvedOperatorName || runtimeAssigneeName,
-        shouldMarkApprovedCandidate
+        shouldMarkApprovedCandidate,
+        shouldMarkRejectedCandidate
       )
     }
 
@@ -1550,7 +1569,8 @@ export function useApprovalProgressState(
           }
         ],
         resolvedOperatorName,
-        shouldMarkApprovedCandidate
+        shouldMarkApprovedCandidate,
+        shouldMarkRejectedCandidate
       )
     }
 
@@ -1601,6 +1621,13 @@ export function useApprovalProgressState(
       .trim()
       .toUpperCase()
     return normalizedStatus === 'COMPLETED' || normalizedStatus === 'APPROVED'
+  }
+
+  function isWorkflowTaskRejected(task: WorkflowTaskResponse): boolean {
+    const normalizedStatus = String(task.status || '')
+      .trim()
+      .toUpperCase()
+    return normalizedStatus === 'REJECTED' || normalizedStatus === 'RETURNED'
   }
 
   function resolveTaskStatusLabel(task: WorkflowTaskResponse): string {

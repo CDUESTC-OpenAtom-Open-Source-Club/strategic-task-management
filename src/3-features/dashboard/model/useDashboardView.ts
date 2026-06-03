@@ -34,13 +34,13 @@ export function useDashboardView(props: DashboardViewProps) {
     return echarts
   }
 
-  // 动态导入 XLSX，只在导出时加载
-  let XLSX: typeof import('xlsx') | null = null
-  const loadXLSX = async () => {
-    if (!XLSX) {
-      XLSX = await import('xlsx')
+  // 动态导入 Excel 导出库，只在导出时加载
+  let excelWriter: typeof import('write-excel-file/browser') | null = null
+  const loadExcelWriter = async () => {
+    if (!excelWriter) {
+      excelWriter = await import('write-excel-file/browser')
     }
-    return XLSX
+    return excelWriter
   }
 
   // 帮助提示内容
@@ -1148,18 +1148,20 @@ export function useDashboardView(props: DashboardViewProps) {
         sheetName = '承接任务'
       }
 
-      const xlsx = await loadXLSX()
-      const worksheet = xlsx.utils.json_to_sheet(exportData)
-      const workbook = xlsx.utils.book_new()
-      xlsx.utils.book_append_sheet(workbook, worksheet, sheetName)
+      const { default: writeXlsxFile } = await loadExcelWriter()
+      const columns = Object.keys(exportData[0] || {}).map(key => {
+        const values = exportData.map(row => row[key])
+        return {
+          header: key,
+          cell: (row: Record<string, string | number>) => row[key],
+          width: Math.max(key.length + 2, ...values.map(value => String(value || '').length))
+        }
+      })
 
-      // 自动列宽
-      const colWidths = Object.keys(exportData[0] || {}).map(key => ({
-        wch: Math.max(key.length + 2, ...exportData.map(row => String(row[key] || '').length))
-      }))
-      worksheet['!cols'] = colWidths
-
-      xlsx.writeFile(workbook, fileName)
+      await writeXlsxFile(exportData, {
+        columns,
+        sheet: sheetName
+      }).toFile(fileName)
 
       ElMessage.success('导出成功')
     } catch (error) {
@@ -2404,7 +2406,6 @@ export function useDashboardView(props: DashboardViewProps) {
     isFallbackMode,
     loadEcharts,
     loadReminderStatuses,
-    loadXLSX,
     messageStore,
     monthIndicatorStats,
     monthIndicators,

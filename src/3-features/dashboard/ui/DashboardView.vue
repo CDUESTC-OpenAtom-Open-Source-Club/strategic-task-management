@@ -101,7 +101,6 @@ const {
   isFallbackMode,
   loadEcharts,
   loadReminderStatuses,
-  loadXLSX,
   messageStore,
   monthIndicatorStats,
   monthIndicators,

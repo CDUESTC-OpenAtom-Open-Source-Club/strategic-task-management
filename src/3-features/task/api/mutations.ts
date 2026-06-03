@@ -11,6 +11,7 @@ import {
   rejectTask as workflowRejectTask
 } from '@/features/workflow/api'
 import { buildQueryKey, invalidateQueries } from '@/shared/lib/utils/cache'
+import { requestMessageCenterRefresh } from '@/shared/lib/messageCenterRefresh'
 import type { ApiResponse, StrategicTask } from '@/shared/types'
 import type { TaskCreateRequest, TaskUpdateRequest } from '@/shared/types'
 
@@ -98,6 +99,7 @@ export async function submitTaskForApproval(
     businessEntityType: 'TASK'
   })
   invalidateTaskCaches(taskId)
+  requestMessageCenterRefresh()
   return { success: true, data: undefined }
 }
 
@@ -117,6 +119,7 @@ export async function approveTask(
 ): Promise<ApiResponse<void>> {
   await workflowApproveTask(String(instanceId), { comment })
   invalidateTaskCaches()
+  requestMessageCenterRefresh()
   return { success: true, data: undefined }
 }
 
@@ -136,6 +139,7 @@ export async function rejectTask(
 ): Promise<ApiResponse<void>> {
   await workflowRejectTask(String(instanceId), { reason })
   invalidateTaskCaches()
+  requestMessageCenterRefresh()
   return { success: true, data: undefined }
 }
 

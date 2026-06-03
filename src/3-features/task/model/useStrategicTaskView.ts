@@ -630,36 +630,98 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     return currentPlanTaskIdSet.value.has(indicatorTaskId)
   }
 
-  async function syncSelectedDepartmentFromRoute(): Promise<void> {
-    const queryDepartment = normalizeDepartmentName(
-      getRouteQueryText(route.query.approvalDepartment)
-    )
-    if (!queryDepartment) {
-      return
+  const matchFunctionalDepartmentName = (candidate?: string | null): string => {
+    const normalized = normalizeDepartmentName(candidate)
+    if (!normalized) {
+      return ''
     }
 
+    return (
+      functionalDepartments.value.find(dept => normalizeDepartmentName(dept) === normalized) || ''
+    )
+  }
+
+  const resolveRouteApprovalDepartment = async (): Promise<string> => {
     if (!orgStore.loaded || orgStore.departments.length === 0) {
       await orgStore.loadDepartments()
     }
 
-    const matchedDepartment = functionalDepartments.value.find(
-      dept => normalizeDepartmentName(dept) === queryDepartment
+    const queryDepartment = matchFunctionalDepartmentName(
+      getRouteQueryText(route.query.approvalDepartment)
     )
-
-    if (matchedDepartment && selectedDepartment.value !== matchedDepartment) {
-      selectedDepartment.value = matchedDepartment
-      persistSelectedDepartment(matchedDepartment)
+    if (queryDepartment) {
+      return queryDepartment
     }
 
-    const nextQuery = { ...route.query }
-    delete nextQuery.approvalDepartment
-    await router.replace({ query: nextQuery })
+    const approvalEntityType = getRouteQueryText(route.query.approvalEntityType).toUpperCase()
+    const approvalEntityId = getRouteQueryText(route.query.approvalEntityId)
+    if (approvalEntityType !== 'PLAN' || !approvalEntityId) {
+      return ''
+    }
+
+    const cachedPlan =
+      planStore.plans.find(plan => String((plan as Record<string, unknown>).id) === approvalEntityId) ||
+      null
+    const plan =
+      cachedPlan ||
+      (await planStore.loadPlanDetails(approvalEntityId, {
+        force: true,
+        background: true
+      }))
+
+    const planRecord = (plan || {}) as Record<string, unknown>
+    const directDepartment = matchFunctionalDepartmentName(
+      String(planRecord.targetOrgName || planRecord.orgName || '')
+    )
+    if (directDepartment) {
+      return directDepartment
+    }
+
+    const planOrgId = Number(
+      planRecord.targetOrgId ??
+        planRecord.target_org_id ??
+        planRecord.orgId ??
+        planRecord.org_id ??
+        NaN
+    )
+    if (!Number.isFinite(planOrgId) || planOrgId <= 0) {
+      return ''
+    }
+
+    return matchFunctionalDepartmentName(departmentIdNameMap.value.get(String(planOrgId)) || '')
+  }
+
+  async function syncSelectedDepartmentFromRoute(): Promise<void> {
+    const routeApprovalDepartment = await resolveRouteApprovalDepartment()
+    if (!routeApprovalDepartment) {
+      return
+    }
+
+    if (selectedDepartment.value !== routeApprovalDepartment) {
+      selectedDepartment.value = routeApprovalDepartment
+      persistSelectedDepartment(routeApprovalDepartment)
+    }
+
+    if (getRouteQueryText(route.query.approvalDepartment)) {
+      const nextQuery = { ...route.query }
+      delete nextQuery.approvalDepartment
+      await router.replace({ query: nextQuery })
+    }
   }
 
   watch(
-    () => [route.query.approvalDepartment, functionalDepartments.value.length],
+    () => [
+      route.query.approvalDepartment,
+      route.query.approvalEntityType,
+      route.query.approvalEntityId,
+      functionalDepartments.value.length
+    ],
     () => {
-      if (getRouteQueryText(route.query.approvalDepartment)) {
+      if (
+        getRouteQueryText(route.query.approvalDepartment) ||
+        (getRouteQueryText(route.query.approvalEntityType).toUpperCase() === 'PLAN' &&
+          getRouteQueryText(route.query.approvalEntityId))
+      ) {
         void syncSelectedDepartmentFromRoute()
       }
     },
@@ -1988,23 +2050,52 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     return '查看审批'
   })
 
+  // 任务审批抽屉状态
+  const taskApprovalVisible = ref(false)
+  const retainedRouteApprovalEntityType = ref<'PLAN' | 'PLAN_REPORT' | undefined>(undefined)
+  const retainedRouteApprovalEntityId = ref<string | undefined>(undefined)
+  watch(taskApprovalVisible, visible => {
+    if (visible) {
+      return
+    }
+
+    retainedRouteApprovalEntityType.value = undefined
+    retainedRouteApprovalEntityId.value = undefined
+  })
+
   const { routeApprovalEntityType, routeApprovalEntityId } = useApprovalRouteAutopen({
     supportedEntityTypes: ['PLAN', 'PLAN_REPORT'] as const,
     onAutoOpen: async () => {
-      await syncSelectedDepartmentFromRoute()
-      await nextTick()
-      await refreshCurrentDepartmentView({ showLoading: true, force: true })
-      await preloadApprovalWorkflowDetail()
-      taskApprovalVisible.value = true
+      retainedRouteApprovalEntityType.value = routeApprovalEntityType.value
+      retainedRouteApprovalEntityId.value = routeApprovalEntityId.value
+      try {
+        await syncSelectedDepartmentFromRoute()
+        await nextTick()
+        await refreshCurrentDepartmentView({ showLoading: true, force: true })
+        await preloadApprovalWorkflowDetail()
+      } catch (error) {
+        logger.warn('[StrategicTaskView] 自动打开审批前刷新失败，降级使用当前页面数据:', error)
+      } finally {
+        await nextTick()
+        taskApprovalVisible.value = true
+      }
     },
     onClearFailure: error => {
       logger.warn('[StrategicTaskView] 清理审批自动打开参数失败:', error)
     }
   })
 
+  const effectiveRouteApprovalEntityType = computed<'PLAN' | 'PLAN_REPORT' | undefined>(() => {
+    return routeApprovalEntityType.value || retainedRouteApprovalEntityType.value
+  })
+
+  const effectiveRouteApprovalEntityId = computed<string | undefined>(() => {
+    return routeApprovalEntityId.value || retainedRouteApprovalEntityId.value
+  })
+
   const primaryApprovalWorkflowEntityType = computed<'PLAN' | 'PLAN_REPORT'>(() => {
-    if (routeApprovalEntityType.value) {
-      return routeApprovalEntityType.value
+    if (effectiveRouteApprovalEntityType.value) {
+      return effectiveRouteApprovalEntityType.value
     }
 
     if (shouldPreferCurrentReportWorkflow.value) {
@@ -2036,11 +2127,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   const primaryApprovalWorkflowEntityId = computed<number | string | undefined>(() => {
     if (primaryApprovalWorkflowEntityType.value === 'PLAN') {
-      return routeApprovalEntityId.value ?? currentPlan.value?.id
+      return effectiveRouteApprovalEntityId.value ?? currentPlan.value?.id
     }
 
     return (
-      routeApprovalEntityId.value ??
+      effectiveRouteApprovalEntityId.value ??
       (hasApprovalWorkflowReportBinding.value
         ? approvalWorkflowReportSummary.value?.id
         : undefined) ??
@@ -2147,7 +2238,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
 
     if (planUiPhase.value === 'draft' && departmentTotalWeight.value !== 100) {
-      return `基础性任务指标权重合计必须为100%，当前为${departmentTotalWeight.value}`
+      return '权重未等于百分之百'
     }
 
     if (planUiPhase.value === 'pending_locked') {
@@ -4067,9 +4158,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 详情抽屉状态
   const detailDrawerVisible = ref(false)
   const currentDetail = ref<StrategicIndicator | null>(null)
-
-  // 任务审批抽屉状态
-  const taskApprovalVisible = ref(false)
 
   // 专门用于审批抽屉的指标列表（显示当前选中部门的所有指标，一个部门的所有指标状态应该统一）
   const approvalIndicators = computed(() => {

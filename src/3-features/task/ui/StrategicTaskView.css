@@ -1968,6 +1968,7 @@
   overflow: visible;
 }
 
+
 .approval-entry-action {
   position: relative;
   z-index: 2;
@@ -2010,6 +2011,10 @@
   line-height: 1;
 }
 
+.weight-tag--overlimit {
+  animation: weight-overlimit-pulse 1.5s ease-in-out infinite;
+}
+
 .approval-entry-wrapper:hover .approval-status-chip,
 .approval-status-chip:hover {
   opacity: 1;
@@ -2017,6 +2022,7 @@
   transform: translateY(-1px);
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14);
 }
+
 
 .approval-status-chip--warning {
   color: #b45309;
@@ -2034,6 +2040,18 @@
   color: #b91c1c;
   border-color: rgba(248, 113, 113, 0.24);
   background: rgba(254, 242, 242, 0.78);
+}
+
+@keyframes weight-overlimit-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.82;
+    transform: scale(1.03);
+  }
 }
 
 .approval-status-chip--info {

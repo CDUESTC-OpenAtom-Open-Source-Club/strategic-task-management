@@ -456,6 +456,7 @@ export function useApprovalProgressWorkflow({
           })
           await refreshPlanApprovalAfterMutation()
           ElMessage.success('审批通过')
+          state.handleClose()
         } finally {
           loadingInstance.close()
         }
@@ -522,6 +523,7 @@ export function useApprovalProgressWorkflow({
         })
         await refreshPlanApprovalAfterMutation()
         ElMessage.success(`已一键通过 ${state.scopedPlanApprovals.value.length} 条审批实例`)
+        state.handleClose()
       } finally {
         loadingInstance.close()
       }
@@ -592,6 +594,7 @@ export function useApprovalProgressWorkflow({
           })
           await refreshPlanApprovalAfterMutation()
           ElMessage.success('审批已驳回')
+          state.handleClose()
         } finally {
           loadingInstance.close()
         }
@@ -651,6 +654,7 @@ export function useApprovalProgressWorkflow({
         })
         await refreshPlanApprovalAfterMutation()
         ElMessage.success(`已一键驳回 ${state.scopedPlanApprovals.value.length} 条审批实例`)
+        state.handleClose()
       } finally {
         loadingInstance.close()
       }

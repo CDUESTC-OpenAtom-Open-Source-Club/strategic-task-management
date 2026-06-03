@@ -448,6 +448,7 @@ export interface WorkflowNode {
     displayName: string
     avatar?: string
     approved?: boolean
+    rejected?: boolean
   }>
 }
 

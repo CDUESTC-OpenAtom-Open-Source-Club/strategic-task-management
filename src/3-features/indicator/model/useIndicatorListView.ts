@@ -4611,10 +4611,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return
     }
 
-    const indicatorNames = indicators.value.map(ind => ind.name).join('、')
-
     ElMessageBox.prompt(
-      `确认提交当前计划下的全部 ${indicators.value.length} 个指标吗？\n\n指标列表：${indicatorNames}\n\n注意：该操作会发起本次上报审批，提交后将无法修改，需等待上级部门审批。\n\n请输入提交备注：`,
+      `确认提交当前计划下的全部 ${indicators.value.length} 个指标吗？\n\n注意：该操作会发起本次上报审批，提交后将无法修改，需等待上级部门审批。\n\n请输入提交备注：`,
       '一键提交确认',
       {
         confirmButtonText: '确定提交',

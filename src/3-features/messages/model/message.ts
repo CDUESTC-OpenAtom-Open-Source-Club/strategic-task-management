@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { Message, MessageBizType } from '@/shared/types'
 import {
+  invalidateMessageCaches,
   messagesApi,
   type MessageCenterSummary,
   type MessageItem
@@ -263,6 +264,7 @@ export const useMessageStore = defineStore('message-center', () => {
   }
 
   async function refreshMessageCenter() {
+    invalidateMessageCaches()
     const results = await Promise.allSettled([fetchSummary(), fetchMessages()])
     const rejected = results.filter(result => result.status === 'rejected')
     if (rejected.length === results.length) {

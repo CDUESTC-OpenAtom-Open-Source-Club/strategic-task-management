@@ -154,6 +154,19 @@ export function useApprovalProgressDrawer(
     const value = typeof props.routeTarget === 'string' ? props.routeTarget.trim() : ''
     return value || ''
   })
+  const explicitApprovalRouteTarget = computed(() => {
+    if (!routeTargetSeed.value) {
+      return ''
+    }
+
+    try {
+      const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost'
+      const parsedUrl = new URL(routeTargetSeed.value, origin)
+      return parsedUrl.searchParams.has('openApproval') ? routeTargetSeed.value : ''
+    } catch {
+      return routeTargetSeed.value.includes('openApproval=') ? routeTargetSeed.value : ''
+    }
+  })
   const currentUserPermissionCodes = computed(() => {
     const permissions = (authStore.user as { permissions?: unknown[] } | null)?.permissions
     if (!Array.isArray(permissions)) {
@@ -345,6 +358,10 @@ export function useApprovalProgressDrawer(
   })
 
   const normalizedRouteTarget = computed(() => {
+    if (explicitApprovalRouteTarget.value) {
+      return explicitApprovalRouteTarget.value
+    }
+
     const detail = routeContextWorkflowDetail.value
     const entityType =
       normalizeWorkflowEntityType(
@@ -1363,7 +1380,8 @@ export function useApprovalProgressDrawer(
   function buildWorkflowNodeCandidates(
     candidates: ApproverCandidateResponse[] | undefined,
     operatorName?: string,
-    markApproved: boolean = false
+    markApproved: boolean = false,
+    markRejected: boolean = false
   ): WorkflowNode['approverCandidates'] {
     const resolvedOperatorName = normalizeDisplayName(operatorName)
     const candidateList = Array.isArray(candidates)
@@ -1379,7 +1397,9 @@ export function useApprovalProgressDrawer(
                 ? workflowUserAvatarCache.value[String(candidate.userId)] || undefined
                 : undefined,
               approved:
-                markApproved && resolvedOperatorName ? displayName === resolvedOperatorName : false
+                markApproved && resolvedOperatorName ? displayName === resolvedOperatorName : false,
+              rejected:
+                markRejected && resolvedOperatorName ? displayName === resolvedOperatorName : false
             }
           })
           .filter(candidate => candidate.displayName)
@@ -1394,6 +1414,18 @@ export function useApprovalProgressDrawer(
       candidateList.unshift({
         displayName: resolvedOperatorName,
         approved: true
+      })
+    }
+
+    if (
+      markRejected &&
+      resolvedOperatorName &&
+      candidateList.length > 0 &&
+      !candidateList.some(candidate => candidate.displayName === resolvedOperatorName)
+    ) {
+      candidateList.unshift({
+        displayName: resolvedOperatorName,
+        rejected: true
       })
     }
 
@@ -1455,6 +1487,7 @@ export function useApprovalProgressDrawer(
 
     const resolvedOperatorName = resolveWorkflowTaskOperatorName(task)
     const shouldMarkApprovedCandidate = isWorkflowTaskApproved(task)
+    const shouldMarkRejectedCandidate = isWorkflowTaskRejected(task)
     const normalizedStatus = String(task.status || '')
       .trim()
       .toUpperCase()
@@ -1476,7 +1509,8 @@ export function useApprovalProgressDrawer(
       return buildWorkflowNodeCandidates(
         runtimeScopedCandidates,
         resolvedOperatorName || runtimeAssigneeName,
-        shouldMarkApprovedCandidate
+        shouldMarkApprovedCandidate,
+        shouldMarkRejectedCandidate
       )
     }
 
@@ -1526,7 +1560,8 @@ export function useApprovalProgressDrawer(
           }
         ],
         resolvedOperatorName,
-        shouldMarkApprovedCandidate
+        shouldMarkApprovedCandidate,
+        shouldMarkRejectedCandidate
       )
     }
 
@@ -1534,7 +1569,8 @@ export function useApprovalProgressDrawer(
       return buildWorkflowNodeCandidates(
         previewCandidates,
         resolvedOperatorName || runtimeAssigneeName,
-        shouldMarkApprovedCandidate
+        shouldMarkApprovedCandidate,
+        shouldMarkRejectedCandidate
       )
     }
 
@@ -1550,7 +1586,8 @@ export function useApprovalProgressDrawer(
           }
         ],
         resolvedOperatorName,
-        shouldMarkApprovedCandidate
+        shouldMarkApprovedCandidate,
+        shouldMarkRejectedCandidate
       )
     }
 
@@ -1606,6 +1643,13 @@ export function useApprovalProgressDrawer(
       .trim()
       .toUpperCase()
     return normalizedStatus === 'COMPLETED' || normalizedStatus === 'APPROVED'
+  }
+
+  function isWorkflowTaskRejected(task: WorkflowTaskResponse): boolean {
+    const normalizedStatus = String(task.status || '')
+      .trim()
+      .toUpperCase()
+    return normalizedStatus === 'REJECTED' || normalizedStatus === 'RETURNED'
   }
 
   function resolveSourceDepartmentDisplayName(): string {
@@ -2959,6 +3003,7 @@ export function useApprovalProgressDrawer(
           })
           await refreshPlanApprovalAfterMutation()
           ElMessage.success('审批通过')
+          handleClose()
         } finally {
           loadingInstance.close()
         }
@@ -3016,6 +3061,7 @@ export function useApprovalProgressDrawer(
         })
         await refreshPlanApprovalAfterMutation()
         ElMessage.success(`已一键通过 ${scopedPlanApprovals.value.length} 条审批实例`)
+        handleClose()
       } finally {
         loadingInstance.close()
       }
@@ -3074,6 +3120,7 @@ export function useApprovalProgressDrawer(
           })
           await refreshPlanApprovalAfterMutation()
           ElMessage.success('审批已驳回')
+          handleClose()
         } finally {
           loadingInstance.close()
         }
@@ -3126,6 +3173,7 @@ export function useApprovalProgressDrawer(
         })
         await refreshPlanApprovalAfterMutation()
         ElMessage.success(`已一键驳回 ${scopedPlanApprovals.value.length} 条审批实例`)
+        handleClose()
       } finally {
         loadingInstance.close()
       }

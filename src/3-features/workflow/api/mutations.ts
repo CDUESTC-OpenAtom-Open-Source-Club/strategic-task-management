@@ -6,6 +6,7 @@
 
 import { apiClient } from '@/shared/api/client'
 import { invalidateQueries } from '@/shared/lib/utils/cache'
+import { requestMessageCenterRefresh } from '@/shared/lib/messageCenterRefresh'
 import type { ApiResponse } from '@/shared/types'
 import type {
   StartWorkflowRequest,
@@ -36,6 +37,7 @@ function invalidateWorkflowCaches(taskOrInstanceId?: string): void {
   }
 
   invalidateQueries(targets)
+  requestMessageCenterRefresh()
 }
 
 /**

@@ -1538,6 +1538,11 @@
   display: inline-flex;
 }
 
+.weight-tag--overlimit {
+  animation: weight-overlimit-pulse 1.5s ease-in-out infinite;
+}
+
+
 .approval-entry-dot {
   position: absolute;
   top: -6px;
@@ -1551,6 +1556,7 @@
   z-index: 2;
 }
 
+
 .timeline-comment {
   margin-top: var(--spacing-sm);
   color: var(--text-regular);
@@ -1559,4 +1565,16 @@
 
 .detail-tags :deep(.el-tag) {
   margin-right: 0;
+}
+
+@keyframes weight-overlimit-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.82;
+    transform: scale(1.03);
+  }
 }

@@ -7,6 +7,7 @@ export interface GlobalDataRefreshDetail {
     | 'window-focus'
     | 'visibility-return'
     | 'heartbeat'
+    | 'message-mutation'
     | 'manual'
   silent?: boolean
 }

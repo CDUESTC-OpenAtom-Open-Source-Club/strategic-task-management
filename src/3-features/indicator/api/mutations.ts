@@ -7,6 +7,7 @@
 
 import { apiClient } from '@/shared/api/client'
 import { buildQueryKey, invalidateQueries } from '@/shared/lib/utils/cache'
+import { requestMessageCenterRefresh } from '@/shared/lib/messageCenterRefresh'
 import type {
   Indicator,
   IndicatorCreateRequest,
@@ -35,6 +36,11 @@ function invalidateIndicatorCaches(id?: number): void {
   }
 
   invalidateQueries(targets)
+}
+
+function invalidateIndicatorAndMessageCaches(id?: number): void {
+  invalidateIndicatorCaches(id)
+  requestMessageCenterRefresh()
 }
 
 /**
@@ -98,7 +104,7 @@ export async function distributeIndicator(
     `/indicators/${id}/distribute`,
     request
   )
-  invalidateIndicatorCaches(id)
+  invalidateIndicatorAndMessageCaches(id)
   return response.data
 }
 
@@ -127,6 +133,7 @@ export async function batchDistributeIndicators(
   )
 
   indicatorIds.forEach(id => invalidateIndicatorCaches(id))
+  requestMessageCenterRefresh()
   return responses[0]?.data ?? ({ success: true } as unknown as DistributionResult)
 }
 
@@ -140,7 +147,7 @@ export async function batchDistributeIndicators(
  */
 export async function withdrawIndicator(id: number, reason?: string): Promise<void> {
   await apiClient.post(`/indicators/${id}/withdraw`, { reason })
-  invalidateIndicatorCaches(id)
+  invalidateIndicatorAndMessageCaches(id)
 }
 
 /**
@@ -163,7 +170,7 @@ export async function submitIndicatorForApproval(
       flowCode: 'INDICATOR_APPROVAL'
     }
   )
-  invalidateIndicatorCaches(id)
+  invalidateIndicatorAndMessageCaches(id)
   return response.data
 }
 

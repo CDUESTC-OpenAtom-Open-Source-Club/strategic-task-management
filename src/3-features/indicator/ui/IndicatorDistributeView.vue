@@ -385,7 +385,17 @@ const {
                   <div class="approval-status-card__footer">点击可进入审批中心</div>
                 </div>
               </el-popover>
-              <el-tag :type="collegeTotalWeight === 100 ? 'success' : 'danger'" size="default">
+              <el-tag
+                :type="
+                  collegeTotalWeight > 100
+                    ? 'danger'
+                    : collegeTotalWeight === 100
+                      ? 'success'
+                      : 'info'
+                "
+                :class="{ 'weight-tag--overlimit': collegeTotalWeight > 100 }"
+                size="default"
+              >
                 基础性权重合计: {{ collegeTotalWeight }} / 100
               </el-tag>
             </div>
@@ -424,7 +434,8 @@ const {
                   <el-button
                     :type="distributionSubmitButtonType"
                     :loading="isBatchDistributing"
-                    :disabled="Boolean(distributionSubmitButtonDisabledReason)"
+                    :aria-disabled="Boolean(distributionSubmitButtonDisabledReason)"
+                    :class="{ 'is-disabled': Boolean(distributionSubmitButtonDisabledReason) }"
                     :title="distributionSubmitButtonDisabledReason"
                     @click="handleBatchDistribute(selectedCollege)"
                   >

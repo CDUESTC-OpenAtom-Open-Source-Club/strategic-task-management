@@ -1409,7 +1409,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     }
 
     if (collegeTotalWeight.value !== 100) {
-      return `基础性任务下子指标权重合计必须为100，当前为${collegeTotalWeight.value}`
+      return '权重未等于百分之百'
     }
 
     if (isBatchDistributing.value) {

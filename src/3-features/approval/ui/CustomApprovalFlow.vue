@@ -306,7 +306,10 @@ const getCandidateSummary = (node: WorkflowNode) => {
                   <div
                     v-for="candidate in node.approverCandidates"
                     :key="`${node.id}-${candidate.userId || candidate.displayName}`"
-                    :class="['candidate-item', { 'is-approved': candidate.approved }]"
+                    :class="[
+                      'candidate-item',
+                      { 'is-approved': candidate.approved, 'is-rejected': candidate.rejected }
+                    ]"
                   >
                     <div class="candidate-avatar-wrap">
                       <AppAvatar
@@ -318,9 +321,15 @@ const getCandidateSummary = (node: WorkflowNode) => {
                       <span v-if="candidate.approved" class="candidate-approved-badge">
                         <el-icon><Check /></el-icon>
                       </span>
+                      <span v-else-if="candidate.rejected" class="candidate-rejected-badge">
+                        <el-icon><Close /></el-icon>
+                      </span>
                     </div>
                     <div class="candidate-name">{{ candidate.displayName }}</div>
                     <div v-if="candidate.approved" class="candidate-state">已审批通过</div>
+                    <div v-else-if="candidate.rejected" class="candidate-state is-rejected">
+                      已审批驳回
+                    </div>
                   </div>
                 </div>
               </div>
@@ -661,7 +670,8 @@ const getCandidateSummary = (node: WorkflowNode) => {
   box-shadow: 0 6px 16px rgba(59, 130, 246, 0.2);
 }
 
-.candidate-approved-badge {
+.candidate-approved-badge,
+.candidate-rejected-badge {
   position: absolute;
   right: -4px;
   bottom: -2px;
@@ -671,10 +681,17 @@ const getCandidateSummary = (node: WorkflowNode) => {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: var(--el-color-success);
   color: #fff;
   border: 2px solid #fff;
   box-sizing: border-box;
+}
+
+.candidate-approved-badge {
+  background: var(--el-color-success);
+}
+
+.candidate-rejected-badge {
+  background: var(--el-color-danger);
 }
 
 .candidate-name {
@@ -691,9 +708,18 @@ const getCandidateSummary = (node: WorkflowNode) => {
   color: var(--el-color-success);
 }
 
+.candidate-state.is-rejected {
+  color: var(--el-color-danger);
+}
+
 .candidate-item.is-approved .candidate-avatar {
   background: linear-gradient(135deg, #34c759, #22c55e);
   box-shadow: 0 8px 18px rgba(34, 197, 94, 0.22);
+}
+
+.candidate-item.is-rejected .candidate-avatar {
+  background: linear-gradient(135deg, #ff8a8a, #f56c6c);
+  box-shadow: 0 8px 18px rgba(245, 108, 108, 0.22);
 }
 
 /* 审批意见 */

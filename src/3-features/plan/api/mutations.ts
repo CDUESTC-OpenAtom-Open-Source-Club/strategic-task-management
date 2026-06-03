@@ -7,6 +7,7 @@
 import { apiClient as api } from '@/shared/api/client'
 import { approveTask, rejectTask } from '@/features/workflow/api'
 import { buildQueryKey, invalidateQueries } from '@/shared/lib/utils/cache'
+import { requestMessageCenterRefresh } from '@/shared/lib/messageCenterRefresh'
 import type { ApiResponse, Plan } from '@/shared/types'
 
 function invalidatePlanCaches(planId?: number | string): void {
@@ -85,6 +86,7 @@ export async function submitPlanForApproval(
   void comment
   const response = await api.post<ApiResponse<void>>(`/plans/${planId}/publish`)
   invalidatePlanCaches(planId)
+  requestMessageCenterRefresh()
   return response
 }
 
@@ -104,6 +106,7 @@ export async function approvePlan(
 ): Promise<ApiResponse<void>> {
   await approveTask(String(instanceId), { comment })
   invalidatePlanCaches()
+  requestMessageCenterRefresh()
   return { success: true, data: undefined }
 }
 
@@ -123,6 +126,7 @@ export async function rejectPlan(
 ): Promise<ApiResponse<void>> {
   await rejectTask(String(instanceId), { reason: comment })
   invalidatePlanCaches()
+  requestMessageCenterRefresh()
   return { success: true, data: undefined }
 }
 

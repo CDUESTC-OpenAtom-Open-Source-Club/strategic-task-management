@@ -96,7 +96,7 @@ function withMessageContext(params?: Record<string, unknown>): Record<string, un
   }
 }
 
-function invalidateMessageCaches(): void {
+export function invalidateMessageCaches(): void {
   invalidateQueries(['messages.summary', 'messages.unread', 'messages.list'])
 }
 

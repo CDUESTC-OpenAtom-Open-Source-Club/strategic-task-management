@@ -5,7 +5,11 @@ import { useMessageStore } from '@/features/messages/model/message'
 import { useApprovalStore } from '@/features/approval/model/store'
 import { APPROVAL_STATE_REFRESH_EVENT } from '@/features/approval/lib'
 import { hasAdminConsoleAccess } from '@/shared/lib/permissions/adminConsoleAccess'
-import { requestGlobalDataRefresh } from '@/5-shared/lib/dataFreshness'
+import {
+  GLOBAL_DATA_REFRESH_REQUEST_EVENT,
+  requestGlobalDataRefresh,
+  type GlobalDataRefreshDetail
+} from '@/shared/lib/dataFreshness'
 
 const GLOBAL_DATA_REFRESH_INTERVAL_MS = 3 * 60 * 1000
 const ATTENTION_REFRESH_COOLDOWN_MS = 45 * 1000
@@ -31,6 +35,24 @@ export function useAppLayout() {
 
   const refreshPendingApprovalState = async () => {
     await Promise.all([messageStore.refreshMessageCenter(), approvalStore.loadPendingApprovals()])
+  }
+
+  const handleGlobalDataRefreshRequest = (event: Event) => {
+    if (!authStore.isAuthenticated) {
+      return
+    }
+
+    const detail = (event as CustomEvent<GlobalDataRefreshDetail>).detail
+    if (detail?.source === 'approval-state-refresh') {
+      return
+    }
+
+    if (detail?.source === 'approval-notification') {
+      void refreshPendingApprovalState()
+      return
+    }
+
+    void messageStore.refreshMessageCenter()
   }
 
   const handleApprovalStateRefresh = () => {
@@ -85,6 +107,10 @@ export function useAppLayout() {
         handleApprovalStateRefresh as EventListener
       )
       window.addEventListener('focus', handleWindowFocus)
+      window.addEventListener(
+        GLOBAL_DATA_REFRESH_REQUEST_EVENT,
+        handleGlobalDataRefreshRequest as EventListener
+      )
       document.addEventListener('visibilitychange', handleVisibilityChange)
 
       approvalNotificationRefreshListener = (() => {
@@ -107,6 +133,10 @@ export function useAppLayout() {
         handleApprovalStateRefresh as EventListener
       )
       window.removeEventListener('focus', handleWindowFocus)
+      window.removeEventListener(
+        GLOBAL_DATA_REFRESH_REQUEST_EVENT,
+        handleGlobalDataRefreshRequest as EventListener
+      )
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       if (approvalNotificationRefreshListener) {
         window.removeEventListener('approval-notification', approvalNotificationRefreshListener)
