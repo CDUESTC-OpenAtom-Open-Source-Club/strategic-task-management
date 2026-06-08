@@ -660,8 +660,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
 
     const cachedPlan =
-      planStore.plans.find(plan => String((plan as Record<string, unknown>).id) === approvalEntityId) ||
-      null
+      planStore.plans.find(
+        plan => String((plan as Record<string, unknown>).id) === approvalEntityId
+      ) || null
     const plan =
       cachedPlan ||
       (await planStore.loadPlanDetails(approvalEntityId, {
@@ -3727,7 +3728,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
           detail,
           error
         })
-      })()
+      })
       .finally(() => {
         globalDataRefreshPromise = null
       })

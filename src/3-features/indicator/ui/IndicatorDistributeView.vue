@@ -22,6 +22,8 @@ import {
   exportSheetsToExcel,
   formatMilestones,
   formatProgress,
+  hasReachedMilestone,
+  MILESTONE_REACHED_TEXT_COLOR,
   type ExcelExportColumn,
   type ExcelExportSheet,
   type ExcelRowTone
@@ -428,6 +430,16 @@ const getDistributionExportRowTone = (row: DistributionExportRow): ExcelRowTone 
   return 'default'
 }
 
+const getDistributionExportRowTextColor = (row: DistributionExportRow): string | undefined => {
+  if (row.type !== 'child') {
+    return undefined
+  }
+
+  return hasReachedMilestone(row.child.progress, getSortedMilestones(row.child.milestones))
+    ? MILESTONE_REACHED_TEXT_COLOR
+    : undefined
+}
+
 const buildDistributionExportSheet = (
   college: string,
   rows = getDistributionExportRowsByCollege(college)
@@ -436,7 +448,8 @@ const buildDistributionExportSheet = (
   rows,
   columns: distributionExportColumns,
   emptyMessage: '当前学院暂无可导出的子指标数据',
-  getRowTone: getDistributionExportRowTone
+  getRowTone: getDistributionExportRowTone,
+  getRowTextColor: getDistributionExportRowTextColor
 })
 
 const handleExportCurrentDistributionCollege = async () => {
@@ -480,6 +493,11 @@ const handleExportSelectedDistributionColleges = async () => {
 
   distributionExporting.value = true
   try {
+    await Promise.all([
+      planStore.loadPlans({ force: true, background: true }),
+      strategicStore.loadIndicatorsByYear(timeContext.currentYear, { force: true })
+    ])
+
     await exportSheetsToExcel(
       selectedColleges.map(
         college => buildDistributionExportSheet(college) as ExcelExportSheet<unknown>
@@ -1501,6 +1519,8 @@ const handleDistributionImportCommitted = async () => {
       type="distribution"
       :target-org-id="currentDistributionImportOrgId"
       :target-org-name="selectedCollege"
+      :source-org-id="currentDepartmentOrgId"
+      :source-org-name="currentDept"
       :cycle-id="currentDistributionImportCycleId"
       @committed="handleDistributionImportCommitted"
     />

@@ -20,6 +20,8 @@ import {
   exportRowsToExcel,
   formatMilestones,
   formatProgress,
+  hasReachedMilestone,
+  MILESTONE_REACHED_TEXT_COLOR,
   type ExcelExportColumn,
   type ExcelRowTone
 } from '@/shared/lib/export/excel'
@@ -346,6 +348,11 @@ const getIndicatorListExportRowTone = (row: StrategicIndicator): ExcelRowTone =>
   return 'default'
 }
 
+const getIndicatorListExportRowTextColor = (row: StrategicIndicator): string | undefined =>
+  hasReachedMilestone(getDisplayProgress(row), getSortedMilestones(row.milestones))
+    ? MILESTONE_REACHED_TEXT_COLOR
+    : undefined
+
 const handleExportIndicatorList = async () => {
   const rows = getIndicatorListExportRows()
   if (rows.length === 0) {
@@ -361,7 +368,8 @@ const handleExportIndicatorList = async () => {
         sheetName: scopeName,
         rows,
         columns: indicatorListExportColumns,
-        getRowTone: getIndicatorListExportRowTone
+        getRowTone: getIndicatorListExportRowTone,
+        getRowTextColor: getIndicatorListExportRowTextColor
       },
       buildExportFileName('指标填报与管理', scopeName)
     )

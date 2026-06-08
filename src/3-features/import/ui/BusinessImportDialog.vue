@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Upload, UploadFilled } from '@element-plus/icons-vue'
+import { QuestionFilled, Upload, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import type { UploadFile, UploadFiles } from 'element-plus'
 import {
@@ -17,6 +17,8 @@ const props = defineProps<{
   type: BusinessImportType
   targetOrgId?: number | null
   targetOrgName?: string | null
+  sourceOrgId?: number | null
+  sourceOrgName?: string | null
   cycleId?: number | null
 }>()
 
@@ -35,8 +37,24 @@ const selectedFile = ref<UploadFile | null>(null)
 const previewResult = ref<ImportPreviewResponse | null>(null)
 const previewing = ref(false)
 const committing = ref(false)
-const conflictMode = ref<ConflictMode>('UPDATE')
 const autoSubmitAndApprove = ref(false)
+const overwriteExisting = ref(false)
+const guidePopoverVisible = ref(false)
+let guidePopoverCloseTimer: ReturnType<typeof window.setTimeout> | null = null
+
+interface ImportGuideColumn {
+  key: string
+  label: string
+  required?: boolean
+}
+
+interface ImportGuideContent {
+  title: string
+  targetName: string
+  columns: ImportGuideColumn[]
+  rows: Record<string, string>[]
+  rules: string[]
+}
 
 const isStrategicImport = computed(() => props.type === 'strategic-task')
 const dialogTitle = computed(() =>
@@ -48,6 +66,115 @@ const canPreview = computed(
 )
 
 const visibleRows = computed(() => previewResult.value?.rows.slice(0, 20) ?? [])
+const strategicImportGuide: ImportGuideContent = {
+  title: '职能部门指标表示例',
+  targetName: '职能部门',
+  columns: [
+    { key: 'department', label: '职能部门' },
+    { key: 'taskType', label: '任务类型', required: true },
+    { key: 'strategicTask', label: '战略任务', required: true },
+    { key: 'indicatorName', label: '核心指标', required: true },
+    { key: 'indicatorType', label: '指标类型', required: true },
+    { key: 'weight', label: '权重' },
+    { key: 'milestones', label: '里程碑明细' },
+    { key: 'remark', label: '备注' }
+  ],
+  rows: [
+    {
+      department: '教务处',
+      taskType: '发展性',
+      strategicTask: '推进本科教育教学改革',
+      indicatorName: '建设智慧教学质量监测体系',
+      indicatorType: '定量',
+      weight: '20%',
+      milestones:
+        '1. 完成方案设计（2026-03-31，30%）\n2. 完成平台试运行（2026-06-30，70%）\n3. 完成年度评估（2026-12-31，100%）',
+      remark: '可填写说明'
+    },
+    {
+      department: '教务处',
+      taskType: '基础性',
+      strategicTask: '完善专业建设质量保障机制',
+      indicatorName: '完成重点专业年度质量报告',
+      indicatorType: '定性',
+      weight: '15',
+      milestones: '质量报告初稿（2026-09-30，60%）\n正式提交（2026-12-31，100%）',
+      remark: ''
+    }
+  ],
+  rules: [
+    '表头建议放在第一行，列顺序可以调整，系统会按列名识别。',
+    '带 * 的列为必填；如果填写职能部门，必须和当前选择的职能部门一致。',
+    '权重支持 10、10%、0.1 三种写法，系统会统一换算为百分制。',
+    '里程碑可以放在一个单元格内多行填写，日期支持 2026-03-31 或 2026-03-31 00:00。'
+  ]
+}
+const distributionImportGuide: ImportGuideContent = {
+  title: '学院子指标表示例',
+  targetName: '学院',
+  columns: [
+    { key: 'college', label: '学院' },
+    { key: 'parentStrategicTask', label: '父级战略任务' },
+    { key: 'parentIndicator', label: '父级核心指标', required: true },
+    { key: 'indicatorName', label: '子指标名称', required: true },
+    { key: 'indicatorType', label: '指标类型', required: true },
+    { key: 'weight', label: '权重' },
+    { key: 'milestones', label: '里程碑明细' },
+    { key: 'remark', label: '备注' }
+  ],
+  rows: [
+    {
+      college: '计算机学院',
+      parentStrategicTask: '推进本科教育教学改革',
+      parentIndicator: '建设智慧教学质量监测体系',
+      indicatorName: '完成学院课程质量数据接入',
+      indicatorType: '定量',
+      weight: '40%',
+      milestones:
+        '1. 完成课程清单梳理（2026-04-30，40%）\n2. 完成数据接入与核验（2026-09-30，80%）\n3. 完成年度归档（2026-12-31，100%）',
+      remark: '按父级指标拆分'
+    },
+    {
+      college: '计算机学院',
+      parentStrategicTask: '完善专业建设质量保障机制',
+      parentIndicator: '完成重点专业年度质量报告',
+      indicatorName: '提交学院专业质量分析报告',
+      indicatorType: '定性',
+      weight: '60',
+      milestones: '报告初稿（2026-10-31，70%）\n正式提交（2026-12-20，100%）',
+      remark: ''
+    }
+  ],
+  rules: [
+    '表头建议放在第一行，列顺序可以调整，系统会按列名识别。',
+    '带 * 的列为必填；如果填写学院，必须和当前选择的学院一致。',
+    '父级核心指标必须能匹配当前职能部门已接收或可拆分的父级指标。',
+    '权重按同一父级指标下的学院子指标合计检查，合计不是 100 会给出警告。'
+  ]
+}
+const currentGuide = computed(() =>
+  isStrategicImport.value ? strategicImportGuide : distributionImportGuide
+)
+
+const clearGuidePopoverCloseTimer = () => {
+  if (guidePopoverCloseTimer) {
+    window.clearTimeout(guidePopoverCloseTimer)
+    guidePopoverCloseTimer = null
+  }
+}
+
+const showGuidePopover = () => {
+  clearGuidePopoverCloseTimer()
+  guidePopoverVisible.value = true
+}
+
+const scheduleHideGuidePopover = () => {
+  clearGuidePopoverCloseTimer()
+  guidePopoverCloseTimer = window.setTimeout(() => {
+    guidePopoverVisible.value = false
+    guidePopoverCloseTimer = null
+  }, 120)
+}
 
 const handleFileChange = (uploadFile: UploadFile, uploadFiles: UploadFiles) => {
   fileList.value = uploadFiles.slice(-1)
@@ -80,6 +207,7 @@ const handlePreview = async () => {
         })
       : await businessImportApi.previewDistributionImport(selectedFile.value.raw, {
           cycleId: props.cycleId,
+          sourceOrgId: props.sourceOrgId || undefined,
           targetCollegeOrgId: props.targetOrgId
         })
   } catch (error) {
@@ -103,7 +231,7 @@ const handleCommit = async () => {
   try {
     const request = {
       confirmToken: previewResult.value.confirmToken,
-      conflictMode: conflictMode.value,
+      conflictMode: (overwriteExisting.value ? 'UPDATE' : 'APPEND') as ConflictMode,
       autoSubmitAndApprove: autoSubmitAndApprove.value,
       comment: autoSubmitAndApprove.value ? '导入后自动下发审批' : '确认导入'
     }
@@ -147,8 +275,10 @@ watch(
       previewResult.value = null
       previewing.value = false
       committing.value = false
-      conflictMode.value = 'UPDATE'
       autoSubmitAndApprove.value = false
+      overwriteExisting.value = false
+      guidePopoverVisible.value = false
+      clearGuidePopoverCloseTimer()
     }
   }
 )
@@ -157,15 +287,80 @@ watch(
 <template>
   <el-dialog
     v-model="dialogVisible"
-    :title="dialogTitle"
-    width="860px"
+    width="min(860px, calc(100vw - 32px))"
     :close-on-click-modal="!previewing && !committing"
   >
+    <template #header>
+      <div class="business-import-header">
+        <span class="business-import-title">{{ dialogTitle }}</span>
+        <el-popover
+          v-model:visible="guidePopoverVisible"
+          trigger="manual"
+          placement="bottom-end"
+          width="min(960px, calc(100vw - 32px))"
+        >
+          <div
+            class="business-import-guide"
+            @mouseenter="showGuidePopover"
+            @mouseleave="scheduleHideGuidePopover"
+          >
+            <div class="guide-title">{{ currentGuide.title }}</div>
+            <div class="guide-context">
+              <span>{{ currentGuide.targetName }}</span>
+              <strong>{{ targetOrgName || '当前选择对象' }}</strong>
+              <span>周期</span>
+              <strong>{{ cycleId || '-' }}</strong>
+            </div>
+
+            <div class="guide-table-scroll" role="region" aria-label="导入示例表格">
+              <table class="guide-table">
+                <thead>
+                  <tr>
+                    <th v-for="column in currentGuide.columns" :key="column.key">
+                      {{ column.label }}<span v-if="column.required" class="required-mark">*</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, rowIndex) in currentGuide.rows" :key="rowIndex">
+                    <td v-for="column in currentGuide.columns" :key="column.key">
+                      {{ row[column.key] || '-' }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <ul class="guide-rules">
+              <li v-for="rule in currentGuide.rules" :key="rule">{{ rule }}</li>
+            </ul>
+          </div>
+
+          <template #reference>
+            <el-button
+              class="import-guide-button"
+              :icon="QuestionFilled"
+              text
+              type="primary"
+              @mouseenter="showGuidePopover"
+              @mouseleave="scheduleHideGuidePopover"
+            >
+              详情？
+            </el-button>
+          </template>
+        </el-popover>
+      </div>
+    </template>
+
     <div class="business-import-dialog">
       <div class="business-import-summary">
         <div>
           <span class="summary-label">{{ targetLabel }}</span>
           <strong>{{ targetOrgName || '未选择' }}</strong>
+        </div>
+        <div v-if="!isStrategicImport">
+          <span class="summary-label">来源职能部门</span>
+          <strong>{{ sourceOrgName || '当前账号部门' }}</strong>
         </div>
         <div>
           <span class="summary-label">当前周期</span>
@@ -281,34 +476,53 @@ watch(
             </template>
           </el-table-column>
         </el-table>
-
-        <div class="commit-options">
-          <el-radio-group v-model="conflictMode">
-            <el-radio-button label="UPDATE">更新已有</el-radio-button>
-            <el-radio-button label="APPEND">追加新增</el-radio-button>
-          </el-radio-group>
-          <el-checkbox v-model="autoSubmitAndApprove">导入后自动发起并完成下发审批</el-checkbox>
-        </div>
       </template>
+
+      <div class="commit-options">
+        <el-checkbox v-model="overwriteExisting">覆盖已有数据</el-checkbox>
+        <el-checkbox v-model="autoSubmitAndApprove">导入后自动发起并完成审批</el-checkbox>
+      </div>
     </div>
 
     <template #footer>
-      <el-button :disabled="previewing || committing" @click="dialogVisible = false"
-        >取消</el-button
-      >
-      <el-button
-        type="primary"
-        :loading="committing"
-        :disabled="!previewResult || previewResult.blocking"
-        @click="handleCommit"
-      >
-        确认导入
-      </el-button>
+      <div class="business-import-footer">
+        <el-button :disabled="previewing || committing" @click="dialogVisible = false">
+          取消
+        </el-button>
+        <el-button
+          type="primary"
+          :loading="committing"
+          :disabled="!previewResult || previewResult.blocking"
+          @click="handleCommit"
+        >
+          确认导入
+        </el-button>
+      </div>
     </template>
   </el-dialog>
 </template>
 
 <style scoped>
+.business-import-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-right: 32px;
+}
+
+.business-import-title {
+  color: #111827;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.import-guide-button {
+  min-height: 36px;
+  padding-inline: 10px;
+}
+
 .business-import-dialog {
   display: flex;
   flex-direction: column;
@@ -383,5 +597,127 @@ watch(
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+}
+
+.business-import-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.business-import-footer :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
+.business-import-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: min(70vh, 620px);
+  overflow-y: auto;
+}
+
+.guide-title {
+  color: #111827;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
+}
+
+.guide-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  color: #6b7280;
+  line-height: 24px;
+}
+
+.guide-context strong {
+  color: #111827;
+}
+
+.guide-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+}
+
+.guide-table {
+  width: 100%;
+  min-width: 900px;
+  border-collapse: collapse;
+  background: #fff;
+  table-layout: fixed;
+}
+
+.guide-table th,
+.guide-table td {
+  border-bottom: 1px solid #e5e7eb;
+  border-right: 1px solid #e5e7eb;
+  padding: 10px 12px;
+  color: #374151;
+  font-size: 13px;
+  line-height: 20px;
+  text-align: left;
+  vertical-align: top;
+  white-space: pre-line;
+  word-break: break-word;
+}
+
+.guide-table th {
+  background: #f3f4f6;
+  color: #111827;
+  font-weight: 600;
+}
+
+.guide-table th:last-child,
+.guide-table td:last-child {
+  border-right: 0;
+}
+
+.guide-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.required-mark {
+  margin-left: 2px;
+  color: #dc2626;
+}
+
+.guide-rules {
+  margin: 0;
+  padding-left: 18px;
+  color: #4b5563;
+  font-size: 13px;
+  line-height: 22px;
+}
+
+@media (max-width: 640px) {
+  .business-import-header {
+    align-items: flex-start;
+    flex-direction: column;
+    padding-right: 24px;
+  }
+
+  .import-guide-button {
+    min-height: 44px;
+  }
+
+  .business-import-summary,
+  .commit-options,
+  .business-import-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .business-import-footer :deep(.el-button) {
+    width: 100%;
+  }
+
+  .preview-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 </style>

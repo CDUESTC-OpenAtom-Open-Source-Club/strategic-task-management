@@ -25,6 +25,8 @@ import {
   exportSheetsToExcel,
   formatMilestones,
   formatProgress,
+  hasReachedMilestone,
+  MILESTONE_REACHED_TEXT_COLOR,
   type ExcelExportColumn,
   type ExcelExportSheet,
   type ExcelRowTone
@@ -33,8 +35,11 @@ import {
   useStrategicTaskView,
   type StrategicTaskViewProps
 } from '@/features/task/model/useStrategicTaskView'
+import { strategicApi } from '@/features/task/api/strategicApi'
+import { useStrategicStore } from '@/features/task/model/strategic'
 
 const props = defineProps<StrategicTaskViewProps>()
+const strategicStore = useStrategicStore()
 
 const {
   PLAN_APPROVAL_HISTORY_WORKFLOW_CODES,
@@ -389,7 +394,72 @@ const strategicExportColumns: ExcelExportColumn<StrategicExportRow>[] = [
   }
 ]
 
-const getStrategicExportRowsByDepartment = (department: string): StrategicExportRow[] => {
+const findStrategicExportPlanByDepartment = (department: string) => {
+  const normalizedDepartment = normalizeDepartmentName(department)
+  const departmentOrgId = resolveDepartmentIdByName(department)
+  const sourceOrgId = Number(
+    (currentPlan.value as Record<string, unknown> | null)?.createdByOrgId ??
+      (currentPlan.value as Record<string, unknown> | null)?.created_by_org_id ??
+      35
+  )
+
+  const plans = planStore.plans.filter(plan => {
+    const planRecord = plan as Record<string, unknown>
+    const planYear = resolvePlanYear(planRecord)
+    const planTargetOrgId = Number(planRecord.targetOrgId ?? planRecord.org_id ?? planRecord.orgId)
+    const planTargetOrgName = normalizeDepartmentName(
+      String(planRecord.targetOrgName || planRecord.orgName || '')
+    )
+
+    return (
+      planYear === timeContext.currentYear &&
+      ((departmentOrgId != null &&
+        Number.isFinite(planTargetOrgId) &&
+        planTargetOrgId === departmentOrgId) ||
+        planTargetOrgName === normalizedDepartment)
+    )
+  })
+
+  return (
+    plans.find(plan => {
+      const planRecord = plan as Record<string, unknown>
+      const planCreatedByOrgId = Number(planRecord.createdByOrgId ?? planRecord.created_by_org_id)
+      const planLevel = String(planRecord.planLevel || planRecord.plan_level || '')
+        .trim()
+        .toUpperCase()
+
+      return (
+        Number.isFinite(planCreatedByOrgId) &&
+        planCreatedByOrgId === sourceOrgId &&
+        planLevel === 'STRAT_TO_FUNC'
+      )
+    }) ||
+    plans[0] ||
+    null
+  )
+}
+
+const loadStrategicExportTaskIdSetByDepartment = async (
+  department: string
+): Promise<Set<string>> => {
+  const plan = findStrategicExportPlanByDepartment(department)
+  const planId = plan?.id
+  if (!planId) {
+    return new Set()
+  }
+
+  const response = await strategicApi.getTasksByPlanId(planId)
+  if (!response?.success || !Array.isArray(response.data)) {
+    return new Set()
+  }
+
+  return new Set(buildTaskIdSet(response.data as Array<Record<string, unknown>>))
+}
+
+const getStrategicExportRowsByDepartment = (
+  department: string,
+  planTaskIdSet?: Set<string>
+): StrategicExportRow[] => {
   const rows = normalizedIndicators.value
     .filter(
       indicator =>
@@ -400,7 +470,9 @@ const getStrategicExportRowsByDepartment = (department: string): StrategicExport
         indicator.ownerDept === '战略发展部' &&
         indicator.responsibleDept === department &&
         indicator.isStrategic === true &&
-        isIndicatorInCurrentPlanScope(indicator)
+        (planTaskIdSet
+          ? planTaskIdSet.has(getIndicatorTaskId(indicator))
+          : isIndicatorInCurrentPlanScope(indicator))
     )
     .map(indicator => ({
       ...indicator,
@@ -440,6 +512,11 @@ const getStrategicExportRowTone = (row: StrategicExportRow): ExcelRowTone => {
   return 'default'
 }
 
+const getStrategicExportRowTextColor = (row: StrategicExportRow): string | undefined =>
+  hasReachedMilestone(row.progress, getSortedMilestones(row.milestones))
+    ? MILESTONE_REACHED_TEXT_COLOR
+    : undefined
+
 const buildStrategicExportSheet = (
   department: string,
   rows = getStrategicExportRowsByDepartment(department)
@@ -448,7 +525,8 @@ const buildStrategicExportSheet = (
   rows,
   columns: strategicExportColumns,
   emptyMessage: '当前部门暂无可导出的战略任务指标',
-  getRowTone: getStrategicExportRowTone
+  getRowTone: getStrategicExportRowTone,
+  getRowTextColor: getStrategicExportRowTextColor
 })
 
 const handleExportCurrentStrategicDepartment = async () => {
@@ -492,10 +570,23 @@ const handleExportSelectedStrategicDepartments = async () => {
 
   strategicExporting.value = true
   try {
+    await Promise.all([
+      planStore.loadPlans({ force: true, background: true }),
+      strategicStore.loadIndicatorsByYear(timeContext.currentYear, { force: true })
+    ])
+
+    const sheets = await Promise.all(
+      departments.map(async department => {
+        const taskIdSet = await loadStrategicExportTaskIdSetByDepartment(department)
+        return buildStrategicExportSheet(
+          department,
+          getStrategicExportRowsByDepartment(department, taskIdSet)
+        ) as ExcelExportSheet<unknown>
+      })
+    )
+
     await exportSheetsToExcel(
-      departments.map(
-        department => buildStrategicExportSheet(department) as ExcelExportSheet<unknown>
-      ),
+      sheets,
       buildExportFileName('战略任务指标总表', departments.length === 1 ? departments[0] : '多部门')
     )
     strategicBatchExportDialogVisible.value = false

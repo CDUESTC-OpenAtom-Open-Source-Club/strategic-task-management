@@ -2,6 +2,8 @@ import type { Cell, SheetData } from 'write-excel-file/browser'
 
 export type ExcelRowTone = 'default' | 'basic' | 'development' | 'draft' | 'warning'
 
+export const MILESTONE_REACHED_TEXT_COLOR = '#c62828'
+
 export interface ExcelExportColumn<T> {
   header: string
   width?: number
@@ -15,6 +17,7 @@ export interface ExcelExportSheet<T> {
   columns: ExcelExportColumn<T>[]
   emptyMessage?: string
   getRowTone?: (row: T, index: number) => ExcelRowTone
+  getRowTextColor?: (row: T, index: number) => string | undefined
 }
 
 export interface ExportAttachment {
@@ -75,7 +78,8 @@ function toStyledCell(
   value: Cell,
   style: Partial<CellObject>,
   column: Pick<ExcelExportColumn<unknown>, 'align'>,
-  rowTone: ExcelRowTone
+  rowTone: ExcelRowTone,
+  rowTextColor?: string
 ): Cell {
   const base = isCellObject(value) ? value : { value: value ?? '' }
   return {
@@ -83,11 +87,12 @@ function toStyledCell(
     ...toneStyleMap[rowTone],
     align: column.align ?? 'left',
     ...base,
+    ...(rowTextColor ? { textColor: rowTextColor } : {}),
     ...style
   }
 }
 
-function buildSheetData<T>(sheet: ExcelExportSheet<T>): SheetData {
+export function buildSheetData<T>(sheet: ExcelExportSheet<T>): SheetData {
   const headerRow = sheet.columns.map(column => ({
     value: column.header,
     ...headerStyle
@@ -113,8 +118,9 @@ function buildSheetData<T>(sheet: ExcelExportSheet<T>): SheetData {
 
   const bodyRows = sheet.rows.map((row, rowIndex) => {
     const rowTone = sheet.getRowTone?.(row, rowIndex) ?? 'default'
+    const rowTextColor = sheet.getRowTextColor?.(row, rowIndex)
     return sheet.columns.map(column =>
-      toStyledCell(column.getValue(row, rowIndex), {}, column, rowTone)
+      toStyledCell(column.getValue(row, rowIndex), {}, column, rowTone, rowTextColor)
     )
   })
 
@@ -214,6 +220,27 @@ export function formatMilestones(milestones?: unknown[] | null): string {
       return `${index + 1}. ${name}（${deadline}，${progress}%）`
     })
     .join('\n')
+}
+
+export function hasReachedMilestone(
+  currentProgress: unknown,
+  milestones?: unknown[] | null
+): boolean {
+  const progress = toFiniteNumber(currentProgress)
+  if (progress === null || !Array.isArray(milestones) || milestones.length === 0) {
+    return false
+  }
+
+  return milestones.some(milestone => {
+    if (!isRecord(milestone)) {
+      return false
+    }
+
+    const targetProgress = toFiniteNumber(
+      getFirstValue(milestone, ['targetProgress', 'progress', 'weightPercent'])
+    )
+    return targetProgress !== null && progress >= targetProgress
+  })
 }
 
 export function normalizeExportAttachments(input: unknown): ExportAttachment[] {

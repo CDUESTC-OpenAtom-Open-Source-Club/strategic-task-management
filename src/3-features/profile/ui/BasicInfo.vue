@@ -101,7 +101,8 @@ const BUSINESS_ROLE_LABELS: Record<string, string> = {
   ROLE_REPORTER: '填报人',
   ROLE_APPROVER: '部门负责人',
   ROLE_STRATEGY_DEPT_HEAD: '战略发展部负责人',
-  ROLE_VICE_PRESIDENT: '分管校领导'
+  ROLE_VICE_PRESIDENT: '分管校领导',
+  ROLE_SYSTEM_ADMIN: '系统管理员'
 }
 
 const rules = {

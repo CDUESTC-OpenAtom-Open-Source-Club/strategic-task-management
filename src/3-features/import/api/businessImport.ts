@@ -101,6 +101,7 @@ export interface StrategicImportPreviewParams {
 export interface DistributionImportPreviewParams {
   cycleId: number
   targetCollegeOrgId: number
+  sourceOrgId?: number
   sheetName?: string
 }
 

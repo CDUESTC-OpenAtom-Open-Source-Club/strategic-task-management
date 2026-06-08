@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
+import { ref } from 'vue'
 
 const noop = vi.fn()
 
 function createViewModel(overrides: Record<string, unknown> = {}) {
   const base = {
-    timeContext: { isReadOnly: false, currentYear: 2026 },
+    timeContext: { isReadOnly: false, currentYear: 2026, cycles: [] },
     authStore: {
       userRole: 'strategic_dept',
       effectiveRole: 'strategic_dept',
@@ -21,7 +22,7 @@ function createViewModel(overrides: Record<string, unknown> = {}) {
     currentApprovalStepName: '',
     currentApprovalWorkflowStatus: '',
     indicators: [] as unknown[],
-    functionalDepartments: [] as string[],
+    functionalDepartments: ref([] as string[]),
     selectedDepartment: '',
     currentIndicator: null,
     selectedIndicators: [] as unknown[],
@@ -30,8 +31,15 @@ function createViewModel(overrides: Record<string, unknown> = {}) {
     currentDistributeGroup: null,
     distributeTarget: [] as string[],
     filteredColleges: [] as string[],
+    colleges: ref([] as string[]),
     selectedCollege: '',
     currentDept: '战略发展部',
+    currentPlan: ref(null),
+    currentDepartmentPlan: ref(null),
+    currentDepartmentOrgId: ref(null),
+    currentDepartmentOrgIdFromTable: ref(null),
+    currentSelectedCollegePlan: ref(null),
+    currentSelectedCollegePlanDetails: ref(null),
     dashboardData: {
       totalScore: 0,
       basicScore: 0,
