@@ -72,7 +72,7 @@ const importStepActive = computed(() => {
 })
 const nextActionTip = computed(() => {
   if (!selectedFile.value) {
-    return '先上传 Excel 文件，系统只会处理当前选中的部门或学院。'
+    return ''
   }
   if (!previewResult.value) {
     return '文件已选择，请先点击“解析预览”。预览通过后，“确认导入”按钮才会启用。'
@@ -429,6 +429,7 @@ watch(
 
       <div class="business-import-actions">
         <el-alert
+          v-if="selectedFile || previewResult"
           class="next-action-tip"
           :type="previewResult?.blocking ? 'error' : previewResult ? 'success' : 'info'"
           :closable="false"
