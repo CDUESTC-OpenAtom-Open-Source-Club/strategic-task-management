@@ -587,6 +587,18 @@ const handleDistributionImportCommitted = async () => {
 
     <div class="distribution-export-bar">
       <el-button
+        v-if="
+          isFunctionalDept &&
+          !timeContext.isReadOnly &&
+          canEditChild &&
+          selectedCollege &&
+          (collegeOverallStatus.label === '暂无指标' || currentCollegePlanActionState === 'draft')
+        "
+        @click="openCopyIndicatorsDialog"
+      >
+        复制学院指标
+      </el-button>
+      <el-button
         type="primary"
         plain
         :loading="distributionExporting"
@@ -732,7 +744,6 @@ const handleDistributionImportCommitted = async () => {
               -->
               <template v-if="isFunctionalDept && !timeContext.isReadOnly">
                 <template v-if="collegeOverallStatus.label === '暂无指标' && canEditChild">
-                  <el-button @click="openCopyIndicatorsDialog">复制学院指标</el-button>
                   <el-button type="primary" @click="openAddIndicatorForm">
                     <el-icon><Plus /></el-icon>
                     新增指标
@@ -751,7 +762,6 @@ const handleDistributionImportCommitted = async () => {
                     </el-button>
                   </div>
                   <template v-if="currentCollegePlanActionState === 'draft' && canEditChild">
-                    <el-button @click="openCopyIndicatorsDialog">复制学院指标</el-button>
                     <el-button type="primary" @click="openAddIndicatorForm">
                       <el-icon><Plus /></el-icon>
                       新增指标
