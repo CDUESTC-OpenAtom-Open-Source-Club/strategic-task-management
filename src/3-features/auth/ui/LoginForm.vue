@@ -4,7 +4,8 @@
     :model="formData"
     :rules="rules"
     class="login-form"
-    @keyup.enter="handleSubmit"
+    @submit.prevent="handleSubmit"
+    @keydown.enter.prevent="handleSubmit"
   >
     <el-form-item prop="account">
       <div class="input-wrapper">
@@ -17,6 +18,7 @@
           size="large"
           :disabled="loading"
           @input="resetError"
+          @keydown.enter.prevent.stop="handleSubmit"
         >
           <template #prefix>
             <el-icon><User /></el-icon>
@@ -37,6 +39,7 @@
           size="large"
           show-password
           :disabled="loading"
+          @keydown.enter.prevent.stop="handleSubmit"
         >
           <template #prefix>
             <el-icon><Lock /></el-icon>

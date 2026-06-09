@@ -184,8 +184,12 @@ export class ApiClient {
         return response.data
       },
       (error: unknown) => {
-        // 处理 401 错误：清除 Token 并跳转登录
-        if (axios.isAxiosError(error) && error.response?.status === 401) {
+        const requestUrl = axios.isAxiosError(error) ? error.config?.url || '' : ''
+        const isAuthRequest =
+          requestUrl.includes('/auth/login') || requestUrl.includes('/auth/refresh')
+
+        // 处理 401 错误：清除 Token 并跳转登录。登录/刷新接口自身失败时交给调用方展示错误。
+        if (axios.isAxiosError(error) && error.response?.status === 401 && !isAuthRequest) {
           logger.warn('[API] 401 Unauthorized - redirecting to login')
           tokenManager.clearAccessToken()
           window.location.href = '/login'

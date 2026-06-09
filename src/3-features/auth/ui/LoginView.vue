@@ -290,6 +290,7 @@ function normalizeLoginError(
     rawMessage.includes('用户名或密码错误') ||
     rawMessage.includes('账号或密码错误') ||
     rawMessage.includes('请求参数不合法') ||
+    code === 2001 ||
     code === 1001
   ) {
     return { message: '账号或密码不正确，请重新输入。', shouldCountAttempt: true }
@@ -337,6 +338,7 @@ const handleSubmit = async (credentials: { account: string; password: string }) 
         loginFormRef.value?.incrementErrorCount()
       }
       errorMessage.value = normalizedError.message
+      ElMessage.error(normalizedError.message)
     }
   } catch (error: unknown) {
     const normalizedError = normalizeLoginError(
@@ -349,6 +351,7 @@ const handleSubmit = async (credentials: { account: string; password: string }) 
       loginFormRef.value?.incrementErrorCount()
     }
     errorMessage.value = normalizedError.message
+    ElMessage.error(normalizedError.message)
   } finally {
     loading.value = false
   }
