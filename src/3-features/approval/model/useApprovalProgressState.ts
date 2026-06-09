@@ -255,6 +255,28 @@ export function useApprovalProgressState(
     return props.departmentName || '当前提交人'
   }
 
+  function isPlaceholderPlanName(value: unknown): boolean {
+    const name = normalizeDisplayName(value)
+    return /^Plan\s*#?\s*\d+$/i.test(name) || /^计划\s*#?\s*\d+$/i.test(name)
+  }
+
+  function resolvePlanDisplayName(value: unknown, fallback: string): string {
+    const name = normalizeDisplayName(value)
+    return name && !isPlaceholderPlanName(name) ? name : fallback
+  }
+
+  function resolvePlanNameFallback(): string {
+    return props.departmentName ? `${props.departmentName}计划` : '当前计划'
+  }
+
+  function resolveSubmitterDisplayName(...candidates: unknown[]): string {
+    const matched = candidates
+      .map(candidate => normalizeDisplayName(candidate))
+      .find(candidate => candidate && !/^\d+$/.test(candidate))
+
+    return matched || props.departmentName || '待确认'
+  }
+
   function cacheSubmitterName(userIdValue: unknown, nameValue: unknown): boolean {
     const userId = parsePositiveUserId(userIdValue)
     const displayName = normalizeDisplayName(nameValue)
@@ -326,12 +348,12 @@ export function useApprovalProgressState(
 
     const submittedById = parsePositiveUserId(props.plan?.submittedBy)
     if (submittedById) {
-      return submitterNameCache.value[String(submittedById)] || String(submittedById)
+      return submitterNameCache.value[String(submittedById)] || getFallbackSubmitterValue()
     }
 
     const createdById = parsePositiveUserId(props.plan?.createdBy)
     if (createdById) {
-      return submitterNameCache.value[String(createdById)] || String(createdById)
+      return submitterNameCache.value[String(createdById)] || getFallbackSubmitterValue()
     }
 
     return getFallbackSubmitterValue()
@@ -345,6 +367,7 @@ export function useApprovalProgressState(
   const planWorkflowDetail = ref<WorkflowInstanceDetailResponse | null>(
     props.initialPlanWorkflowDetail
   )
+  const planWorkflowDetailLoading = ref(false)
   const workflowDefinitionPreview = ref<WorkflowDefinitionPreviewResponse | null>(null)
   const planWorkflowHistoryCards = ref<WorkflowHistoryCardResponse[]>([])
   const planWorkflowDetailRequestSeq = ref(0)
@@ -847,9 +870,7 @@ export function useApprovalProgressState(
   })
 
   const hasPlanWorkflowData = computed(() => {
-    const workflowInstanceId = Number(
-      props.plan?.workflowInstanceId ?? planWorkflowDetail.value?.instanceId ?? NaN
-    )
+    const workflowInstanceId = Number(planWorkflowDetail.value?.instanceId ?? NaN)
     if (Number.isFinite(workflowInstanceId) && workflowInstanceId > 0) {
       return true
     }
@@ -863,9 +884,6 @@ export function useApprovalProgressState(
     }
 
     return Boolean(
-      normalizeDisplayName(props.plan?.currentStepName) ||
-      normalizeDisplayName(props.plan?.workflowStatus) ||
-      props.plan?.currentTaskId ||
       normalizeDisplayName(planWorkflowDetail.value?.currentStepName) ||
       normalizeDisplayName(planWorkflowDetail.value?.flowCode) ||
       normalizeDisplayName(planWorkflowDetail.value?.status)
@@ -1692,19 +1710,20 @@ export function useApprovalProgressState(
           currentStepName: relatedPlanReportStepDisplay.value,
           createdAt: undefined,
           entityId: relatedPlanReportSummary.value.id,
-          planName: props.planName || props.departmentName || '当前计划'
+          planName: resolvePlanDisplayName(props.planName, resolvePlanNameFallback())
         }
       ]
     }
 
     if (hasPlanWorkflowData.value && props.plan) {
+      const fallbackPlanName = resolvePlanDisplayName(props.planName, resolvePlanNameFallback())
+      const planName = resolvePlanDisplayName(activePlanWorkflow.value?.name, fallbackPlanName)
+
       return [
         {
           instanceId: currentPlanInstanceId.value,
           instanceNo: String(currentPlanInstanceId.value || '待回填'),
-          title: String(
-            activePlanWorkflow.value?.name || props.planName || props.departmentName || '当前计划'
-          ),
+          title: planName,
           submitterName: planSubmitterName.value,
           currentStepName: String(currentPlanStepDisplay.value),
           createdAt:
@@ -1715,10 +1734,12 @@ export function useApprovalProgressState(
             activePlanWorkflow.value?.businessEntityId ||
             props.workflowEntityId ||
             activePlanWorkflow.value?.id,
-          planName: activePlanWorkflow.value?.name
+          planName
         }
       ]
     }
+
+    const fallbackPlanName = resolvePlanDisplayName(props.planName, resolvePlanNameFallback())
 
     return scopedPlanApprovals.value.map((instance, index) => ({
       instanceId: Number(instance.instanceId) || index,
@@ -1726,15 +1747,16 @@ export function useApprovalProgressState(
         String(
           instance.instanceNo || instance.flowInstanceNo || instance.processInstanceNo || ''
         ).trim() || `审批实例 ${index + 1}`,
-      title: String(
-        instance.entityTitle ||
-          instance.planName ||
-          instance.title ||
-          instance.entityName ||
-          `${props.planName || props.departmentName || '当前计划'} - 审批实例 ${index + 1}`
-      ).trim(),
-      submitterName: String(
-        instance.submitterName || instance.applicantName || instance.submitter || '未知'
+      title: resolvePlanDisplayName(
+        instance.entityTitle || instance.planName || instance.title || instance.entityName || '',
+        `${fallbackPlanName} - 审批实例 ${index + 1}`
+      ),
+      submitterName: resolveSubmitterDisplayName(
+        instance.submitterName,
+        instance.applicantName,
+        instance.submitter,
+        instance.sourceOrgName,
+        instance.targetOrgName
       ),
       currentStepName: String(
         instance.currentStepName ||
@@ -1760,7 +1782,10 @@ export function useApprovalProgressState(
         return {
           instanceId: Number(item.instanceId) || index,
           instanceNo: String(item.instanceNo || item.instanceId || `审批实例 ${index + 1}`),
-          title: normalizeDisplayName(item.planName) || `Plan ${item.entityId || ''}`.trim(),
+          title: resolvePlanDisplayName(
+            item.planName,
+            item.entityId ? `审批实例 ${item.entityId}` : '审批实例'
+          ),
           routeTitle: resolveApprovalRouteTitle(item),
           flowName: item.flowName,
           flowCode: item.flowCode,
@@ -1789,16 +1814,12 @@ export function useApprovalProgressState(
     }
 
     if (hasPlanWorkflowData.value && props.plan) {
+      const fallbackPlanName = resolvePlanDisplayName(props.planName, resolvePlanNameFallback())
+      const planName = resolvePlanDisplayName(activePlanWorkflow.value?.name, fallbackPlanName)
+
       return {
-        key:
-          activePlanWorkflow.value?.name ||
-          props.planName ||
-          props.departmentName ||
-          'current-plan',
-        planName:
-          activePlanWorkflow.value?.name ||
-          props.planName ||
-          `${props.departmentName || '当前部门'}计划`,
+        key: planName,
+        planName,
         currentStepName: currentPlanStepDisplay.value,
         submitterName: planSubmitterName.value,
         createdAt:
@@ -1818,10 +1839,11 @@ export function useApprovalProgressState(
       .filter(Boolean)
       .sort()
     const latestCreatedAt = sortedCreatedAt[sortedCreatedAt.length - 1]
+    const planName = resolvePlanDisplayName(props.planName, resolvePlanNameFallback())
 
     return {
-      key: props.planName || props.departmentName || 'current-plan',
-      planName: props.planName || `${props.departmentName || '当前部门'}计划`,
+      key: planName,
+      planName,
       currentStepName:
         scopedPlanApprovals.value
           .map(item => item.currentStepName)
@@ -1830,8 +1852,16 @@ export function useApprovalProgressState(
         '审批中',
       submitterName:
         scopedPlanApprovals.value
-          .map(item => item.submitterName)
-          .find(name => typeof name === 'string' && name.trim()) || '未知',
+          .map(item =>
+            resolveSubmitterDisplayName(
+              item.submitterName,
+              item.applicantName,
+              item.submitter,
+              item.sourceOrgName,
+              item.targetOrgName
+            )
+          )
+          .find(name => typeof name === 'string' && name.trim()) || '待确认',
       createdAt: latestCreatedAt,
       count: scopedPlanApprovals.value.length
     }
@@ -2688,6 +2718,9 @@ export function useApprovalProgressState(
     if (isPlanHistoryOnlyMode.value) {
       return false
     }
+    if (planWorkflowDetailLoading.value && scopedPlanApprovals.value.length === 0) {
+      return false
+    }
     return Boolean(currentPlanApprovalSummary.value)
   })
 
@@ -2802,6 +2835,7 @@ export function useApprovalProgressState(
     planStore,
     planSubmitterName,
     planWorkflowDetail,
+    planWorkflowDetailLoading,
     planWorkflowDetailRequestSeq,
     planWorkflowHistory,
     planWorkflowHistoryCards,

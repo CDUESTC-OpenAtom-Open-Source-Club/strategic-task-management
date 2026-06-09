@@ -209,10 +209,12 @@ export function useApprovalProgressWorkflow({
   async function loadPlanWorkflowDetail() {
     if (!props.showPlanApprovals || !props.plan) {
       state.planWorkflowDetail.value = null
+      state.planWorkflowDetailLoading.value = false
       return
     }
 
     const requestSeq = ++state.planWorkflowDetailRequestSeq.value
+    state.planWorkflowDetailLoading.value = true
 
     try {
       if (
@@ -274,6 +276,10 @@ export function useApprovalProgressWorkflow({
         state.planWorkflowDetail.value = null
       }
       logger.warn('[ApprovalProgressDrawer] 加载计划工作流详情失败:', error)
+    } finally {
+      if (requestSeq === state.planWorkflowDetailRequestSeq.value) {
+        state.planWorkflowDetailLoading.value = false
+      }
     }
   }
 

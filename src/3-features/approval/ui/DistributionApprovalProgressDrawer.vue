@@ -122,6 +122,7 @@ const {
   pendingPlanApprovals,
   permissionUtil,
   planApprovalsLoading,
+  planWorkflowDetailLoading,
   planDetailContentLoading,
   planDetailDialogVisible,
   planStore,
@@ -214,9 +215,12 @@ const {
       <!-- 标签页 -->
       <el-tabs v-model="activeTab" class="approval-tabs">
         <el-tab-pane v-if="showPlanApprovals" name="pending-plans" label="计划审批">
-          <div v-loading="planApprovalsLoading" class="plan-approval-pane">
+          <div
+            v-loading="planApprovalsLoading || planWorkflowDetailLoading"
+            class="plan-approval-pane"
+          >
             <el-empty
-              v-if="!planApprovalsLoading && !showPlanPendingCard"
+              v-if="!planApprovalsLoading && !planWorkflowDetailLoading && !showPlanPendingCard"
               description="暂无审批中的计划"
               :image-size="120"
             />
