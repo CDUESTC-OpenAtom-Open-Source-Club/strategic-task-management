@@ -585,6 +585,19 @@ const handleDistributionImportCommitted = async () => {
       当前处于历史快照模式（{{ timeContext.currentYear }}年），数据为只读状态
     </el-alert>
 
+    <div class="distribution-export-bar">
+      <el-button
+        type="primary"
+        plain
+        :loading="distributionExporting"
+        :disabled="colleges.length === 0"
+        @click="openDistributionBatchExportDialog"
+      >
+        <el-icon><Download /></el-icon>
+        全部导出
+      </el-button>
+    </div>
+
     <div class="distribution-layout">
       <!-- 左侧：学院侧边栏 -->
       <div class="strategic-panel card-animate">
@@ -703,26 +716,14 @@ const handleDistributionImportCommitted = async () => {
               </el-tag>
             </div>
             <div class="header-actions">
-              <div class="header-action-group header-action-group--data">
-                <el-button
-                  type="primary"
-                  plain
-                  :loading="distributionExporting"
-                  :disabled="colleges.length === 0"
-                  @click="openDistributionBatchExportDialog"
-                >
-                  <el-icon><Download /></el-icon>
-                  全部导出
-                </el-button>
-                <el-button
-                  :loading="distributionExporting"
-                  @click="handleExportCurrentDistributionCollege"
-                >
-                  <el-icon><Download /></el-icon>
-                  导出
-                </el-button>
-                <el-button :icon="Upload" @click="openDistributionImportDialog">导入</el-button>
-              </div>
+              <el-button
+                :loading="distributionExporting"
+                @click="handleExportCurrentDistributionCollege"
+              >
+                <el-icon><Download /></el-icon>
+                导出
+              </el-button>
+              <el-button :icon="Upload" @click="openDistributionImportDialog">导入</el-button>
               <!-- 
                 按钮显示逻辑：
                 - 草稿态且暂无指标 → 只显示"新增指标"
@@ -731,38 +732,31 @@ const handleDistributionImportCommitted = async () => {
               -->
               <template v-if="isFunctionalDept && !timeContext.isReadOnly">
                 <template v-if="collegeOverallStatus.label === '暂无指标' && canEditChild">
-                  <div class="header-action-group">
+                  <el-button @click="openCopyIndicatorsDialog">复制学院指标</el-button>
+                  <el-button type="primary" @click="openAddIndicatorForm">
+                    <el-icon><Plus /></el-icon>
+                    新增指标
+                  </el-button>
+                </template>
+                <template v-else>
+                  <div class="approval-entry-wrapper">
+                    <span
+                      v-if="canCurrentUserApproveCurrentPlan"
+                      class="approval-entry-dot"
+                      aria-hidden="true"
+                    ></span>
+                    <el-button :type="distributionApprovalButtonType" @click="handleOpenApproval">
+                      <el-icon><Check /></el-icon>
+                      {{ distributionApprovalButtonText }}
+                    </el-button>
+                  </div>
+                  <template v-if="currentCollegePlanActionState === 'draft' && canEditChild">
                     <el-button @click="openCopyIndicatorsDialog">复制学院指标</el-button>
                     <el-button type="primary" @click="openAddIndicatorForm">
                       <el-icon><Plus /></el-icon>
                       新增指标
                     </el-button>
-                  </div>
-                </template>
-                <template v-else>
-                  <template v-if="currentCollegePlanActionState === 'draft' && canEditChild">
-                    <div class="header-action-group">
-                      <el-button @click="openCopyIndicatorsDialog">复制学院指标</el-button>
-                      <el-button type="primary" @click="openAddIndicatorForm">
-                        <el-icon><Plus /></el-icon>
-                        新增指标
-                      </el-button>
-                    </div>
-                  </template>
-                  <div class="header-action-group header-action-group--workflow">
-                    <div class="approval-entry-wrapper">
-                      <span
-                        v-if="canCurrentUserApproveCurrentPlan"
-                        class="approval-entry-dot"
-                        aria-hidden="true"
-                      ></span>
-                      <el-button :type="distributionApprovalButtonType" @click="handleOpenApproval">
-                        <el-icon><Check /></el-icon>
-                        {{ distributionApprovalButtonText }}
-                      </el-button>
-                    </div>
                     <el-button
-                      v-if="currentCollegePlanActionState === 'draft' && canEditChild"
                       :type="distributionSubmitButtonType"
                       :loading="isBatchDistributing"
                       :aria-disabled="Boolean(distributionSubmitButtonDisabledReason)"
@@ -773,8 +767,9 @@ const handleDistributionImportCommitted = async () => {
                       <el-icon><Promotion /></el-icon>
                       {{ distributionSubmitButtonText }}
                     </el-button>
+                  </template>
+                  <template v-else-if="withdrawButtonVisible">
                     <el-button
-                      v-else-if="withdrawButtonVisible"
                       :type="withdrawButtonType"
                       :loading="isBatchDistributing"
                       :disabled="withdrawButtonDisabled"
@@ -784,7 +779,7 @@ const handleDistributionImportCommitted = async () => {
                       <el-icon><Promotion /></el-icon>
                       撤回
                     </el-button>
-                  </div>
+                  </template>
                 </template>
               </template>
             </div>
