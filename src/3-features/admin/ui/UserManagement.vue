@@ -42,6 +42,8 @@ import orgApi from '@/features/organization/api/org'
 const authStore = useAuthStore()
 const auditLogStore = useAuditLogStore()
 
+type AdminOrganization = Organization & { sortOrder?: number }
+
 interface UserListPageData {
   content: Record<string, unknown>[]
   totalElements?: number
@@ -125,7 +127,7 @@ const userForm = ref<UserForm>({
 })
 
 // 组织树数据
-const organizationTree = ref<Organization[]>([])
+const organizationTree = ref<AdminOrganization[]>([])
 const organizationLoading = ref(false)
 
 const getOrganizationNameById = (orgId: string | number | null | undefined) => {
@@ -269,26 +271,88 @@ const statusOptions = [
   { value: 'disabled', label: '禁用' }
 ]
 
+const departmentTypeRank: Record<string, number> = {
+  strategic_dept: 1,
+  functional_dept: 2,
+  secondary_college: 3
+}
+
+const getDepartmentSortRank = (type?: string) => departmentTypeRank[type || ''] ?? 99
+const getNumericSortValue = (value: string | number | undefined) => {
+  const numericValue = Number(value ?? NaN)
+  return Number.isFinite(numericValue) ? numericValue : Number.MAX_SAFE_INTEGER
+}
+
+const inferDepartmentSortRank = (name: string) => {
+  if (name.includes('战略发展部')) {
+    return departmentTypeRank.strategic_dept
+  }
+  if (name.endsWith('学院') || name.includes('学院')) {
+    return departmentTypeRank.secondary_college
+  }
+  return departmentTypeRank.functional_dept
+}
+
 const departmentOptions = computed(() => {
-  const names = new Set<string>()
+  const orgsByName = new Map<string, AdminOrganization>()
 
   organizationTree.value.forEach(org => {
-    if (org.name?.trim()) {
-      names.add(org.name.trim())
+    const name = org.name?.trim()
+    if (name && !orgsByName.has(name)) {
+      orgsByName.set(name, org)
     }
   })
 
+  const fallbackOrgsByName = new Map<string, { name: string; orgId?: string | number }>()
   users.value.forEach(user => {
-    if (user.orgName?.trim()) {
-      names.add(user.orgName.trim())
+    const name = user.orgName?.trim()
+    if (name && !orgsByName.has(name)) {
+      const existing = fallbackOrgsByName.get(name)
+      const existingSortValue = getNumericSortValue(existing?.orgId)
+      const nextSortValue = getNumericSortValue(user.orgId)
+      if (!existing || nextSortValue < existingSortValue) {
+        fallbackOrgsByName.set(name, { name, orgId: user.orgId })
+      }
     }
   })
 
   return [
     { value: 'all', label: '全部部门' },
-    ...Array.from(names)
-      .sort((left, right) => left.localeCompare(right, 'zh-CN'))
-      .map(name => ({ value: name, label: name }))
+    ...Array.from(orgsByName.values())
+      .sort((left, right) => {
+        const typeCompare = getDepartmentSortRank(left.type) - getDepartmentSortRank(right.type)
+        if (typeCompare !== 0) {
+          return typeCompare
+        }
+
+        const sortCompare = (left.sortOrder ?? 0) - (right.sortOrder ?? 0)
+        if (sortCompare !== 0) {
+          return sortCompare
+        }
+
+        const idCompare = getNumericSortValue(left.id) - getNumericSortValue(right.id)
+        if (idCompare !== 0) {
+          return idCompare
+        }
+
+        return left.name.localeCompare(right.name, 'zh-CN')
+      })
+      .map(org => ({ value: org.name, label: org.name })),
+    ...Array.from(fallbackOrgsByName.values())
+      .sort((left, right) => {
+        const typeCompare = inferDepartmentSortRank(left.name) - inferDepartmentSortRank(right.name)
+        if (typeCompare !== 0) {
+          return typeCompare
+        }
+
+        const idCompare = getNumericSortValue(left.orgId) - getNumericSortValue(right.orgId)
+        if (idCompare !== 0) {
+          return idCompare
+        }
+
+        return left.name.localeCompare(right.name, 'zh-CN')
+      })
+      .map(org => ({ value: org.name, label: org.name }))
   ]
 })
 
@@ -506,6 +570,7 @@ const loadOrganizations = async () => {
       id: dept.id,
       name: dept.name,
       type: dept.type,
+      sortOrder: dept.sortOrder,
       children: []
     }))
     hydrateUserOrganizationNames()
