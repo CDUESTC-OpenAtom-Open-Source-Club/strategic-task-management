@@ -2376,7 +2376,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       return
     }
     if (copySourceCollegeOptions.value.length === 0) {
-      ElMessage.warning('当前没有可复制的学院指标数据')
+      ElMessage.warning('暂无其它学院可复制指标')
       return
     }
 

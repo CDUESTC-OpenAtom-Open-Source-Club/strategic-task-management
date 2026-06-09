@@ -594,6 +594,8 @@ const handleDistributionImportCommitted = async () => {
           selectedCollege &&
           (collegeOverallStatus.label === '暂无指标' || currentCollegePlanActionState === 'draft')
         "
+        :disabled="copySourceCollegeOptions.length === 0"
+        :title="copySourceCollegeOptions.length === 0 ? '暂无其它学院可复制指标' : ''"
         @click="openCopyIndicatorsDialog"
       >
         复制学院指标
