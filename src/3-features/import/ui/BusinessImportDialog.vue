@@ -64,6 +64,38 @@ const targetLabel = computed(() => (isStrategicImport.value ? '当前职能部�
 const canPreview = computed(
   () => Boolean(selectedFile.value?.raw) && Boolean(props.targetOrgId) && Boolean(props.cycleId)
 )
+const importStepActive = computed(() => {
+  if (previewResult.value) {
+    return previewResult.value.blocking ? 1 : 2
+  }
+  return selectedFile.value ? 1 : 0
+})
+const nextActionTip = computed(() => {
+  if (!selectedFile.value) {
+    return '先上传 Excel 文件，系统只会处理当前选中的部门或学院。'
+  }
+  if (!previewResult.value) {
+    return '文件已选择，请先点击“解析预览”。预览通过后，“确认导入”按钮才会启用。'
+  }
+  if (previewResult.value.blocking) {
+    return '预览发现阻断错误，请修正 Excel 后重新上传并解析。'
+  }
+  return autoSubmitAndApprove.value
+    ? '预览已通过，点击“确认导入”后会自动发起并完成审批。'
+    : '预览已通过，点击“确认导入”写入数据。'
+})
+const footerActionTip = computed(() => {
+  if (!selectedFile.value) {
+    return '上传文件后先解析预览。'
+  }
+  if (!previewResult.value) {
+    return '先点“解析预览”，通过后才能确认导入或自动审批。'
+  }
+  if (previewResult.value.blocking) {
+    return '文件有阻断错误，暂不能确认导入。'
+  }
+  return '预览通过，可以确认导入。'
+})
 
 const visibleRows = computed(() => previewResult.value?.rows.slice(0, 20) ?? [])
 const strategicImportGuide: ImportGuideContent = {
@@ -368,6 +400,17 @@ watch(
         </div>
       </div>
 
+      <el-steps
+        class="business-import-steps"
+        :active="importStepActive"
+        finish-status="success"
+        simple
+      >
+        <el-step title="选择文件" />
+        <el-step title="解析预览" />
+        <el-step title="确认导入" />
+      </el-steps>
+
       <el-upload
         drag
         accept=".xlsx"
@@ -385,13 +428,21 @@ watch(
       </el-upload>
 
       <div class="business-import-actions">
+        <el-alert
+          class="next-action-tip"
+          :type="previewResult?.blocking ? 'error' : previewResult ? 'success' : 'info'"
+          :closable="false"
+          show-icon
+          :title="nextActionTip"
+        />
         <el-button
+          type="primary"
           :icon="Upload"
           :loading="previewing"
           :disabled="!canPreview"
           @click="handlePreview"
         >
-          解析预览
+          {{ previewResult ? '重新解析预览' : '解析预览' }}
         </el-button>
       </div>
 
@@ -486,17 +537,20 @@ watch(
 
     <template #footer>
       <div class="business-import-footer">
-        <el-button :disabled="previewing || committing" @click="dialogVisible = false">
-          取消
-        </el-button>
-        <el-button
-          type="primary"
-          :loading="committing"
-          :disabled="!previewResult || previewResult.blocking"
-          @click="handleCommit"
-        >
-          确认导入
-        </el-button>
+        <div class="footer-action-tip">{{ footerActionTip }}</div>
+        <div class="footer-actions">
+          <el-button :disabled="previewing || committing" @click="dialogVisible = false">
+            取消
+          </el-button>
+          <el-button
+            type="primary"
+            :loading="committing"
+            :disabled="!previewResult || previewResult.blocking"
+            @click="handleCommit"
+          >
+            确认导入
+          </el-button>
+        </div>
       </div>
     </template>
   </el-dialog>
@@ -540,9 +594,25 @@ watch(
   color: #6b7280;
 }
 
+.business-import-steps {
+  border-radius: 6px;
+}
+
 .business-import-actions {
   display: flex;
-  justify-content: flex-end;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.next-action-tip {
+  flex: 1;
+  min-width: 0;
+}
+
+.business-import-actions :deep(.el-button) {
+  min-width: 136px;
+  margin-left: 0;
 }
 
 .preview-stat-grid {
@@ -602,11 +672,27 @@ watch(
 .business-import-footer {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.footer-action-tip {
+  max-width: min(520px, 100%);
+  color: #4b5563;
+  font-size: 13px;
+  line-height: 20px;
+  text-align: left;
+}
+
+.footer-actions {
+  display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
 }
 
-.business-import-footer :deep(.el-button + .el-button) {
+.footer-actions :deep(.el-button + .el-button) {
   margin-left: 0;
 }
 
@@ -706,13 +792,22 @@ watch(
   }
 
   .business-import-summary,
+  .business-import-actions,
   .commit-options,
   .business-import-footer {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .business-import-footer :deep(.el-button) {
+  .business-import-actions :deep(.el-button) {
+    width: 100%;
+  }
+
+  .footer-actions {
+    width: 100%;
+  }
+
+  .footer-actions :deep(.el-button) {
     width: 100%;
   }
 
