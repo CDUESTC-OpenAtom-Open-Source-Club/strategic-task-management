@@ -598,7 +598,7 @@ const handleDistributionImportCommitted = async () => {
         :title="copySourceCollegeOptions.length === 0 ? '暂无其它学院可复制指标' : ''"
         @click="openCopyIndicatorsDialog"
       >
-        复制学院指标
+        复制其他学院指标
       </el-button>
       <el-button
         type="primary"
@@ -1615,7 +1615,7 @@ const handleDistributionImportCommitted = async () => {
 
     <el-dialog
       v-model="copyIndicatorDialogVisible"
-      title="复制学院指标"
+      title="复制其他学院指标"
       width="520px"
       :close-on-click-modal="true"
       @close="closeCopyIndicatorsDialog"
