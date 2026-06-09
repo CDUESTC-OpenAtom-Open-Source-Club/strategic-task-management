@@ -3024,24 +3024,42 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const isSavingMilestoneEdit = ref(false)
   const createTempMilestoneId = () => -Date.now() - Math.floor(Math.random() * 1000)
 
-  const sortDialogMilestonesByDate = (milestones: Milestone[]): Milestone[] => {
-    const toTime = (value?: string | null) => {
-      if (!value) {
-        return Number.POSITIVE_INFINITY
-      }
-
-      const time = new Date(value).getTime()
-      return Number.isFinite(time) ? time : Number.POSITIVE_INFINITY
-    }
-
-    return [...milestones].sort((a, b) => {
-      const dateDiff = toTime(a.deadline) - toTime(b.deadline)
-      if (dateDiff !== 0) {
-        return dateDiff
-      }
-
-      return Number(a.targetProgress ?? 0) - Number(b.targetProgress ?? 0)
+  const sortMilestoneListByProgress = (milestones: Milestone[]): Milestone[] =>
+    sortMilestonesByProgress(milestones).map((milestone, index) => {
+      milestone.sortOrder = index + 1
+      return milestone
     })
+
+  const sortNewRowMilestonesByProgress = () => {
+    newRow.value.milestones = sortMilestoneListByProgress(newRow.value.milestones)
+  }
+
+  const sortEditingMilestonesByProgress = () => {
+    editingMilestones.value = sortMilestoneListByProgress(editingMilestones.value)
+  }
+
+  const toEditableMilestoneProgress = (value: number | null | undefined): number => {
+    const numericValue = Number(value ?? 0)
+    if (!Number.isFinite(numericValue)) {
+      return 0
+    }
+    return Math.min(100, Math.max(0, numericValue))
+  }
+
+  const handleNewRowMilestoneProgressChange = (
+    milestone: Milestone,
+    value: number | null | undefined
+  ) => {
+    milestone.targetProgress = toEditableMilestoneProgress(value)
+    void nextTick(sortNewRowMilestonesByProgress)
+  }
+
+  const handleEditingMilestoneProgressChange = (
+    milestone: Milestone,
+    value: number | null | undefined
+  ) => {
+    milestone.targetProgress = toEditableMilestoneProgress(value)
+    void nextTick(sortEditingMilestonesByProgress)
   }
 
   // 打开里程碑编辑弹窗
@@ -3062,7 +3080,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
     editingMilestoneIndicator.value = row
     // 深拷贝里程碑数据
-    editingMilestones.value = sortDialogMilestonesByDate(
+    editingMilestones.value = sortMilestoneListByProgress(
       JSON.parse(JSON.stringify(row.milestones || []))
     )
     milestoneEditDialogVisible.value = true
@@ -3089,7 +3107,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       deadline: '',
       status: 'pending'
     })
-    editingMilestones.value = sortDialogMilestonesByDate(editingMilestones.value)
+    sortEditingMilestonesByProgress()
   }
 
   // 生成12个月里程碑（编辑弹窗内）
@@ -3127,7 +3145,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         status: 'NOT_STARTED' // 使用后端枚举值
       })
     }
-    editingMilestones.value = sortDialogMilestonesByDate(editingMilestones.value)
+    sortEditingMilestonesByProgress()
     logger.info(
       `[generateMonthlyMilestonesInDialog] Generated ${editingMilestones.value.length} milestones`
     )
@@ -3139,7 +3157,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   }
 
   const handleMilestoneDeadlineChange = () => {
-    editingMilestones.value = sortDialogMilestonesByDate(editingMilestones.value)
+    sortEditingMilestonesByProgress()
   }
 
   // 保存里程碑编辑
@@ -3179,7 +3197,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
       const indicatorId = currentIndicator.id.toString()
       const deptKey = selectedDepartment.value || ''
-      const sortedMilestones = sortDialogMilestonesByDate(editingMilestones.value)
+      const sortedMilestones = sortMilestoneListByProgress(editingMilestones.value)
+      editingMilestones.value = sortedMilestones
 
       logger.info(
         `[StrategicTaskView] Saving ${sortedMilestones.length} milestones for indicator ${indicatorId}`
@@ -3196,7 +3215,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
             dueDate: toMilestoneDueDate(milestone.deadline),
             targetProgress: Number(milestone.targetProgress || 0),
             status: toMilestoneRequestStatus(milestone.status),
-            sortOrder: Number(milestone.sortOrder ?? index + 1),
+            sortOrder: index + 1,
             isPaired: Boolean((milestone as { isPaired?: boolean }).isPaired ?? false),
             inheritedFrom: null as number | null
           }
@@ -3397,6 +3416,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       deadline: '',
       status: 'pending'
     })
+    sortNewRowMilestonesByProgress()
   }
 
   // 生成12个月里程碑（定量指标默认）
@@ -3418,6 +3438,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         status: 'pending'
       })
     }
+    sortNewRowMilestonesByProgress()
   }
 
   // 删除里程碑
@@ -3853,9 +3874,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       return
     }
 
+    const orderedMilestones = sortMilestoneListByProgress(milestones)
+
     await milestoneApi.saveMilestonesForIndicator(
       String(indicatorId),
-      milestones.map((milestone, index) => ({
+      orderedMilestones.map((milestone, index) => ({
         milestoneName: String(milestone.name || '').trim() || `里程碑 ${index + 1}`,
         targetProgress: Number(milestone.targetProgress) || 0,
         dueDate: milestone.deadline || null,
@@ -3910,6 +3933,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         `[StrategicTaskView] Saving indicator with taskContent: "${newRow.value.taskContent}"`
       )
 
+      const orderedMilestones = sortMilestoneListByProgress(newRow.value.milestones)
+      newRow.value.milestones = orderedMilestones
+
       // 调用 Store 添加指标（现在是异步的，会调用后端 API）
       const createdIndicatorResponse = await strategicStore.addIndicator({
         id: Date.now().toString(),
@@ -3924,7 +3950,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         weight,
         remark: newRow.value.remark || '无备注',
         canWithdraw: true,
-        milestones: [...newRow.value.milestones],
+        milestones: [...orderedMilestones],
         targetValue: 100,
         unit: '%',
         responsibleDept: selectedDepartment.value || '战略发展部', // 责任部门是选中的部门
@@ -3939,8 +3965,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       const createdIndicatorId = Number(
         createdIndicatorResponse?.data?.indicatorId ?? createdIndicatorResponse?.data?.id ?? NaN
       )
-      if (Number.isFinite(createdIndicatorId) && newRow.value.milestones.length > 0) {
-        await persistNewIndicatorMilestones(createdIndicatorId, newRow.value.milestones)
+      if (Number.isFinite(createdIndicatorId) && orderedMilestones.length > 0) {
+        await persistNewIndicatorMilestones(createdIndicatorId, orderedMilestones)
       }
 
       // 统一走“变更后刷新”链路，避免新增后被旧缓存覆盖，导致主页仍显示上一版状态。
@@ -5461,9 +5487,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     handleDistributeOrWithdraw,
     handleEditMilestones,
     handleEditMilestonesByIndex,
+    handleEditingMilestoneProgressChange,
     handleGlobalClick,
     handleIndicatorDblClick,
     handleMilestoneDeadlineChange,
+    handleNewRowMilestoneProgressChange,
     handleOpenApproval,
     handleRejectCurrentIndicatorWorkflow,
     handleSelectionChange,

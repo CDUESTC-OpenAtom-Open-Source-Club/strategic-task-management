@@ -205,9 +205,11 @@ const {
   handleDistributeOrWithdraw,
   handleEditMilestones,
   handleEditMilestonesByIndex,
+  handleEditingMilestoneProgressChange,
   handleGlobalClick,
   handleIndicatorDblClick,
   handleMilestoneDeadlineChange,
+  handleNewRowMilestoneProgressChange,
   handleOpenApproval,
   handleRejectCurrentIndicatorWorkflow,
   handleSelectionChange,
@@ -1548,12 +1550,15 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                             size="small"
                           />
                           <el-input-number
-                            v-model="ms.targetProgress"
+                            :model-value="ms.targetProgress"
                             :min="0"
                             :max="100"
                             placeholder="目标进度%"
                             size="small"
                             style="width: 110px"
+                            @update:model-value="
+                              value => handleNewRowMilestoneProgressChange(ms, value)
+                            "
                           />
                           <el-date-picker
                             v-model="ms.deadline"
@@ -2014,12 +2019,13 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                 class="field-name"
               />
               <el-input-number
-                v-model="ms.targetProgress"
+                :model-value="ms.targetProgress"
                 :min="0"
                 :max="100"
                 placeholder="目标进度%"
                 size="small"
                 class="field-progress"
+                @update:model-value="value => handleEditingMilestoneProgressChange(ms, value)"
               />
               <el-date-picker
                 v-model="ms.deadline"
