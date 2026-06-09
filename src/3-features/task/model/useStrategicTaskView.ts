@@ -1597,6 +1597,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
 
     try {
+      await planStore.loadPlans({ force: options.force, background: true })
       await hydrateCurrentPlanWorkflowState()
       if (options.reloadIndicators === true || strategicStore.indicators.length === 0) {
         await strategicStore.loadIndicatorsByYear(timeContext.currentYear, {
