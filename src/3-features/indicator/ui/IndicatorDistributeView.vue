@@ -323,8 +323,8 @@ const distributionExportCollegesIndeterminate = computed(
 const distributionExportColumns: ExcelExportColumn<DistributionExportRow>[] = [
   { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
   { header: '学院', width: 20, getValue: row => row.exportCollege },
-  { header: '战略任务', width: 28, getValue: row => row.taskTitle || '-' },
-  { header: '核心指标', width: 32, getValue: row => row.indicator.name || '-' },
+  { header: '父级战略任务', width: 28, getValue: row => row.taskTitle || '-' },
+  { header: '父级核心指标', width: 32, getValue: row => row.indicator.name || '-' },
   { header: '子指标名称', width: 32, getValue: row => row.child.name || '-' },
   {
     header: '指标类型',
