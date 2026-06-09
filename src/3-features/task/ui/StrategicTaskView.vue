@@ -37,6 +37,7 @@ import {
 } from '@/features/task/model/useStrategicTaskView'
 import { strategicApi } from '@/features/task/api/strategicApi'
 import { useStrategicStore } from '@/features/task/model/strategic'
+import type { ImportCommitResponse } from '@/features/import/api/businessImport'
 
 const props = defineProps<StrategicTaskViewProps>()
 const strategicStore = useStrategicStore()
@@ -632,8 +633,14 @@ const openStrategicImportDialog = () => {
   strategicImportDialogVisible.value = true
 }
 
-const handleStrategicImportCommitted = async () => {
+const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => {
   await refreshCurrentDepartmentView({ showLoading: true, force: true, reloadIndicators: true })
+
+  if (result?.workflow?.autoSubmitAndApprove || result?.workflow?.instanceId) {
+    resetApprovalWorkflowStateCache()
+    await refreshApprovalWorkflowSummaries()
+    await preloadApprovalWorkflowDetail()
+  }
 }
 </script>
 
