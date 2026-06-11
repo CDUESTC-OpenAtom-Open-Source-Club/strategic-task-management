@@ -75,13 +75,13 @@ const nextActionTip = computed(() => {
     return ''
   }
   if (!previewResult.value) {
-    return '文件已选择，请先点击“解析预览”。预览通过后，“确认导入”按钮才会启用。'
+    return '文件已选择，请先点击“解析预览”。预览通过后，确认按钮才会启用。'
   }
   if (previewResult.value.blocking) {
     return '预览发现阻断错误，请修正 Excel 后重新上传并解析。'
   }
   return autoSubmitAndApprove.value
-    ? '预览已通过，点击“确认导入”后会自动发起并完成审批。'
+    ? '预览已通过，点击“确认下发”后会按最终总权重校验并自动审批。'
     : '预览已通过，点击“确认导入”写入数据。'
 })
 const footerActionTip = computed(() => {
@@ -98,6 +98,43 @@ const footerActionTip = computed(() => {
 })
 
 const visibleRows = computed(() => previewResult.value?.rows.slice(0, 20) ?? [])
+
+const formatCommitBlockedMessage = (result: ImportCommitResponse) => {
+  const reason = result.workflow?.message?.trim() || '本次导入未执行'
+
+  if (reason.includes('已下发') || reason.includes('重复导入')) {
+    return '当前任务已下发，不能重复导入或下发。'
+  }
+  if (reason.includes('权重合计必须为100')) {
+    return `本次导入未写入：下发前权重校验未通过，基础属性权重合计必须等于 100%。${reason}`
+  }
+  if (reason.includes('未产生可审批计划')) {
+    return '本次导入未写入：没有生成可审批计划，请检查导入目标和数据。'
+  }
+
+  return `本次导入未写入：${reason}`
+}
+
+const formatAutoDispatchBlockedMessage = (result: ImportCommitResponse) => {
+  const importSummary = `导入成功：新增 ${result.createdCount} 条，更新 ${result.updatedCount} 条`
+  const reason = result.workflow?.message?.trim() || '自动下发未完成'
+
+  if (reason.includes('权重合计必须为100')) {
+    return `${importSummary}；下发已阻止：权重校验未通过，基础属性权重合计必须等于 100%。${reason}`
+  }
+  if (reason.includes('已下发') || reason.includes('重复发起')) {
+    return `${importSummary}；下发已阻止：当前任务已处于已下发状态，不能重复下发。`
+  }
+  if (reason.includes('未产生可审批计划')) {
+    return `${importSummary}；下发已阻止：本次导入没有生成可审批计划，请检查导入目标和数据。`
+  }
+  if (reason.includes('自动审批流程未启用')) {
+    return `${importSummary}；下发已阻止：自动审批流程未启用，请联系管理员启用流程后再下发。`
+  }
+
+  return `${importSummary}；下发已阻止：${reason}`
+}
+
 const strategicImportGuide: ImportGuideContent = {
   title: '职能部门指标表示例',
   targetName: '职能部门',
@@ -271,10 +308,19 @@ const handleCommit = async () => {
       ? await businessImportApi.commitStrategicTaskImport(previewResult.value.batchId, request)
       : await businessImportApi.commitDistributionImport(previewResult.value.batchId, request)
 
-    const workflowMessage = result.workflow?.message ? `，${result.workflow.message}` : ''
-    ElMessage.success(
-      `导入成功：新增 ${result.createdCount} 条，更新 ${result.updatedCount} 条${workflowMessage}`
-    )
+    if (result.status === 'COMMIT_BLOCKED') {
+      ElMessage.warning(formatCommitBlockedMessage(result))
+      return
+    }
+
+    if (result.status === 'COMMITTED_WITH_WORKFLOW_FAILED') {
+      ElMessage.warning(formatAutoDispatchBlockedMessage(result))
+    } else {
+      const workflowMessage = result.workflow?.message ? `，${result.workflow.message}` : ''
+      ElMessage.success(
+        `导入成功：新增 ${result.createdCount} 条，更新 ${result.updatedCount} 条${workflowMessage}`
+      )
+    }
     emit('committed', result)
     dialogVisible.value = false
   } catch (error) {
@@ -549,7 +595,7 @@ watch(
             :disabled="!previewResult || previewResult.blocking"
             @click="handleCommit"
           >
-            确认导入
+            {{ autoSubmitAndApprove ? '确认下发' : '确认导入' }}
           </el-button>
         </div>
       </div>

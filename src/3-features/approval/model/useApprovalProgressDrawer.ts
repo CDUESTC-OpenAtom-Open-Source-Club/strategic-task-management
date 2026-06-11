@@ -258,6 +258,49 @@ export function useApprovalProgressDrawer(
     return typeof value === 'string' ? value.trim() : ''
   }
 
+  function isGenericPlanDisplayName(value: unknown): boolean {
+    const normalized = normalizeDisplayName(value).replace(/\s+/g, ' ')
+    if (!normalized) {
+      return true
+    }
+
+    return (
+      /^Plan\s+\d+$/i.test(normalized) ||
+      /^业务对象#\d+$/.test(normalized) ||
+      normalized === '计划审批' ||
+      normalized === '审批通知' ||
+      /^有新的.+待审批$/.test(normalized)
+    )
+  }
+
+  function resolvePlanDisplayNameFromContext(
+    detail?: WorkflowInstanceDetailResponse | null,
+    fallback?: unknown
+  ): string {
+    const candidates = [detail?.planName, props.plan?.name, props.planName, fallback]
+
+    const explicitName = candidates
+      .map(candidate => normalizeDisplayName(candidate))
+      .find(candidate => candidate && !isGenericPlanDisplayName(candidate))
+    if (explicitName) {
+      return explicitName
+    }
+
+    const departmentName =
+      normalizeDisplayName(detail?.targetOrgName) ||
+      normalizeDisplayName(props.plan?.targetOrgName) ||
+      normalizeDisplayName(props.departmentName) ||
+      normalizeDisplayName(detail?.sourceOrgName) ||
+      normalizeDisplayName(props.plan?.createdByOrgName) ||
+      normalizeDisplayName(props.plan?.orgName)
+
+    if (departmentName) {
+      return `${departmentName}计划`
+    }
+
+    return normalizeDisplayName(fallback) || '当前计划'
+  }
+
   function normalizeWorkflowCode(value: unknown): string {
     return String(value || '')
       .trim()
@@ -501,7 +544,31 @@ export function useApprovalProgressDrawer(
       return createdBy
     }
 
-    return props.departmentName || '当前提交人'
+    const submittedByName = normalizeDisplayName(props.plan?.submittedByName)
+    if (submittedByName) {
+      return submittedByName
+    }
+
+    const createdByName = normalizeDisplayName(props.plan?.createdByName)
+    if (createdByName) {
+      return createdByName
+    }
+
+    const currentUserDisplayName = normalizeDisplayName(authStore.userName)
+    const currentDepartmentName = normalizeDisplayName(authStore.effectiveDepartment)
+    const sourceDepartmentName =
+      normalizeDisplayName(props.plan?.createdByOrgName) ||
+      normalizeDisplayName(props.plan?.orgName)
+    if (
+      currentUserDisplayName &&
+      currentDepartmentName &&
+      sourceDepartmentName &&
+      currentDepartmentName === sourceDepartmentName
+    ) {
+      return currentUserDisplayName
+    }
+
+    return sourceDepartmentName || normalizeDisplayName(props.departmentName) || '待确认'
   }
 
   function cacheSubmitterName(userIdValue: unknown, nameValue: unknown): boolean {
@@ -575,12 +642,12 @@ export function useApprovalProgressDrawer(
 
     const submittedById = parsePositiveUserId(props.plan?.submittedBy)
     if (submittedById) {
-      return submitterNameCache.value[String(submittedById)] || String(submittedById)
+      return submitterNameCache.value[String(submittedById)] || getFallbackSubmitterValue()
     }
 
     const createdById = parsePositiveUserId(props.plan?.createdBy)
     if (createdById) {
-      return submitterNameCache.value[String(createdById)] || String(createdById)
+      return submitterNameCache.value[String(createdById)] || getFallbackSubmitterValue()
     }
 
     return getFallbackSubmitterValue()
@@ -629,6 +696,13 @@ export function useApprovalProgressDrawer(
     statusType?: 'success' | 'warning' | 'danger' | 'info'
     entityId?: string | number
     planName?: string
+  }
+
+  interface PendingPlanApprovalPreviewItem {
+    key: string
+    title: string
+    routeDisplay: string
+    routeTarget: string
   }
 
   interface WorkflowHistoryTarget {
@@ -792,6 +866,69 @@ export function useApprovalProgressDrawer(
     })
   })
 
+  function resolvePendingApprovalRouteDisplay(instance: Record<string, any>): string {
+    const sourceOrgName = normalizeDisplayName(instance.sourceOrgName)
+    const targetOrgName = normalizeDisplayName(instance.targetOrgName)
+
+    if (sourceOrgName && targetOrgName) {
+      return `${sourceOrgName} -> ${targetOrgName}`
+    }
+
+    return sourceOrgName || targetOrgName || '流向待补充'
+  }
+
+  function resolvePendingApprovalDepartmentName(instance: Record<string, any>): string {
+    const entityType = normalizeWorkflowEntityType(instance.entityType) || 'PLAN'
+    const sourceOrgName = normalizeDisplayName(instance.sourceOrgName)
+    const targetOrgName = normalizeDisplayName(instance.targetOrgName)
+
+    if (entityType === 'PLAN_REPORT') {
+      return sourceOrgName || targetOrgName || props.departmentName || ''
+    }
+
+    return targetOrgName || sourceOrgName || props.departmentName || ''
+  }
+
+  function resolvePendingApprovalTitle(instance: Record<string, any>, index: number): string {
+    return (
+      normalizeDisplayName(instance.entityTitle) ||
+      normalizeDisplayName(instance.planName) ||
+      normalizeDisplayName(instance.title) ||
+      normalizeDisplayName(instance.entityName) ||
+      `${props.planName || props.departmentName || '当前计划'} - 审批实例 ${index + 1}`
+    )
+  }
+
+  const pendingPlanApprovalPreviewItems = computed<PendingPlanApprovalPreviewItem[]>(() =>
+    scopedPlanApprovals.value.map((instance, index) => {
+      const entityType = normalizeWorkflowEntityType(instance.entityType) || 'PLAN'
+      const entityId =
+        parsePositiveEntityId(instance.entityId ?? instance.businessEntityId) ?? undefined
+      const approvalInstanceId = parsePositiveEntityId(instance.instanceId) ?? undefined
+      const routeTarget =
+        resolveApprovalRoute({
+          actionUrl: typeof instance.actionUrl === 'string' ? instance.actionUrl : null,
+          entityType,
+          entityId,
+          approvalInstanceId,
+          viewerRole: authStore.effectiveRole || authStore.userRole,
+          departmentName: resolvePendingApprovalDepartmentName(instance) || null,
+          sourceOrgName: normalizeDisplayName(instance.sourceOrgName) || null,
+          targetOrgName: normalizeDisplayName(instance.targetOrgName) || null,
+          currentDepartmentName:
+            normalizeDisplayName(authStore.effectiveDepartment || authStore.user?.department) ||
+            null
+        }) || ''
+
+      return {
+        key: `${approvalInstanceId || instance.taskId || index}`,
+        title: resolvePendingApprovalTitle(instance, index),
+        routeDisplay: resolvePendingApprovalRouteDisplay(instance),
+        routeTarget
+      }
+    })
+  )
+
   const scopedPendingPlanCount = computed(() => scopedPlanApprovals.value.length)
 
   const historyTargets = computed<WorkflowHistoryTarget[]>(() => {
@@ -839,7 +976,7 @@ export function useApprovalProgressDrawer(
 
       return {
         id: parsePositiveEntityId(props.secondaryWorkflowEntityId) ?? undefined,
-        name: props.planName || props.departmentName || '当前计划',
+        name: resolvePlanDisplayNameFromContext(detail),
         workflowInstanceId: Number(detail.instanceId || 0) || undefined,
         workflowStatus: detail.status,
         status: detail.status,
@@ -851,8 +988,14 @@ export function useApprovalProgressDrawer(
         workflowHistory: Array.isArray(detail.history) ? detail.history : [],
         submittedAt: detail.startTime,
         createdAt: detail.startTime,
-        createdByName: props.departmentName || '',
-        submittedByName: props.departmentName || '',
+        createdByName:
+          normalizeDisplayName(detail.starterName) ||
+          normalizeDisplayName(detail.targetOrgName) ||
+          normalizeDisplayName(props.departmentName),
+        submittedByName:
+          normalizeDisplayName(detail.starterName) ||
+          normalizeDisplayName(detail.targetOrgName) ||
+          normalizeDisplayName(props.departmentName),
         sourceOrgName: detail.sourceOrgName,
         targetOrgName: detail.targetOrgName
       } as Plan
@@ -877,7 +1020,13 @@ export function useApprovalProgressDrawer(
           ? detail.canWithdraw
           : props.plan.canWithdraw,
       workflowHistory:
-        useDetail && Array.isArray(detail?.history) ? detail.history : props.plan.workflowHistory
+        useDetail && Array.isArray(detail?.history) ? detail.history : props.plan.workflowHistory,
+      sourceOrgName: useDetail ? detail.sourceOrgName : undefined,
+      targetOrgName: useDetail ? detail.targetOrgName : props.plan.targetOrgName,
+      submittedByName:
+        (useDetail ? normalizeDisplayName(detail.starterName) : '') || props.plan.submittedByName,
+      createdByName:
+        (useDetail ? normalizeDisplayName(detail.starterName) : '') || props.plan.createdByName
     }
   })
 
@@ -908,6 +1057,35 @@ export function useApprovalProgressDrawer(
           activePlanWorkflow.value.workflowHistory.length > 0))
     )
   })
+
+  function resolvePlanSubmitterDisplayName(detail?: WorkflowInstanceDetailResponse | null): string {
+    const PLACEHOLDER_PATTERNS = /^(待确认|未知|当前提交人|\d+|用户#\d+|user#\d+)$/i
+    const starterId = parsePositiveUserId(detail?.starterId)
+    const currentDepartmentName = normalizeDisplayName(authStore.effectiveDepartment)
+    const sourceDepartmentName =
+      normalizeDisplayName(detail?.sourceOrgName) ||
+      normalizeDisplayName(props.plan?.createdByOrgName) ||
+      normalizeDisplayName(props.plan?.orgName)
+    const currentUserSubmitterFallback =
+      currentDepartmentName &&
+      sourceDepartmentName &&
+      currentDepartmentName === sourceDepartmentName
+        ? normalizeDisplayName(authStore.userName)
+        : ''
+    const candidates = [
+      starterId ? submitterNameCache.value[String(starterId)] : '',
+      detail?.starterName,
+      activePlanWorkflow.value?.submittedByName,
+      props.plan?.submittedByName,
+      props.plan?.createdByName,
+      currentUserSubmitterFallback,
+      sourceDepartmentName
+    ]
+    const matched = candidates
+      .map(candidate => normalizeDisplayName(candidate))
+      .find(candidate => candidate && !PLACEHOLDER_PATTERNS.test(candidate))
+    return matched || getFallbackSubmitterValue()
+  }
 
   const normalizedPlanBusinessStatus = computed(() => {
     const rawStatus = String(props.plan?.status || '')
@@ -2300,19 +2478,21 @@ export function useApprovalProgressDrawer(
       ]
     }
 
-    if (hasPlanWorkflowData.value && props.plan) {
+    if (hasPlanWorkflowData.value && activePlanWorkflow.value) {
+      const planName = resolvePlanDisplayNameFromContext(
+        planWorkflowDetail.value,
+        activePlanWorkflow.value.name
+      )
       return [
         {
           instanceId: currentPlanInstanceId.value,
           instanceNo: String(currentPlanInstanceId.value || '待回填'),
-          title: String(
-            activePlanWorkflow.value?.name || props.planName || props.departmentName || '当前计划'
-          ),
-          submitterName: planSubmitterName.value,
+          title: planName,
+          submitterName: resolvePlanSubmitterDisplayName(planWorkflowDetail.value),
           currentStepName: String(currentPlanStepDisplay.value),
           createdAt: activePlanWorkflow.value?.submittedAt || activePlanWorkflow.value?.createdAt,
-          entityId: activePlanWorkflow.value?.id,
-          planName: activePlanWorkflow.value?.name
+          entityId: activePlanWorkflow.value?.id || props.workflowEntityId,
+          planName
         }
       ]
     }
@@ -2436,28 +2616,22 @@ export function useApprovalProgressDrawer(
         key: `plan-report-${props.workflowEntityId || planWorkflowDetail.value.instanceId || 'current'}`,
         planName: props.planName || `${props.departmentName || '当前部门'}上报审批`,
         currentStepName: currentPlanStepDisplay.value,
-        submitterName:
-          props.departmentName ||
-          normalizeDisplayName(planWorkflowDetail.value.targetOrgName) ||
-          '当前部门',
+        submitterName: resolvePlanSubmitterDisplayName(planWorkflowDetail.value),
         createdAt: planWorkflowDetail.value.startTime,
         count: 1
       }
     }
 
-    if (hasPlanWorkflowData.value && props.plan) {
+    if (hasPlanWorkflowData.value && activePlanWorkflow.value) {
+      const planName = resolvePlanDisplayNameFromContext(
+        planWorkflowDetail.value,
+        activePlanWorkflow.value.name
+      )
       return {
-        key:
-          activePlanWorkflow.value?.name ||
-          props.planName ||
-          props.departmentName ||
-          'current-plan',
-        planName:
-          activePlanWorkflow.value?.name ||
-          props.planName ||
-          `${props.departmentName || '当前部门'}计划`,
+        key: planName,
+        planName,
         currentStepName: currentPlanStepDisplay.value,
-        submitterName: planSubmitterName.value,
+        submitterName: resolvePlanSubmitterDisplayName(planWorkflowDetail.value),
         createdAt: activePlanWorkflow.value?.submittedAt || activePlanWorkflow.value?.createdAt,
         count: 1
       }
@@ -3377,6 +3551,16 @@ export function useApprovalProgressDrawer(
     await router.push(normalizedRouteTarget.value)
   }
 
+  async function navigateToPendingPlanApproval(item: PendingPlanApprovalPreviewItem) {
+    if (!item.routeTarget) {
+      ElMessage.warning('暂无法定位审批页面')
+      return
+    }
+
+    handleClose()
+    await router.push(item.routeTarget)
+  }
+
   // 处理自定义审批流程事件
   function handleAddNode() {
     // 暂不实现，可后续扩展
@@ -3819,6 +4003,7 @@ export function useApprovalProgressDrawer(
     loadWorkflowDefinitionPreview,
     mapWorkflowTaskStatusToNodeStatus,
     matchesExpectedWorkflowCode,
+    navigateToPendingPlanApproval,
     navigateToRouteTarget,
     normalizeDisplayName,
     normalizeStepMatchKey,
@@ -3832,6 +4017,7 @@ export function useApprovalProgressDrawer(
     parsePositiveEntityId,
     parsePositiveUserId,
     pendingCount,
+    pendingPlanApprovalPreviewItems,
     pendingPlanApprovals,
     planDetailContentLoading,
     planApprovalsLoading,

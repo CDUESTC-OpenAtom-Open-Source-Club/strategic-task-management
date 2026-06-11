@@ -40,6 +40,7 @@ const {
   availableFunctionalDepts,
   baseDelayedTasks,
   benchmarkChartRef,
+  benchmarkSectionRef,
   benchmarkData,
   canViewAllDepartments,
   collegeBarData,
@@ -71,6 +72,7 @@ const {
   getStatusClass,
   getStatusText,
   handleAlertClick,
+  handleSummaryDrillClick,
   handleBackToColleges,
   handleBackToDepts,
   handleBreadcrumbNavigate,
@@ -269,7 +271,9 @@ const {
             </template>
             完成率达 <span class="highlight-success">{{ dashboardData.completionRate }}%</span>，
             {{ dashboardData.completionRate >= 80 ? '进度符合预期' : '建议加快推进滞后任务' }}。
-            <button type="button" class="drill-btn">立即下钻诊断 →</button>
+            <button type="button" class="drill-btn" @click.prevent="handleSummaryDrillClick">
+              立即下钻诊断 →
+            </button>
           </p>
         </div>
         <div class="summary-stats">
@@ -333,6 +337,7 @@ const {
 
       <!-- 中间深度图表层 -->
       <div
+        ref="benchmarkSectionRef"
         class="chart-section deep-charts benchmark-section"
         :class="{ 'has-detail': showIndicatorCard || showMonthIndicatorCard }"
       >

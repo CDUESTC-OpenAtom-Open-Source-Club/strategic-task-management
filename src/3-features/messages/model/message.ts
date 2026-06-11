@@ -7,6 +7,8 @@ import {
   type MessageCenterSummary,
   type MessageItem
 } from '@/features/messages/api/messagesApi'
+import { getWorkflowInstanceDetail } from '@/features/workflow/api'
+import type { WorkflowInstanceDetailResponse } from '@/features/workflow/api'
 
 function createEmptySummary(): MessageCenterSummary {
   return {
@@ -29,6 +31,36 @@ function createEmptySummary(): MessageCenterSummary {
 function isApprovalBizType(bizType?: MessageBizType): boolean {
   return bizType === 'APPROVAL_TODO' || bizType === 'APPROVAL_RESULT'
 }
+
+function parseMessageMetadataJson(message: Message): Record<string, unknown> {
+  const metadataJson = message.metadata?.metadataJson
+  if (typeof metadataJson !== 'string' || !metadataJson.trim()) {
+    return {}
+  }
+
+  try {
+    const parsed = JSON.parse(metadataJson) as unknown
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+function resolveMessageApprovalInstanceId(message: Message): string {
+  if (message.approvalInstanceId) {
+    return String(message.approvalInstanceId)
+  }
+
+  const nestedMetadata = parseMessageMetadataJson(message)
+  const metadataInstanceId =
+    nestedMetadata.approvalInstanceId ?? message.metadata?.approvalInstanceId
+  const normalizedInstanceId = String(metadataInstanceId || '').trim()
+  return /^\d+$/.test(normalizedInstanceId) ? normalizedInstanceId : ''
+}
+
+const workflowDetailCache = new Map<string, WorkflowInstanceDetailResponse | null>()
 
 export const useMessageStore = defineStore('message-center', () => {
   const rawMessages = ref<Message[]>([])
@@ -180,6 +212,75 @@ export const useMessageStore = defineStore('message-center', () => {
     }
   }
 
+  async function loadWorkflowDetailForMessage(
+    message: Message
+  ): Promise<WorkflowInstanceDetailResponse | null> {
+    const instanceId = resolveMessageApprovalInstanceId(message)
+    if (!instanceId) {
+      return null
+    }
+
+    if (workflowDetailCache.has(instanceId)) {
+      return workflowDetailCache.get(instanceId) ?? null
+    }
+
+    try {
+      const response = await getWorkflowInstanceDetail(instanceId)
+      const detail = response.success && response.data ? response.data : null
+      workflowDetailCache.set(instanceId, detail)
+      return detail
+    } catch {
+      workflowDetailCache.set(instanceId, null)
+      return null
+    }
+  }
+
+  function applyWorkflowDetailToMessage(
+    message: Message,
+    detail: WorkflowInstanceDetailResponse | null
+  ): Message {
+    if (!detail) {
+      return message
+    }
+
+    const hasMessageStepName = Boolean(
+      message.currentStepName ||
+      message.metadata?.currentStepName ||
+      parseMessageMetadataJson(message).stepName
+    )
+    const nextMetadata = {
+      ...(message.metadata ?? {}),
+      ...(detail.flowCode ? { flowCode: detail.flowCode } : {}),
+      ...(detail.flowName ? { flowName: detail.flowName } : {}),
+      ...(detail.sourceOrgName ? { sourceOrgName: detail.sourceOrgName } : {}),
+      ...(detail.targetOrgName ? { targetOrgName: detail.targetOrgName } : {}),
+      ...(detail.planName ? { planName: detail.planName } : {}),
+      ...(!hasMessageStepName && detail.currentStepName
+        ? { currentStepName: detail.currentStepName }
+        : {})
+    }
+
+    return {
+      ...message,
+      currentStepName:
+        message.currentStepName || (!hasMessageStepName ? detail.currentStepName : undefined),
+      metadata: nextMetadata
+    }
+  }
+
+  async function enrichApprovalMessages(messages: Message[]): Promise<Message[]> {
+    return Promise.all(
+      messages.map(async message => {
+        if (!isApprovalBizType(message.bizType)) {
+          return message
+        }
+
+        const detail = await loadWorkflowDetailForMessage(message)
+        return applyWorkflowDetailToMessage(message, detail)
+      })
+    )
+  }
+
   function recomputeSummaryFromMessages(): void {
     const todoCount = rawMessages.value.filter(message => isActionRequired(message)).length
     const approvalResultUnread = rawMessages.value.filter(
@@ -217,18 +318,6 @@ export const useMessageStore = defineStore('message-center', () => {
     )
   }
 
-  function applyMessageDetail(message: MessageItem): Message {
-    const nextMessage = toStoreMessage(message)
-    const targetIndex = rawMessages.value.findIndex(item => item.id === nextMessage.id)
-    if (targetIndex === -1) {
-      rawMessages.value = [nextMessage, ...rawMessages.value]
-    } else {
-      rawMessages.value.splice(targetIndex, 1, nextMessage)
-    }
-    cleanupHiddenReadMessages()
-    return nextMessage
-  }
-
   async function fetchSummary() {
     summaryLoading.value = true
     try {
@@ -248,7 +337,7 @@ export const useMessageStore = defineStore('message-center', () => {
     listLoading.value = true
     try {
       const remoteMessages = await messagesApi.getAllMessages()
-      rawMessages.value = remoteMessages.map(toStoreMessage)
+      rawMessages.value = await enrichApprovalMessages(remoteMessages.map(toStoreMessage))
       cleanupHiddenReadMessages()
       recomputeSummaryFromMessages()
       error.value = null
@@ -282,7 +371,16 @@ export const useMessageStore = defineStore('message-center', () => {
     detailLoading.value = true
     try {
       const detail = await messagesApi.getMessageDetail(messageId)
-      return applyMessageDetail(detail)
+      const enriched = await enrichApprovalMessages([toStoreMessage(detail)])
+      const target = enriched[0] || toStoreMessage(detail)
+      const targetIndex = rawMessages.value.findIndex(item => item.id === target.id)
+      if (targetIndex === -1) {
+        rawMessages.value = [target, ...rawMessages.value]
+      } else {
+        rawMessages.value.splice(targetIndex, 1, target)
+      }
+      cleanupHiddenReadMessages()
+      return target
     } finally {
       detailLoading.value = false
     }

@@ -729,8 +729,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <el-button
             :type="distributeButtonType"
             size="small"
-            :aria-disabled="distributeButtonDisabled"
-            :class="{ 'is-disabled': distributeButtonDisabled }"
+            :disabled="distributeButtonDisabled"
             :title="distributeButtonDisabledReason"
             @click.stop="handleDistributeOrWithdraw"
           >
@@ -1707,6 +1706,16 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <el-descriptions-item label="当前进度"
             >{{ currentDetail.progress }}%</el-descriptions-item
           >
+          <el-descriptions-item label="填报进度">
+            <template v-if="shouldShowReportedProgress(currentDetail)">
+              <el-tooltip content="已提交但尚未审批通过的填报进度" placement="top">
+                <span style="color: #e6a23c; font-weight: 600"
+                  >{{ getDisplayedReportedProgress(currentDetail) }}%</span
+                >
+              </el-tooltip>
+            </template>
+            <span v-else style="color: #909399">暂无填报</span>
+          </el-descriptions-item>
           <el-descriptions-item label="责任部门">{{
             currentDetail.responsibleDept
           }}</el-descriptions-item>

@@ -164,7 +164,11 @@ async function silentApiGet<T>(url: string): Promise<SilentApiResult<T>> {
 function invalidatePlanCaches(planId?: number | string): void {
   const targets: Array<string | readonly [string, string, Record<string, string>]> = [
     'plan.list',
-    'dashboard.overview'
+    'dashboard.overview',
+    'workflow.todo',
+    'workflow.detail',
+    'workflow.instances',
+    'workflow.statistics'
   ]
   if (planId !== undefined) {
     targets.push('plan.detail', `plan.detail.${planId}`)
@@ -1207,13 +1211,27 @@ function resolveCurrentMonthPlanReportSummaries(
         new Date(a.updatedAt || a.createdAt || 0).getTime()
     )
 
+  const currentWorkflowReport =
+    currentMonthReports.find(report => {
+      const normalizedStatus = getNormalizedReportStatus(report.status)
+      return ['PENDING', 'IN_REVIEW', 'SUBMITTED', 'APPROVED'].includes(normalizedStatus)
+    }) ||
+    currentMonthReports.find(report => {
+      const normalizedStatus = getNormalizedReportStatus(report.status)
+      return (
+        Boolean(report.workflowInstanceId ?? report.auditInstanceId) &&
+        !['DRAFT', 'REJECTED', 'WITHDRAWN', 'CANCELLED'].includes(normalizedStatus)
+      )
+    }) ||
+    null
+
+  const currentEditableReport =
+    currentMonthReports.find(report =>
+      ['DRAFT', 'REJECTED'].includes(getNormalizedReportStatus(report.status))
+    ) || null
+
   return {
-    currentReport:
-      currentMonthReports.find(report =>
-        ['DRAFT', 'REJECTED'].includes(getNormalizedReportStatus(report.status))
-      ) ||
-      currentMonthReports.find(report => isActiveCurrentReportStatus(report.status)) ||
-      null,
+    currentReport: currentWorkflowReport || currentEditableReport || currentMonthReports[0] || null,
     latestReport:
       currentMonthReports.find(report => {
         const normalizedStatus = getNormalizedReportStatus(report.status)
@@ -1853,6 +1871,7 @@ export const planApi = {
         `/plans/${planId}/submit-dispatch`,
         payload
       )
+      invalidatePlanReportsCache(planId)
       invalidatePlanCaches(planId)
       return response
     })
@@ -1951,6 +1970,7 @@ export const planApi = {
         .post<
           ApiResponse<Plan>
         >(`/plans/${planId}/withdraw`, undefined, { timeout: PLAN_WITHDRAW_TIMEOUT_MS })
+      invalidatePlanReportsCache(planId)
       invalidatePlanCaches(planId)
       invalidateQueries([
         'workflow.todo',

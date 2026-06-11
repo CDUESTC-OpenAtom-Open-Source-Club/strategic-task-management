@@ -127,29 +127,39 @@
       <div v-if="detailMessage" class="detail-content">
         <div class="detail-tags">
           <el-tag size="small">{{ detailMessage.title }}</el-tag>
-          <el-tag v-if="detailMessage.senderDisplay" type="info" size="small">
+          <el-tag
+            v-if="detailMessage.senderDisplay && !isApprovalMessage(detailMessage)"
+            type="info"
+            size="small"
+          >
             {{ detailMessage.senderDisplay }}
           </el-tag>
           <el-tag
-            v-if="
-              detailMessage.bizType === 'APPROVAL_TODO' && resolveApprovalDepartment(detailMessage)
-            "
+            v-if="isApprovalMessage(detailMessage) && getApprovalCurrentStepDisplay(detailMessage)"
+            type="warning"
+            size="small"
+          >
+            当前环节：{{ getApprovalCurrentStepDisplay(detailMessage) }}
+          </el-tag>
+          <el-tag
+            v-if="isApprovalMessage(detailMessage) && getApprovalDepartmentDisplay(detailMessage)"
             type="success"
             size="small"
           >
-            审批中部门：{{ resolveApprovalDepartment(detailMessage) }}
+            审批中部门：{{ getApprovalDepartmentDisplay(detailMessage) }}
           </el-tag>
           <el-tag
-            v-if="
-              detailMessage.bizType === 'APPROVAL_TODO' &&
-              resolveApprovalRouteDisplay(detailMessage)
-            "
+            v-if="isApprovalMessage(detailMessage) && getApprovalRouteDisplay(detailMessage)"
             type="primary"
             size="small"
           >
-            {{ resolveApprovalRouteDisplay(detailMessage) }}
+            审批流向：{{ getApprovalRouteDisplay(detailMessage) }}
           </el-tag>
-          <el-tag v-if="detailMessage.currentStepName" type="warning" size="small">
+          <el-tag
+            v-if="!isApprovalMessage(detailMessage) && detailMessage.currentStepName"
+            type="warning"
+            size="small"
+          >
             {{ detailMessage.currentStepName }}
           </el-tag>
         </div>
@@ -202,6 +212,11 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import MessageList from '@/shared/ui/message/MessageList.vue'
+import {
+  getApprovalCurrentStepDisplay,
+  getApprovalDepartmentDisplay,
+  getApprovalRouteDisplay
+} from '@/shared/ui/message/approvalMessageDisplay'
 import { useMessageStore } from '@/features/messages/model/message'
 import {
   requiresApprovalCenterFallback,
@@ -374,7 +389,7 @@ function buildApprovalCenterContext(message: Message) {
     workflowEntityId,
     approvalInstanceId: message.approvalInstanceId,
     departmentName: resolveApprovalDepartment(message),
-    planName: message.title,
+    planName: resolveApprovalCenterPlanName(message),
     routeTarget: routeTarget || undefined
   }
 }
@@ -452,6 +467,43 @@ function getMessageMetadataValue(message: Message, key: string): string {
   }
 
   return ''
+}
+
+function isGenericApprovalTitle(value: string): boolean {
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  if (!normalized) {
+    return true
+  }
+
+  return (
+    /^Plan\s+\d+$/i.test(normalized) ||
+    /^业务对象#\d+$/.test(normalized) ||
+    normalized === '计划审批' ||
+    normalized === '审批通知' ||
+    /^有新的.+待审批$/.test(normalized)
+  )
+}
+
+function resolveApprovalCenterPlanName(message: Message): string {
+  const candidates = [
+    getMessageMetadataValue(message, 'businessName'),
+    getMessageMetadataValue(message, 'planName'),
+    getMessageMetadataValue(message, 'entityTitle'),
+    getMessageMetadataValue(message, 'entityName'),
+    message.title
+  ]
+
+  const explicitName = candidates
+    .map(value => String(value || '').trim())
+    .find(value => value && !isGenericApprovalTitle(value))
+  if (explicitName) {
+    return explicitName
+  }
+
+  const targetOrgName = getMessageMetadataValue(message, 'targetOrgName')
+  const sourceOrgName = getMessageMetadataValue(message, 'sourceOrgName')
+  const departmentName = targetOrgName || sourceOrgName || message.senderDisplay || ''
+  return departmentName ? `${departmentName}计划` : ''
 }
 
 function resolvePlanReportCollegeFromBusinessName(message: Message): string {

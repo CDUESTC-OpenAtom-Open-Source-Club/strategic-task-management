@@ -15,6 +15,73 @@
   gap: 8px;
 }
 
+.pending-plan-approval-tag {
+  cursor: pointer;
+}
+
+:global(.pending-plan-approval-popper) {
+  padding: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+}
+
+.pending-plan-approval-preview {
+  overflow: hidden;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.pending-plan-approval-preview__title {
+  padding: 10px 12px;
+  border-bottom: 1px solid #edf2f7;
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pending-plan-approval-preview__item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid #f1f5f9;
+  background: #fff;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pending-plan-approval-preview__item:last-child {
+  border-bottom: 0;
+}
+
+.pending-plan-approval-preview__item:hover {
+  background: #eff6ff;
+}
+
+.pending-plan-approval-preview__name,
+.pending-plan-approval-preview__route {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pending-plan-approval-preview__name {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pending-plan-approval-preview__route {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .approval-content {
   padding: 0;
 }

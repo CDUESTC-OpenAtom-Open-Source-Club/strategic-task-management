@@ -1,9 +1,9 @@
-import { watch } from 'vue'
+import { onMounted, onUnmounted, watch } from 'vue'
 import { ElLoading, ElMessage, ElMessageBox } from 'element-plus'
 import { approvalApi } from '@/features/task/api/strategicApi'
 import { indicatorFillApi } from '@/features/plan/api/planApi'
 import { tryGetUserById } from '@/features/user/api/query'
-import { notifyApprovalStateRefresh } from '@/features/approval/lib'
+import { APPROVAL_STATE_REFRESH_EVENT, notifyApprovalStateRefresh } from '@/features/approval/lib'
 import { apiClient } from '@/shared/api'
 import type { ApiResponse } from '@/shared/types'
 import { logger } from '@/shared/lib/utils/logger'
@@ -19,6 +19,7 @@ import type {
   PlanApprovalDetailItem,
   PlanReportSnapshotSummary
 } from '@/features/approval/model/types'
+import type { WorkflowInstanceDetailResponse } from '@/features/workflow/api/types'
 import type { ApprovalProgressState } from './useApprovalProgressState'
 
 interface UseApprovalProgressWorkflowOptions {
@@ -32,6 +33,34 @@ export function useApprovalProgressWorkflow({
   emit,
   state
 }: UseApprovalProgressWorkflowOptions) {
+  function normalizeWorkflowRuntimeStatus(value: unknown): string {
+    return String(value || '')
+      .trim()
+      .toUpperCase()
+  }
+
+  function isActivePlanStatus(): boolean {
+    return ['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(
+      normalizeWorkflowRuntimeStatus(props.plan?.workflowStatus || props.plan?.status)
+    )
+  }
+
+  function isTerminalWorkflowDetail(detail: WorkflowInstanceDetailResponse): boolean {
+    return ['WITHDRAWN', 'CANCELLED', 'REJECTED', 'RETURNED'].includes(
+      normalizeWorkflowRuntimeStatus(detail.status)
+    )
+  }
+
+  function shouldIgnoreWorkflowDetail(detail: WorkflowInstanceDetailResponse): boolean {
+    return isActivePlanStatus() && isTerminalWorkflowDetail(detail)
+  }
+
+  function waitForWorkflowRetry(delayMs: number): Promise<void> {
+    return new Promise(resolve => {
+      window.setTimeout(resolve, delayMs)
+    })
+  }
+
   async function ensureWorkflowUserAvatarLoaded(userIdValue: unknown): Promise<void> {
     if (!state.canLookupWorkflowUsers.value) {
       return
@@ -206,7 +235,9 @@ export function useApprovalProgressWorkflow({
     }
   }
 
-  async function loadPlanWorkflowDetail() {
+  async function loadPlanWorkflowDetail(
+    options: { retryActive?: boolean; maxAttempts?: number; delayMs?: number } = {}
+  ) {
     if (!props.showPlanApprovals || !props.plan) {
       state.planWorkflowDetail.value = null
       state.planWorkflowDetailLoading.value = false
@@ -215,61 +246,88 @@ export function useApprovalProgressWorkflow({
 
     const requestSeq = ++state.planWorkflowDetailRequestSeq.value
     state.planWorkflowDetailLoading.value = true
+    const maxAttempts = options.retryActive ? (options.maxAttempts ?? 12) : 1
+    const delayMs = options.delayMs ?? 500
 
     try {
-      if (
-        state.hasRelatedPlanReportActiveWorkflow.value &&
-        state.relatedPlanReportSummary.value?.id
-      ) {
-        const response = await getWorkflowInstanceDetailByBusiness(
-          'PLAN_REPORT',
-          Number(state.relatedPlanReportSummary.value.id)
-        )
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        let ignoredTerminalDetail = false
+
+        const applyWorkflowDetail = (detail: WorkflowInstanceDetailResponse): boolean => {
+          if (!state.matchesExpectedWorkflowCode(detail.flowCode)) {
+            return false
+          }
+
+          if (shouldIgnoreWorkflowDetail(detail)) {
+            ignoredTerminalDetail = true
+            return false
+          }
+
+          if (requestSeq === state.planWorkflowDetailRequestSeq.value) {
+            state.planWorkflowDetail.value = detail
+          }
+          return true
+        }
+
         if (
-          requestSeq === state.planWorkflowDetailRequestSeq.value &&
-          response.success &&
-          response.data &&
-          state.matchesExpectedWorkflowCode(response.data.flowCode)
+          state.hasRelatedPlanReportActiveWorkflow.value &&
+          state.relatedPlanReportSummary.value?.id
         ) {
-          state.planWorkflowDetail.value = response.data
+          const response = await getWorkflowInstanceDetailByBusiness(
+            'PLAN_REPORT',
+            Number(state.relatedPlanReportSummary.value.id)
+          )
+          if (
+            requestSeq === state.planWorkflowDetailRequestSeq.value &&
+            response.success &&
+            response.data &&
+            applyWorkflowDetail(response.data)
+          ) {
+            return
+          }
+        }
+
+        const businessEntityType = props.workflowEntityType || 'PLAN'
+        const businessEntityId = Number(props.workflowEntityId ?? props.plan.id ?? 0)
+        if (Number.isFinite(businessEntityId) && businessEntityId > 0) {
+          const response = await getWorkflowInstanceDetailByBusiness(
+            businessEntityType,
+            businessEntityId
+          )
+          if (
+            requestSeq === state.planWorkflowDetailRequestSeq.value &&
+            response.success &&
+            response.data &&
+            applyWorkflowDetail(response.data)
+          ) {
+            return
+          }
+        }
+
+        const workflowInstanceId = Number(props.plan.workflowInstanceId ?? 0)
+        if (Number.isFinite(workflowInstanceId) && workflowInstanceId > 0) {
+          const response = await getWorkflowInstanceDetail(String(workflowInstanceId))
+          if (
+            requestSeq === state.planWorkflowDetailRequestSeq.value &&
+            response.success &&
+            response.data &&
+            applyWorkflowDetail(response.data)
+          ) {
+            return
+          }
+        }
+
+        if (requestSeq === state.planWorkflowDetailRequestSeq.value) {
+          state.planWorkflowDetail.value = null
+        }
+
+        const shouldRetryActiveDetail =
+          options.retryActive && (ignoredTerminalDetail || isActivePlanStatus())
+        if (!shouldRetryActiveDetail || attempt >= maxAttempts - 1) {
           return
         }
-      }
 
-      const businessEntityType = props.workflowEntityType || 'PLAN'
-      const businessEntityId = Number(props.workflowEntityId ?? props.plan.id ?? 0)
-      if (Number.isFinite(businessEntityId) && businessEntityId > 0) {
-        const response = await getWorkflowInstanceDetailByBusiness(
-          businessEntityType,
-          businessEntityId
-        )
-        if (
-          requestSeq === state.planWorkflowDetailRequestSeq.value &&
-          response.success &&
-          response.data &&
-          state.matchesExpectedWorkflowCode(response.data.flowCode)
-        ) {
-          state.planWorkflowDetail.value = response.data
-          return
-        }
-      }
-
-      const workflowInstanceId = Number(props.plan.workflowInstanceId ?? 0)
-      if (Number.isFinite(workflowInstanceId) && workflowInstanceId > 0) {
-        const response = await getWorkflowInstanceDetail(String(workflowInstanceId))
-        if (
-          requestSeq === state.planWorkflowDetailRequestSeq.value &&
-          response.success &&
-          response.data &&
-          state.matchesExpectedWorkflowCode(response.data.flowCode)
-        ) {
-          state.planWorkflowDetail.value = response.data
-          return
-        }
-      }
-
-      if (requestSeq === state.planWorkflowDetailRequestSeq.value) {
-        state.planWorkflowDetail.value = null
+        await waitForWorkflowRetry(delayMs)
       }
     } catch (error) {
       if (requestSeq === state.planWorkflowDetailRequestSeq.value) {
@@ -818,9 +876,53 @@ export function useApprovalProgressWorkflow({
     state.selectedPlanReportSnapshotLoading.value = false
   }
 
+  async function refreshPlanWorkflowContext(
+    options: { retryActive?: boolean } = {}
+  ): Promise<void> {
+    await loadRelatedPlanReportSummary()
+    await loadPlanWorkflowDetail({ retryActive: options.retryActive })
+    await loadWorkflowDefinitionPreview()
+    await ensureWorkflowRelatedAvatarsLoaded()
+    await loadPlanWorkflowHistoryCards()
+  }
+
+  const handleApprovalStateRefresh = (event?: Event) => {
+    if (!props.modelValue || !props.showPlanApprovals) {
+      return
+    }
+
+    const source = String(
+      (event as CustomEvent<{ source?: string }> | undefined)?.detail?.source || ''
+    )
+    const retryActive = source.includes('plan-submit') || isActivePlanStatus()
+
+    state.historyInstanceDetailCache.value = {}
+    state.selectedHistoryInstanceId.value = null
+    state.selectedHistoryInstanceDetail.value = null
+    state.selectedHistoryInstanceDetailLoading.value = false
+    void loadPendingPlanApprovals()
+    void refreshPlanWorkflowContext({ retryActive })
+  }
+
+  onMounted(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    window.addEventListener(APPROVAL_STATE_REFRESH_EVENT, handleApprovalStateRefresh)
+  })
+
+  onUnmounted(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    window.removeEventListener(APPROVAL_STATE_REFRESH_EVENT, handleApprovalStateRefresh)
+  })
+
   watch(
     () => props.modelValue,
-    val => {
+    async val => {
       if (val) {
         state.activeTab.value = props.showPlanApprovals
           ? state.isPlanPendingApproval.value || state.hasRelatedPlanReportActiveWorkflow.value
@@ -835,11 +937,7 @@ export function useApprovalProgressWorkflow({
           void ensureSubmitterNameLoaded(props.plan?.submittedBy, props.plan?.createdByName)
         }
         void loadPendingPlanApprovals()
-        void loadPlanWorkflowDetail()
-        void loadRelatedPlanReportSummary()
-        void loadWorkflowDefinitionPreview()
-        void ensureWorkflowRelatedAvatarsLoaded()
-        void loadPlanWorkflowHistoryCards()
+        await refreshPlanWorkflowContext()
       } else {
         state.selectedHistoryInstanceId.value = null
         state.selectedHistoryInstanceDetail.value = null
@@ -852,6 +950,14 @@ export function useApprovalProgressWorkflow({
   watch(
     () => props.initialPlanWorkflowDetail,
     detail => {
+      if (detail && shouldIgnoreWorkflowDetail(detail)) {
+        state.planWorkflowDetail.value = null
+        if (props.modelValue) {
+          void loadPlanWorkflowDetail({ retryActive: true })
+        }
+        return
+      }
+
       state.planWorkflowDetail.value = detail ?? null
     }
   )
@@ -872,7 +978,7 @@ export function useApprovalProgressWorkflow({
       props.secondaryWorkflowEntityType,
       props.secondaryWorkflowEntityId
     ],
-    ([
+    async ([
       showPlanApprovals,
       planId,
       ,
@@ -898,11 +1004,7 @@ export function useApprovalProgressWorkflow({
       }
 
       state.planWorkflowDetail.value = null
-      void loadPlanWorkflowDetail()
-      void loadRelatedPlanReportSummary()
-      void loadWorkflowDefinitionPreview()
-      void ensureWorkflowRelatedAvatarsLoaded()
-      void loadPlanWorkflowHistoryCards()
+      await refreshPlanWorkflowContext()
     },
     { immediate: true }
   )
@@ -940,12 +1042,6 @@ export function useApprovalProgressWorkflow({
       if (!props.modelValue || !props.showPlanApprovals) {
         return
       }
-
-      state.planWorkflowDetail.value = null
-      void loadPlanWorkflowDetail()
-      void loadWorkflowDefinitionPreview()
-      void ensureWorkflowRelatedAvatarsLoaded()
-      void loadPlanWorkflowHistoryCards()
 
       if (state.hasRelatedPlanReportActiveWorkflow.value) {
         state.activeTab.value = 'pending-plans'
@@ -988,6 +1084,7 @@ export function useApprovalProgressWorkflow({
     loadSelectedHistoryInstanceDetail,
     loadWorkflowDefinitionPreview,
     openPlanApprovalDetails,
+    refreshPlanWorkflowContext,
     refreshPlanApprovalAfterMutation
   }
 }

@@ -38,23 +38,21 @@
           <div class="message-title">{{ message.title }}</div>
           <div class="message-content">{{ message.content }}</div>
 
-          <div v-if="message.currentStepName || message.senderDisplay" class="message-extra">
+          <div v-if="isApprovalType(message)" class="message-extra approval-meta">
+            <span v-if="getApprovalCurrentStepDisplay(message)">
+              当前环节：{{ getApprovalCurrentStepDisplay(message) }}
+            </span>
+            <span v-if="getApprovalDepartmentDisplay(message)">
+              审批中部门：{{ getApprovalDepartmentDisplay(message) }}
+            </span>
+            <span v-if="getApprovalRouteDisplay(message)">
+              审批流向：{{ getApprovalRouteDisplay(message) }}
+            </span>
+          </div>
+
+          <div v-else-if="message.currentStepName || message.senderDisplay" class="message-extra">
             <span v-if="message.currentStepName">当前环节：{{ message.currentStepName }}</span>
             <span v-if="message.senderDisplay">来源：{{ message.senderDisplay }}</span>
-          </div>
-
-          <div
-            v-if="message.bizType === 'APPROVAL_TODO' && getApprovalDepartmentDisplay(message)"
-            class="message-extra approval-department"
-          >
-            <span>审批中部门：{{ getApprovalDepartmentDisplay(message) }}</span>
-          </div>
-
-          <div
-            v-if="message.bizType === 'APPROVAL_TODO' && getApprovalRouteDisplay(message)"
-            class="message-extra approval-route"
-          >
-            <span>审批流向：{{ getApprovalRouteDisplay(message) }}</span>
           </div>
 
           <div class="message-actions">
@@ -77,6 +75,11 @@
 <script setup lang="ts">
 import { formatDateTime } from '@/shared/lib/utils'
 import type { Message } from '@/shared/types'
+import {
+  getApprovalCurrentStepDisplay,
+  getApprovalDepartmentDisplay,
+  getApprovalRouteDisplay
+} from './approvalMessageDisplay'
 
 interface Props {
   messages: Message[]
@@ -186,27 +189,10 @@ const getRelativeTime = (date: Date): string => {
   return formatDateTime(date)
 }
 
-const getMetadataText = (message: Message, key: string): string => {
-  const value = message.metadata?.[key]
-  return typeof value === 'string' ? value.trim() : ''
-}
-
-const getApprovalDepartmentDisplay = (message: Message): string => {
-  const sourceOrgName = getMetadataText(message, 'sourceOrgName')
-  const targetOrgName = getMetadataText(message, 'targetOrgName')
-  return targetOrgName || sourceOrgName || message.senderDisplay || ''
-}
-
-const getApprovalRouteDisplay = (message: Message): string => {
-  const sourceOrgName = getMetadataText(message, 'sourceOrgName')
-  const targetOrgName = getMetadataText(message, 'targetOrgName')
-
-  if (sourceOrgName && targetOrgName) {
-    return `${sourceOrgName} -> ${targetOrgName}`
-  }
-
-  return sourceOrgName || targetOrgName || ''
-}
+const isApprovalType = (message: Message): boolean =>
+  message.bizType === 'APPROVAL_TODO' ||
+  message.bizType === 'APPROVAL_RESULT' ||
+  message.type === 'approval'
 
 const handleMessageClick = (message: Message) => {
   emit('view', message)
@@ -328,6 +314,12 @@ const viewDetails = (message: Message) => {
   margin-bottom: 12px;
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+.message-extra.approval-meta {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
 }
 
 .message-actions {

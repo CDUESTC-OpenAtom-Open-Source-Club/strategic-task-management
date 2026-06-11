@@ -68,6 +68,7 @@ export function useDashboardView(props: DashboardViewProps) {
   let benchmarkChartInstance: echarts.ECharts | null = null
   const radarChartRef = ref<HTMLElement | null>(null)
   const benchmarkChartRef = ref<HTMLElement | null>(null)
+  const benchmarkSectionRef = ref<HTMLElement | null>(null)
 
   // 学院看板图表实例
   let collegeChartInstance: echarts.ECharts | null = null
@@ -1028,6 +1029,13 @@ export function useDashboardView(props: DashboardViewProps) {
   const handleAlertClick = (level: 'severe' | 'moderate' | 'normal') => {
     filterForm.value.alertLevel = level
     applyFilters()
+  }
+
+  const handleSummaryDrillClick = () => {
+    window.scrollTo({
+      top: document.documentElement.scrollHeight,
+      behavior: 'smooth'
+    })
   }
 
   // 面包屑导航
@@ -2345,6 +2353,7 @@ export function useDashboardView(props: DashboardViewProps) {
     availableFunctionalDepts,
     baseDelayedTasks,
     benchmarkChartRef,
+    benchmarkSectionRef,
     benchmarkData,
     canViewAllDepartments,
     collegeBarData,
@@ -2376,6 +2385,7 @@ export function useDashboardView(props: DashboardViewProps) {
     getStatusClass,
     getStatusText,
     handleAlertClick,
+    handleSummaryDrillClick,
     handleBackToColleges,
     handleBackToDepts,
     handleBreadcrumbNavigate,

@@ -49,7 +49,10 @@ import {
 } from '@/shared/lib/utils/indicatorStatus'
 import { getPlanStatusDisplay, normalizePlanStatus } from '@/features/task/lib'
 import { ApprovalProgressDrawer } from '@/features/approval'
-import { canCurrentUserHandleWorkflowApproval } from '@/features/approval/lib'
+import {
+  canCurrentUserHandleWorkflowApproval,
+  notifyApprovalStateRefresh
+} from '@/features/approval/lib'
 import { useApprovalRouteAutopen } from '@/features/approval/lib'
 import { useApprovalStore } from '@/features/approval/model/store'
 import _MilestoneList from '@/features/milestone/ui/MilestoneList.vue'
@@ -71,7 +74,9 @@ import {
 } from '@/features/plan/lib/indicatorWorkflow'
 import type {
   WorkflowDefinitionPreviewResponse,
-  WorkflowInstanceDetailResponse
+  WorkflowHistoryItem,
+  WorkflowInstanceDetailResponse,
+  WorkflowTaskResponse
 } from '@/features/workflow/api/types'
 
 export interface StrategicTaskViewProps {
@@ -227,37 +232,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
   }
 
-  const ensureInitialSelectedDepartment = (departments: string[]): void => {
-    if (departments.length === 0 || selectedDepartment.value) {
-      return
-    }
-
-    const persistedDepartment = readPersistedSelectedDepartment()
-    const matchedPersistedDepartment = departments.find(
-      dept => normalizeDepartmentName(dept) === persistedDepartment
-    )
-
-    if (matchedPersistedDepartment) {
-      selectedDepartment.value = matchedPersistedDepartment
-      persistSelectedDepartment(matchedPersistedDepartment)
-      return
-    }
-
-    selectedDepartment.value = departments[0] ?? ''
-    if (selectedDepartment.value) {
-      persistSelectedDepartment(selectedDepartment.value)
-    }
-  }
-
-  // 初始化选中部门 - 默认选中第一个职能部门
-  watch(
-    functionalDepartments,
-    newDeps => {
-      ensureInitialSelectedDepartment(newDeps)
-    },
-    { immediate: true }
-  )
-
   const departmentIdNameMap = computed(() => {
     const map = new Map<string, string>()
     orgStore.departments.forEach(dept => {
@@ -298,6 +272,45 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     })
     return map
   })
+
+  const resolveDepartmentIdByName = (departmentName?: string | null): number | null => {
+    const normalized = normalizeDepartmentName(departmentName)
+    if (!normalized) {
+      return null
+    }
+    return departmentNameIdMap.value.get(normalized) ?? null
+  }
+
+  const ensureInitialSelectedDepartment = (departments: string[]): void => {
+    if (departments.length === 0 || selectedDepartment.value) {
+      return
+    }
+
+    const persistedDepartment = readPersistedSelectedDepartment()
+    const matchedPersistedDepartment = departments.find(
+      dept => normalizeDepartmentName(dept) === persistedDepartment
+    )
+
+    if (matchedPersistedDepartment) {
+      selectedDepartment.value = matchedPersistedDepartment
+      persistSelectedDepartment(matchedPersistedDepartment)
+      return
+    }
+
+    selectedDepartment.value = departments[0] ?? ''
+    if (selectedDepartment.value) {
+      persistSelectedDepartment(selectedDepartment.value)
+    }
+  }
+
+  // 初始化选中部门 - 默认选中第一个职能部门
+  watch(
+    functionalDepartments,
+    newDeps => {
+      ensureInitialSelectedDepartment(newDeps)
+    },
+    { immediate: true }
+  )
 
   const resolvePlanYear = (plan: Record<string, unknown>): number | null => {
     const explicitYear = plan?.cycle?.year ?? plan?.year
@@ -1670,14 +1683,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     return Number(cycleId)
   }
 
-  const resolveDepartmentIdByName = (departmentName?: string | null): number | null => {
-    const normalized = normalizeDepartmentName(departmentName)
-    if (!normalized) {
-      return null
-    }
-    return departmentNameIdMap.value.get(normalized) ?? null
-  }
-
   const canCurrentUserSubmitCurrentPlan = computed(() => {
     const plan = currentPlan.value as
       | (typeof currentPlan.value & {
@@ -1867,9 +1872,137 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     return status === 'DISTRIBUTED'
   })
 
+  const normalizeWorkflowRuntimeValue = (value: unknown): string =>
+    String(value || '')
+      .trim()
+      .toUpperCase()
+
+  const isSubmitLikeWorkflowTask = (task: WorkflowTaskResponse | null | undefined): boolean => {
+    const stepNo = Number(task?.stepNo ?? NaN)
+    if (Number.isFinite(stepNo) && stepNo === 1) {
+      return true
+    }
+
+    const stepType = normalizeWorkflowRuntimeValue(task?.stepType)
+    if (stepType === 'SUBMIT' || stepType === 'START') {
+      return true
+    }
+
+    const taskText = normalizeWorkflowRuntimeValue(
+      [task?.taskKey, task?.taskName, task?.currentStepName].filter(Boolean).join(' ')
+    )
+    return (
+      taskText.includes('SUBMIT') ||
+      taskText.includes('START') ||
+      taskText.includes('提交') ||
+      taskText.includes('发起')
+    )
+  }
+
+  const isSubmitLikeWorkflowHistoryItem = (
+    item: WorkflowHistoryItem | null | undefined
+  ): boolean => {
+    const stepText = normalizeWorkflowRuntimeValue(
+      [item?.taskName, item?.stepName].filter(Boolean).join(' ')
+    )
+    return (
+      stepText.includes('SUBMIT') ||
+      stepText.includes('START') ||
+      stepText.includes('提交') ||
+      stepText.includes('发起')
+    )
+  }
+
+  const isCompletedWorkflowTask = (task: WorkflowTaskResponse): boolean => {
+    const status = normalizeWorkflowRuntimeValue(task.status)
+    return ['APPROVED', 'COMPLETED', 'PASSED'].includes(status) || Boolean(task.approvedAt)
+  }
+
+  const isWorkflowHistoryDecision = (item: WorkflowHistoryItem): boolean => {
+    const action = normalizeWorkflowRuntimeValue(item.action)
+    return action.includes('APPROVE') || action.includes('PASS') || action.includes('REJECT')
+  }
+
+  const resolvePreviousCompletedWorkflowTask = (
+    pendingTask: WorkflowTaskResponse,
+    tasks: WorkflowTaskResponse[]
+  ): WorkflowTaskResponse | null => {
+    const pendingStepNo = Number(pendingTask.stepNo ?? NaN)
+    if (!Number.isFinite(pendingStepNo)) {
+      return null
+    }
+
+    return (
+      tasks
+        .filter(task => {
+          const taskStepNo = Number(task.stepNo ?? NaN)
+          return (
+            Number.isFinite(taskStepNo) &&
+            taskStepNo < pendingStepNo &&
+            isCompletedWorkflowTask(task)
+          )
+        })
+        .sort((left, right) => {
+          const leftStepNo = Number(left.stepNo ?? Number.MIN_SAFE_INTEGER)
+          const rightStepNo = Number(right.stepNo ?? Number.MIN_SAFE_INTEGER)
+          if (leftStepNo !== rightStepNo) {
+            return rightStepNo - leftStepNo
+          }
+          return String(right.approvedAt || right.createdTime || '').localeCompare(
+            String(left.approvedAt || left.createdTime || '')
+          )
+        })[0] || null
+    )
+  }
+
+  const resolveLatestWorkflowHistoryDecision = (
+    history: WorkflowHistoryItem[]
+  ): WorkflowHistoryItem | null => {
+    return history.filter(isWorkflowHistoryDecision).at(-1) || null
+  }
+
+  const isPlanPreviousNodeSubmitterWithdrawStage = computed(() => {
+    const detail = preloadedPlanWorkflowDetail.value
+    if (!detail) {
+      return true
+    }
+
+    const tasks = Array.isArray(detail.tasks) ? detail.tasks : []
+    const pendingTask = currentPendingPlanWorkflowTask.value
+    if (tasks.length > 0 && !pendingTask) {
+      return false
+    }
+
+    if (pendingTask && isSubmitLikeWorkflowTask(pendingTask)) {
+      return false
+    }
+
+    if (pendingTask) {
+      const previousTask = resolvePreviousCompletedWorkflowTask(pendingTask, tasks)
+      if (previousTask) {
+        return isSubmitLikeWorkflowTask(previousTask)
+      }
+    }
+
+    const history = Array.isArray(detail.history) ? detail.history : []
+    const latestHistoryDecision = resolveLatestWorkflowHistoryDecision(history)
+    if (latestHistoryDecision) {
+      return isSubmitLikeWorkflowHistoryItem(latestHistoryDecision)
+    }
+
+    return true
+  })
+
+  const hasPlanWorkflowNodeEvidence = computed(() => {
+    const detail = preloadedPlanWorkflowDetail.value
+    const hasTaskEvidence = Array.isArray(detail?.tasks) && detail.tasks.length > 0
+    const hasHistoryEvidence = Array.isArray(detail?.history) && detail.history.length > 0
+    return hasTaskEvidence || hasHistoryEvidence
+  })
+
   // 判断 Plan 是否可以撤回
-  // 统一以后端 workflow snapshot 的 canWithdraw 为准。
-  // 业务口径：填报人提交后，只要下一个审批人仍未处理，填报人就还能撤回。
+  // 业务口径：只允许“上一个已完成节点是填报/提交节点”时撤回。
+  // 上一个节点一旦变成审批人节点，后续审批中即使后端 canWithdraw 仍为 true，前端也必须置灰。
   // 撤回权限只跟当前部门填报人走，不在前端额外放宽跨部门管理权限。
   const canWithdrawPlan = computed(() => {
     const status = currentPlanStatus.value
@@ -1883,11 +2016,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       return false
     }
 
-    return (
-      (status === 'PENDING' || ['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(workflowStatus)) &&
-      isCurrentUserReporter.value &&
-      Boolean(canWithdrawFlag)
-    )
+    const isPendingWorkflow =
+      status === 'PENDING' || ['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(workflowStatus)
+    const isSubmitterWithdrawStage = isPlanPreviousNodeSubmitterWithdrawStage.value
+    const isWorkflowNodeWithdrawable = hasPlanWorkflowNodeEvidence.value
+      ? isSubmitterWithdrawStage
+      : Boolean(canWithdrawFlag)
+
+    return isPendingWorkflow && isCurrentUserReporter.value && isWorkflowNodeWithdrawable
   })
 
   // 判断当前页面指标是否已进入“不可编辑”的流程阶段
@@ -2333,6 +2469,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       canWithdraw: nextCanWithdraw
     }
 
+    if (target === 'submitted') {
+      preloadedPlanWorkflowDetail.value = null
+      return
+    }
+
     if (preloadedPlanWorkflowDetail.value) {
       preloadedPlanWorkflowDetail.value = {
         ...preloadedPlanWorkflowDetail.value,
@@ -2366,11 +2507,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         comment: approvalSubmitComment.value.trim() || undefined
       })
       applyLocalPlanWorkflowUiPatch('submitted')
+      notifyApprovalStateRefresh({ source: 'strategic-task-plan-submit-start' })
       await waitForPlanWorkflowReady()
       await refreshCurrentDepartmentView({ force: true })
       await refreshApprovalCenterLiveView()
       await preloadApprovalWorkflowDetail()
       await loadPendingPlanApprovalCount()
+      notifyApprovalStateRefresh({ source: 'strategic-task-plan-submit' })
       handleCloseApprovalSetupDialog()
       ElMessage.success('已发起整体计划审批')
     } catch (error) {
@@ -2556,6 +2699,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       'indicator.list',
       'task.list',
       'plan.detail',
+      'workflow.todo',
+      'workflow.detail',
+      'workflow.instances',
+      'workflow.statistics',
       'dashboard.overview',
       buildQueryKey('task', 'list', { year: timeContext.currentYear })
     ])
@@ -2576,6 +2723,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       'task.list',
       'task.scope',
       'plan.detail',
+      'workflow.todo',
+      'workflow.detail',
+      'workflow.instances',
+      'workflow.statistics',
       'dashboard.overview',
       buildQueryKey('task', 'list', { year: timeContext.currentYear })
     ]
@@ -4218,16 +4369,40 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     await syncCurrentPlanReportSummaries({ force: true })
   }
 
+  function normalizeWorkflowRuntimeStatus(value: unknown): string {
+    return String(value || '')
+      .trim()
+      .toUpperCase()
+  }
+
+  function isActiveApprovalWorkflowDetail(
+    detail: WorkflowInstanceDetailResponse | null | undefined
+  ): boolean {
+    const status = normalizeWorkflowRuntimeStatus(detail?.status)
+    if (['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(status)) {
+      return true
+    }
+
+    if (
+      ['WITHDRAWN', 'CANCELLED', 'REJECTED', 'RETURNED', 'APPROVED', 'DISTRIBUTED'].includes(status)
+    ) {
+      return false
+    }
+
+    return false
+  }
+
   async function waitForPlanWorkflowReady(
     options: { maxAttempts?: number; delayMs?: number } = {}
   ): Promise<void> {
-    const maxAttempts = options.maxAttempts ?? 6
-    const delayMs = options.delayMs ?? 400
+    const maxAttempts = options.maxAttempts ?? 16
+    const delayMs = options.delayMs ?? 500
 
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       await preloadApprovalWorkflowDetail()
 
       const detail = preloadedPlanWorkflowDetail.value
+      const isActiveDetail = isActiveApprovalWorkflowDetail(detail)
       const hasPendingTask =
         Array.isArray(detail?.tasks) &&
         detail.tasks.some(
@@ -4240,7 +4415,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         detail?.currentTaskId || detail?.currentApproverId || detail?.currentStepName
       )
 
-      if (hasPendingTask || hasWorkflowPointer) {
+      if (isActiveDetail && (hasPendingTask || hasWorkflowPointer)) {
         return
       }
 
@@ -4253,6 +4428,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         await sleep(delayMs)
       }
     }
+
+    preloadedPlanWorkflowDetail.value = null
   }
 
   async function preloadApprovalWorkflowDetail(): Promise<void> {
@@ -4989,6 +5166,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
           try {
             await refreshTaskPageAfterIndicatorMutation()
             await refreshApprovalCenterLiveView()
+            notifyApprovalStateRefresh({ source: 'strategic-task-plan-withdraw' })
           } catch (refreshError) {
             logger.warn('[StrategicTaskView] Plan 撤回成功，但刷新指标列表失败:', refreshError)
             ElMessage.warning('Plan 已撤回成功，但指标列表刷新失败，请手动刷新页面确认最新状态')

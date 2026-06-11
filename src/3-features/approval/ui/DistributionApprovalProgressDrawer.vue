@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Document, User, Timer, Right } from '@element-plus/icons-vue'
 import ApprovalHistory from './ApprovalHistory.vue'
 import CustomApprovalFlow from './CustomApprovalFlow.vue'
@@ -111,6 +112,7 @@ const {
   loadWorkflowDefinitionPreview,
   mapWorkflowTaskStatusToNodeStatus,
   matchesExpectedWorkflowCode,
+  navigateToPendingPlanApproval,
   normalizeDisplayName,
   normalizeStepMatchKey,
   normalizeWorkflowAction,
@@ -119,6 +121,7 @@ const {
   openPlanApprovalDetails,
   parsePositiveUserId,
   pendingCount,
+  pendingPlanApprovalPreviewItems,
   pendingPlanApprovals,
   permissionUtil,
   planApprovalsLoading,
@@ -168,6 +171,35 @@ const {
   workflowNodes,
   workflowUserAvatarCache
 } = useDistributionApprovalProgressDrawer(props, emit)
+
+const isPlaceholderPlanApprovalName = (value: unknown): boolean => {
+  const normalized = normalizeDisplayName(value).replace(/\s+/g, ' ')
+  return /^Plan\s*#?\s*\d+$/i.test(normalized) || /^计划\s*#?\s*\d+$/i.test(normalized)
+}
+
+const normalizeApprovalDepartmentName = (value: unknown): string => {
+  return normalizeDisplayName(value)
+    .replace(/[（(［[].*?[）)］\]]/g, '')
+    .trim()
+}
+
+const displayedCurrentPlanApprovalName = computed(() => {
+  const rawName = normalizeDisplayName(currentPlanApprovalSummary.value?.planName)
+  if (rawName && !isPlaceholderPlanApprovalName(rawName)) {
+    return rawName
+  }
+
+  if (props.approvalType === 'submission') {
+    const departmentName =
+      normalizeApprovalDepartmentName(props.departmentName) ||
+      normalizeApprovalDepartmentName(currentPlanApprovalSummary.value?.submitterName) ||
+      '当前部门'
+
+    return `${departmentName}上报审批`
+  }
+
+  return rawName || '当前计划'
+})
 </script>
 
 <template>
@@ -183,13 +215,33 @@ const {
       <div class="drawer-header">
         <h3 class="drawer-title">{{ showPlanApprovals ? '审批中心' : '审批进度' }}</h3>
         <div class="stats-tags">
-          <el-tag
+          <el-popover
             v-if="showPlanApprovals && scopedPendingPlanCount > 0"
-            type="warning"
-            size="small"
+            trigger="hover"
+            placement="bottom-end"
+            :width="320"
+            popper-class="pending-plan-approval-popper"
           >
-            当前计划审批中: {{ scopedPendingPlanCount }}
-          </el-tag>
+            <template #reference>
+              <el-tag type="warning" size="small" class="pending-plan-approval-tag">
+                其他计划审批中: {{ scopedPendingPlanCount }}
+              </el-tag>
+            </template>
+
+            <div class="pending-plan-approval-preview">
+              <div class="pending-plan-approval-preview__title">其他计划还在审批中</div>
+              <button
+                v-for="item in pendingPlanApprovalPreviewItems"
+                :key="item.key"
+                type="button"
+                class="pending-plan-approval-preview__item"
+                @click="navigateToPendingPlanApproval(item)"
+              >
+                <span class="pending-plan-approval-preview__name">{{ item.title }}</span>
+                <span class="pending-plan-approval-preview__route">{{ item.routeDisplay }}</span>
+              </button>
+            </div>
+          </el-popover>
           <el-tag v-if="!hasPlanWorkflowData && pendingCount > 0" type="warning" size="small">
             审批中: {{ pendingCount }}
           </el-tag>
@@ -234,7 +286,7 @@ const {
                   <div class="plan-info">
                     <el-icon class="plan-icon"><Document /></el-icon>
                     <div class="info-text">
-                      <div class="plan-name">{{ currentPlanApprovalSummary.planName }}</div>
+                      <div class="plan-name">{{ displayedCurrentPlanApprovalName }}</div>
                       <div class="plan-year">
                         {{
                           hasPlanWorkflowData
@@ -466,7 +518,7 @@ const {
               historicalPlanApprovalItems.find(
                 item => String(item.instanceId) === selectedHistoryInstanceId
               )?.routeTitle ||
-              currentPlanApprovalSummary?.planName ||
+              displayedCurrentPlanApprovalName ||
               '当前计划'
             }}
           </div>

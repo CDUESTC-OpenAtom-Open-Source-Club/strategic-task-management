@@ -546,7 +546,15 @@ const currentDistributionImportCycleId = computed(() => {
   return Number.isFinite(numericCycleId) && numericCycleId > 0 ? numericCycleId : null
 })
 
+// 导入入口暂不在页面显示，保留原有实现，后续恢复时只需切回 true。
+const distributionImportEnabled = false
+const distributionImportDisabledReason = '导入功能暂不启用'
+
 const openDistributionImportDialog = () => {
+  if (!distributionImportEnabled) {
+    ElMessage.warning(distributionImportDisabledReason)
+    return
+  }
   if (!selectedCollege.value || !currentDistributionImportOrgId.value) {
     ElMessage.warning('请先选择要导入的学院')
     return
@@ -737,7 +745,14 @@ const handleDistributionImportCommitted = async () => {
                 <el-icon><Download /></el-icon>
                 导出
               </el-button>
-              <el-button :icon="Upload" @click="openDistributionImportDialog">导入</el-button>
+              <!-- 导入入口当前不用，保留代码；恢复时将 distributionImportEnabled 改为 true。 -->
+              <el-button
+                v-if="distributionImportEnabled"
+                :icon="Upload"
+                @click="openDistributionImportDialog"
+              >
+                导入
+              </el-button>
               <!-- 
                 按钮显示逻辑：
                 - 草稿态且暂无指标 → 只显示"新增指标"
@@ -1461,6 +1476,16 @@ const handleDistributionImportCommitted = async () => {
           }}</el-descriptions-item>
           <el-descriptions-item label="当前进度">
             {{ currentDetailIndicator.progress || 0 }}%
+          </el-descriptions-item>
+          <el-descriptions-item label="填报进度">
+            <template v-if="shouldShowReportedProgress(currentDetailIndicator)">
+              <el-tooltip content="已提交但尚未审批通过的填报进度" placement="top">
+                <span style="color: #e6a23c; font-weight: 600"
+                  >{{ getDisplayedReportedProgress(currentDetailIndicator) }}%</span
+                >
+              </el-tooltip>
+            </template>
+            <span v-else style="color: #909399">暂无填报</span>
           </el-descriptions-item>
           <el-descriptions-item label="责任部门">
             {{ currentDetailIndicator.responsibleDept || '未分配' }}

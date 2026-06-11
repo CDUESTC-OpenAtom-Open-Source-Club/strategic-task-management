@@ -914,6 +914,16 @@ const handleExportIndicatorList = async () => {
           <el-descriptions-item label="当前进度"
             >{{ currentDetail.progress || 0 }}%</el-descriptions-item
           >
+          <el-descriptions-item label="填报进度">
+            <template v-if="shouldShowReportedProgress(currentDetail)">
+              <el-tooltip content="已提交但尚未审批通过的填报进度" placement="top">
+                <span style="color: #e6a23c; font-weight: 600"
+                  >{{ getDisplayedReportedProgress(currentDetail) }}%</span
+                >
+              </el-tooltip>
+            </template>
+            <span v-else style="color: #909399">暂无填报</span>
+          </el-descriptions-item>
           <el-descriptions-item v-if="shouldShowDetailResponsibleDept" label="责任部门">
             {{ currentDetail.responsibleDept || '未分配' }}
           </el-descriptions-item>

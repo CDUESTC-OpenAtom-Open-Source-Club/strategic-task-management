@@ -10,18 +10,23 @@ import {
   requestGlobalDataRefresh,
   type GlobalDataRefreshDetail
 } from '@/shared/lib/dataFreshness'
+import { useWebSocketNotifications } from '@/shared/api/websocket'
 
-const GLOBAL_DATA_REFRESH_INTERVAL_MS = 3 * 60 * 1000
+// WS 连接时轮询 2 分钟兜底，WS 断开时加速到 30 秒
+const POLLING_INTERVAL_WS_CONNECTED = 2 * 60 * 1000
+const POLLING_INTERVAL_WS_DISCONNECTED = 30 * 1000
 const ATTENTION_REFRESH_COOLDOWN_MS = 45 * 1000
 let globalDataRefreshTimer: ReturnType<typeof setInterval> | null = null
 let approvalNotificationRefreshListener: EventListener | null = null
 let lastAttentionRefreshAt = 0
+let currentPollingInterval = POLLING_INTERVAL_WS_DISCONNECTED
 
 export function useAppLayout() {
   const authStore = useAuthStore()
   const orgStore = useOrgStore()
   const messageStore = useMessageStore()
   const approvalStore = useApprovalStore()
+  const { isConnected } = useWebSocketNotifications()
 
   const isLoggedIn = computed(() => authStore.isAuthenticated)
   const currentUser = computed(() => authStore.user)
@@ -80,6 +85,33 @@ export function useAppLayout() {
     }
   }
 
+  /** 根据 WS 连接状态动态调整轮询间隔 */
+  const applyPollingInterval = () => {
+    const wsConnected = isConnected.value
+    const targetInterval = wsConnected
+      ? POLLING_INTERVAL_WS_CONNECTED
+      : POLLING_INTERVAL_WS_DISCONNECTED
+
+    if (targetInterval === currentPollingInterval && globalDataRefreshTimer) {
+      return // 无需变化
+    }
+
+    currentPollingInterval = targetInterval
+
+    // 重启定时器以应用新间隔
+    if (globalDataRefreshTimer) {
+      clearInterval(globalDataRefreshTimer)
+      globalDataRefreshTimer = null
+    }
+
+    globalDataRefreshTimer = setInterval(() => {
+      if (!authStore.isAuthenticated || document.hidden) {
+        return
+      }
+      requestGlobalDataRefresh({ source: 'heartbeat', silent: true })
+    }, currentPollingInterval)
+  }
+
   const startGlobalDataRefreshTimer = () => {
     if (globalDataRefreshTimer || typeof window === 'undefined') {
       return
@@ -90,7 +122,7 @@ export function useAppLayout() {
         return
       }
       requestGlobalDataRefresh({ source: 'heartbeat', silent: true })
-    }, GLOBAL_DATA_REFRESH_INTERVAL_MS)
+    }, currentPollingInterval)
   }
 
   const stopGlobalDataRefreshTimer = () => {
@@ -144,6 +176,13 @@ export function useAppLayout() {
       }
     }
     stopGlobalDataRefreshTimer()
+  })
+
+  // 监听 WS 连接状态变化，动态调整轮询间隔
+  watch(isConnected, () => {
+    if (globalDataRefreshTimer) {
+      applyPollingInterval()
+    }
   })
 
   watch(

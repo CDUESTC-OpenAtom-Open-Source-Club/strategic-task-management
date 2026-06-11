@@ -42,7 +42,34 @@ const timeContext = useTimeContextStore()
 
 const { tabs, activeTab, handleTabClick } = useNavigation(viewingRole)
 
-const { unreadCount, handleNotificationClick, Bell } = useNotificationCenter()
+const {
+  unreadCount,
+  pendingApprovalPreviewMessages,
+  hasPendingApprovalPreviewMessages,
+  notificationPreviewLoading,
+  handleNotificationHover,
+  handleNotificationClick,
+  formatNotificationTime,
+  resolveNotificationApprovalRoute,
+  Bell
+} = useNotificationCenter()
+
+// 铃铛摇摆 + Badge 动画（参考 notification-V3 Lottie 关键帧）
+const bellAnimating = ref(false)
+let bellAnimTimer: ReturnType<typeof setTimeout> | null = null
+watch(unreadCount, (newVal, oldVal) => {
+  if (newVal !== oldVal && oldVal !== undefined) {
+    if (bellAnimTimer) clearTimeout(bellAnimTimer)
+    bellAnimating.value = false
+    nextTick(() => {
+      bellAnimating.value = true
+      // Lottie 动画总时长约 1.67s + 余量
+      bellAnimTimer = setTimeout(() => {
+        bellAnimating.value = false
+      }, 1800)
+    })
+  }
+})
 const { approvalCenterVisible, approvalCenterContext, closeApprovalCenter } = useApprovalCenter()
 
 const approvalCenterPlanId = computed(() => {
@@ -229,21 +256,80 @@ const handleDropdownCommand = async (command: string) => {
           </div>
 
           <!-- Notification badge -->
-          <el-badge
-            :value="unreadCount"
-            :max="99"
-            :hidden="unreadCount <= 0"
-            class="notification-badge"
+          <el-popover
+            trigger="hover"
+            placement="bottom-end"
+            :width="360"
+            popper-class="notification-preview-popper"
+            @before-enter="handleNotificationHover"
           >
-            <el-button
-              :icon="Bell"
-              circle
-              :aria-label="
-                unreadCount > 0 ? `消息中心，当前有 ${unreadCount} 条未处理消息` : '消息中心'
-              "
-              @click="handleNotificationClick"
-            />
-          </el-badge>
+            <template #reference>
+              <el-badge
+                :value="unreadCount"
+                :max="99"
+                :hidden="unreadCount <= 0"
+                class="notification-badge"
+                :class="{ 'bell-active': bellAnimating }"
+              >
+                <el-button
+                  circle
+                  :aria-label="
+                    unreadCount > 0 ? `消息中心，当前有 ${unreadCount} 条未处理消息` : '消息中心'
+                  "
+                  @click="handleNotificationClick"
+                >
+                  <el-icon :class="{ 'bell-swing': bellAnimating }">
+                    <Bell />
+                  </el-icon>
+                </el-button>
+              </el-badge>
+            </template>
+
+            <div class="notification-preview">
+              <div class="notification-preview__header">
+                <span>待审批通知</span>
+                <span>最多 3 条</span>
+              </div>
+
+              <div v-if="notificationPreviewLoading" class="notification-preview__empty">
+                加载中...
+              </div>
+              <div
+                v-else-if="!hasPendingApprovalPreviewMessages"
+                class="notification-preview__empty"
+              >
+                暂无待审批通知
+              </div>
+              <div v-else class="notification-preview__list">
+                <button
+                  v-for="message in pendingApprovalPreviewMessages"
+                  :key="message.id"
+                  type="button"
+                  class="notification-preview__item"
+                  @click="handleNotificationClick"
+                >
+                  <span class="notification-preview__title">{{ message.title }}</span>
+                  <span class="notification-preview__content">{{ message.content }}</span>
+                  <span class="notification-preview__meta">
+                    <span class="notification-preview__route">
+                      {{ resolveNotificationApprovalRoute(message) || '待补充' }}
+                    </span>
+                    <span class="notification-preview__time">
+                      {{ formatNotificationTime(message.createdAt) }}
+                    </span>
+                  </span>
+                </button>
+              </div>
+
+              <button
+                type="button"
+                class="notification-preview__footer"
+                @click="handleNotificationClick"
+              >
+                查看全部消息
+              </button>
+            </div>
+          </el-popover>
 
           <!-- User dropdown menu -->
           <el-dropdown @command="handleDropdownCommand">
@@ -504,10 +590,20 @@ const handleDropdownCommand = async (command: string) => {
 }
 
 .notification-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
   margin-right: 8px;
+  flex: 0 0 36px;
 }
 
 .notification-badge :deep(.el-button) {
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.2);
   color: #fff;
@@ -520,6 +616,168 @@ const handleDropdownCommand = async (command: string) => {
 .notification-badge :deep(.el-badge__content) {
   background: #dc2626;
   pointer-events: none;
+}
+
+.notification-badge :deep(.el-badge__content.is-fixed) {
+  top: 0;
+  right: 0;
+  transform: translate(35%, -35%);
+  transform-origin: center;
+}
+
+@keyframes bell-swing-anim {
+  0% {
+    transform: rotate(0deg);
+  }
+  14% {
+    transform: rotate(18deg);
+  }
+  28% {
+    transform: rotate(-18deg);
+  }
+  46% {
+    transform: rotate(18deg);
+  }
+  62% {
+    transform: rotate(-9deg);
+  }
+  76% {
+    transform: rotate(5deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+/* 铃铛摇摆动画 */
+.bell-swing {
+  display: inline-flex;
+  transform-origin: top center;
+  animation: bell-swing-anim 1.7s cubic-bezier(0.45, 0.05, 0.55, 0.95);
+}
+
+/* 防止铃铛摇摆时旋转溢出导致按钮尺寸变化、红点偏移 */
+.notification-badge.bell-active :deep(.el-button) {
+  overflow: hidden;
+}
+
+:global(.notification-preview-popper) {
+  padding: 0;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 6px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+}
+
+.notification-preview {
+  overflow: hidden;
+  background: #fff;
+  border-radius: 6px;
+}
+
+.notification-preview__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e5e7eb;
+  color: #111827;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.notification-preview__header span:last-child {
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.notification-preview__list {
+  display: flex;
+  flex-direction: column;
+}
+
+.notification-preview__item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 0;
+  border-bottom: 1px solid #f1f5f9;
+  background: #fff;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.notification-preview__item:hover {
+  background: #f8fafc;
+}
+
+.notification-preview__title {
+  overflow: hidden;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notification-preview__content {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #4b5563;
+  font-size: 12px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.notification-preview__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #6b7280;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.notification-preview__route {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notification-preview__time {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.notification-preview__empty {
+  padding: 24px 14px;
+  color: #6b7280;
+  font-size: 13px;
+  text-align: center;
+}
+
+.notification-preview__footer {
+  width: 100%;
+  padding: 10px 14px;
+  border: 0;
+  border-top: 1px solid #e5e7eb;
+  background: #f9fafb;
+  color: #1d4ed8;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.notification-preview__footer:hover {
+  background: #eef2ff;
 }
 
 .user-avatar {
