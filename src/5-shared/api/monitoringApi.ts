@@ -55,6 +55,8 @@ export interface AlertStats {
   }
 }
 
+export type ManualAlertSeverity = 'INFO' | 'WARNING' | 'CRITICAL' | null
+
 type ApiEnvelope<T> = {
   code?: number
   message?: string
@@ -134,6 +136,41 @@ async function requestUnclosedAlerts(path: string): Promise<AlertEvent[] | null>
  * 预警告警 API
  */
 export const alertApi = {
+  async getManualAlertLevels(indicatorIds: number[]): Promise<Record<string, ManualAlertSeverity>> {
+    const ids = [...new Set(indicatorIds.filter(id => Number.isFinite(id) && id > 0))]
+    if (ids.length === 0) {
+      return {}
+    }
+
+    const response = await apiClient.get<
+      ApiEnvelope<Record<string, string>> | Record<string, string>
+    >(`/alerts/manual-levels?indicatorIds=${ids.join(',')}`)
+    const payload = unwrapMockResponse(
+      response as ApiEnvelope<Record<string, string>> | Record<string, string>
+    )
+
+    return Object.fromEntries(
+      Object.entries(payload || {}).map(([indicatorId, severity]) => {
+        const normalized = String(severity || '').toUpperCase()
+        return [
+          indicatorId,
+          normalized === 'INFO' || normalized === 'WARNING' || normalized === 'CRITICAL'
+            ? (normalized as Exclude<ManualAlertSeverity, null>)
+            : null
+        ]
+      })
+    )
+  },
+
+  async setManualAlertLevel(
+    indicatorId: number | string,
+    severity: ManualAlertSeverity
+  ): Promise<void> {
+    await apiClient.put(`/alerts/indicator/${indicatorId}/manual-level`, {
+      severity: severity ?? 'NONE'
+    })
+  },
+
   /**
    * 获取告警统计
    * 使用 OpenAPI 告警统计接口

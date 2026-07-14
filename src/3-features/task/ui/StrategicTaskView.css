@@ -1262,6 +1262,17 @@
   opacity: 0.8;
 }
 
+.manual-alert-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.manual-alert-select {
+  width: 118px;
+}
+
 .progress-suffix {
   font-size: 14px;
   color: var(--text-main);

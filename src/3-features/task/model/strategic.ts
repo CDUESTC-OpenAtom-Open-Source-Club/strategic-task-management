@@ -11,6 +11,7 @@ import type { StrategicIndicator, StrategicTask } from '@/shared/types'
 import { indicatorApi } from '@/features/indicator/api'
 import { milestoneApi } from '@/entities/milestone/api/milestoneApi'
 import { strategicApi } from '@/features/task/api/strategicApi'
+import { alertApi, type ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import { logger } from '@/shared/lib/utils/logger'
 import { useOrgStore } from '@/features/organization/model/store'
 import { withExponentialRetry } from '@/shared/api/wrappers'
@@ -126,6 +127,16 @@ function getBoolean(record: Record<string, unknown>, ...keys: string[]): boolean
     }
   }
   return undefined
+}
+
+function normalizeManualAlertSeverity(value: unknown): ManualAlertSeverity {
+  const normalized = String(value || '')
+    .trim()
+    .toUpperCase()
+  if (normalized === 'INFO' || normalized === 'WARNING' || normalized === 'CRITICAL') {
+    return normalized
+  }
+  return null
 }
 
 function hasApiData<T>(response: { success?: boolean; code?: number; data?: T | null }) {
@@ -326,6 +337,7 @@ export function toStrategicIndicator(raw: unknown): StrategicIndicator {
     // type2 已从后端库表移除，前端仅做展示兼容，不再作为业务判断依据
     type2: (getString(item, 'type2', 'indicatorType2') || '基础性') as '发展性' | '基础性',
     progress: getNumber(item, 'progress'),
+    manualAlertSeverity: normalizeManualAlertSeverity(item.manualAlertSeverity),
     createTime: createdAt,
     weight: getNumber(item, 'weight', 'weightPercent'),
     remark: getString(item, 'remark'),
@@ -654,6 +666,28 @@ function normalizeIndicatorDepartments(
   }))
 }
 
+async function hydrateManualAlertLevels(list: StrategicIndicator[]): Promise<StrategicIndicator[]> {
+  const indicatorIds = list.map(item => Number(item.id)).filter(id => Number.isFinite(id) && id > 0)
+
+  if (indicatorIds.length === 0) {
+    return list
+  }
+
+  try {
+    const levels = await alertApi.getManualAlertLevels(indicatorIds)
+    return list.map(item => {
+      const severity = levels[String(item.id)] ?? levels[Number(item.id)]
+      return {
+        ...item,
+        manualAlertSeverity: normalizeManualAlertSeverity(severity)
+      }
+    })
+  } catch (alertError) {
+    logger.warn('[Strategic Store] 手动预警等级加载失败，跳过预警等级回显', alertError)
+    return list
+  }
+}
+
 function resolveDepartmentIdByName(
   departments: Department[],
   value: string | undefined | null
@@ -779,6 +813,7 @@ export const useStrategicStore = defineStore('strategic', () => {
           const taskLookup = buildTaskLookup(tasksResponse.data)
           const aligned = applyTaskMetadata(normalized, taskLookup)
           const hydrated = await hydrateIndicatorMilestones(aligned)
+          const alertHydrated = await hydrateManualAlertLevels(hydrated)
 
           // 统一部门字段：ID/别名 -> 标准部门名（含合并名称），避免跨页面筛选不命中
           const orgStore = useOrgStore()
@@ -790,7 +825,7 @@ export const useStrategicStore = defineStore('strategic', () => {
             }
           }
           const resolveDept = buildDepartmentResolver(orgStore.departments)
-          indicators.value = normalizeIndicatorDepartments(hydrated, resolveDept)
+          indicators.value = normalizeIndicatorDepartments(alertHydrated, resolveDept)
 
           dataSource.value = 'api'
           logger.debug(`[Strategic Store] Loaded ${indicators.value.length} indicators`)
@@ -922,6 +957,26 @@ export const useStrategicStore = defineStore('strategic', () => {
       return response
     } catch (err) {
       logger.error('[Strategic Store] Failed to delete indicator:', err)
+      throw err
+    }
+  }
+
+  async function updateManualAlertLevel(id: string, severity: ManualAlertSeverity) {
+    try {
+      if (!/^\d+$/.test(id)) {
+        throw new Error(`指标 ${id} 尚未持久化，无法设置预警等级`)
+      }
+
+      await alertApi.setManualAlertLevel(id, severity)
+      const index = indicators.value.findIndex(i => String(i.id) === String(id))
+      if (index !== -1) {
+        indicators.value[index] = {
+          ...indicators.value[index],
+          manualAlertSeverity: severity
+        }
+      }
+    } catch (err) {
+      logger.error('[Strategic Store] Failed to update manual alert level:', err)
       throw err
     }
   }
@@ -1204,6 +1259,7 @@ export const useStrategicStore = defineStore('strategic', () => {
     patchIndicator,
     patchIndicatorsByTaskId,
     updateIndicator,
+    updateManualAlertLevel,
     deleteIndicator,
     withdrawIndicator,
     addStatusAuditEntry,

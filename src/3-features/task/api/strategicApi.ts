@@ -255,6 +255,7 @@ function convertIndicatorVOToStrategicIndicator(vo: IndicatorVO): StrategicIndic
     type2:
       (vo.type2 as '发展性' | '基础性') ?? (vo.level === 'STRAT_TO_FUNC' ? '发展性' : '基础性'),
     progress: vo.progress ?? calculateProgress(milestones),
+    manualAlertSeverity: vo.manualAlertSeverity ?? null,
     createTime: new Date(vo.createdAt).toLocaleDateString('zh-CN'),
     weight: vo.weightPercent,
     remark: vo.remark || '',

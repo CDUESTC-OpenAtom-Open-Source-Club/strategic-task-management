@@ -18,15 +18,12 @@ import {
   buildAttachmentCell,
   buildExportFileName,
   exportRowsToExcel,
-  formatMilestones,
   formatProgress,
-  hasReachedMilestone,
-  MILESTONE_REACHED_TEXT_COLOR,
   type ExcelExportColumn,
   type ExcelRowTone
 } from '@/shared/lib/export/excel'
-import IndicatorMilestoneTimeline from '@/features/indicator/ui/IndicatorMilestoneTimeline.vue'
 import { ApprovalProgressDrawer } from '@/features/approval'
+import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import {
   useIndicatorListView,
   type IndicatorListViewProps
@@ -312,12 +309,13 @@ const indicatorListExportColumns: ExcelExportColumn<StrategicIndicator>[] = [
     width: 24,
     getValue: row => formatProgress(getDisplayProgress(row), getDisplayedReportedProgress(row))
   },
-  { header: '填报说明', width: 28, getValue: row => row.pendingRemark || '-' },
   {
-    header: '里程碑',
-    width: 34,
-    getValue: row => formatMilestones(getSortedMilestones(row.milestones))
+    header: '预警等级判定',
+    width: 18,
+    align: 'center',
+    getValue: row => getManualAlertLabel(row.manualAlertSeverity)
   },
+  { header: '填报说明', width: 28, getValue: row => row.pendingRemark || '-' },
   {
     header: '附件',
     width: 42,
@@ -348,10 +346,29 @@ const getIndicatorListExportRowTone = (row: StrategicIndicator): ExcelRowTone =>
   return 'default'
 }
 
-const getIndicatorListExportRowTextColor = (row: StrategicIndicator): string | undefined =>
-  hasReachedMilestone(getDisplayProgress(row), getSortedMilestones(row.milestones))
-    ? MILESTONE_REACHED_TEXT_COLOR
-    : undefined
+const manualAlertOptions: Array<{
+  label: string
+  value: ManualAlertSeverity
+  type: 'success' | 'info' | 'warning' | 'danger'
+}> = [
+  { label: '无预警', value: null, type: 'success' },
+  { label: '一般滞后', value: 'INFO', type: 'info' },
+  { label: '严重滞后', value: 'WARNING', type: 'warning' },
+  { label: '重大滞后', value: 'CRITICAL', type: 'danger' }
+]
+
+const getManualAlertOption = (severity?: ManualAlertSeverity) =>
+  manualAlertOptions.find(option => option.value === (severity ?? null)) || manualAlertOptions[0]
+
+const getManualAlertLabel = (severity?: ManualAlertSeverity) => getManualAlertOption(severity).label
+
+const getManualAlertTagType = (severity?: ManualAlertSeverity) =>
+  getManualAlertOption(severity).type
+
+const getMonthlyExpectedProgress = () => {
+  const month = new Date().getMonth() + 1
+  return Math.min(100, Math.round((month / 12) * 100))
+}
 
 const handleExportIndicatorList = async () => {
   const rows = getIndicatorListExportRows()
@@ -368,8 +385,7 @@ const handleExportIndicatorList = async () => {
         sheetName: scopeName,
         rows,
         columns: indicatorListExportColumns,
-        getRowTone: getIndicatorListExportRowTone,
-        getRowTextColor: getIndicatorListExportRowTextColor
+        getRowTone: getIndicatorListExportRowTone
       },
       buildExportFileName('指标填报与管理', scopeName)
     )
@@ -675,49 +691,6 @@ const handleExportIndicatorList = async () => {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column label="里程碑" width="120" align="center">
-                <template #default="{ row }">
-                  <el-popover
-                    placement="left"
-                    :width="320"
-                    trigger="hover"
-                    :disabled="!row.milestones?.length"
-                  >
-                    <template #reference>
-                      <div class="milestone-cell">
-                        <span class="milestone-count">
-                          {{ row.milestones?.length || 0 }} 个里程碑
-                        </span>
-                      </div>
-                    </template>
-                    <div class="milestone-popover">
-                      <div class="milestone-popover-title">里程碑列表</div>
-                      <div
-                        v-for="(ms, idx) in getMilestonesTooltip(row)"
-                        :key="ms.id"
-                        class="milestone-item"
-                        :class="{ 'milestone-completed': (row.progress || 0) >= ms.progress }"
-                      >
-                        <div class="milestone-item-header">
-                          <span class="milestone-index">{{ idx + 1 }}.</span>
-                          <span class="milestone-name">{{ ms.name || '未命名' }}</span>
-                          <el-icon
-                            v-if="(row.progress || 0) >= ms.progress"
-                            class="milestone-check-icon"
-                          >
-                            <Check />
-                          </el-icon>
-                        </div>
-                        <div class="milestone-item-info">
-                          <span>预期: {{ ms.expectedDate || '未设置' }}</span>
-                          <span>进度: {{ ms.progress }}%</span>
-                        </div>
-                      </div>
-                      <div v-if="!row.milestones?.length" class="milestone-empty">暂无里程碑</div>
-                    </div>
-                  </el-popover>
-                </template>
-              </el-table-column>
               <el-table-column prop="progress" label="进度" width="150" align="center">
                 <template #default="{ row }">
                   <div class="progress-cell">
@@ -734,6 +707,13 @@ const handleExportIndicatorList = async () => {
                       >
                     </el-tooltip>
                   </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="预警等级判定" width="150" align="center">
+                <template #default="{ row }">
+                  <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
+                    {{ getManualAlertLabel(row.manualAlertSeverity) }}
+                  </el-tag>
                 </template>
               </el-table-column>
               <el-table-column
@@ -924,6 +904,11 @@ const handleExportIndicatorList = async () => {
             </template>
             <span v-else style="color: #909399">暂无填报</span>
           </el-descriptions-item>
+          <el-descriptions-item label="预警等级判定">
+            <el-tag :type="getManualAlertTagType(currentDetail.manualAlertSeverity)" size="small">
+              {{ getManualAlertLabel(currentDetail.manualAlertSeverity) }}
+            </el-tag>
+          </el-descriptions-item>
           <el-descriptions-item v-if="shouldShowDetailResponsibleDept" label="责任部门">
             {{ currentDetail.responsibleDept || '未分配' }}
           </el-descriptions-item>
@@ -954,19 +939,6 @@ const handleExportIndicatorList = async () => {
             </button>
           </div>
         </div>
-
-        <!-- 里程碑信息 -->
-        <div
-          v-if="currentDetail.milestones && currentDetail.milestones.length > 0"
-          class="milestone-section"
-        >
-          <div class="divider"></div>
-          <h4>里程碑节点</h4>
-          <IndicatorMilestoneTimeline
-            :milestones="currentDetail.milestones"
-            :current-progress="currentDetail.progress"
-          />
-        </div>
       </div>
     </el-drawer>
 
@@ -990,20 +962,9 @@ const handleExportIndicatorList = async () => {
             <span class="info-value highlight">{{ currentReportIndicator.progress || 0 }}%</span>
           </div>
           <div class="info-row">
-            <span class="info-label">目标值：</span>
-            <el-tooltip
-              v-if="nearestMilestone"
-              :content="nearestMilestone.name || '里程碑'"
-              placement="top"
-            >
-              <span class="info-value milestone-target">
-                {{ nearestMilestone.targetProgress }}%（{{
-                  formatMilestoneDate(nearestMilestone.deadline)
-                }}）
-              </span>
-            </el-tooltip>
-            <span v-else class="info-value"
-              >{{ currentReportIndicator.targetValue }}{{ currentReportIndicator.unit }}</span
+            <span class="info-label">月度参考：</span>
+            <span class="info-value monthly-target"
+              >本月建议进度 {{ getMonthlyExpectedProgress() }}%</span
             >
           </div>
         </div>
@@ -1015,12 +976,12 @@ const handleExportIndicatorList = async () => {
           <el-form-item label="填报进度" required>
             <el-input-number
               v-model="reportForm.newProgress"
-              :min="currentReportIndicator.progress || 0"
+              :min="0"
               :max="100"
               :step="5"
               style="width: 200px"
             />
-            <span class="form-hint">%（如果低于或等于真实进度，保存时会提示错误）</span>
+            <span class="form-hint">%（按本月实际完成情况填写）</span>
           </el-form-item>
           <el-form-item label="进度备注" required>
             <el-input

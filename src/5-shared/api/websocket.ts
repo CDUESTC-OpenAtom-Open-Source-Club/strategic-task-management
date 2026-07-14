@@ -6,6 +6,7 @@
 
 import { ref, computed } from 'vue'
 import { logger } from '@/shared/lib/utils/logger'
+import { tokenManager } from '@/shared/lib/utils/tokenManager'
 import { WS_BASE_URL } from '@/shared/config/api'
 
 // Notification types matching backend
@@ -55,7 +56,13 @@ let consecutiveFailureCount = 0
  */
 function getWebSocketUrl(): string {
   const userId = getUserId()
-  return `${WS_BASE_URL}/ws/notifications?userId=${encodeURIComponent(userId)}`
+  const token = tokenManager.getAccessToken()
+  const params = new URLSearchParams()
+  params.set('userId', userId)
+  if (token) {
+    params.set('token', token)
+  }
+  return `${WS_BASE_URL}/ws/notifications?${params.toString()}`
 }
 
 function logConnectionError(message: string, error?: unknown): void {
@@ -229,6 +236,12 @@ export function connectWebSocket(): void {
     return
   }
 
+  if (!tokenManager.getAccessToken()) {
+    shouldReconnect = false
+    logger.warn('[WebSocket] No access token, skipping connection')
+    return
+  }
+
   connectionState.value = 'connecting'
   shouldReconnect = true
   handshakeRejected = false
@@ -244,7 +257,7 @@ export function connectWebSocket(): void {
 
     if (import.meta.env.DEV) {
       // eslint-disable-next-line no-console
-      console.log('[WebSocket] Connecting to:', url)
+      console.log('[WebSocket] Connecting to:', url.replace(/([?&]token=)[^&]+/, '$1***'))
     }
   } catch (error) {
     connectionState.value = 'error'
