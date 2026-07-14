@@ -1,5 +1,5 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
-import type { DashboardData, UserRole, Indicator } from '@/shared/types'
+import type { AlertSummary, DashboardData, UserRole, Indicator } from '@/shared/types'
 import { useStrategicStore } from '@/features/task/model/strategic'
 import { dashboardApi } from '@/features/dashboard/api/dashboardApi'
 import { useDashboardStore } from '@/features/dashboard/model/store'
@@ -264,6 +264,78 @@ export function useDashboardView(props: DashboardViewProps) {
     return `${total}/${total}`
   }
 
+  const getIndicatorIdentity = (indicator: {
+    indicatorId?: number | string
+    id?: number | string
+  }): number | null => {
+    const rawId = indicator.indicatorId ?? indicator.id
+    const id = Number(rawId)
+    return Number.isFinite(id) && id > 0 ? id : null
+  }
+
+  const databaseAlertSeverityByIndicatorId = computed(() => {
+    const severityRank: Record<string, number> = {
+      INFO: 1,
+      MINOR: 1,
+      WARNING: 2,
+      MAJOR: 2,
+      CRITICAL: 3
+    }
+    const severityByIndicatorId = new Map<number, string>()
+
+    dashboardStore.unclosedAlerts.forEach(alert => {
+      const status = String(alert.status || '').toUpperCase()
+      if (status === 'CLOSED' || status === 'RESOLVED') {
+        return
+      }
+
+      const indicatorId = getIndicatorIdentity({
+        indicatorId: alert.indicatorId,
+        id: alert.entityId
+      })
+      if (!indicatorId) {
+        return
+      }
+
+      const severity = String(alert.severity || '').toUpperCase()
+      const currentSeverity = severityByIndicatorId.get(indicatorId)
+      if (
+        !currentSeverity ||
+        (severityRank[severity] || 0) > (severityRank[currentSeverity] || 0)
+      ) {
+        severityByIndicatorId.set(indicatorId, severity)
+      }
+    })
+
+    return severityByIndicatorId
+  })
+
+  const getDatabaseAlertStatus = (indicator: {
+    indicatorId?: number | string
+    id?: number | string
+  }): IndicatorStatus | null => {
+    const indicatorId = getIndicatorIdentity(indicator)
+    if (!indicatorId) {
+      return null
+    }
+
+    const severity = databaseAlertSeverityByIndicatorId.value.get(indicatorId)
+    if (severity === 'CRITICAL') {
+      return 'delayed'
+    }
+    if (severity === 'WARNING' || severity === 'MAJOR') {
+      return 'warning'
+    }
+    return null
+  }
+
+  const getUnifiedIndicatorStatus = (
+    indicator: Indicator,
+    fallbackStatus: IndicatorStatus
+  ): IndicatorStatus => {
+    return getDatabaseAlertStatus(indicator) ?? fallbackStatus
+  }
+
   // 选中部门的指标列表
   const selectedDeptIndicators = computed(() => {
     if (!selectedBenchmarkDept.value) {
@@ -283,7 +355,7 @@ export function useDashboardView(props: DashboardViewProps) {
       })
       .map(i => ({
         ...i,
-        status: getIndicatorStatus(i),
+        status: getUnifiedIndicatorStatus(i, getIndicatorStatus(i)),
         targetProgress: getCurrentTargetProgress(i),
         milestoneIndex: getCurrentMilestoneIndex(i)
       }))
@@ -332,7 +404,7 @@ export function useDashboardView(props: DashboardViewProps) {
       })
       .map(i => ({
         ...i,
-        status: getIndicatorStatus(i)
+        status: getUnifiedIndicatorStatus(i, getIndicatorStatus(i))
       }))
 
     return {
@@ -358,7 +430,7 @@ export function useDashboardView(props: DashboardViewProps) {
       })
       .map(i => ({
         ...i,
-        status: getIndicatorStatusAtMonth(i, month, year)
+        status: getUnifiedIndicatorStatus(i, getIndicatorStatusAtMonth(i, month, year))
       }))
 
     return {
@@ -432,7 +504,7 @@ export function useDashboardView(props: DashboardViewProps) {
       })
       .map(i => ({
         ...i,
-        status: getIndicatorStatusAtMonth(i, month, currentYear),
+        status: getUnifiedIndicatorStatus(i, getIndicatorStatusAtMonth(i, month, currentYear)),
         targetProgress: getCurrentTargetProgress(i),
         milestoneIndex: getCurrentMilestoneIndex(i)
       }))
@@ -488,7 +560,7 @@ export function useDashboardView(props: DashboardViewProps) {
       })
       .map(i => ({
         ...i,
-        status: getIndicatorStatusAtMonth(i, month, year)
+        status: getUnifiedIndicatorStatus(i, getIndicatorStatusAtMonth(i, month, year))
       }))
 
     // 按学院分组统计
@@ -546,7 +618,10 @@ export function useDashboardView(props: DashboardViewProps) {
         })
         .map(i => ({
           ...i,
-          status: getIndicatorStatusAtMonth(i, collegeSelectedMonth.value, currentYear)
+          status: getUnifiedIndicatorStatus(
+            i,
+            getIndicatorStatusAtMonth(i, collegeSelectedMonth.value, currentYear)
+          )
         }))
 
       // 按学院分组统计（所有来源部门）
@@ -610,7 +685,7 @@ export function useDashboardView(props: DashboardViewProps) {
         })
         .map(i => ({
           ...i,
-          status: getIndicatorStatusAtMonth(i, month, currentYear)
+          status: getUnifiedIndicatorStatus(i, getIndicatorStatusAtMonth(i, month, currentYear))
         }))
 
       // 职能部门视角：只看自己下发的
@@ -654,7 +729,7 @@ export function useDashboardView(props: DashboardViewProps) {
       })
       .map(i => ({
         ...i,
-        status: getIndicatorStatusAtMonth(i, month, currentYear),
+        status: getUnifiedIndicatorStatus(i, getIndicatorStatusAtMonth(i, month, currentYear)),
         targetProgress: getCurrentTargetProgress(i),
         milestoneIndex: getCurrentMilestoneIndex(i)
       }))
@@ -719,7 +794,7 @@ export function useDashboardView(props: DashboardViewProps) {
       })
       .map(i => ({
         ...i,
-        status: getIndicatorStatusAtMonth(i, month, currentYear)
+        status: getUnifiedIndicatorStatus(i, getIndicatorStatusAtMonth(i, month, currentYear))
       }))
 
     // 根据角色应用部门筛选
@@ -907,7 +982,11 @@ export function useDashboardView(props: DashboardViewProps) {
     try {
       startLoading()
       clearError()
-      await strategicStore.loadIndicatorsByYear(timeContext.currentYear)
+      await Promise.all([
+        strategicStore.loadIndicatorsByYear(timeContext.currentYear),
+        dashboardStore.fetchAlertStats(),
+        dashboardStore.fetchUnclosedAlerts()
+      ])
     } catch (err) {
       setError(err instanceof Error ? err.message : '重新加载失败')
       logger.error('[Dashboard] Failed to reload data:', err)
@@ -997,9 +1076,76 @@ export function useDashboardView(props: DashboardViewProps) {
   })
 
   // 从 store 计算仪表盘数据
+  const databaseAlertSummary = computed<AlertSummary | null>(() => {
+    const stats = dashboardStore.alertStatsData
+
+    if (stats) {
+      const countBySeverity = stats.countBySeverity || {
+        CRITICAL: 0,
+        WARNING: 0,
+        INFO: 0
+      }
+      const severe = Number(countBySeverity.CRITICAL || 0)
+      const moderate = Number(countBySeverity.WARNING || 0) + Number(countBySeverity.MAJOR || 0)
+      const normal = Number(countBySeverity.INFO || 0) + Number(countBySeverity.MINOR || 0)
+
+      return {
+        severe,
+        moderate,
+        normal,
+        total: stats.totalOpen || severe + moderate + normal
+      }
+    }
+
+    if (dashboardStore.unclosedAlerts.length > 0) {
+      return dashboardStore.unclosedAlerts.reduce<AlertSummary>(
+        (summary, alert) => {
+          const status = String(alert.status).toUpperCase()
+          if (status === 'CLOSED' || status === 'RESOLVED') {
+            return summary
+          }
+
+          summary.total += 1
+          const severity = String(alert.severity).toUpperCase()
+          if (severity === 'CRITICAL') {
+            summary.severe += 1
+          } else if (severity === 'WARNING' || severity === 'MAJOR') {
+            summary.moderate += 1
+          } else {
+            summary.normal += 1
+          }
+          return summary
+        },
+        {
+          severe: 0,
+          moderate: 0,
+          normal: 0,
+          total: 0
+        }
+      )
+    }
+
+    return null
+  })
+
   const dashboardData = computed<DashboardData>(() => {
     const indicators = dashboardStore.visibleIndicators
-    return buildDashboardSummary(indicators, selectedMonth.value, timeContext.currentYear)
+    const summary = buildDashboardSummary(indicators, selectedMonth.value, timeContext.currentYear)
+    const alertSummary = databaseAlertSummary.value
+
+    if (!alertSummary) {
+      return summary
+    }
+
+    return {
+      ...summary,
+      warningCount: alertSummary.severe + alertSummary.moderate,
+      alertIndicators: {
+        severe: alertSummary.severe,
+        moderate: alertSummary.moderate,
+        normal: alertSummary.normal
+      }
+    }
   })
 
   // 应用筛选
@@ -2292,6 +2438,7 @@ export function useDashboardView(props: DashboardViewProps) {
       if (strategicStore.dataSource !== 'api' || strategicStore.indicators.length === 0) {
         await strategicStore.loadIndicatorsByYear(timeContext.currentYear, { force: true })
       }
+      await Promise.all([dashboardStore.fetchAlertStats(), dashboardStore.fetchUnclosedAlerts()])
     } catch (err) {
       logger.error('[Dashboard] Initial load failed:', err)
     }

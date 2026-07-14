@@ -30,14 +30,15 @@ export interface WarningEvent {
  */
 export interface AlertEvent {
   id: number
+  indicatorId?: number
   ruleId: number
   ruleName: string
   entityType: string
   entityId: number
   entityName?: string
-  severity: 'CRITICAL' | 'MAJOR' | 'MINOR'
+  severity: 'CRITICAL' | 'WARNING' | 'INFO' | 'MAJOR' | 'MINOR'
   message: string
-  status: 'OPEN' | 'IN_PROGRESS' | 'CLOSED'
+  status: 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED'
   triggeredAt: string
   assigneeId?: number
   assigneeName?: string
@@ -50,8 +51,10 @@ export interface AlertStats {
   totalOpen: number
   countBySeverity: {
     CRITICAL: number
-    MAJOR: number
-    MINOR: number
+    WARNING: number
+    INFO: number
+    MAJOR?: number
+    MINOR?: number
   }
 }
 
@@ -73,12 +76,10 @@ const EMPTY_ALERT_STATS: AlertStats = {
   totalOpen: 0,
   countBySeverity: {
     CRITICAL: 0,
-    MAJOR: 0,
-    MINOR: 0
+    WARNING: 0,
+    INFO: 0
   }
 }
-
-const ALERTS_REMOTE_ENABLED = import.meta.env.VITE_ENABLE_ALERTS_API === 'true'
 
 const ALERTS_API_UNAVAILABLE_KEY = 'sism_alerts_api_unavailable'
 
@@ -176,10 +177,6 @@ export const alertApi = {
    * 使用 OpenAPI 告警统计接口
    */
   getStats: async () => {
-    if (!ALERTS_REMOTE_ENABLED) {
-      return EMPTY_ALERT_STATS
-    }
-
     if (alertsApiUnavailable) {
       return EMPTY_ALERT_STATS
     }
@@ -203,10 +200,6 @@ export const alertApi = {
    * 兼容 `/alerts/events/unclosed` 与 `/alerts/unresolved`
    */
   getUnclosedAlerts: async () => {
-    if (!ALERTS_REMOTE_ENABLED) {
-      return []
-    }
-
     if (alertsApiUnavailable) {
       return []
     }

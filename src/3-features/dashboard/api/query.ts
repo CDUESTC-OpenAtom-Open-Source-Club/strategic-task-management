@@ -7,10 +7,7 @@
 import { apiClient } from '@/shared/api/client'
 import { alertApi } from '@/shared/api/monitoringApi'
 import { buildQueryKey, fetchWithCache } from '@/shared/lib/utils/cache'
-import {
-  CACHE_TTL,
-  createShortMemoryPolicy
-} from '@/shared/lib/utils/cache-config'
+import { CACHE_TTL, createShortMemoryPolicy } from '@/shared/lib/utils/cache-config'
 import { logger } from '@/shared/lib/utils/logger'
 import type { DashboardData, DepartmentProgress, AlertSummary } from '@/shared/types'
 
@@ -19,9 +16,7 @@ const DASHBOARD_POLICY = createShortMemoryPolicy(CACHE_TTL.DASHBOARD, {
   tags: ['dashboard.overview']
 })
 
-function summarizeAlerts(
-  alerts: Array<{ severity?: string; status?: string }>
-): AlertSummary {
+function summarizeAlerts(alerts: Array<{ severity?: string; status?: string }>): AlertSummary {
   const summary: AlertSummary = {
     severe: 0,
     moderate: 0,
@@ -30,7 +25,8 @@ function summarizeAlerts(
   }
 
   alerts.forEach(alert => {
-    if (String(alert.status).toUpperCase() === 'CLOSED') {
+    const status = String(alert.status).toUpperCase()
+    if (status === 'CLOSED' || status === 'RESOLVED') {
       return
     }
 
@@ -38,7 +34,7 @@ function summarizeAlerts(
     const severity = String(alert.severity).toUpperCase()
     if (severity === 'CRITICAL') {
       summary.severe += 1
-    } else if (severity === 'MAJOR') {
+    } else if (severity === 'WARNING' || severity === 'MAJOR') {
       summary.moderate += 1
     } else {
       summary.normal += 1
