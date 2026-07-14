@@ -19,7 +19,9 @@ console.log('🔍 Checking FSD compliance...\n')
 
 features.forEach(feature => {
   const featurePath = path.join(featuresDir, feature)
-  if (!fs.statSync(featurePath).isDirectory()) {return}
+  if (!fs.statSync(featurePath).isDirectory()) {
+    return
+  }
 
   const hasApi = fs.existsSync(path.join(featurePath, 'api'))
   const hasModel = fs.existsSync(path.join(featurePath, 'model'))
