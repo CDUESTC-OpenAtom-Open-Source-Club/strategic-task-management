@@ -65,7 +65,7 @@ jobs:
   build-and-push:
     name: Build and Push
     needs: qa
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, frontend]
 
     steps:
       - name: Checkout code
@@ -78,30 +78,38 @@ jobs:
           echo "image=ghcr.io/${OWNER}/strategic-task-management" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GHCR_TOKEN}" | sudo docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
 
       - name: Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: |
-            ${{ steps.image.outputs.image }}:${{ github.sha }}
-            ${{ steps.image.outputs.image }}:main
-          build-args: |
-            VITE_API_BASE_URL=/api/v1
-            VITE_USE_MOCK=false
-            VITE_ENABLE_DEVTOOLS=false
-            VITE_LOG_LEVEL=warn
-            VITE_APP_COMMIT_HASH=${{ github.sha }}
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          set -euo pipefail
+          sudo docker build \
+            --file Dockerfile \
+            --build-arg VITE_API_BASE_URL=/api/v1 \
+            --build-arg VITE_USE_MOCK=false \
+            --build-arg VITE_ENABLE_DEVTOOLS=false \
+            --build-arg VITE_LOG_LEVEL=warn \
+            --build-arg VITE_APP_COMMIT_HASH="${GITHUB_SHA}" \
+            --tag "${IMAGE}:${GITHUB_SHA}" \
+            --tag "${IMAGE}:main" \
+            .
+          for tag in "${GITHUB_SHA}" main; do
+            for attempt in 1 2 3; do
+              if sudo docker push "${IMAGE}:${tag}"; then
+                break
+              fi
+              if [[ "${attempt}" == "3" ]]; then
+                exit 1
+              fi
+              sleep $((attempt * 5))
+            done
+          done
 
       - name: Trigger backend system deployment
         if: github.ref_name == 'main'
