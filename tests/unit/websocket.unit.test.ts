@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const loggerWarnMock = vi.fn()
 const loggerErrorMock = vi.fn()
+const getAccessTokenMock = vi.fn()
 
 vi.mock('@/shared/config/api', () => ({
   WS_BASE_URL: 'ws://localhost:8080'
@@ -11,6 +12,12 @@ vi.mock('@/shared/lib/utils/logger', () => ({
   logger: {
     warn: loggerWarnMock,
     error: loggerErrorMock
+  }
+}))
+
+vi.mock('@/shared/lib/utils/tokenManager', () => ({
+  tokenManager: {
+    getAccessToken: getAccessTokenMock
   }
 }))
 
@@ -40,6 +47,8 @@ describe('websocket notifications', () => {
     vi.resetModules()
     loggerWarnMock.mockReset()
     loggerErrorMock.mockReset()
+    getAccessTokenMock.mockReset()
+    getAccessTokenMock.mockReturnValue('test-token')
     MockWebSocket.instances = []
     vi.stubGlobal('WebSocket', MockWebSocket)
     localStorage.clear()
@@ -68,7 +77,7 @@ describe('websocket notifications', () => {
 
     expect(MockWebSocket.instances).toHaveLength(1)
     expect(MockWebSocket.instances[0].url).toBe(
-      'ws://localhost:8080/ws/notifications?userId=124'
+      'ws://localhost:8080/ws/notifications?userId=124&token=test-token'
     )
 
     const state = websocketModule.useWebSocketNotifications()
