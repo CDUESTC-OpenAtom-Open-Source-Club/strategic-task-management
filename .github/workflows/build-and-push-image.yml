@@ -87,12 +87,13 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push image
+      - name: Build image on GitHub runner
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          push: true
+          load: true
+          push: false
           tags: |
             ${{ steps.image.outputs.image }}:${{ github.sha }}
             ${{ steps.image.outputs.image }}:main
@@ -102,9 +103,72 @@ jobs:
             VITE_ENABLE_DEVTOOLS=false
             VITE_LOG_LEVEL=warn
             VITE_APP_COMMIT_HASH=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Publish image and create deployment artifact
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          set -euo pipefail
+          for tag in "${GITHUB_SHA}" main; do
+            for attempt in 1 2 3; do
+              if docker push "${IMAGE}:${tag}"; then
+                break
+              fi
+              if [[ "${attempt}" == "3" ]]; then
+                exit 1
+              fi
+              sleep $((attempt * 5))
+            done
+          done
+          docker save "${IMAGE}:${GITHUB_SHA}" "${IMAGE}:main" | gzip -1 > frontend-image.tar.gz
+
+      - name: Upload frontend image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-image-${{ github.sha }}
+          path: frontend-image.tar.gz
+          retention-days: 1
+          compression-level: 0
+
+  stage-on-server:
+    name: Stage Image on Server Runner
+    if: github.ref_name == 'main'
+    needs: build-and-push
+    runs-on: [self-hosted, Linux, X64, frontend]
+
+    steps:
+      - name: Normalize image name
+        id: image
+        run: |
+          OWNER="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          echo "image=ghcr.io/${OWNER}/strategic-task-management:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify self-hosted runner
+        run: |
+          set -euo pipefail
+          [[ "${RUNNER_ENVIRONMENT}" == "self-hosted" ]]
+          sudo -n true
+          sudo docker info >/dev/null
+
+      - name: Download frontend image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-image-${{ github.sha }}
+          path: ${{ runner.temp }}/frontend-image-${{ github.run_id }}
+
+      - name: Load frontend image on server runner
+        env:
+          FRONTEND_IMAGE: ${{ steps.image.outputs.image }}
+          ARTIFACT_DIR: ${{ runner.temp }}/frontend-image-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gzip -dc "${ARTIFACT_DIR}/frontend-image.tar.gz" | sudo docker load
+          sudo docker image inspect "${FRONTEND_IMAGE}" >/dev/null
+          rm -rf "${ARTIFACT_DIR}"
 
       - name: Trigger backend system deployment
-        if: github.ref_name == 'main'
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
         run: |
