@@ -51,6 +51,7 @@ const RESTRICTED_IMPORT_PATTERNS = [
   }
 ]
 const LARGE_VUE_FILE_THRESHOLD = 2500
+const LARGE_TYPESCRIPT_FILE_THRESHOLD = 2500
 const REPORT_LIMIT = 20
 const APPROVED_DIRECT_NETWORK_FILES = new Set([
   'src/5-shared/api/client.ts',
@@ -153,6 +154,19 @@ function scanLargeVueFiles(files) {
     .sort((left, right) => right.lineCount - left.lineCount)
 }
 
+function scanLargeTypeScriptFiles(files) {
+  return files
+    .filter(file => file.relativePath.endsWith('.ts') || file.relativePath.endsWith('.tsx'))
+    .map(file => {
+      const lineCount = fs.readFileSync(file.absolutePath, 'utf8').split('\n').length
+      return {
+        file: file.relativePath,
+        lineCount
+      }
+    })
+    .sort((left, right) => right.lineCount - left.lineCount)
+}
+
 function countDirectoryFiles(relativeDirPath) {
   const absoluteDirPath = path.join(projectRoot, relativeDirPath)
   if (!fs.existsSync(absoluteDirPath)) {
@@ -217,11 +231,12 @@ function printList(title, items, formatter = value => value) {
   }
 }
 
-function serializeBaseline(tsNoCheckFiles, oldImportViolations) {
+function serializeBaseline(tsNoCheckFiles, oldImportViolations, oversizedTypeScriptFiles) {
   return {
     generatedAt: new Date().toISOString(),
     tsNoCheckFiles,
-    oldImportViolations: oldImportViolations.map(item => `${item.patternId}::${item.file}`)
+    oldImportViolations: oldImportViolations.map(item => `${item.patternId}::${item.file}`),
+    oversizedTypeScriptFiles: oversizedTypeScriptFiles.map(item => item.file)
   }
 }
 
@@ -232,6 +247,10 @@ function main() {
   const oldImportViolations = scanOldImports(sourceFiles)
   const largeVueFiles = scanLargeVueFiles(sourceFiles)
   const oversizedVueFiles = largeVueFiles.filter(file => file.lineCount > LARGE_VUE_FILE_THRESHOLD)
+  const largeTypeScriptFiles = scanLargeTypeScriptFiles(sourceFiles)
+  const oversizedTypeScriptFiles = largeTypeScriptFiles.filter(
+    file => file.lineCount > LARGE_TYPESCRIPT_FILE_THRESHOLD
+  )
   const topLevelEntrypointCounts = OLD_ENTRYPOINT_DIRECTORIES.map(dirPath => ({
     directory: dirPath,
     fileCount: countDirectoryFiles(dirPath)
@@ -241,14 +260,18 @@ function main() {
 
   const baseline = fs.existsSync(baselinePath)
     ? readJson(baselinePath)
-    : { tsNoCheckFiles: [], oldImportViolations: [] }
+    : { tsNoCheckFiles: [], oldImportViolations: [], oversizedTypeScriptFiles: [] }
 
   const baselineTsNoCheckSet = new Set(baseline.tsNoCheckFiles || [])
   const baselineOldImportSet = new Set(baseline.oldImportViolations || [])
+  const baselineOversizedTypeScriptSet = new Set(baseline.oversizedTypeScriptFiles || [])
 
   const newTsNoCheckFiles = tsNoCheckFiles.filter(file => !baselineTsNoCheckSet.has(file))
   const newOldImportViolations = oldImportViolations.filter(
     item => !baselineOldImportSet.has(`${item.patternId}::${item.file}`)
+  )
+  const newOversizedTypeScriptFiles = oversizedTypeScriptFiles.filter(
+    item => !baselineOversizedTypeScriptSet.has(item.file)
   )
 
   console.log('Frontend architecture debt report')
@@ -258,10 +281,18 @@ function main() {
   console.log(
     `Oversized Vue files (>${LARGE_VUE_FILE_THRESHOLD} lines): ${oversizedVueFiles.length}`
   )
+  console.log(
+    `Oversized TypeScript files (>${LARGE_TYPESCRIPT_FILE_THRESHOLD} lines): ${oversizedTypeScriptFiles.length}`
+  )
 
   printList(
-    'Top oversized Vue files',
+    'Largest Vue files',
     largeVueFiles.slice(0, REPORT_LIMIT),
+    item => `${item.file} (${item.lineCount} lines)`
+  )
+  printList(
+    'Largest TypeScript files',
+    largeTypeScriptFiles.slice(0, REPORT_LIMIT),
     item => `${item.file} (${item.lineCount} lines)`
   )
   printList(
@@ -281,15 +312,28 @@ function main() {
     newOldImportViolations,
     item => `${item.file} -> ${item.label} (${item.count} matches)`
   )
+  printList(
+    'New oversized TypeScript files vs baseline',
+    newOversizedTypeScriptFiles,
+    item => `${item.file} (${item.lineCount} lines)`
+  )
 
   if (shouldUpdateBaseline) {
-    const updatedBaseline = serializeBaseline(tsNoCheckFiles, oldImportViolations)
+    const updatedBaseline = serializeBaseline(
+      tsNoCheckFiles,
+      oldImportViolations,
+      oversizedTypeScriptFiles
+    )
     fs.writeFileSync(baselinePath, `${JSON.stringify(updatedBaseline, null, 2)}\n`)
     console.log(`\nBaseline updated: ${toPosix(path.relative(projectRoot, baselinePath))}`)
     process.exit(0)
   }
 
-  if (newTsNoCheckFiles.length > 0 || newOldImportViolations.length > 0) {
+  if (
+    newTsNoCheckFiles.length > 0 ||
+    newOldImportViolations.length > 0 ||
+    newOversizedTypeScriptFiles.length > 0
+  ) {
     console.error('\nArchitecture debt baseline check failed.')
     console.error(
       'Remove the new debt or run the baseline update command after an approved review.'

@@ -526,6 +526,7 @@ export interface IndicatorVO {
   type?: 'QUANTITATIVE' | 'QUALITATIVE' | '定量' | '定性'
   progress?: number
   reportProgress?: number | null
+  manualAlertSeverity?: AlertSeverity | null
   hasCurrentMonthFill?: boolean
   ownerOrgId: number
   targetOrgId: number
@@ -580,6 +581,7 @@ export interface IndicatorCreateRequest {
   parentIndicatorId?: number
   ownerOrgId: number
   targetOrgId: number
+  cycleId?: number
   weightPercent: number
   sortOrder?: number
   remark?: string

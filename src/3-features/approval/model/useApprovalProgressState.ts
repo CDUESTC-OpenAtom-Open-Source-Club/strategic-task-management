@@ -126,6 +126,8 @@ export function useApprovalProgressState(
   const relatedPlanReportSummary = ref<PlanReportSnapshotSummary | null>(null)
   const selectedPlanReportSnapshot = ref<PlanReportSnapshotSummary | null>(null)
   const selectedPlanReportSnapshotLoading = ref(false)
+  const planReportProgressDrafts = ref<Record<string, number>>({})
+  const savingPlanReportProgressKey = ref<string | null>(null)
 
   const expectedWorkflowCodes = computed(() => {
     const rawCodes = Array.isArray(props.workflowCode) ? props.workflowCode : [props.workflowCode]
@@ -955,11 +957,32 @@ export function useApprovalProgressState(
     })
   })
 
+  function getPlanReportProgressEditKey(reportId: number | string, indicatorId: number | string) {
+    return `${reportId}:${indicatorId}`
+  }
+
+  function setPlanReportProgressDraft(
+    reportId: number | string | null,
+    indicatorId: number | string | null,
+    value: number | undefined
+  ) {
+    if (!reportId || !indicatorId || value === undefined) {
+      return
+    }
+
+    const key = getPlanReportProgressEditKey(reportId, indicatorId)
+    planReportProgressDrafts.value = {
+      ...planReportProgressDrafts.value,
+      [key]: Number(value)
+    }
+  }
+
   const displayedPlanReportIndicatorItems = computed(() => {
     const snapshot = displayedPlanReportSnapshot.value
     const indicatorDetails = Array.isArray(snapshot?.indicatorDetails)
       ? snapshot.indicatorDetails
       : []
+    const reportId = Number(snapshot?.id ?? NaN)
 
     return indicatorDetails.map((detail: PlanReportIndicatorDetailItem, index: number) => {
       const indicatorId = Number(detail?.indicatorId ?? NaN)
@@ -971,8 +994,14 @@ export function useApprovalProgressState(
         `指标${Number.isFinite(indicatorId) ? ` #${indicatorId}` : index + 1}`
       const type1 = normalizeDisplayName(matchedIndicator?.type1)
       const type2 = normalizeDisplayName(matchedIndicator?.type2)
+      const progressValue = Number(detail?.progress ?? NaN)
+      const editKey =
+        Number.isFinite(reportId) && Number.isFinite(indicatorId)
+          ? getPlanReportProgressEditKey(reportId, indicatorId)
+          : ''
 
       return {
+        reportId: Number.isFinite(reportId) ? reportId : null,
         indicatorId: Number.isFinite(indicatorId) ? indicatorId : null,
         indicatorName,
         indicatorType: [type1, type2].filter(Boolean).join(' / ') || '--',
@@ -983,9 +1012,22 @@ export function useApprovalProgressState(
         currentProgress: Number.isFinite(Number(matchedIndicator?.progress))
           ? `${Number(matchedIndicator?.progress)}%`
           : '--',
-        submittedProgress: Number.isFinite(Number(detail?.progress))
-          ? `${Number(detail?.progress)}%`
-          : '--',
+        submittedProgress: Number.isFinite(progressValue) ? `${progressValue}%` : '--',
+        submittedProgressValue: Number.isFinite(progressValue) ? progressValue : null,
+        submittedProgressDraft:
+          editKey && planReportProgressDrafts.value[editKey] !== undefined
+            ? planReportProgressDrafts.value[editKey]
+            : Number.isFinite(progressValue)
+              ? progressValue
+              : 0,
+        progressEditKey: editKey,
+        canEditSubmittedProgress:
+          Boolean(editKey) &&
+          !props.readonly &&
+          props.approvalType === 'submission' &&
+          hasRelatedPlanReportActiveWorkflow.value &&
+          canCurrentUserHandlePlanApproval.value,
+        isSavingSubmittedProgress: savingPlanReportProgressKey.value === editKey,
         submittedComment: normalizeDisplayName(detail?.comment) || '--',
         targetValue: formatIndicatorMetricValue(matchedIndicator?.targetValue),
         actualValue: formatIndicatorMetricValue(matchedIndicator?.actualValue),
@@ -994,6 +1036,59 @@ export function useApprovalProgressState(
       }
     })
   })
+
+  async function savePlanReportIndicatorProgress(item: {
+    reportId: number | string | null
+    indicatorId: number | string | null
+    indicatorName?: string
+    submittedProgressDraft?: number
+    progressEditKey?: string
+  }) {
+    if (!item.reportId || !item.indicatorId || !item.progressEditKey) {
+      ElMessage.warning('当前报告明细缺少必要信息，无法修改填报进度')
+      return
+    }
+
+    const progress = Number(item.submittedProgressDraft)
+    if (!Number.isFinite(progress) || progress < 0 || progress > 100) {
+      ElMessage.warning('进度必须在 0 到 100 之间')
+      return
+    }
+
+    savingPlanReportProgressKey.value = item.progressEditKey
+    try {
+      const updatedReport = await indicatorFillApi.updatePlanReportIndicatorProgress(
+        item.reportId,
+        item.indicatorId,
+        progress
+      )
+
+      if (String(relatedPlanReportSummary.value?.id ?? '') === String(updatedReport.id)) {
+        relatedPlanReportSummary.value = updatedReport
+      }
+      if (String(selectedPlanReportSnapshot.value?.id ?? '') === String(updatedReport.id)) {
+        selectedPlanReportSnapshot.value = updatedReport
+      }
+      if (
+        !selectedPlanReportSnapshot.value &&
+        String(displayedPlanReportSnapshot.value?.id ?? '') === String(updatedReport.id)
+      ) {
+        selectedPlanReportSnapshot.value = updatedReport
+      }
+
+      planReportProgressDrafts.value = {
+        ...planReportProgressDrafts.value,
+        [item.progressEditKey]: progress
+      }
+      emit('refresh')
+      ElMessage.success(`已更新「${item.indicatorName || '该指标'}」填报进度`)
+    } catch (error) {
+      logger.error('[ApprovalProgressDrawer] 更新填报进度失败:', error)
+      ElMessage.error(error instanceof Error && error.message ? error.message : '更新填报进度失败')
+    } finally {
+      savingPlanReportProgressKey.value = null
+    }
+  }
 
   const hasPlanWorkflowData = computed(() => {
     const workflowInstanceId = Number(planWorkflowDetail.value?.instanceId ?? NaN)
@@ -3001,6 +3096,7 @@ export function useApprovalProgressState(
     resolveTaskStatusLabel,
     resolveTaskStatusTag,
     resolveWorkflowTaskOperatorName,
+    savePlanReportIndicatorProgress,
     scopedDepartmentPlan,
     scopedPendingPlanCount,
     scopedPlanApprovals,
@@ -3010,6 +3106,7 @@ export function useApprovalProgressState(
     selectedHistoryInstanceId,
     selectedPlanReportSnapshot,
     selectedPlanReportSnapshotLoading,
+    setPlanReportProgressDraft,
     shouldDisplayWorkflowHistoryItem,
     showArchivedPlanWorkflowEmptyState,
     showCardHistoryEmptyState,

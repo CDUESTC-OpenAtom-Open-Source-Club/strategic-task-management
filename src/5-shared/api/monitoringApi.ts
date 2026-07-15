@@ -30,14 +30,15 @@ export interface WarningEvent {
  */
 export interface AlertEvent {
   id: number
+  indicatorId?: number
   ruleId: number
   ruleName: string
   entityType: string
   entityId: number
   entityName?: string
-  severity: 'CRITICAL' | 'MAJOR' | 'MINOR'
+  severity: 'CRITICAL' | 'WARNING' | 'INFO' | 'MAJOR' | 'MINOR'
   message: string
-  status: 'OPEN' | 'IN_PROGRESS' | 'CLOSED'
+  status: 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED'
   triggeredAt: string
   assigneeId?: number
   assigneeName?: string
@@ -50,10 +51,14 @@ export interface AlertStats {
   totalOpen: number
   countBySeverity: {
     CRITICAL: number
-    MAJOR: number
-    MINOR: number
+    WARNING: number
+    INFO: number
+    MAJOR?: number
+    MINOR?: number
   }
 }
+
+export type ManualAlertSeverity = 'INFO' | 'WARNING' | 'CRITICAL' | null
 
 type ApiEnvelope<T> = {
   code?: number
@@ -71,12 +76,10 @@ const EMPTY_ALERT_STATS: AlertStats = {
   totalOpen: 0,
   countBySeverity: {
     CRITICAL: 0,
-    MAJOR: 0,
-    MINOR: 0
+    WARNING: 0,
+    INFO: 0
   }
 }
-
-const ALERTS_REMOTE_ENABLED = import.meta.env.VITE_ENABLE_ALERTS_API === 'true'
 
 const ALERTS_API_UNAVAILABLE_KEY = 'sism_alerts_api_unavailable'
 
@@ -134,15 +137,46 @@ async function requestUnclosedAlerts(path: string): Promise<AlertEvent[] | null>
  * 预警告警 API
  */
 export const alertApi = {
+  async getManualAlertLevels(indicatorIds: number[]): Promise<Record<string, ManualAlertSeverity>> {
+    const ids = [...new Set(indicatorIds.filter(id => Number.isFinite(id) && id > 0))]
+    if (ids.length === 0) {
+      return {}
+    }
+
+    const response = await apiClient.get<
+      ApiEnvelope<Record<string, string>> | Record<string, string>
+    >(`/alerts/manual-levels?indicatorIds=${ids.join(',')}`)
+    const payload = unwrapMockResponse(
+      response as ApiEnvelope<Record<string, string>> | Record<string, string>
+    )
+
+    return Object.fromEntries(
+      Object.entries(payload || {}).map(([indicatorId, severity]) => {
+        const normalized = String(severity || '').toUpperCase()
+        return [
+          indicatorId,
+          normalized === 'INFO' || normalized === 'WARNING' || normalized === 'CRITICAL'
+            ? (normalized as Exclude<ManualAlertSeverity, null>)
+            : null
+        ]
+      })
+    )
+  },
+
+  async setManualAlertLevel(
+    indicatorId: number | string,
+    severity: ManualAlertSeverity
+  ): Promise<void> {
+    await apiClient.put(`/alerts/indicator/${indicatorId}/manual-level`, {
+      severity: severity ?? 'NONE'
+    })
+  },
+
   /**
    * 获取告警统计
    * 使用 OpenAPI 告警统计接口
    */
   getStats: async () => {
-    if (!ALERTS_REMOTE_ENABLED) {
-      return EMPTY_ALERT_STATS
-    }
-
     if (alertsApiUnavailable) {
       return EMPTY_ALERT_STATS
     }
@@ -166,10 +200,6 @@ export const alertApi = {
    * 兼容 `/alerts/events/unclosed` 与 `/alerts/unresolved`
    */
   getUnclosedAlerts: async () => {
-    if (!ALERTS_REMOTE_ENABLED) {
-      return []
-    }
-
     if (alertsApiUnavailable) {
       return []
     }

@@ -2517,6 +2517,81 @@ export const indicatorFillApi = {
     return loadPlanReportById(response.data.id).catch(() => enrichPlanReportWorkflow(response.data))
   },
 
+  async updatePlanReportIndicatorProgress(
+    reportId: number | string,
+    indicatorId: number | string,
+    progress: number
+  ): Promise<PlanReportSimpleResponse> {
+    const normalizedProgress = Number(progress)
+    if (
+      !Number.isFinite(normalizedProgress) ||
+      normalizedProgress < 0 ||
+      normalizedProgress > 100
+    ) {
+      throw new Error('进度必须在 0 到 100 之间')
+    }
+
+    const report = await loadPlanReportById(reportId)
+    const numericIndicatorId = Number(indicatorId)
+    if (!Number.isFinite(numericIndicatorId) || numericIndicatorId <= 0) {
+      throw new Error('指标ID无效，无法更新填报进度')
+    }
+
+    const details = Array.isArray(report.indicatorDetails) ? report.indicatorDetails : []
+    if (!details.some(detail => Number(detail.indicatorId) === numericIndicatorId)) {
+      throw new Error('当前报告中没有找到该指标明细')
+    }
+
+    const operatorUserId =
+      Number(
+        useAuthStore().user?.id ?? (useAuthStore().user as { userId?: number } | null)?.userId
+      ) || undefined
+
+    const nextIndicatorDetails = details.map(detail => {
+      const isTarget = Number(detail.indicatorId) === numericIndicatorId
+      const content = detail.comment || report.content || report.summary || ''
+      return {
+        indicatorId: Number(detail.indicatorId),
+        title: String(report.title || ''),
+        content,
+        summary: content,
+        progress: isTarget ? normalizedProgress : Number(detail.progress ?? 0),
+        issues: content,
+        nextPlan: content,
+        milestoneNote: detail.milestoneNote ?? null,
+        attachmentIds: Array.isArray(detail.attachments)
+          ? detail.attachments
+              .map(attachment => Number(attachment.id))
+              .filter(id => Number.isFinite(id) && id > 0)
+          : []
+      }
+    })
+
+    const response = await apiClient.put<ApiResponse<PlanReportSimpleResponse>>(
+      `/reports/${report.id}`,
+      {
+        title: report.title || '',
+        indicatorId: numericIndicatorId,
+        content: report.content || report.summary || '',
+        summary: report.summary || report.content || '',
+        progress: normalizedProgress,
+        issues: report.issues || '',
+        nextPlan: report.nextPlan || '',
+        operatorUserId,
+        indicatorDetails: nextIndicatorDetails
+      }
+    )
+    if (!hasApiData(response) || !response.data) {
+      throw new Error(response.message || '更新填报进度失败')
+    }
+
+    if (report.planId) {
+      invalidatePlanReportsCache(report.planId)
+    }
+
+    return loadPlanReportById(response.data.id).catch(() => enrichPlanReportWorkflow(response.data))
+  },
+
   async withdrawCurrentMonthPlanReport(
     planId: number | string,
     reportOrgId: number,

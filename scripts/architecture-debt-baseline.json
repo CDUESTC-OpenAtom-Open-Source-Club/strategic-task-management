@@ -1,5 +1,14 @@
 {
   "generatedAt": "2026-04-27T14:36:58.176Z",
   "tsNoCheckFiles": [],
-  "oldImportViolations": []
+  "oldImportViolations": [],
+  "oversizedTypeScriptFiles": [
+    "src/3-features/approval/model/useApprovalProgressDrawer.ts",
+    "src/3-features/approval/model/useApprovalProgressState.ts",
+    "src/3-features/dashboard/model/useDashboardView.ts",
+    "src/3-features/indicator/model/useIndicatorDistributeView.ts",
+    "src/3-features/indicator/model/useIndicatorListView.ts",
+    "src/3-features/plan/api/planApi.ts",
+    "src/3-features/task/model/useStrategicTaskView.ts"
+  ]
 }

@@ -23,7 +23,8 @@ const compatibilityWhitelist = [
   { method: 'put', path: '/api/v1/auth/users/me/contact' },
   { method: 'post', path: '/api/v1/auth/password-reset/send' },
   { method: 'post', path: '/api/v1/auth/password-reset/verify' },
-  { method: 'post', path: '/api/v1/auth/password-reset/confirm' }
+  { method: 'post', path: '/api/v1/auth/password-reset/confirm' },
+  { method: 'put', path: '/api/v1/alerts/indicator/{id}/manual-level' }
 ] as const
 
 function normalizePathLiteral(rawPath: string): string | null {

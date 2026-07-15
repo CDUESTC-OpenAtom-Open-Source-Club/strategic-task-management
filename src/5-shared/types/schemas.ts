@@ -44,6 +44,7 @@ export const StrategicIndicatorSchema = z.object({
   year: z.number(),
   milestones: z.array(MilestoneSchema),
   statusAudit: z.array(z.unknown()),
+  manualAlertSeverity: z.enum(['INFO', 'WARNING', 'CRITICAL']).nullable().optional(),
   parentIndicatorId: z.union([z.string(), z.number()]).optional()
 })
 

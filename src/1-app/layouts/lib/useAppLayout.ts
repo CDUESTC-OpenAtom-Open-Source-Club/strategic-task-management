@@ -20,6 +20,8 @@ let globalDataRefreshTimer: ReturnType<typeof setInterval> | null = null
 let approvalNotificationRefreshListener: EventListener | null = null
 let lastAttentionRefreshAt = 0
 let currentPollingInterval = POLLING_INTERVAL_WS_DISCONNECTED
+let messageRefreshInFlight: Promise<unknown> | null = null
+let approvalRefreshInFlight: Promise<unknown> | null = null
 
 export function useAppLayout() {
   const authStore = useAuthStore()
@@ -34,12 +36,28 @@ export function useAppLayout() {
   const strategicDeptName = computed(() => orgStore.getStrategicDeptName())
   const canAccessAdminConsole = computed(() => hasAdminConsoleAccess(authStore.user))
 
-  const refreshNotificationState = async () => {
-    await Promise.all([messageStore.refreshMessageCenter(), approvalStore.loadPendingApprovals()])
+  const refreshMessages = () => {
+    if (!messageRefreshInFlight) {
+      messageRefreshInFlight = Promise.resolve(messageStore.refreshMessageCenter()).finally(() => {
+        messageRefreshInFlight = null
+      })
+    }
+    return messageRefreshInFlight
   }
 
-  const refreshPendingApprovalState = async () => {
-    await Promise.all([messageStore.refreshMessageCenter(), approvalStore.loadPendingApprovals()])
+  const refreshPendingApprovals = () => {
+    if (!approvalRefreshInFlight) {
+      approvalRefreshInFlight = Promise.resolve(approvalStore.loadPendingApprovals()).finally(
+        () => {
+          approvalRefreshInFlight = null
+        }
+      )
+    }
+    return approvalRefreshInFlight
+  }
+
+  const refreshNotificationState = async () => {
+    await Promise.all([refreshMessages(), refreshPendingApprovals()])
   }
 
   const handleGlobalDataRefreshRequest = (event: Event) => {
@@ -53,15 +71,15 @@ export function useAppLayout() {
     }
 
     if (detail?.source === 'approval-notification') {
-      void refreshPendingApprovalState()
+      void refreshNotificationState()
       return
     }
 
-    void messageStore.refreshMessageCenter()
+    void refreshMessages()
   }
 
   const handleApprovalStateRefresh = () => {
-    void refreshPendingApprovalState()
+    void refreshNotificationState()
     requestGlobalDataRefresh({ source: 'approval-state-refresh', silent: true })
   }
 
@@ -196,7 +214,7 @@ export function useAppLayout() {
         void refreshNotificationState()
         startGlobalDataRefreshTimer()
       } else if (isAuth) {
-        void refreshPendingApprovalState()
+        void refreshNotificationState()
         startGlobalDataRefreshTimer()
       } else {
         stopGlobalDataRefreshTimer()

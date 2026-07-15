@@ -12,12 +12,31 @@ export async function withRetry<T>(
   const { maxRetries = 3, baseDelay = 1000, maxDelay = 10000 } = config
 
   let lastError: Error | null = null
+  let attemptsMade = 0
+
+  const toReadableError = (error: unknown): Error => {
+    if (error instanceof Error) {
+      return error
+    }
+
+    const messageCandidates = [
+      (error as { details?: { message?: unknown } } | null)?.details?.message,
+      (error as { response?: { data?: { message?: unknown } } } | null)?.response?.data?.message,
+      (error as { message?: unknown } | null)?.message
+    ]
+    const message = messageCandidates.find(
+      value => typeof value === 'string' && value.trim() && value.trim() !== '[object Object]'
+    )
+
+    return new Error(typeof message === 'string' ? message : String(error))
+  }
 
   for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
     try {
       return await fn()
     } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error))
+      attemptsMade = attempt
+      lastError = toReadableError(error)
 
       logger.warn(`[Retry] Attempt ${attempt}/${maxRetries} failed:`, error)
 
@@ -50,7 +69,10 @@ export async function withRetry<T>(
     }
   }
 
-  logger.error(`[Retry] All ${maxRetries} attempts failed`, lastError ?? new Error('Unknown error'))
+  logger.error(
+    `[Retry] ${attemptsMade}/${maxRetries} attempts failed`,
+    lastError ?? new Error('Unknown error')
+  )
   throw lastError ?? new Error('Unknown error')
 }
 

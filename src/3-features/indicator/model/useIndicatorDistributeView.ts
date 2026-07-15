@@ -493,6 +493,60 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   const currentSelectedCollegePlanDetails = ref<Plan | null>(null)
   const currentPlanTaskTypeMap = ref<Record<string, string>>({})
 
+  const resolveCurrentCycleId = (): number | undefined => {
+    const selectedPlan = currentSelectedCollegePlan.value as
+      | (Plan & { cycleId?: number | string; cycle_id?: number | string })
+      | null
+    const selectedPlanDetails = currentSelectedCollegePlanDetails.value as
+      | (Plan & { cycleId?: number | string; cycle_id?: number | string })
+      | null
+    const departmentPlan = currentDepartmentPlan.value as
+      | (Plan & { cycleId?: number | string; cycle_id?: number | string })
+      | null
+    const departmentPlanDetails = currentDepartmentPlanDetails.value as
+      | (Plan & { cycleId?: number | string; cycle_id?: number | string })
+      | null
+
+    const directCycleId =
+      selectedPlanDetails?.cycleId ??
+      selectedPlanDetails?.cycle_id ??
+      selectedPlan?.cycleId ??
+      selectedPlan?.cycle_id ??
+      departmentPlanDetails?.cycleId ??
+      departmentPlanDetails?.cycle_id ??
+      departmentPlan?.cycleId ??
+      departmentPlan?.cycle_id
+    const numericDirectCycleId = Number(directCycleId)
+    if (Number.isFinite(numericDirectCycleId) && numericDirectCycleId > 0) {
+      return numericDirectCycleId
+    }
+
+    const cycle = timeContext.cycles.find(item => Number(item.year) === timeContext.currentYear) as
+      | { cycleId?: number | string; id?: number | string }
+      | undefined
+    const numericCycleId = Number(cycle?.cycleId ?? cycle?.id)
+    return Number.isFinite(numericCycleId) && numericCycleId > 0 ? numericCycleId : undefined
+  }
+
+  const getApiErrorMessage = (error: unknown, fallback: string): string => {
+    const candidates = [
+      (error as { details?: { message?: unknown } } | null)?.details?.message,
+      (error as { response?: { data?: { message?: unknown } } } | null)?.response?.data?.message,
+      (error as { message?: unknown } | null)?.message
+    ]
+
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string') {
+        const trimmed = candidate.trim()
+        if (trimmed && trimmed !== '[object Object]') {
+          return trimmed
+        }
+      }
+    }
+
+    return fallback
+  }
+
   const matchesCurrentDepartmentPlanContext = (plan: Plan | null | undefined): plan is Plan => {
     if (!plan) {
       return false
@@ -2705,6 +2759,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         sortOrder: 0,
         remark: newIndicatorForm.value.remark || '',
         progress: 0,
+        cycleId: resolveCurrentCycleId(),
         year: timeContext.currentYear,
         canWithdraw: false,
         parentIndicatorId,
@@ -2786,7 +2841,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       await refreshDistributionData()
     } catch (error: any) {
       logger.error('[IndicatorDistributeView] saveNewIndicator failed:', error)
-      ElMessage.error(error?.message || '保存指标失败，请重试')
+      ElMessage.error(getApiErrorMessage(error, '保存指标失败，请重试'))
     } finally {
       isSavingIndicator.value = false
     }
@@ -2919,6 +2974,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
           sortOrder: 0,
           remark: sourceIndicator.remark || '',
           progress: 0,
+          cycleId: resolveCurrentCycleId(),
           year: timeContext.currentYear,
           canWithdraw: false,
           parentIndicatorId,
@@ -2948,7 +3004,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     } catch (error) {
       logger.error('[IndicatorDistributeView] copyIndicatorsFromCollege failed:', error)
       await refreshDistributionData()
-      ElMessage.error(error instanceof Error ? error.message : '复制学院指标失败')
+      ElMessage.error(getApiErrorMessage(error, '复制学院指标失败'))
     } finally {
       loading.close()
     }

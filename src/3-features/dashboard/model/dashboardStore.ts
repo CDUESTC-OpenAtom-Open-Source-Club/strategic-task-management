@@ -76,8 +76,16 @@ export const useDashboardStore = defineStore('dashboard', () => {
   // 预警统计计算属性
   const totalAlerts = computed(() => alertStatsData.value?.totalOpen || 0)
   const criticalAlerts = computed(() => alertStatsData.value?.countBySeverity.CRITICAL || 0)
-  const majorAlerts = computed(() => alertStatsData.value?.countBySeverity.MAJOR || 0)
-  const minorAlerts = computed(() => alertStatsData.value?.countBySeverity.MINOR || 0)
+  const majorAlerts = computed(
+    () =>
+      (alertStatsData.value?.countBySeverity.WARNING || 0) +
+      (alertStatsData.value?.countBySeverity.MAJOR || 0)
+  )
+  const minorAlerts = computed(
+    () =>
+      (alertStatsData.value?.countBySeverity.INFO || 0) +
+      (alertStatsData.value?.countBySeverity.MINOR || 0)
+  )
 
   // 筛选后的指标列表
   const filteredIndicators = computed<StrategicIndicator[]>(() => {
@@ -662,8 +670,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
         totalOpen: 0,
         countBySeverity: {
           CRITICAL: 0,
-          MAJOR: 0,
-          MINOR: 0
+          WARNING: 0,
+          INFO: 0
         }
       }
     } finally {

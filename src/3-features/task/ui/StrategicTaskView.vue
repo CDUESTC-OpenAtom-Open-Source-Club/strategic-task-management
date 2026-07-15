@@ -10,7 +10,7 @@ import {
   Loading,
   Upload
 } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import AppAvatar from '@/shared/ui/avatar/AppAvatar.vue'
 import IndicatorMilestoneTimeline from '@/features/indicator/ui/IndicatorMilestoneTimeline.vue'
 import { DistributionApprovalProgressDrawer } from '@/features/approval'
@@ -23,14 +23,12 @@ import {
   buildExportFileName,
   exportRowsToExcel,
   exportSheetsToExcel,
-  formatMilestones,
   formatProgress,
-  hasReachedMilestone,
-  MILESTONE_REACHED_TEXT_COLOR,
   type ExcelExportColumn,
   type ExcelExportSheet,
   type ExcelRowTone
 } from '@/shared/lib/export/excel'
+import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import {
   useStrategicTaskView,
   type StrategicTaskViewProps
@@ -177,13 +175,11 @@ const {
   getIndicatorCategoryLabel,
   getIndicatorMappedTaskType,
   getIndicatorTaskId,
-  getMilestonesTooltip,
   getPersistedWithdrawableRows,
   getProgressColor,
   getProgressStatus,
   getPendingProgressDelta,
   getRouteQueryText,
-  getSortedMilestones,
   getSpanMethod,
   getTaskCategoryLabel,
   getTaskGroup,
@@ -204,7 +200,6 @@ const {
   handleDistributeAll,
   handleDistributeOrWithdraw,
   handleEditMilestones,
-  handleEditMilestonesByIndex,
   handleEditingMilestoneProgressChange,
   handleGlobalClick,
   handleIndicatorDblClick,
@@ -237,7 +232,6 @@ const {
   isIndicatorInCurrentPlanScope,
   isIndicatorInFlowStage,
   isInitialDataLoading,
-  isMilestoneLoading,
   isPlanDistributed,
   isReadOnly,
   isSavingIndicatorCell,
@@ -343,6 +337,61 @@ const strategicExporting = ref(false)
 const strategicBatchExportDialogVisible = ref(false)
 const selectedStrategicExportDepartments = ref<string[]>([])
 const strategicImportDialogVisible = ref(false)
+const savingManualAlertIndicatorId = ref<string | number | null>(null)
+type ManualAlertSelectValue = Exclude<ManualAlertSeverity, null> | ''
+
+const manualAlertOptions: Array<{
+  label: string
+  value: ManualAlertSelectValue
+  type: 'success' | 'info' | 'warning' | 'danger'
+}> = [
+  { label: '无预警', value: '', type: 'success' },
+  { label: '一般滞后', value: 'INFO', type: 'info' },
+  { label: '严重滞后', value: 'WARNING', type: 'warning' },
+  { label: '重大滞后', value: 'CRITICAL', type: 'danger' }
+]
+
+const getManualAlertOption = (severity?: ManualAlertSeverity) =>
+  manualAlertOptions.find(option => option.value === (severity ?? '')) || manualAlertOptions[0]
+
+const getManualAlertLabel = (severity?: ManualAlertSeverity) => getManualAlertOption(severity).label
+
+const getManualAlertTagType = (severity?: ManualAlertSeverity) =>
+  getManualAlertOption(severity).type
+
+const handleManualAlertChange = async (
+  row: StrategicIndicator,
+  selectedSeverity: ManualAlertSelectValue
+) => {
+  const severity: ManualAlertSeverity = selectedSeverity === '' ? null : selectedSeverity
+  const previousSeverity = row.manualAlertSeverity ?? null
+  if (previousSeverity === severity) {
+    return
+  }
+
+  const label = getManualAlertLabel(severity)
+  try {
+    await ElMessageBox.confirm(
+      `确认将「${row.name || '该指标'}」的预警等级调整为「${label}」？确认后会通知对应下级部门。`,
+      '调整预警等级',
+      {
+        confirmButtonText: '确认调整',
+        cancelButtonText: '取消',
+        type: severity ? 'warning' : 'info'
+      }
+    )
+
+    savingManualAlertIndicatorId.value = row.id
+    await strategicStore.updateManualAlertLevel(String(row.id), severity)
+    ElMessage.success(severity ? '预警等级已调整，并已通知下级部门' : '预警已取消')
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(error instanceof Error && error.message ? error.message : '预警等级调整失败')
+    }
+  } finally {
+    savingManualAlertIndicatorId.value = null
+  }
+}
 
 const allStrategicExportDepartmentsSelected = computed({
   get: () =>
@@ -379,9 +428,10 @@ const strategicExportColumns: ExcelExportColumn<StrategicExportRow>[] = [
     getValue: row => formatProgress(row.progress, getDisplayedReportedProgress(row))
   },
   {
-    header: '里程碑',
-    width: 34,
-    getValue: row => formatMilestones(getSortedMilestones(row.milestones))
+    header: '预警等级判定',
+    width: 18,
+    align: 'center',
+    getValue: row => getManualAlertLabel(row.manualAlertSeverity)
   },
   {
     header: '附件',
@@ -516,9 +566,11 @@ const getStrategicExportRowTone = (row: StrategicExportRow): ExcelRowTone => {
 }
 
 const getStrategicExportRowTextColor = (row: StrategicExportRow): string | undefined =>
-  hasReachedMilestone(row.progress, getSortedMilestones(row.milestones))
-    ? MILESTONE_REACHED_TEXT_COLOR
-    : undefined
+  row.manualAlertSeverity === 'CRITICAL'
+    ? '#f56c6c'
+    : row.manualAlertSeverity === 'WARNING'
+      ? '#e6a23c'
+      : undefined
 
 const buildStrategicExportSheet = (
   department: string,
@@ -1033,60 +1085,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   </div>
                 </template>
               </el-table-column>
-              <!-- 目标进度列 -->
-              <el-table-column label="里程碑" width="120" align="center">
-                <template #default="{ row, $index }">
-                  <el-popover
-                    placement="left"
-                    :width="320"
-                    trigger="hover"
-                    :disabled="isMilestoneLoading(row.id) || !row.milestones?.length"
-                  >
-                    <template #reference>
-                      <div
-                        class="milestone-cell"
-                        :class="{ editable: canEditIndicators }"
-                        @dblclick="handleEditMilestonesByIndex($index)"
-                      >
-                        <span class="milestone-count">
-                          {{
-                            isMilestoneLoading(row.id)
-                              ? '加载中...'
-                              : row.milestones?.length
-                                ? `${row.milestones.length} 个里程碑`
-                                : '未设置'
-                          }}
-                        </span>
-                      </div>
-                    </template>
-                    <div class="milestone-popover">
-                      <div class="milestone-popover-title">里程碑列表</div>
-                      <div
-                        v-for="(ms, idx) in getMilestonesTooltip(row)"
-                        :key="ms.id"
-                        class="milestone-item"
-                        :class="{ 'milestone-completed': (row.progress || 0) >= ms.progress }"
-                      >
-                        <div class="milestone-item-header">
-                          <span class="milestone-index">{{ idx + 1 }}.</span>
-                          <span class="milestone-name">{{ ms.name || '未命名' }}</span>
-                          <el-icon
-                            v-if="(row.progress || 0) >= ms.progress"
-                            class="milestone-check-icon"
-                          >
-                            <Check />
-                          </el-icon>
-                        </div>
-                        <div class="milestone-item-info">
-                          <span>预期: {{ ms.expectedDate || '未设置' }}</span>
-                          <span>进度: {{ ms.progress }}%</span>
-                        </div>
-                      </div>
-                      <div v-if="!row.milestones?.length" class="milestone-empty">暂无里程碑</div>
-                    </div>
-                  </el-popover>
-                </template>
-              </el-table-column>
               <el-table-column prop="progress" label="进度" width="120" align="center">
                 <template #default="{ row }">
                   <div class="progress-cell" @dblclick="handleIndicatorDblClick(row, 'progress')">
@@ -1123,6 +1121,37 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         >
                       </el-tooltip>
                     </template>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="预警等级判定" width="150" align="center">
+                <template #default="{ row }">
+                  <div class="manual-alert-cell">
+                    <el-select
+                      v-if="isStrategicDept"
+                      :model-value="row.manualAlertSeverity ?? ''"
+                      size="small"
+                      class="manual-alert-select"
+                      :disabled="savingManualAlertIndicatorId === row.id"
+                      :loading="savingManualAlertIndicatorId === row.id"
+                      @change="
+                        value => handleManualAlertChange(row, value as ManualAlertSelectValue)
+                      "
+                    >
+                      <el-option
+                        v-for="option in manualAlertOptions"
+                        :key="option.value || 'NONE'"
+                        :label="option.label"
+                        :value="option.value"
+                      />
+                    </el-select>
+                    <el-tag
+                      v-else
+                      :type="getManualAlertTagType(row.manualAlertSeverity)"
+                      size="small"
+                    >
+                      {{ getManualAlertLabel(row.manualAlertSeverity) }}
+                    </el-tag>
                   </div>
                 </template>
               </el-table-column>
@@ -1715,6 +1744,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
               </el-tooltip>
             </template>
             <span v-else style="color: #909399">暂无填报</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="预警等级判定">
+            <el-tag :type="getManualAlertTagType(currentDetail.manualAlertSeverity)" size="small">
+              {{ getManualAlertLabel(currentDetail.manualAlertSeverity) }}
+            </el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="责任部门">{{
             currentDetail.responsibleDept

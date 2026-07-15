@@ -25,7 +25,8 @@ function summarizeAlerts(alerts: Array<{ severity?: string; status?: string }>):
   }
 
   alerts.forEach(alert => {
-    if (String(alert.status).toUpperCase() === 'CLOSED') {
+    const status = String(alert.status).toUpperCase()
+    if (status === 'CLOSED' || status === 'RESOLVED') {
       return
     }
 
@@ -33,7 +34,7 @@ function summarizeAlerts(alerts: Array<{ severity?: string; status?: string }>):
     const severity = String(alert.severity).toUpperCase()
     if (severity === 'CRITICAL') {
       summary.severe += 1
-    } else if (severity === 'MAJOR') {
+    } else if (severity === 'WARNING' || severity === 'MAJOR') {
       summary.moderate += 1
     } else {
       summary.normal += 1
