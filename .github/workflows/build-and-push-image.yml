@@ -4,6 +4,15 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      delivery_target:
+        description: Delivery target
+        required: false
+        default: artifact-only
+        type: choice
+        options:
+          - artifact-only
+          - test-server
 
 permissions:
   contents: read
@@ -131,13 +140,13 @@ jobs:
           path: |
             frontend-image.tar.gz
             scripts/deployment/validate-runner-host.sh
-          retention-days: 1
+          retention-days: 7
           compression-level: 0
           overwrite: true
 
   stage-on-server:
     name: Stage Image on Server Runner
-    if: github.ref_name == 'main'
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.delivery_target == 'test-server' }}
     needs: build-and-push
     runs-on: [self-hosted, Linux, X64, frontend, production]
 
@@ -194,6 +203,7 @@ jobs:
             "ref": "main",
             "inputs": {
               "deploy_mode": "frontend-only",
+              "delivery_target": "test-server",
               "frontend_tag": "${GITHUB_SHA}",
               "target_env": "production"
             }
