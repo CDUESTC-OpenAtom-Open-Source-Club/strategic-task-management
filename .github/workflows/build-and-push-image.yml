@@ -20,7 +20,7 @@ env:
 jobs:
   qa:
     name: QA
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout code
@@ -65,7 +65,7 @@ jobs:
   build-and-push:
     name: Build and Push
     needs: qa
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout code
@@ -128,15 +128,18 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: frontend-image-${{ github.sha }}
-          path: frontend-image.tar.gz
+          path: |
+            frontend-image.tar.gz
+            scripts/deployment/validate-runner-host.sh
           retention-days: 1
           compression-level: 0
+          overwrite: true
 
   stage-on-server:
     name: Stage Image on Server Runner
     if: github.ref_name == 'main'
     needs: build-and-push
-    runs-on: [self-hosted, Linux, X64, frontend]
+    runs-on: [self-hosted, Linux, X64, frontend, production]
 
     steps:
       - name: Normalize image name
@@ -158,15 +161,23 @@ jobs:
           name: frontend-image-${{ github.sha }}
           path: ${{ runner.temp }}/frontend-image-${{ github.run_id }}
 
+      - name: Validate deployment host
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/frontend-image-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          bash "${ARTIFACT_DIR}/scripts/deployment/validate-runner-host.sh" \
+            /opt/sism-stack/production
+
       - name: Load frontend image on server runner
         env:
           FRONTEND_IMAGE: ${{ steps.image.outputs.image }}
           ARTIFACT_DIR: ${{ runner.temp }}/frontend-image-${{ github.run_id }}
         run: |
           set -euo pipefail
+          gzip -t "${ARTIFACT_DIR}/frontend-image.tar.gz"
           gzip -dc "${ARTIFACT_DIR}/frontend-image.tar.gz" | sudo docker load
           sudo docker image inspect "${FRONTEND_IMAGE}" >/dev/null
-          rm -rf "${ARTIFACT_DIR}"
 
       - name: Trigger backend system deployment
         env:
@@ -188,3 +199,9 @@ jobs:
             }
           }
           EOF
+
+      - name: Remove downloaded frontend artifact
+        if: ${{ always() }}
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/frontend-image-${{ github.run_id }}
+        run: rm -rf "${ARTIFACT_DIR}"
