@@ -10,6 +10,7 @@
 
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/features/auth/model/store'
+import { isDingTalkContainer, tryDingTalkAutoLogin } from '@/features/auth/lib/dingtalk'
 import { tokenManager } from '@/shared/lib/utils/tokenManager'
 import { logger } from '@/shared/lib/utils/logger'
 import { hasAdminConsoleAccess } from '@/shared/lib/permissions/adminConsoleAccess'
@@ -225,6 +226,12 @@ router.beforeEach(async (to, _from, next) => {
 
   // 确保认证状态已从 localStorage 恢复
   await ensureAuthRestored()
+
+  // 钉钉容器内且当前未登录：先尝试静默免登（结果会话内缓存）。
+  // 成功则直接放行原目标路由（待办深链直达审批页）；失败则落到登录页并展示原因。
+  if (!useAuthStore().isAuthenticated && isDingTalkContainer()) {
+    await tryDingTalkAutoLogin()
+  }
 
   const authStore = useAuthStore()
   const currentOrgId = Number(authStore.user?.orgId ?? NaN)

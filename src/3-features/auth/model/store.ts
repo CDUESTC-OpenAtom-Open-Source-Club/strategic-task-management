@@ -202,6 +202,70 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   // ============ Actions ============
+
+  /**
+   * 登录响应落地：解析 token/用户、补全组织信息、恢复持久化状态。
+   * 账号密码登录与钉钉免登共用。
+   */
+  const applyLoginResponse = async (
+    response: Record<string, unknown>
+  ): Promise<{ success: boolean; error?: string }> => {
+    const parseResult = parseLoginResponse(response)
+
+    if (!parseResult.success || !parseResult.data) {
+      return {
+        success: false,
+        error: parseResult.error || '登录失败：服务器响应格式错误'
+      }
+    }
+
+    const { token: loginToken, user: userData, refreshToken } = parseResult.data
+
+    token.value = loginToken
+    tokenManager.setAccessToken(loginToken)
+    clearLegacyAccessTokenStorage()
+    if (refreshToken) {
+      localStorage.setItem('refreshToken', refreshToken)
+    }
+
+    const enrichedUserData = await enrichUserWithOrganization(userData)
+    const normalizedUserData = normalizeLegacyUserData(enrichedUserData)
+    const mappedUser = mapBackendUser(normalizedUserData)
+    if (!mappedUser) {
+      logger.warn('[Auth] 登录响应未能解析出有效前端角色，终止登录流程')
+      tokenManager.clearAccessToken()
+      clearLegacyAccessTokenStorage()
+      token.value = null
+      localStorage.removeItem('refreshToken')
+      persistUser(null)
+      return {
+        success: false,
+        error: '登录失败：未识别的用户角色，请联系管理员确认账号权限'
+      }
+    }
+
+    user.value = mappedUser
+    persistUser(mappedUser)
+    invalidateQueries(['auth.user'])
+    authInitialized.value = true
+
+    // 登录成功后，触发数据重新加载
+    if (mappedUser.role === 'strategic_dept') {
+      import('@/features/task/model/strategic')
+        .then(({ useStrategicStore }) => {
+          const strategicStore = useStrategicStore()
+          const timeContext = useTimeContextStore()
+          logger.debug('🔄 [Auth] 登录成功，重新加载指标数据..')
+          strategicStore.loadIndicatorsByYear(timeContext.currentYear)
+        })
+        .catch(err => {
+          logger.warn('⚠️ [Auth] 重新加载数据失败:', err)
+        })
+    }
+
+    return { success: true }
+  }
+
   const login = async (credentials: { account: string; password: string }) => {
     loading.value = true
     logger.debug('🔐 [Auth] 开始登录', credentials.account)
@@ -209,72 +273,7 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const response = await api.post('/auth/login', credentials)
       logger.debug('📦 [Auth] 登录响应:', response)
-
-      const parseResult = parseLoginResponse(response as Record<string, unknown>)
-
-      if (parseResult.success && parseResult.data) {
-        const { token: loginToken, user: userData, refreshToken } = parseResult.data
-
-        logger.debug('?[Auth] 登录成功，Token:', loginToken.substring(0, 20) + '...')
-        logger.debug('👤 [Auth] 用户数据:', userData)
-
-        token.value = loginToken
-        tokenManager.setAccessToken(loginToken)
-        clearLegacyAccessTokenStorage()
-        if (refreshToken) {
-          localStorage.setItem('refreshToken', refreshToken)
-        }
-
-        const enrichedUserData = await enrichUserWithOrganization(userData)
-        const normalizedUserData = normalizeLegacyUserData(enrichedUserData)
-        const mappedUser = mapBackendUser(normalizedUserData)
-        if (!mappedUser) {
-          logger.warn('[Auth] 登录响应未能解析出有效前端角色，终止登录流程')
-          tokenManager.clearAccessToken()
-          clearLegacyAccessTokenStorage()
-          token.value = null
-          localStorage.removeItem('refreshToken')
-          persistUser(null)
-          return {
-            success: false,
-            error: '登录失败：未识别的用户角色，请联系管理员确认账号权限'
-          }
-        }
-        logger.debug('?[Auth] 映射后的用户:', mappedUser)
-
-        user.value = mappedUser
-        persistUser(mappedUser)
-        invalidateQueries(['auth.user'])
-        authInitialized.value = true
-
-        logger.debug('?[Auth] 登录状态已保存')
-
-        // 等待响应式更新完?
-        await new Promise(resolve => setTimeout(resolve, 200))
-
-        logger.debug('✅[Auth] Token设置完成，准备加载数据')
-
-        // 登录成功后，触发数据重新加载
-        if (mappedUser.role === 'strategic_dept') {
-          import('@/features/task/model/strategic')
-            .then(({ useStrategicStore }) => {
-              const strategicStore = useStrategicStore()
-              const timeContext = useTimeContextStore()
-              logger.debug('🔄 [Auth] 登录成功，重新加载指标数据..')
-              strategicStore.loadIndicatorsByYear(timeContext.currentYear)
-            })
-            .catch(err => {
-              logger.warn('⚠️ [Auth] 重新加载数据失败:', err)
-            })
-        }
-
-        return { success: true }
-      } else {
-        return {
-          success: false,
-          error: parseResult.error || '登录失败：服务器响应格式错误'
-        }
-      }
+      return await applyLoginResponse(response as Record<string, unknown>)
     } catch (error: unknown) {
       logger.error('❌[Auth] 登录异常:', error)
       const code = Number(
@@ -298,6 +297,30 @@ export const useAuthStore = defineStore('auth', () => {
     } finally {
       loading.value = false
       logger.debug('🏁 [Auth] 登录流程结束')
+    }
+  }
+
+  /**
+   * 钉钉免登：免登码换取本系统登录态（账号绑定由后端按手机号自动完成）。
+   */
+  const loginWithDingTalk = async (
+    authCode: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    loading.value = true
+    logger.debug('🔐 [Auth] 钉钉免登开始')
+
+    try {
+      const response = await api.post('/auth/dingtalk/login', { authCode })
+      return await applyLoginResponse(response as Record<string, unknown>)
+    } catch (error: unknown) {
+      logger.warn('[Auth] 钉钉免登失败:', error)
+      const message =
+        (error as { response?: { data?: { message?: string } } }).response?.data?.message ||
+        (error as { message?: string }).message ||
+        '钉钉免登失败，请重新进入应用'
+      return { success: false, error: message }
+    } finally {
+      loading.value = false
     }
   }
 
@@ -544,6 +567,7 @@ export const useAuthStore = defineStore('auth', () => {
 
     // Actions
     login,
+    loginWithDingTalk,
     logout,
     fetchUser,
     initializeAuth,

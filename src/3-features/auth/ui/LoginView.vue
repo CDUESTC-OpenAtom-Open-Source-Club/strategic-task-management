@@ -95,6 +95,15 @@
             <p class="login-subtitle">User Login</p>
           </div>
 
+          <el-alert
+            v-if="dingTalkBanner"
+            :title="dingTalkBanner"
+            type="warning"
+            :closable="false"
+            show-icon
+            class="dingtalk-alert"
+          />
+
           <LoginForm
             ref="loginFormRef"
             :loading="loading"
@@ -130,15 +139,24 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/features/auth/model/store'
+import { dingTalkLoginError, isDingTalkContainer } from '@/features/auth/lib/dingtalk'
 import LoginForm from './LoginForm.vue'
 import { announcementApi } from '@/features/admin/api/announcementApi'
 
 const router = useRouter()
 const authStore = useAuthStore()
+
+// 钉钉容器内免登失败时的提示（该场景下用户无法走账号密码登录）
+const dingTalkBanner = computed(() => {
+  if (!isDingTalkContainer()) {
+    return ''
+  }
+  return dingTalkLoginError.value || ''
+})
 
 // Background rotation
 interface BgImage {
@@ -396,6 +414,10 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.dingtalk-alert {
+  margin-bottom: 16px;
+}
+
 .login-page {
   min-height: 100vh;
   width: 100%;
