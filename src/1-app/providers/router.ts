@@ -48,6 +48,12 @@ const ensureAuthRestored = async () => {
 
 const routes: RouteRecordRaw[] = [
   {
+    path: '/dingtalk/todo',
+    name: 'DingTalkTodoRedirect',
+    component: () => import('@/features/auth/ui/DingTalkTodoRedirect.vue'),
+    meta: { title: '审批待办 - 战略指标管理系统' }
+  },
+  {
     path: '/login',
     name: 'Login',
     component: () => import('@/features/auth/ui/LoginView.vue'),
