@@ -16,6 +16,7 @@
 import { onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Loading } from '@element-plus/icons-vue'
+import { openLinkInWorkbench } from '@/features/auth/lib/dingtalk'
 
 const route = useRoute()
 const router = useRouter()
@@ -25,28 +26,33 @@ const parseSourceId = (raw: unknown): RegExpMatchArray | null => {
   return raw.match(/^sism-approval-([A-Z_]+)-(\d+)-(\d+)(?:-(\d+))?$/)
 }
 
-onMounted(() => {
+const buildTargetRoute = () => {
   const fullscreen = route.query.dd_full_screen === 'true'
   const match = parseSourceId(route.query.sourceId)
-  if (!match) {
-    router.replace({
-      path: '/strategic-tasks',
-      query: { tab: 'approval', ...(fullscreen ? { dd_full_screen: 'true' } : {}) }
-    })
-    return
+  const query: Record<string, string> = { tab: 'approval' }
+  if (fullscreen) {
+    query.dd_full_screen = 'true'
   }
-  const [, entityType, entityId, instanceId] = match
-  router.replace({
-    path: '/strategic-tasks',
-    query: {
-      tab: 'approval',
+  if (match) {
+    const [, entityType, entityId, instanceId] = match
+    Object.assign(query, {
       openApproval: '1',
       approvalEntityType: entityType,
       approvalEntityId: entityId,
-      approvalInstanceId: instanceId,
-      ...(fullscreen ? { dd_full_screen: 'true' } : {})
-    }
-  })
+      approvalInstanceId: instanceId
+    })
+  }
+  return { path: '/strategic-tasks', query }
+}
+
+onMounted(async () => {
+  // PC 钉钉优先用工作台模式打开（占满主窗口）；移动端或失败则路由跳转
+  const target = buildTargetRoute()
+  const absoluteUrl = `${window.location.origin}${router.resolve(target).href}`
+  const openedInWorkbench = await openLinkInWorkbench(absoluteUrl)
+  if (!openedInWorkbench) {
+    router.replace(target)
+  }
 })
 </script>
 
