@@ -165,8 +165,26 @@ const loadDingTalkJSApi = (): Promise<DingTalkJSApi> => {
   return jsapiPromise
 }
 
+/** 钉钉容器就绪（dd.ready），requestAuthCode 必须在 ready 回调后调用 */
+const whenDingTalkReady = (dd: DingTalkJSApi): Promise<void> => {
+  return new Promise<void>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error('钉钉容器就绪超时'))
+    }, AUTH_CODE_TIMEOUT_MS)
+    dd.ready(() => {
+      window.clearTimeout(timer)
+      resolve()
+    })
+    dd.error(err => {
+      window.clearTimeout(timer)
+      reject(new Error(`钉钉容器异常: ${JSON.stringify(err)}`))
+    })
+  })
+}
+
 const requestDingTalkAuthCode = async (corpId: string): Promise<string> => {
   const dd = await loadDingTalkJSApi()
+  await whenDingTalkReady(dd)
   return new Promise<string>((resolve, reject) => {
     const timer = window.setTimeout(() => {
       reject(new Error('获取钉钉免登码超时'))
