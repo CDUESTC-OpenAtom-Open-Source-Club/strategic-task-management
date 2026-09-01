@@ -3,40 +3,21 @@
  *
  * 职责:
  * - 检测当前页面是否运行在钉钉内置浏览器中
- * - 按需加载钉钉 JSAPI 并申请免登码
+ * - 通过官方 dingtalk-jsapi SDK 申请免登码
  * - 编排"免登码 → 后端换 SISM 登录态"的静默登录流程
  *
  * 设计约束:
+ * - SDK 通过 npm 打包进应用（dingtalk-jsapi），不依赖 CDN 脚本加载
  * - 只在钉钉容器内且后端启用钉钉集成时才工作，其余环境一律跳过
  * - 每次页面加载只尝试一次，结果在会话内缓存，避免路由守卫反复触发
  */
 
 import { ref } from 'vue'
+import dd from 'dingtalk-jsapi'
 import { apiClient as api } from '@/shared/api/client'
 import { logger } from '@/shared/lib/utils/logger'
 
-const JSAPI_SRC = 'https://g.alicdn.com/dingtalk/dingtalk-jsapi/3.0.25/dingtalk.open.js'
 const AUTH_CODE_TIMEOUT_MS = 10000
-
-interface DingTalkJSApi {
-  ready: (callback: () => void) => void
-  error: (callback: (err: unknown) => void) => void
-  runtime: {
-    permission: {
-      requestAuthCode: (options: {
-        corpId: string
-        onSuccess: (result: { code: string }) => void
-        onFail: (err: unknown) => void
-      }) => void
-    }
-  }
-}
-
-declare global {
-  interface Window {
-    dd?: DingTalkJSApi
-  }
-}
 
 export interface DingTalkAutoLoginResult {
   ok: boolean
@@ -66,48 +47,6 @@ export const isPcDingTalk = (): boolean => {
   )
 }
 
-/**
- * PC 钉钉内以工作台模式打开链接（占满主窗口，非侧边栏半屏）。
- * 返回 false 表示不在 PC 钉钉或 JSAPI 不可用，调用方应回退到普通路由跳转。
- */
-export const openLinkInWorkbench = async (url: string): Promise<boolean> => {
-  if (!isPcDingTalk()) {
-    return false
-  }
-  try {
-    const dd = (await loadDingTalkJSApi()) as unknown as {
-      biz: {
-        util: {
-          openLink: (options: {
-            url: string
-            targetDesktop?: string
-            onSuccess: () => void
-            onFail: (err: unknown) => void
-          }) => void
-        }
-      }
-    }
-    return await new Promise<boolean>(resolve => {
-      let settled = false
-      const finish = (ok: boolean) => {
-        if (!settled) {
-          settled = true
-          resolve(ok)
-        }
-      }
-      dd.biz.util.openLink({
-        url,
-        targetDesktop: 'workbench',
-        onSuccess: () => finish(true),
-        onFail: () => finish(false)
-      })
-      window.setTimeout(() => finish(false), 3000)
-    })
-  } catch {
-    return false
-  }
-}
-
 interface DingTalkStatus {
   enabled: boolean
   configured: boolean
@@ -134,39 +73,8 @@ const fetchDingTalkStatus = async (): Promise<DingTalkStatus | null> => {
   }
 }
 
-let jsapiPromise: Promise<DingTalkJSApi> | null = null
-
-const loadDingTalkJSApi = (): Promise<DingTalkJSApi> => {
-  if (window.dd) {
-    return Promise.resolve(window.dd)
-  }
-  if (jsapiPromise) {
-    return jsapiPromise
-  }
-
-  jsapiPromise = new Promise<DingTalkJSApi>((resolve, reject) => {
-    const script = document.createElement('script')
-    script.src = JSAPI_SRC
-    script.async = true
-    script.onload = () => {
-      if (window.dd) {
-        resolve(window.dd)
-      } else {
-        jsapiPromise = null
-        reject(new Error('钉钉 JSAPI 加载异常'))
-      }
-    }
-    script.onerror = () => {
-      jsapiPromise = null
-      reject(new Error('钉钉 JSAPI 加载失败'))
-    }
-    document.head.appendChild(script)
-  })
-  return jsapiPromise
-}
-
 /** 钉钉容器就绪（dd.ready），requestAuthCode 必须在 ready 回调后调用 */
-const whenDingTalkReady = (dd: DingTalkJSApi): Promise<void> => {
+const whenDingTalkReady = (): Promise<void> => {
   return new Promise<void>((resolve, reject) => {
     const timer = window.setTimeout(() => {
       reject(new Error('钉钉容器就绪超时'))
@@ -175,7 +83,7 @@ const whenDingTalkReady = (dd: DingTalkJSApi): Promise<void> => {
       window.clearTimeout(timer)
       resolve()
     })
-    dd.error(err => {
+    dd.error((err: unknown) => {
       window.clearTimeout(timer)
       reject(new Error(`钉钉容器异常: ${JSON.stringify(err)}`))
     })
@@ -183,8 +91,7 @@ const whenDingTalkReady = (dd: DingTalkJSApi): Promise<void> => {
 }
 
 const requestDingTalkAuthCode = async (corpId: string): Promise<string> => {
-  const dd = await loadDingTalkJSApi()
-  await whenDingTalkReady(dd)
+  await whenDingTalkReady()
   return new Promise<string>((resolve, reject) => {
     const timer = window.setTimeout(() => {
       reject(new Error('获取钉钉免登码超时'))
@@ -202,6 +109,36 @@ const requestDingTalkAuthCode = async (corpId: string): Promise<string> => {
       }
     })
   })
+}
+
+/**
+ * PC 钉钉内以工作台模式打开链接（占满主窗口，非侧边栏半屏）。
+ * 返回 false 表示不在 PC 钉钉或 JSAPI 不可用，调用方应回退到普通路由跳转。
+ */
+export const openLinkInWorkbench = async (url: string): Promise<boolean> => {
+  if (!isPcDingTalk()) {
+    return false
+  }
+  try {
+    return await new Promise<boolean>(resolve => {
+      let settled = false
+      const finish = (ok: boolean) => {
+        if (!settled) {
+          settled = true
+          resolve(ok)
+        }
+      }
+      dd.biz.util.openLink({
+        url,
+        targetDesktop: 'workbench',
+        onSuccess: () => finish(true),
+        onFail: () => finish(false)
+      })
+      window.setTimeout(() => finish(false), 3000)
+    })
+  } catch {
+    return false
+  }
 }
 
 let autoLoginPromise: Promise<DingTalkAutoLoginResult> | null = null
