@@ -16,7 +16,6 @@
 import { onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Loading } from '@element-plus/icons-vue'
-import { openLinkInWorkbench } from '@/features/auth/lib/dingtalk'
 
 const route = useRoute()
 const router = useRouter()
@@ -45,14 +44,10 @@ const buildTargetRoute = () => {
   return { path: '/strategic-tasks', query }
 }
 
-onMounted(async () => {
-  // PC 钉钉优先用工作台模式打开（占满主窗口）；移动端或失败则路由跳转
-  const target = buildTargetRoute()
-  const absoluteUrl = `${window.location.origin}${router.resolve(target).href}`
-  const openedInWorkbench = await openLinkInWorkbench(absoluteUrl)
-  if (!openedInWorkbench) {
-    router.replace(target)
-  }
+onMounted(() => {
+  // 直接前端路由跳转到审批深链（与消息中心跳转同链路）。
+  // 不调用 dd openLink(workbench)：PC 工作台容器对裸链接会渲染"页面走丢了"。
+  router.replace(buildTargetRoute())
 })
 </script>
 
