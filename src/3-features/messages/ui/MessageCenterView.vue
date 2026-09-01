@@ -209,7 +209,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import MessageList from '@/shared/ui/message/MessageList.vue'
 import {
@@ -228,6 +228,7 @@ import type { Message } from '@/shared/types'
 import { formatDateTime } from '@/shared/lib/utils'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 const messageStore = useMessageStore()
 const { openApprovalCenter } = useApprovalCenter()
@@ -853,8 +854,37 @@ function clearReadMessages() {
   ElMessage.success('已清除当前视图中的已读消息')
 }
 
-onMounted(() => {
-  void refreshData()
+/** 钉钉待办 sourceId：sism-approval-{type}-{entityId}-{instanceId}[-{stepId}] */
+const DINGTALK_SOURCE_ID_RE = /^sism-approval-([A-Z_]+)-(\d+)-(\d+)(?:-(\d+))?$/
+
+/**
+ * 钉钉待办跳转落地：按 sourceId 中的审批实例 ID 自动打开对应的待处理审批
+ * 消息（审批中心盒子/详情弹窗），用户无需在列表中手动查找。
+ */
+async function autoOpenFromDingTalkSourceId() {
+  const raw = route.query.sourceId
+  if (typeof raw !== 'string' || !raw) {
+    return
+  }
+  const match = raw.match(DINGTALK_SOURCE_ID_RE)
+  const nextQuery = { ...route.query }
+  delete nextQuery.sourceId
+  await router.replace({ query: nextQuery })
+  if (!match) {
+    return
+  }
+  const instanceId = match[3]
+  const target = messageStore.todoMessages.find(
+    message => String(message.approvalInstanceId ?? '') === instanceId
+  )
+  if (target) {
+    handleMessageView(target)
+  }
+}
+
+onMounted(async () => {
+  await refreshData()
+  await autoOpenFromDingTalkSourceId()
 })
 </script>
 
