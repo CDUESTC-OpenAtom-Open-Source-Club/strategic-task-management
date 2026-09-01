@@ -35,6 +35,7 @@
     "axios": "^1.16.1",
     "commitlint": "^20.4.4",
     "dayjs": "^1.11.13",
+    "dingtalk-jsapi": "^3.2.9",
     "dotenv": "^17.2.3",
     "echarts": "^5.5.1",
     "element-plus": "^2.12.0",
