@@ -26,9 +26,13 @@ const parseSourceId = (raw: unknown): RegExpMatchArray | null => {
 }
 
 onMounted(() => {
+  const fullscreen = route.query.dd_full_screen === 'true'
   const match = parseSourceId(route.query.sourceId)
   if (!match) {
-    router.replace({ path: '/strategic-tasks', query: { tab: 'approval' } })
+    router.replace({
+      path: '/strategic-tasks',
+      query: { tab: 'approval', ...(fullscreen ? { dd_full_screen: 'true' } : {}) }
+    })
     return
   }
   const [, entityType, entityId, instanceId] = match
@@ -39,7 +43,8 @@ onMounted(() => {
       openApproval: '1',
       approvalEntityType: entityType,
       approvalEntityId: entityId,
-      approvalInstanceId: instanceId
+      approvalInstanceId: instanceId,
+      ...(fullscreen ? { dd_full_screen: 'true' } : {})
     }
   })
 })
