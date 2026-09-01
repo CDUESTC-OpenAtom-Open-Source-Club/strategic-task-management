@@ -217,7 +217,30 @@ const router = createRouter({
 })
 
 // Navigation guards
+/** 钉钉待办卡片 sourceId：sism-approval-{type}-{entityId}-{instanceId}[-{stepId}] */
+const DINGTALK_SOURCE_ID_RE = /^sism-approval-([A-Z_]+)-(\d+)-(\d+)(?:-(\d+))?$/
+
 router.beforeEach(async (to, _from, next) => {
+  // 钉钉待办卡片跳转：sourceId 携带的业务标识还原为标准审批深链参数，
+  // 与消息中心"跳转到对应页面"走完全相同的打开链路
+  if (typeof to.query.sourceId === 'string' && !to.query.approvalEntityType) {
+    const match = to.query.sourceId.match(DINGTALK_SOURCE_ID_RE)
+    if (match) {
+      const [, entityType, entityId, instanceId] = match
+      next({
+        path: to.path,
+        query: {
+          ...to.query,
+          approvalEntityType: entityType,
+          approvalEntityId: entityId,
+          approvalInstanceId: instanceId
+        },
+        replace: true
+      })
+      return
+    }
+  }
+
   // 开始进度进度条（如果是页面导航）
   if (_from.name !== undefined) {
     startProgress()
