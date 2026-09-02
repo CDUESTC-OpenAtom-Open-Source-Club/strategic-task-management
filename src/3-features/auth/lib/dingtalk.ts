@@ -36,17 +36,6 @@ export const isDingTalkContainer = (): boolean => {
   return /DingTalk/i.test(navigator.userAgent)
 }
 
-/** PC 桌面端钉钉（工作台容器存在，才需要 workbench 打开方式） */
-export const isPcDingTalk = (): boolean => {
-  if (typeof navigator === 'undefined') {
-    return false
-  }
-  return (
-    /DingTalk/i.test(navigator.userAgent) &&
-    !/Mobile|Android|iPhone|iPad/i.test(navigator.userAgent)
-  )
-}
-
 interface DingTalkStatus {
   enabled: boolean
   configured: boolean
@@ -109,36 +98,6 @@ const requestDingTalkAuthCode = async (corpId: string): Promise<string> => {
       }
     })
   })
-}
-
-/**
- * PC 钉钉内以工作台模式打开链接（占满主窗口，非侧边栏半屏）。
- * 返回 false 表示不在 PC 钉钉或 JSAPI 不可用，调用方应回退到普通路由跳转。
- */
-export const openLinkInWorkbench = async (url: string): Promise<boolean> => {
-  if (!isPcDingTalk()) {
-    return false
-  }
-  try {
-    return await new Promise<boolean>(resolve => {
-      let settled = false
-      const finish = (ok: boolean) => {
-        if (!settled) {
-          settled = true
-          resolve(ok)
-        }
-      }
-      dd.biz.util.openLink({
-        url,
-        targetDesktop: 'workbench',
-        onSuccess: () => finish(true),
-        onFail: () => finish(false)
-      })
-      window.setTimeout(() => finish(false), 3000)
-    })
-  } catch {
-    return false
-  }
 }
 
 let autoLoginPromise: Promise<DingTalkAutoLoginResult> | null = null

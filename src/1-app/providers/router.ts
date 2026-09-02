@@ -49,19 +49,13 @@ const ensureAuthRestored = async () => {
 const routes: RouteRecordRaw[] = [
   {
     // 钉钉工作台 applink 的 path 不能带查询参数（会 404），
-    // 因此 sourceId 编在路径段里，由本重定向页转为消息中心查询参数
+    // 因此 sourceId 编在路径段里，由本重定向转为消息中心查询参数
     path: '/mt/:sourceId',
     name: 'DingTalkTodoPathRedirect',
     redirect: to => ({
       path: '/messages',
       query: { sourceId: String(to.params.sourceId || '') }
     })
-  },
-  {
-    path: '/dingtalk/todo',
-    name: 'DingTalkTodoRedirect',
-    component: () => import('@/features/auth/ui/DingTalkTodoRedirect.vue'),
-    meta: { title: '审批待办 - 战略指标管理系统' }
   },
   {
     path: '/login',
@@ -227,116 +221,3 @@ const router = createRouter({
 })
 
 // Navigation guards
-/** 钉钉待办卡片 sourceId：sism-approval-{type}-{entityId}-{instanceId}[-{stepId}] */
-const DINGTALK_SOURCE_ID_RE = /^sism-approval-([A-Z_]+)-(\d+)-(\d+)(?:-(\d+))?$/
-
-router.beforeEach(async (to, _from, next) => {
-  // 钉钉工作台 applink 拼装会产生双斜杠路径（首页根地址尾斜杠 + path 头斜杠），
-  // 例：//mt/xxx —— 路由匹配会失败落到 404，这里统一剥掉多余的斜杠
-  if (to.path.startsWith('//')) {
-    next({ path: to.path.replace(/^\/+/, '/'), query: to.query, hash: to.hash, replace: true })
-    return
-  }
-
-  // 钉钉待办卡片跳转：sourceId 携带的业务标识还原为标准审批深链参数，
-  // 与消息中心"跳转到对应页面"走完全相同的打开链路
-  if (typeof to.query.sourceId === 'string' && !to.query.approvalEntityType) {
-    const match = to.query.sourceId.match(DINGTALK_SOURCE_ID_RE)
-    if (match) {
-      const [, entityType, entityId, instanceId] = match
-      next({
-        path: to.path,
-        query: {
-          ...to.query,
-          approvalEntityType: entityType,
-          approvalEntityId: entityId,
-          approvalInstanceId: instanceId
-        },
-        replace: true
-      })
-      return
-    }
-  }
-
-  // 开始进度进度条（如果是页面导航）
-  if (_from.name !== undefined) {
-    startProgress()
-  }
-
-  // 设置页面标题
-  if (to.meta['title']) {
-    document.title = to.meta['title'] as string
-  } else {
-    document.title = '战略指标管理系统'
-  }
-
-  // 确保认证状态已从 localStorage 恢复
-  await ensureAuthRestored()
-
-  // 钉钉容器内且当前未登录：先尝试静默免登（结果会话内缓存）。
-  // 成功则直接放行原目标路由（待办深链直达审批页）；失败则落到登录页并展示原因。
-  if (!useAuthStore().isAuthenticated && isDingTalkContainer()) {
-    await tryDingTalkAutoLogin()
-  }
-
-  const authStore = useAuthStore()
-  const currentOrgId = Number(authStore.user?.orgId ?? NaN)
-  const canAccessAdminConsole = hasAdminConsoleAccess(authStore.user)
-  logger.debug('[Router] auth restored', {
-    path: to.path,
-    authenticated: authStore.isAuthenticated,
-    role: authStore.userRole,
-    effectiveRole: authStore.effectiveRole,
-    orgId: currentOrgId,
-    orgType: authStore.user?.orgType,
-    canAccessAdminConsole
-  })
-
-  const protectedRouteRedirect = resolveProtectedRouteRedirect({
-    requiresAuth: Boolean(to.meta['requiresAuth']),
-    isAuthenticated: authStore.isAuthenticated,
-    hasAdminConsoleAccess: canAccessAdminConsole,
-    userRole: authStore.userRole,
-    effectiveRole: authStore.effectiveRole,
-    allowedRoles: Array.isArray(to.meta['roles']) ? (to.meta['roles'] as string[]) : undefined,
-    path: to.path
-  })
-
-  if (protectedRouteRedirect) {
-    if (protectedRouteRedirect === '/login' && authStore.isAuthenticated) {
-      logger.warn('[Router] authenticated session missing valid role, clearing auth state', {
-        path: to.path,
-        role: authStore.userRole,
-        effectiveRole: authStore.effectiveRole
-      })
-      authStore.logout({ redirect: false })
-    }
-    next(protectedRouteRedirect)
-    return
-  }
-
-  // Redirect authenticated users away from login page
-  if (to.path === '/login' && authStore.isAuthenticated) {
-    if (!authStore.userRole) {
-      authStore.logout({ redirect: false })
-      next('/login')
-      return
-    }
-    next(resolveAuthenticatedHome(authStore))
-    return
-  }
-
-  next()
-})
-
-// 路由切换完成后结束进度条
-router.afterEach(() => {
-  doneProgress()
-})
-
-// 路由切换失败时也要结束进度条
-router.onError(() => {
-  doneProgress()
-})
-
-export default router
