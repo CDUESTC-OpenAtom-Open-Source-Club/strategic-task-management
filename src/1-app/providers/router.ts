@@ -231,6 +231,13 @@ const router = createRouter({
 const DINGTALK_SOURCE_ID_RE = /^sism-approval-([A-Z_]+)-(\d+)-(\d+)(?:-(\d+))?$/
 
 router.beforeEach(async (to, _from, next) => {
+  // 钉钉工作台 applink 拼装会产生双斜杠路径（首页根地址尾斜杠 + path 头斜杠），
+  // 例：//mt/xxx —— 路由匹配会失败落到 404，这里统一剥掉多余的斜杠
+  if (to.path.startsWith('//')) {
+    next({ path: to.path.replace(/^\/+/, '/'), query: to.query, hash: to.hash, replace: true })
+    return
+  }
+
   // 钉钉待办卡片跳转：sourceId 携带的业务标识还原为标准审批深链参数，
   // 与消息中心"跳转到对应页面"走完全相同的打开链路
   if (typeof to.query.sourceId === 'string' && !to.query.approvalEntityType) {
