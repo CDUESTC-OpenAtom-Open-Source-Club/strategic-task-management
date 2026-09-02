@@ -48,6 +48,16 @@ const ensureAuthRestored = async () => {
 
 const routes: RouteRecordRaw[] = [
   {
+    // 钉钉工作台 applink 的 path 不能带查询参数（会 404），
+    // 因此 sourceId 编在路径段里，由本重定向页转为消息中心查询参数
+    path: '/mt/:sourceId',
+    name: 'DingTalkTodoPathRedirect',
+    redirect: to => ({
+      path: '/messages',
+      query: { sourceId: String(to.params.sourceId || '') }
+    })
+  },
+  {
     path: '/dingtalk/todo',
     name: 'DingTalkTodoRedirect',
     component: () => import('@/features/auth/ui/DingTalkTodoRedirect.vue'),
