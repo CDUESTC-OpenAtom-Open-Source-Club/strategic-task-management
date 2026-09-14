@@ -16,7 +16,9 @@ import {
   buildImportTemplateSheet,
   getImportTemplateGuide
 } from '@/features/import/lib/importTemplate'
+import { canAutoApproveImport } from '@/features/import/lib/importPermissions'
 import { exportSheetsToExcel, type ExcelExportSheet } from '@/shared/lib/export/excel'
+import { useAuthStore } from '@/features/auth/model/store'
 
 const props = defineProps<{
   visible: boolean
@@ -50,6 +52,11 @@ const templateDownloading = ref(false)
 const isStrategicImport = computed(() => props.type === 'strategic-task')
 const dialogTitle = computed(() =>
   isStrategicImport.value ? '导入职能部门指标表' : '导入学院子指标表'
+)
+const authStore = useAuthStore()
+// 填报人可解析预览和确认导入（含覆盖）；自动发起审批仅部门最高领导人可用，无权限角色显示禁用并带提示
+const canAutoApprove = computed(() =>
+  canAutoApproveImport((authStore.user as { roles?: unknown } | null)?.roles)
 )
 const targetLabel = computed(() => (isStrategicImport.value ? '当前职能部门' : '当前学院'))
 const canPreview = computed(
@@ -476,7 +483,17 @@ watch(
         >
           <el-checkbox v-model="overwriteExisting">覆盖已有数据</el-checkbox>
         </el-tooltip>
-        <el-checkbox v-model="autoSubmitAndApprove">导入后自动发起并完成审批</el-checkbox>
+        <el-tooltip
+          content="仅部门最高负责人（分管校领导/学院院长、战略部负责人）可使用自动发起审批"
+          :disabled="canAutoApprove"
+          placement="top"
+        >
+          <span>
+            <el-checkbox v-model="autoSubmitAndApprove" :disabled="!canAutoApprove"
+              >导入后自动发起并完成审批</el-checkbox
+            >
+          </span>
+        </el-tooltip>
       </div>
     </div>
 
