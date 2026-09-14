@@ -1182,22 +1182,12 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="240" align="center">
+              <el-table-column label="操作" width="180" align="center">
                 <template #default="{ row }">
                   <div class="action-buttons-inline">
                     <!-- 查看按钮 - 始终显示 -->
                     <el-button link type="primary" size="small" @click="handleViewDetail(row)"
                       >查看</el-button
-                    >
-
-                    <!-- 里程碑按钮 - 仅草稿状态可编辑 -->
-                    <el-button
-                      v-if="canEditIndicators"
-                      link
-                      type="primary"
-                      size="small"
-                      @click="handleEditMilestones(row)"
-                      >里程碑</el-button
                     >
 
                     <!-- 删除按钮 - 仅草稿状态可删除 -->
