@@ -135,48 +135,24 @@ const routes: RouteRecordRaw[] = [
       // ============================================================
 
       /**
-       * @deprecated As a formal entry point.
-       * Plan management is being consolidated into `/strategic-tasks`.
-       * This route is retained temporarily for compatibility and backup access.
+       * 历史废弃入口兼容：计划管理页已下线，统一收敛到战略任务管理。
+       * 早期版本遗留的独立"计划管理"页面（含未实现的提交按钮）不再对外提供。
        */
       {
         path: 'plans',
-        name: 'PlanList',
-        component: () => import('@/features/plan/ui/PlanListView.vue'),
-        meta: { title: '计划列表 - 战略指标管理系统' }
+        redirect: '/strategic-tasks'
       },
-
-      /**
-       * @deprecated As a formal entry point.
-       * Retained temporarily while the strategic workbench absorbs plan detail flows.
-       */
       {
         path: 'plans/:id',
-        name: 'plan-detail',
-        component: () => import('@/features/plan/ui/PlanDetailView.vue'),
-        meta: { title: '计划详情 - 战略指标管理系统' }
+        redirect: '/strategic-tasks'
       },
-
-      /**
-       * @deprecated As a formal entry point.
-       * Retained temporarily while the strategic workbench absorbs plan editing flows.
-       */
       {
         path: 'plans/:id/edit',
-        name: 'plan-edit',
-        component: () => import('@/features/plan/ui/PlanEditView.vue'),
-        meta: { roles: ['strategic_dept'], title: '编辑计划 - 战略指标管理系统' }
+        redirect: '/strategic-tasks'
       },
-
-      /**
-       * @deprecated As a formal entry point.
-       * Retained temporarily while the strategic workbench absorbs plan creation flows.
-       */
       {
         path: 'plans/create',
-        name: 'plan-create',
-        component: () => import('@/features/plan/ui/PlanEditView.vue'),
-        meta: { roles: ['strategic_dept'], title: '创建计划 - 战略指标管理系统' }
+        redirect: '/strategic-tasks'
       },
 
       /**

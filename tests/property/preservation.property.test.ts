@@ -221,7 +221,14 @@ describe('Property 2: Preservation - Runtime Behavior Unchanged', () => {
       const routeNames = routes.map(r => r.name)
       expect(routeNames).toContain('Login')
       expect(routeNames).toContain('Dashboard')
-      expect(routeNames).toContain('PlanList')
+
+      // 历史遗留的独立"计划管理"页面已下线，/plans 系列入口应重定向到战略任务管理
+      const planRoutes = routes.filter(r => r.path.startsWith('/plans'))
+      expect(planRoutes.length).toBeGreaterThan(0)
+      planRoutes.forEach(route => {
+        expect(route.redirect).toBe('/strategic-tasks')
+      })
+      expect(routeNames).not.toContain('PlanList')
     })
 
     it('should preserve navigation guard behavior', async () => {
