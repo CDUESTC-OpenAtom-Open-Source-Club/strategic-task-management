@@ -10,7 +10,6 @@ import {
   mockAnnouncements,
   mockIndicators,
   mockStrategicTasks,
-  mockMilestones,
   mockAssessmentCycles,
   mockDashboardData,
   createMockResponse,
@@ -400,20 +399,6 @@ export class MockApiHandler {
       // ============================================
       // 里程碑 API
       // ============================================
-      else if (normalizedPath === '/api/milestones' && normalizedMethod === 'GET') {
-        response = await this.handleGetMilestones(query)
-      } else if (normalizedPath.startsWith('/api/milestones/') && normalizedMethod === 'GET') {
-        const id = normalizedPath.split('/').pop()
-        response = await this.handleGetMilestone(id ?? '0')
-      } else if (normalizedPath === '/api/milestones' && normalizedMethod === 'POST') {
-        response = await this.handleCreateMilestone(data)
-      } else if (normalizedPath.startsWith('/api/milestones/') && normalizedMethod === 'PUT') {
-        const id = normalizedPath.split('/').pop()
-        response = await this.handleUpdateMilestone(id ?? '0', data)
-      } else if (normalizedPath.startsWith('/api/milestones/') && normalizedMethod === 'DELETE') {
-        const id = normalizedPath.split('/').pop()
-        response = await this.handleDeleteMilestone(id ?? '0')
-      }
       // ============================================
       // 组织架构 API
       // ============================================
@@ -759,16 +744,7 @@ export class MockApiHandler {
       return createMockError('NOT_FOUND', `指标 ${id} 不存在`)
     }
 
-    // 关联里程碑数据
-    const associatedMilestones = mockMilestones.filter(m => m.indicatorId === indicatorId)
-
-    return createMockResponse(
-      {
-        ...indicator,
-        milestones: associatedMilestones
-      },
-      '获取指标成功'
-    )
+    return createMockResponse(indicator, '获取指标成功')
   }
 
   private static async handleCreateIndicator(data: Record<string, unknown>) {
@@ -781,8 +757,7 @@ export class MockApiHandler {
       progress: 0,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      statusAudit: [],
-      milestones: []
+      statusAudit: []
     }
 
     return createMockResponse(newIndicator, '创建指标成功')
@@ -810,73 +785,6 @@ export class MockApiHandler {
   // ============================================
   // 里程碑处理器
   // ============================================
-
-  private static async handleGetMilestones(query: Record<string, string>) {
-    let milestones = [...mockMilestones]
-
-    // 支持按指标过滤
-    if (query.indicatorId) {
-      const indicatorId = Number(query.indicatorId)
-      milestones = milestones.filter(milestone => milestone.indicatorId === indicatorId)
-    }
-
-    // 支持按状态过滤
-    if (query.status) {
-      milestones = milestones.filter(milestone => milestone.status === query.status)
-    }
-
-    logger.debug('🎭 [Mock API] 获取里程碑列表:', {
-      query,
-      count: milestones.length
-    })
-
-    return createMockPageResponse(milestones, Number(query.page) || 1, Number(query.pageSize) || 10)
-  }
-
-  private static async handleGetMilestone(id: string) {
-    const milestoneId = Number(id)
-    const milestone = mockMilestones.find(item => item.milestoneId === milestoneId)
-
-    if (!milestone) {
-      return createMockError('NOT_FOUND', `里程碑 ${id} 不存在`)
-    }
-
-    return createMockResponse(milestone, '获取里程碑成功')
-  }
-
-  private static async handleCreateMilestone(data: Record<string, unknown>) {
-    logger.info('🎭 [Mock API] 创建里程碑:', data)
-
-    const newMilestone = {
-      milestoneId: Date.now(),
-      ...data,
-      status: 'PENDING',
-      isPaired: false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    }
-
-    return createMockResponse(newMilestone, '创建里程碑成功')
-  }
-
-  private static async handleUpdateMilestone(id: string, data: Record<string, unknown>) {
-    logger.info('🎭 [Mock API] 更新里程碑:', id, data)
-
-    return createMockResponse(
-      {
-        milestoneId: Number(id),
-        ...data,
-        updatedAt: new Date().toISOString()
-      },
-      '更新里程碑成功'
-    )
-  }
-
-  private static async handleDeleteMilestone(id: string) {
-    logger.info('🎭 [Mock API] 删除里程碑:', id)
-
-    return createMockResponse({ milestoneId: Number(id) }, '删除里程碑成功')
-  }
 
   // ============================================
   // 组织架构处理器

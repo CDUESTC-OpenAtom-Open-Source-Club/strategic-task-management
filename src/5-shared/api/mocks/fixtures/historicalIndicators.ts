@@ -15,9 +15,7 @@ export {
   indicators2025,
   indicators2026,
   allHistoricalIndicators,
-  allIndicators,
-  generateQuarterlyMilestones,
-  generateHistoricalMilestones,
+  allIndicators
 } from './indicators'
 
 // 从新的统一模拟数据文件导出

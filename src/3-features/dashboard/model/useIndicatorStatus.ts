@@ -19,63 +19,9 @@ import type {
  * 计算指标状态
  */
 export function getIndicatorStatus(indicator: StrategicIndicator): IndicatorStatus {
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-
-  const milestones = indicator.milestones || []
-  if (milestones.length === 0) {
-    return 'normal'
-  }
-
-  const currentProgress = indicator.progress || 0
-
-  // 按deadline排序里程碑
-  const sortedMilestones = [...milestones].sort(
-    (a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime()
-  )
-
-  // 检查是否有已过期但未达标的里程碑（延期）
-  for (const milestone of sortedMilestones) {
-    const deadlineDate = new Date(milestone.deadline)
-    deadlineDate.setHours(23, 59, 59, 999)
-
-    if (deadlineDate < today && currentProgress < milestone.targetProgress) {
-      return 'delayed'
-    }
-  }
-
-  // 找到离今天最近的未来里程碑
-  const nextMilestone = sortedMilestones.find(m => {
-    const deadlineDate = new Date(m.deadline)
-    deadlineDate.setHours(23, 59, 59, 999)
-    return deadlineDate >= today
-  })
-
-  if (!nextMilestone) {
-    // 没有未来的里程碑，检查最后一个里程碑是否完成
-    const lastMilestone = sortedMilestones[sortedMilestones.length - 1]
-    if (lastMilestone && currentProgress >= lastMilestone.targetProgress) {
-      return 'ahead'
-    }
-    return 'normal'
-  }
-
-  // 检查是否超前完成
-  if (currentProgress >= nextMilestone.targetProgress) {
-    return 'ahead'
-  }
-
-  // 检查是否预警（距离deadline ≤ 3天且未达标）
-  const nextDeadline = new Date(nextMilestone.deadline)
-  nextDeadline.setHours(23, 59, 59, 999)
-  const daysUntilDeadline = Math.ceil(
-    (nextDeadline.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
-  )
-
-  if (daysUntilDeadline <= 3 && currentProgress < nextMilestone.targetProgress) {
-    return 'warning'
-  }
-
+  // 里程碑机制已移除：状态不再由里程碑推导，统一回落为正常。
+  // 延后判断改由上报链路的上级鉴定等级承载（见上报审批链路策划稿）。
+  void indicator
   return 'normal'
 }
 
@@ -108,31 +54,8 @@ export function getStatusClass(status: IndicatorStatus): string {
 /**
  * 获取当月目标进度
  */
-export function getCurrentTargetProgress(indicator: StrategicIndicator): number | null {
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-
-  const milestones = indicator.milestones || []
-  if (milestones.length === 0) {
-    return null
-  }
-
-  // 按deadline排序里程碑
-  const sortedMilestones = [...milestones].sort(
-    (a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime()
-  )
-
-  // 找到离今天最近的里程碑（deadline >= 今天）
-  const nextMilestone = sortedMilestones.find(m => {
-    const deadlineDate = new Date(m.deadline)
-    deadlineDate.setHours(23, 59, 59, 999)
-    return deadlineDate >= today
-  })
-
-  if (nextMilestone) {
-    return nextMilestone.targetProgress
-  }
-
+export function getCurrentTargetProgress(_indicator: StrategicIndicator): number | null {
+  // 里程碑机制已移除：不再有里程碑目标进度。
   return null
 }
 

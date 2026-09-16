@@ -13,11 +13,7 @@
 import { describe, it, expect } from 'vitest'
 import * as fc from 'fast-check'
 import { useDataValidator } from '@/shared/lib/validation/useDataValidator'
-import {
-  PROGRESS_APPROVAL_STATUS_VALUES,
-  MILESTONE_STATUS_VALUES,
-  USER_ROLE_VALUES
-} from '@/shared/config/validationRules'
+import { PROGRESS_APPROVAL_STATUS_VALUES, USER_ROLE_VALUES } from '@/shared/config/validationRules'
 
 // ============================================================================
 // 测试数据生成器 (Arbitraries)
@@ -40,32 +36,7 @@ const validIndicatorArbitrary = fc.record({
   weight: fc.float({ min: 0, max: 100, noNaN: true }),
   responsibleDept: nonEmptyStringArbitrary(100),
   year: fc.integer({ min: 2020, max: 2030 }),
-  milestones: fc.array(
-    fc.record({
-      id: nonEmptyStringArbitrary(50),
-      name: nonEmptyStringArbitrary(100),
-      targetProgress: fc.integer({ min: 0, max: 100 }),
-      deadline: fc
-        .date({ min: new Date('2020-01-01'), max: new Date('2030-12-31') })
-        .filter(d => !isNaN(d.getTime())),
-      status: fc.constantFrom(...MILESTONE_STATUS_VALUES)
-    }),
-    { minLength: 0, maxLength: 5 }
-  ),
   progressApprovalStatus: fc.constantFrom(...PROGRESS_APPROVAL_STATUS_VALUES)
-})
-
-/**
- * 生成有效的里程碑对象
- */
-const validMilestoneArbitrary = fc.record({
-  id: nonEmptyStringArbitrary(50),
-  name: nonEmptyStringArbitrary(100),
-  targetProgress: fc.integer({ min: 0, max: 100 }),
-  deadline: fc
-    .date({ min: new Date('2020-01-01'), max: new Date('2030-12-31') })
-    .filter(d => !isNaN(d.getTime())),
-  status: fc.constantFrom(...MILESTONE_STATUS_VALUES)
 })
 
 /**
@@ -116,33 +87,6 @@ const incompleteIndicatorArbitrary = fc.oneof(
   })
 )
 
-/**
- * 生成缺少必填字段的里程碑对象
- */
-const incompleteMilestoneArbitrary = fc.oneof(
-  // 缺少 id
-  fc.record({
-    name: nonEmptyStringArbitrary(100),
-    targetProgress: fc.integer({ min: 0, max: 100 }),
-    deadline: fc.date(),
-    status: fc.constantFrom(...MILESTONE_STATUS_VALUES)
-  }),
-  // 缺少 name
-  fc.record({
-    id: nonEmptyStringArbitrary(50),
-    targetProgress: fc.integer({ min: 0, max: 100 }),
-    deadline: fc.date(),
-    status: fc.constantFrom(...MILESTONE_STATUS_VALUES)
-  }),
-  // 缺少 status
-  fc.record({
-    id: nonEmptyStringArbitrary(50),
-    name: nonEmptyStringArbitrary(100),
-    targetProgress: fc.integer({ min: 0, max: 100 }),
-    deadline: fc.date()
-  })
-)
-
 // ============================================================================
 // Property 3: Data Completeness Validation
 // ============================================================================
@@ -151,11 +95,11 @@ describe('Property 3: Data Completeness Validation', () => {
   /**
    * **Validates: Requirements 2.4, 3.4, 4.4**
    *
-   * *For any* indicator object, milestone object, or audit log entry,
+   * *For any* indicator object, user object, or audit log entry,
    * the validation function SHALL return isValid=true if and only if
    * all required fields (as defined in validationRules) are present and non-null.
    */
-  const { validateIndicator, validateMilestone, validateUser } = useDataValidator()
+  const { validateIndicator, validateUser } = useDataValidator()
 
   describe('Indicator Completeness', () => {
     it('should return isValid=true for any indicator with all required fields present and non-null', () => {
@@ -217,36 +161,6 @@ describe('Property 3: Data Completeness Validation', () => {
     })
   })
 
-  describe('Milestone Completeness', () => {
-    it('should return isValid=true for any milestone with all required fields present and non-null', () => {
-      fc.assert(
-        fc.property(validMilestoneArbitrary, milestone => {
-          const result = validateMilestone(milestone)
-
-          expect(result.isValid).toBe(true)
-          expect(result.errors).toHaveLength(0)
-
-          return result.isValid === true
-        }),
-        { numRuns: 100 }
-      )
-    })
-
-    it('should return isValid=false for any milestone missing required fields', () => {
-      fc.assert(
-        fc.property(incompleteMilestoneArbitrary, incompleteMilestone => {
-          const result = validateMilestone(incompleteMilestone)
-
-          expect(result.isValid).toBe(false)
-          expect(result.errors.length).toBeGreaterThan(0)
-
-          return result.isValid === false
-        }),
-        { numRuns: 100 }
-      )
-    })
-  })
-
   describe('User Completeness', () => {
     it('should return isValid=true for any user with all required fields present and non-null', () => {
       fc.assert(
@@ -294,7 +208,7 @@ describe('Property 4: Enum Value Validation', () => {
   /**
    * **Validates: Requirements 2.6, 5.2**
    *
-   * *For any* field defined as an enum type (role, progressApprovalStatus, milestoneStatus),
+   * *For any* field defined as an enum type (role, progressApprovalStatus),
    * the validation function SHALL return true if and only if the value is one of the
    * predefined valid enum values.
    */
@@ -336,38 +250,6 @@ describe('Property 4: Enum Value Validation', () => {
     })
   })
 
-  describe('Milestone Status Enum', () => {
-    it('should return true for any valid milestoneStatus value', () => {
-      fc.assert(
-        fc.property(fc.constantFrom(...MILESTONE_STATUS_VALUES), status => {
-          const result = validateEnum(status, MILESTONE_STATUS_VALUES)
-
-          expect(result).toBe(true)
-          return result === true
-        }),
-        { numRuns: 100 }
-      )
-    })
-
-    it('should return false for any invalid milestoneStatus value', () => {
-      const invalidStatusArbitrary = fc
-        .string({ minLength: 1, maxLength: 50 })
-        .filter(
-          s => !MILESTONE_STATUS_VALUES.includes(s as (typeof MILESTONE_STATUS_VALUES)[number])
-        )
-
-      fc.assert(
-        fc.property(invalidStatusArbitrary, invalidStatus => {
-          const result = validateEnum(invalidStatus, MILESTONE_STATUS_VALUES)
-
-          expect(result).toBe(false)
-          return result === false
-        }),
-        { numRuns: 100 }
-      )
-    })
-  })
-
   describe('User Role Enum', () => {
     it('should return true for any valid user role value', () => {
       fc.assert(
@@ -399,7 +281,7 @@ describe('Property 4: Enum Value Validation', () => {
   })
 
   describe('Enum Validation with Entity Validators', () => {
-    const { validateIndicator, validateMilestone, validateUser } = useDataValidator()
+    const { validateIndicator, validateUser } = useDataValidator()
 
     it('should validate indicator with valid progressApprovalStatus enum', () => {
       fc.assert(
@@ -452,56 +334,6 @@ describe('Property 4: Enum Value Validation', () => {
 
             // 应该有关于 progressApprovalStatus 的错误
             const statusErrors = result.errors.filter(e => e.field === 'progressApprovalStatus')
-            expect(statusErrors.length).toBeGreaterThan(0)
-
-            return statusErrors.length > 0
-          }
-        ),
-        { numRuns: 100 }
-      )
-    })
-
-    it('should validate milestone with valid status enum', () => {
-      fc.assert(
-        fc.property(fc.constantFrom(...MILESTONE_STATUS_VALUES), status => {
-          const milestone = {
-            id: 'milestone-1',
-            name: 'Test Milestone',
-            targetProgress: 50,
-            deadline: new Date('2025-06-30'),
-            status: status
-          }
-
-          const result = validateMilestone(milestone)
-
-          expect(result.isValid).toBe(true)
-          return result.isValid === true
-        }),
-        { numRuns: 100 }
-      )
-    })
-
-    it('should reject milestone with invalid status enum', () => {
-      fc.assert(
-        fc.property(
-          fc
-            .string({ minLength: 1, maxLength: 20 })
-            .filter(
-              s => !MILESTONE_STATUS_VALUES.includes(s as (typeof MILESTONE_STATUS_VALUES)[number])
-            ),
-          invalidStatus => {
-            const milestone = {
-              id: 'milestone-1',
-              name: 'Test Milestone',
-              targetProgress: 50,
-              deadline: new Date('2025-06-30'),
-              status: invalidStatus
-            }
-
-            const result = validateMilestone(milestone)
-
-            // 应该有关于 status 的错误
-            const statusErrors = result.errors.filter(e => e.field === 'status')
             expect(statusErrors.length).toBeGreaterThan(0)
 
             return statusErrors.length > 0
@@ -571,8 +403,7 @@ describe('Property 5: Data Format Validation', () => {
    * *For any* progress value, it SHALL be a number in the range [0, 100].
    * *For any* weight value, it SHALL be a non-negative number.
    */
-  const { validateDateFormat, validateProgress, validateIndicator, validateMilestone } =
-    useDataValidator()
+  const { validateDateFormat, validateProgress, validateIndicator } = useDataValidator()
 
   describe('Date Format Validation (Requirement 9.1)', () => {
     it('should return true for any valid Date object', () => {
@@ -770,26 +601,6 @@ describe('Property 5: Data Format Validation', () => {
         { numRuns: 100 }
       )
     })
-
-    it('should validate milestone targetProgress field is in range [0, 100]', () => {
-      fc.assert(
-        fc.property(fc.integer({ min: 0, max: 100 }), targetProgress => {
-          const milestone = {
-            id: 'milestone-1',
-            name: 'Test Milestone',
-            targetProgress: targetProgress,
-            deadline: new Date('2025-06-30'),
-            status: 'pending' as const
-          }
-
-          const result = validateMilestone(milestone)
-
-          expect(result.isValid).toBe(true)
-          return result.isValid === true
-        }),
-        { numRuns: 100 }
-      )
-    })
   })
 
   describe('Weight Value Validation (Requirement 9.3)', () => {
@@ -907,33 +718,6 @@ describe('Property 5: Data Format Validation', () => {
             }
 
             const result = validateIndicator(indicator)
-
-            expect(result.isValid).toBe(true)
-            return result.isValid === true
-          }
-        ),
-        { numRuns: 100 }
-      )
-    })
-
-    it('should validate milestone with all format-correct fields', () => {
-      fc.assert(
-        fc.property(
-          fc.integer({ min: 0, max: 100 }), // targetProgress
-          fc
-            .date({ min: new Date('2020-01-01'), max: new Date('2030-12-31') })
-            .filter(d => !isNaN(d.getTime())), // deadline
-          fc.constantFrom(...MILESTONE_STATUS_VALUES), // status
-          (targetProgress, deadline, status) => {
-            const milestone = {
-              id: 'milestone-1',
-              name: 'Test Milestone',
-              targetProgress: targetProgress,
-              deadline: deadline,
-              status: status
-            }
-
-            const result = validateMilestone(milestone)
 
             expect(result.isValid).toBe(true)
             return result.isValid === true

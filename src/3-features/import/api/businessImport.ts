@@ -21,12 +21,6 @@ export interface ImportFieldMapping {
   confidence: string
 }
 
-export interface ImportMilestoneValue {
-  name: string
-  dueAt: string | null
-  targetProgress: number | null
-}
-
 export interface ImportNormalizedRow {
   department?: string
   college?: string
@@ -39,7 +33,6 @@ export interface ImportNormalizedRow {
   weight?: number | string | null
   remark?: string
   parentIndicatorId?: number | string | null
-  milestones?: ImportMilestoneValue[]
 }
 
 export interface ImportRowPreview {

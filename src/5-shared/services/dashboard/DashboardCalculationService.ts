@@ -175,42 +175,6 @@ export class DashboardCalculationService {
 
     return distribution
   }
-
-  /**
-   * 计算里程碑完成情况
-   * @param indicators 指标列表
-   * @returns 里程碑统计
-   */
-  calculateMilestoneStats(indicators: Indicator[]): {
-    total: number
-    completed: number
-    inProgress: number
-    overdue: number
-  } {
-    let total = 0
-    let completed = 0
-    let inProgress = 0
-    let overdue = 0
-
-    const now = new Date()
-
-    indicators.forEach(indicator => {
-      const milestones = indicator.milestones || []
-      milestones.forEach(milestone => {
-        total++
-
-        if (milestone.status === 'completed') {
-          completed++
-        } else if (new Date(milestone.deadline) < now) {
-          overdue++
-        } else {
-          inProgress++
-        }
-      })
-    })
-
-    return { total, completed, inProgress, overdue }
-  }
 }
 
 // 导出单例实例函数

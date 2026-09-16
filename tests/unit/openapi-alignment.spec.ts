@@ -11,7 +11,6 @@ const compatibilityWhitelist = [
   { method: 'post', path: '/api/v1/auth/refresh' },
   { method: 'get', path: '/api/v1/actuator/health' },
   { method: 'post', path: '/api/v1/critical-endpoint' },
-  { method: 'get', path: '/api/v1/milestones/{id}/pairing-status' },
   { method: 'post', path: '/api/v1/tasks/{id}/activate' },
   { method: 'post', path: '/api/v1/tasks/{id}/cancel' },
   { method: 'post', path: '/api/v1/indicators/distribute' },

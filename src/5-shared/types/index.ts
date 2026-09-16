@@ -14,7 +14,6 @@
 export type {
   StrategicTask,
   Indicator,
-  Milestone,
   User,
   AssessmentCycle,
   ProgressReport,
@@ -26,36 +25,17 @@ export type {
   CreateIndicatorRequest,
   UpdateIndicatorRequest,
   SubmitProgressApprovalRequest,
-  ApproveProgressRequest,
-  CreateMilestoneRequest,
-  UpdateMilestoneRequest
+  ApproveProgressRequest
 } from './entities'
 /* eslint-enable no-restricted-syntax */
 
-export {
-  MilestoneStatus,
-  ProgressApprovalStatus,
-  AuditAction,
-  IndicatorStatus,
-  UserRole
-} from './entities'
-
-// UI-only milestone type (frontend-friendly) to unify milestone display data
-export interface MilestoneUI {
-  id: string | number
-  name: string
-  deadline?: string
-  targetProgress: number
-  status?: string
-  completed?: boolean
-}
+export { ProgressApprovalStatus, AuditAction, IndicatorStatus, UserRole } from './entities'
 
 // ============================================================================
 // Backend-Aligned VO Types (统一后端对齐类型)
 // ============================================================================
 export type {
   IndicatorVO,
-  MilestoneVO,
   IndicatorCreateRequest,
   IndicatorDistributionRequest,
   BatchDistributionRequest,
@@ -89,27 +69,9 @@ export interface Permission {
 
 // ============================================================================
 // 以下是 UI 特有的类型定义
-// 实体类型(StrategicTask, Indicator, Milestone 等)已移至 entities.ts
-// 请使用: import { StrategicTask, Indicator, Milestone } from '@/shared/types'
+// 实体类型(StrategicTask, Indicator 等)已移至 entities.ts
+// 请使用: import { StrategicTask, Indicator } from '@/shared/types'
 // ============================================================================
-
-// 里程碑配对状态摘要
-export interface MilestonePairingStatus {
-  totalMilestones: number
-  pairedCount: number
-  unpairedCount: number
-  nextMilestoneToReport: any | null
-  isAllPaired: boolean
-  pairingProgress: number // 配对进度百分比
-}
-
-// 里程碑填报验证结果
-export interface MilestoneReportValidation {
-  milestoneId: string
-  canReport: boolean
-  message: string
-  nextMilestoneToReport: any | null
-}
 
 // 仪表盘数据类型 (Enhanced)
 export interface DashboardData {
@@ -632,10 +594,6 @@ export interface IndicatorFill {
   currentStepName?: string
   currentApproverId?: number
   currentApproverName?: string
-
-  // 关联的里程碑（如果有）
-  milestone_id?: string | number
-  milestone_name?: string
 }
 
 /**
@@ -710,13 +668,11 @@ export interface IndicatorFillForm {
   progress: number
   content: string
   attachments?: File[]
-  milestone_id?: string | number
   batch_items?: Array<{
     indicator_id: string | number
     indicator_name?: string
     progress: number
     content: string
-    milestone_id?: string | number
     attachment_ids?: number[]
   }>
 }

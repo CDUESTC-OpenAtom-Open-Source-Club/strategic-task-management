@@ -9,11 +9,9 @@ import {
   UserRoleSchema,
   UserSchema,
   StrategicIndicatorSchema,
-  MilestoneSchema,
   LoginCredentialsSchema,
   validateUser,
   validateIndicator,
-  validateMilestone,
   validateLoginCredentials
 } from '@/shared/types/schemas'
 import { TEST_CREDENTIALS } from '../helpers/testCredentials'
@@ -91,7 +89,6 @@ describe('Zod Schemas', () => {
       status: 'DRAFT' as const,
       isStrategic: true,
       year: 2024,
-      milestones: [],
       statusAudit: []
     }
 
@@ -110,59 +107,9 @@ describe('Zod Schemas', () => {
       expect(result.parentIndicatorId).toBe('parent-001')
     })
 
-    it('should accept indicator with milestones', () => {
-      const indicatorWithMilestones = {
-        ...validIndicator,
-        milestones: [
-          {
-            id: 'milestone-001',
-            name: '测试里程碑',
-            targetProgress: 50,
-            deadline: '2024-06-30',
-            status: 'pending' as const
-          }
-        ]
-      }
-      const result = StrategicIndicatorSchema.parse(indicatorWithMilestones)
-      expect(result.milestones).toHaveLength(1)
-    })
-
     it('should reject indicator with invalid weight', () => {
       const invalidIndicator = { ...validIndicator, weight: 150 }
       expect(() => StrategicIndicatorSchema.parse(invalidIndicator)).toThrow()
-    })
-  })
-
-  describe('MilestoneSchema', () => {
-    const validMilestone = {
-      id: 'milestone-001',
-      name: '测试里程碑',
-      targetProgress: 50,
-      deadline: '2024-06-30',
-      status: 'pending' as const
-    }
-
-    it('should accept valid milestone data', () => {
-      const result = MilestoneSchema.parse(validMilestone)
-      expect(result.id).toBe('milestone-001')
-    })
-
-    it('should accept milestone with optional fields', () => {
-      const milestoneWithOptionals = {
-        ...validMilestone,
-        weightPercent: 50,
-        sortOrder: 1,
-        indicatorId: 'indicator-001',
-        isPaired: false
-      }
-      const result = MilestoneSchema.parse(milestoneWithOptionals)
-      expect(result.weightPercent).toBe(50)
-      expect(result.sortOrder).toBe(1)
-    })
-
-    it('should reject milestone with empty name', () => {
-      const invalidMilestone = { ...validMilestone, name: '' }
-      expect(() => MilestoneSchema.parse(invalidMilestone)).toThrow()
     })
   })
 
@@ -240,7 +187,6 @@ describe('Zod Schemas', () => {
           status: 'DRAFT' as const,
           isStrategic: true,
           year: 2024,
-          milestones: [],
           statusAudit: []
         }
 
@@ -253,30 +199,6 @@ describe('Zod Schemas', () => {
         const invalidData = { name: 'test' }
 
         const result = validateIndicator(invalidData)
-        expect(result.success).toBe(false)
-        expect(result.errors).toBeDefined()
-      })
-    })
-
-    describe('validateMilestone', () => {
-      it('should return success for valid milestone', () => {
-        const milestoneData = {
-          id: 'milestone-001',
-          name: '测试里程碑',
-          targetProgress: 50,
-          deadline: '2024-06-30',
-          status: 'pending' as const
-        }
-
-        const result = validateMilestone(milestoneData)
-        expect(result.success).toBe(true)
-        expect(result.data).toBeDefined()
-      })
-
-      it('should return errors for invalid milestone', () => {
-        const invalidData = { title: '' }
-
-        const result = validateMilestone(invalidData)
         expect(result.success).toBe(false)
         expect(result.errors).toBeDefined()
       })

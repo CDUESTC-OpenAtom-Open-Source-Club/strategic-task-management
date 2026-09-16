@@ -13,7 +13,6 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest'
 import * as fc from 'fast-check'
 import { setActivePinia, createPinia } from 'pinia'
 import { useStrategicStore } from '@/features/task/model/strategic'
-import { MILESTONE_STATUS_VALUES } from '@/shared/config/validationRules'
 
 // ============================================================================
 // 测试环境设置 - Mock localStorage
@@ -63,19 +62,6 @@ beforeAll(() => {
  */
 const nonEmptyStringArbitrary = (maxLength: number = 50) =>
   fc.string({ minLength: 1, maxLength }).filter(s => s.trim().length > 0)
-
-/**
- * 生成有效的里程碑对象
- */
-const _validMilestoneArbitrary = fc.record({
-  id: nonEmptyStringArbitrary(50),
-  name: nonEmptyStringArbitrary(100),
-  targetProgress: fc.integer({ min: 0, max: 100 }),
-  deadline: fc
-    .date({ min: new Date('2020-01-01'), max: new Date('2030-12-31') })
-    .map(d => d.toISOString().split('T')[0] || '2025-01-01'),
-  status: fc.constantFrom(...MILESTONE_STATUS_VALUES)
-})
 
 // ============================================================================
 // Property 1: Data Source Verification
@@ -205,40 +191,6 @@ describe('Property 1: Data Source Verification', () => {
 
             // 权重值检查
             expect(indicator.weight).toBeGreaterThanOrEqual(0)
-          }
-
-          return true
-        }),
-        { numRuns: 10 }
-      )
-    })
-
-    it('should have valid milestone structure in indicators with milestones', () => {
-      fc.assert(
-        fc.property(fc.constant(null), () => {
-          const store = useStrategicStore()
-
-          // 检查有里程碑的指标
-          const indicatorsWithMilestones = store.indicators.filter(
-            i => i.milestones && i.milestones.length > 0
-          )
-
-          for (const indicator of indicatorsWithMilestones) {
-            for (const milestone of indicator.milestones!) {
-              // 里程碑必填字段
-              expect(milestone.id).toBeDefined()
-              expect(milestone.name).toBeDefined()
-              expect(typeof milestone.targetProgress).toBe('number')
-              expect(milestone.deadline).toBeDefined()
-              expect(milestone.status).toBeDefined()
-
-              // 里程碑进度范围
-              expect(milestone.targetProgress).toBeGreaterThanOrEqual(0)
-              expect(milestone.targetProgress).toBeLessThanOrEqual(100)
-
-              // 里程碑状态枚举
-              expect(['pending', 'completed', 'overdue']).toContain(milestone.status)
-            }
           }
 
           return true

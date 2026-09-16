@@ -118,64 +118,8 @@ export function useDashboardView(props: DashboardViewProps) {
   }
 
   // 计算指标状态的函数
-  const getIndicatorStatus = (indicator: Indicator): IndicatorStatus => {
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-
-    const milestones = indicator.milestones || []
-    if (milestones.length === 0) {
-      return 'normal'
-    }
-
-    const currentProgress = indicator.progress || 0
-
-    // 按 dueDate 排序里程碑
-    const sortedMilestones = [...milestones].sort(
-      (a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()
-    )
-
-    // 检查是否有已过期但未达标的里程碑（延期）
-    for (const milestone of sortedMilestones) {
-      const deadlineDate = new Date(milestone.dueDate)
-      deadlineDate.setHours(23, 59, 59, 999)
-
-      if (deadlineDate < today && currentProgress < milestone.targetProgress) {
-        return 'delayed'
-      }
-    }
-
-    // 找到离今天最近的未来里程碑（dueDate > 今天）
-    const nextMilestone = sortedMilestones.find(m => {
-      const deadlineDate = new Date(m.dueDate)
-      deadlineDate.setHours(23, 59, 59, 999)
-      return deadlineDate >= today
-    })
-
-    if (!nextMilestone) {
-      // 没有未来的里程碑，检查最后一个里程碑是否完成
-      const lastMilestone = sortedMilestones[sortedMilestones.length - 1]
-      if (lastMilestone && currentProgress >= lastMilestone.targetProgress) {
-        return 'ahead' // 全部完成
-      }
-      return 'normal'
-    }
-
-    // 检查是否超前完成
-    if (currentProgress >= nextMilestone.targetProgress) {
-      return 'ahead'
-    }
-
-    // 检查是否预警（距离 dueDate ≤ 3 天且未达标）
-    const nextDeadline = new Date(nextMilestone.dueDate)
-    nextDeadline.setHours(23, 59, 59, 999)
-    const daysUntilDeadline = Math.ceil(
-      (nextDeadline.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
-    )
-
-    if (daysUntilDeadline <= 3 && currentProgress < nextMilestone.targetProgress) {
-      return 'warning'
-    }
-
+  const getIndicatorStatus = (_indicator: Indicator): IndicatorStatus => {
+    // 里程碑机制已移除：状态不再由里程碑推导，统一回落为正常。
     return 'normal'
   }
 
@@ -201,67 +145,9 @@ export function useDashboardView(props: DashboardViewProps) {
     return classMap[status]
   }
 
-  // 获取当月目标进度（离今天最近的里程碑的目标进度）
-  const getCurrentTargetProgress = (indicator: Indicator): number | null => {
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-
-    const milestones = indicator.milestones || []
-    if (milestones.length === 0) {
-      return null
-    }
-
-    // 按 dueDate 排序里程碑
-    const sortedMilestones = [...milestones].sort(
-      (a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()
-    )
-
-    // 找到离今天最近的里程碑（dueDate >= 今天）
-    const nextMilestone = sortedMilestones.find(m => {
-      const deadlineDate = new Date(m.dueDate)
-      deadlineDate.setHours(23, 59, 59, 999)
-      return deadlineDate >= today
-    })
-
-    if (nextMilestone) {
-      return nextMilestone.targetProgress
-    }
-
-    // 如果没有未来的里程碑，返回最后一个里程碑的目标
-    const lastMilestone = sortedMilestones[sortedMilestones.length - 1]
-    return lastMilestone ? lastMilestone.targetProgress : null
-  }
-
-  // 获取当前里程碑序号信息（如 "2/5" 表示第2个里程碑，共5个）
-  const getCurrentMilestoneIndex = (indicator: Indicator): string | null => {
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-
-    const milestones = indicator.milestones || []
-    if (milestones.length === 0) {
-      return null
-    }
-
-    const total = milestones.length
-
-    // 按 dueDate 排序里程碑
-    const sortedMilestones = [...milestones].sort(
-      (a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()
-    )
-
-    // 找到离今天最近的里程碑（dueDate >= 今天）
-    const nextMilestoneIndex = sortedMilestones.findIndex(m => {
-      const deadlineDate = new Date(m.dueDate)
-      deadlineDate.setHours(23, 59, 59, 999)
-      return deadlineDate >= today
-    })
-
-    if (nextMilestoneIndex !== -1) {
-      return `${nextMilestoneIndex + 1}/${total}`
-    }
-
-    // 如果没有未来的里程碑，返回最后一个
-    return `${total}/${total}`
+  // 里程碑机制已移除：不再有里程碑目标进度。
+  const getCurrentTargetProgress = (_indicator: Indicator): number | null => {
+    return null
   }
 
   const getIndicatorIdentity = (indicator: {
@@ -356,8 +242,7 @@ export function useDashboardView(props: DashboardViewProps) {
       .map(i => ({
         ...i,
         status: getUnifiedIndicatorStatus(i, getIndicatorStatus(i)),
-        targetProgress: getCurrentTargetProgress(i),
-        milestoneIndex: getCurrentMilestoneIndex(i)
+        targetProgress: getCurrentTargetProgress(i)
       }))
   })
 
@@ -505,8 +390,7 @@ export function useDashboardView(props: DashboardViewProps) {
       .map(i => ({
         ...i,
         status: getUnifiedIndicatorStatus(i, getIndicatorStatusAtMonth(i, month, currentYear)),
-        targetProgress: getCurrentTargetProgress(i),
-        milestoneIndex: getCurrentMilestoneIndex(i)
+        targetProgress: getCurrentTargetProgress(i)
       }))
   })
 
@@ -730,8 +614,7 @@ export function useDashboardView(props: DashboardViewProps) {
       .map(i => ({
         ...i,
         status: getUnifiedIndicatorStatus(i, getIndicatorStatusAtMonth(i, month, currentYear)),
-        targetProgress: getCurrentTargetProgress(i),
-        milestoneIndex: getCurrentMilestoneIndex(i)
+        targetProgress: getCurrentTargetProgress(i)
       }))
 
     // 职能部门视角：只看自己下发的
@@ -1251,7 +1134,6 @@ export function useDashboardView(props: DashboardViewProps) {
           指标类型: item.type,
           权重: item.weight,
           完成进度: `${item.progress}%`,
-          里程碑进度: item.milestoneProgress,
           审批状态:
             item.approvalStatus === 'approved'
               ? '已通过'
@@ -1286,7 +1168,6 @@ export function useDashboardView(props: DashboardViewProps) {
           指标类别: item.type2,
           权重: item.weight,
           完成进度: `${item.progress}%`,
-          里程碑进度: item.milestoneProgress,
           审批状态:
             item.approvalStatus === 'approved'
               ? '已通过'
@@ -2525,7 +2406,6 @@ export function useDashboardView(props: DashboardViewProps) {
     filteredMonthIndicators,
     getCollegeRankingData,
     getCollegeStatsForFunctionalDept,
-    getCurrentMilestoneIndex,
     getCurrentTargetProgress,
     getDeptStatsAtMonth,
     getIndicatorStatus,

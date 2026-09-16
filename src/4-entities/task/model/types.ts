@@ -184,7 +184,6 @@ export interface TaskDetail extends Task {
     status?: string
     targetOrgName?: string
     responsibleDept?: string
-    milestoneCount?: number
   }>
 
   // Statistics

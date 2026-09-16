@@ -48,7 +48,6 @@ const readMethodArb = fc.constantFrom('GET', 'HEAD', 'OPTIONS')
  */
 const urlPathArb = fc.oneof(
   fc.constant('/api/indicators'),
-  fc.constant('/api/milestones'),
   fc.constant('/api/tasks'),
   fc.constant('/api/users'),
   fc.constant('/api/orgs'),
@@ -427,7 +426,6 @@ describe('Idempotency Requirement Checking', () => {
   it('should add idempotency key only for write methods on protected paths', () => {
     // Write method on protected path - should add key
     expect(shouldAddIdempotencyKey('POST', '/api/indicators')).toBe(true)
-    expect(shouldAddIdempotencyKey('PUT', '/api/milestones/1')).toBe(true)
     expect(shouldAddIdempotencyKey('DELETE', '/api/tasks/1')).toBe(true)
 
     // Read method on protected path - should NOT add key
@@ -484,7 +482,6 @@ describe('Integration Tests', () => {
       },
       {
         method: 'PUT',
-        url: '/api/milestones/1',
         data: { status: 'completed', progress: 100 }
       },
       {

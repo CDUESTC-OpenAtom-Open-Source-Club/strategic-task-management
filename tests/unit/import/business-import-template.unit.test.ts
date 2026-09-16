@@ -9,26 +9,8 @@ import {
 const importTypes: BusinessImportType[] = ['strategic-task', 'distribution']
 
 const expectedHeaders: Record<BusinessImportType, string[]> = {
-  'strategic-task': [
-    '职能部门',
-    '任务类型',
-    '战略任务',
-    '核心指标',
-    '指标类型',
-    '权重',
-    '里程碑明细',
-    '备注'
-  ],
-  distribution: [
-    '学院',
-    '父级战略任务',
-    '父级核心指标',
-    '子指标名称',
-    '指标类型',
-    '权重',
-    '里程碑明细',
-    '备注'
-  ]
+  'strategic-task': ['职能部门', '任务类型', '战略任务', '核心指标', '指标类型', '权重', '备注'],
+  distribution: ['学院', '父级战略任务', '父级核心指标', '子指标名称', '指标类型', '权重', '备注']
 }
 
 const expectedSheetNames: Record<BusinessImportType, string> = {

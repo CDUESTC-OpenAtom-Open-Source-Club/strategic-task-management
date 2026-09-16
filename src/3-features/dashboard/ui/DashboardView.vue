@@ -65,8 +65,6 @@ const {
   filteredMonthIndicators,
   getCollegeRankingData,
   getCollegeStatsForFunctionalDept,
-  getCurrentMilestoneIndex,
-  getCurrentTargetProgress,
   getDeptStatsAtMonth,
   getIndicatorStatus,
   getStatusClass,
@@ -542,21 +540,6 @@ const {
                           />
                         </span>
                       </div>
-                      <div
-                        v-if="indicator.targetProgress !== null || indicator.milestoneIndex"
-                        class="detail-row"
-                      >
-                        <span class="detail-label">目标进度</span>
-                        <span class="detail-value"
-                          >{{
-                            indicator.targetProgress !== null
-                              ? indicator.targetProgress + '%'
-                              : '-'
-                          }}{{
-                            indicator.milestoneIndex ? ' (' + indicator.milestoneIndex + ')' : ''
-                          }}</span
-                        >
-                      </div>
                       <div class="detail-row">
                         <span class="detail-label">权重</span>
                         <span class="detail-value">{{ indicator.weight }}</span>
@@ -724,21 +707,6 @@ const {
                             style="width: 120px; display: inline-flex"
                           />
                         </span>
-                      </div>
-                      <div
-                        v-if="indicator.targetProgress !== null || indicator.milestoneIndex"
-                        class="detail-row"
-                      >
-                        <span class="detail-label">目标进度</span>
-                        <span class="detail-value"
-                          >{{
-                            indicator.targetProgress !== null
-                              ? indicator.targetProgress + '%'
-                              : '-'
-                          }}{{
-                            indicator.milestoneIndex ? ' (' + indicator.milestoneIndex + ')' : ''
-                          }}</span
-                        >
                       </div>
                       <div class="detail-row">
                         <span class="detail-label">权重</span>
@@ -985,21 +953,6 @@ const {
                             style="width: 120px; display: inline-flex"
                           />
                         </span>
-                      </div>
-                      <div
-                        v-if="indicator.targetProgress !== null || indicator.milestoneIndex"
-                        class="detail-row"
-                      >
-                        <span class="detail-label">目标进度</span>
-                        <span class="detail-value"
-                          >{{
-                            indicator.targetProgress !== null
-                              ? indicator.targetProgress + '%'
-                              : '-'
-                          }}{{
-                            indicator.milestoneIndex ? ' (' + indicator.milestoneIndex + ')' : ''
-                          }}</span
-                        >
                       </div>
                       <div class="detail-row">
                         <span class="detail-label">权重</span>

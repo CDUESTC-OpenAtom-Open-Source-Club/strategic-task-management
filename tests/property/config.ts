@@ -131,12 +131,6 @@ export const arbitraries = {
   indicatorStatus: () => fc.constantFrom('ACTIVE', 'ARCHIVED'),
 
   /**
-   * Generate valid milestone statuses
-   */
-  milestoneStatus: () =>
-    fc.constantFrom('NOT_STARTED', 'IN_PROGRESS', 'COMPLETED', 'DELAYED', 'CANCELED'),
-
-  /**
    * Generate valid report statuses
    */
   reportStatus: () => fc.constantFrom('DRAFT', 'SUBMITTED', 'RETURNED', 'APPROVED', 'REJECTED'),
