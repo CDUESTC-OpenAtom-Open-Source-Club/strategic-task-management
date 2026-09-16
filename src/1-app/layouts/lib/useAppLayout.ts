@@ -196,11 +196,21 @@ export function useAppLayout() {
     stopGlobalDataRefreshTimer()
   })
 
-  // 监听 WS 连接状态变化，动态调整轮询间隔
+  // 监听 WS 连接状态变化，动态调整轮询间隔。
+  // 加 10s 防抖：WS 状态抖动（连接→断开→连接）时避免定时器被反复重建，
+  // 否则每次重建都会立即重置轮询周期，造成高频静默刷新。
+  let applyPollingIntervalDebounce: ReturnType<typeof setTimeout> | null = null
   watch(isConnected, () => {
-    if (globalDataRefreshTimer) {
-      applyPollingInterval()
+    if (!globalDataRefreshTimer) {
+      return
     }
+    if (applyPollingIntervalDebounce) {
+      clearTimeout(applyPollingIntervalDebounce)
+    }
+    applyPollingIntervalDebounce = setTimeout(() => {
+      applyPollingIntervalDebounce = null
+      applyPollingInterval()
+    }, 10 * 1000)
   })
 
   watch(
