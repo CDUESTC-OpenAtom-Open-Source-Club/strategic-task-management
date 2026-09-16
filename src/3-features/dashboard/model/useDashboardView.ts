@@ -1235,6 +1235,27 @@ export function useDashboardView(props: DashboardViewProps) {
     dashboardStore.drillDownToDepartment(target, isCollege ? 'college' : 'functional')
   }
 
+  // A5 点行下钻：选中部门视图中的指标行，弹出完整详情卡（复用 popover 数据，不新增接口）
+  const selectedIndicatorDetail = ref<{
+    dashboard: (typeof filteredDeptIndicators.value)[number]
+  } | null>(null)
+
+  const handleIndicatorRowClick = (indicator: { id?: string | number; name?: string }) => {
+    const pool = [
+      ...filteredDeptIndicators.value,
+      ...filteredMonthIndicators.value,
+      ...filteredCollegeMonthIndicators.value
+    ]
+    const match = pool.find(item => String(item.id) === String(indicator.id))
+    if (match) {
+      selectedIndicatorDetail.value = { dashboard: match }
+    }
+  }
+
+  const handleCloseIndicatorDetail = () => {
+    selectedIndicatorDetail.value = null
+  }
+
   // 任务来源点击筛选
   const handleSourceClick = (source: string) => {
     dashboardStore.applyFilter({ sourceOwner: source })
@@ -2427,6 +2448,9 @@ export function useDashboardView(props: DashboardViewProps) {
     handleResize,
     handleSankeyLinkClick,
     handleSankeyNodeClick,
+    handleIndicatorRowClick,
+    handleCloseIndicatorDetail,
+    selectedIndicatorDetail,
     handleSourceClick,
     handleStatusFilterClick,
     handleUrge,
