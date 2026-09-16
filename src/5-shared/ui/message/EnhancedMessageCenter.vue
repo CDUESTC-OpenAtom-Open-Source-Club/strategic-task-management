@@ -32,6 +32,7 @@ import {
   CircleClose as _CircleClose
 } from '@element-plus/icons-vue'
 import type { Message, MessageType, AlertLevel } from '@/shared/types'
+import { formatDateShort, formatDateTime } from '@/shared/lib/utils'
 
 /**
  * 增强型消息中心组件
@@ -170,7 +171,7 @@ const getRelativeTime = (date: Date) => {
   if (days < 30) {
     return `${Math.floor(days / 7)}周前`
   }
-  return `${new Date(date).toLocaleDateString()}`
+  return formatDateShort(date)
 }
 
 // 获取消息图标样式
@@ -485,7 +486,7 @@ onMounted(() => {
                     </div>
                   </div>
                   <div class="message-time">
-                    <ElTooltip :content="new Date(message.createdAt).toLocaleString()">
+                    <ElTooltip :content="formatDateTime(message.createdAt)">
                       <span>{{ getRelativeTime(message.createdAt) }}</span>
                     </ElTooltip>
                   </div>
