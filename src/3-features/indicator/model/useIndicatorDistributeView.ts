@@ -28,6 +28,7 @@ import { indicatorApi } from '@/features/indicator/api'
 import { milestoneApi } from '@/entities/milestone/api/milestoneApi'
 import { logger } from '@/shared/lib/utils/logger'
 import { resolveMilestoneDisplayState } from '@/shared/lib/utils/milestoneDisplay'
+import { alertApi, type ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import type { Plan } from '@/shared/types'
 import { canUseAsFunctionalParentIndicator } from '@/features/indicator/lib/scope'
 import { sortMilestonesByProgress } from '@/shared/lib/utils/milestoneSort'
@@ -4844,6 +4845,153 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     return data
   })
 
+  // ==================== 子指标预警等级（与战略任务管理页共用后端能力） ====================
+  // 业务口径与战略任务管理页一致：计划正式下发后才能调整预警等级；
+  // 写权限当前仅战略部负责人/分管校领导/系统管理员（后端校验），职能部门后续放开时只需调整 canEditChildManualAlert。
+  const MANUAL_ALERT_WRITE_ROLES = [
+    'ROLE_STRATEGY_DEPT_HEAD',
+    'ROLE_VICE_PRESIDENT',
+    'ROLE_SYSTEM_ADMIN'
+  ]
+  const childManualAlertLevels = ref<Record<string, ManualAlertSeverity>>({})
+  const savingChildManualAlertId = ref<string | null>(null)
+  const isLoadingChildManualAlerts = ref(false)
+
+  const canEditChildManualAlert = computed(() => {
+    const roles = (authStore.user as { roles?: unknown } | null)?.roles
+    if (!Array.isArray(roles)) {
+      return false
+    }
+    const normalized = roles.map(role =>
+      String(role ?? '')
+        .trim()
+        .toUpperCase()
+    )
+    return normalized.some(role => MANUAL_ALERT_WRITE_ROLES.includes(role))
+  })
+
+  const childManualAlertEditable = computed(
+    () =>
+      canEditChildManualAlert.value && normalizedSelectedCollegePlanStatus.value === 'DISTRIBUTED'
+  )
+
+  const getChildManualAlertSeverity = (
+    child: StrategicIndicator | NewChildIndicator | null | undefined
+  ): ManualAlertSeverity => {
+    if (!child) {
+      return null
+    }
+    const key = String(child.id)
+    return childManualAlertLevels.value[key] ?? null
+  }
+
+  const loadChildManualAlertLevels = async () => {
+    const ids = collegeTableData.value
+      .map(row => (row.type === 'child' ? row.child?.id : undefined))
+      .filter((id): id is number => typeof id === 'number' && Number.isFinite(id) && id > 0)
+    if (ids.length === 0 || isLoadingChildManualAlerts.value) {
+      return
+    }
+
+    isLoadingChildManualAlerts.value = true
+    try {
+      const levels = await alertApi.getManualAlertLevels(ids)
+      const next: Record<string, ManualAlertSeverity> = {}
+      ids.forEach(id => {
+        const severity = levels[String(id)] ?? levels[id] ?? null
+        next[String(id)] = severity
+      })
+      childManualAlertLevels.value = next
+    } catch (error) {
+      logger.warn('[IndicatorDistributeView] 加载子指标预警等级失败（不影响其它功能）:', error)
+    } finally {
+      isLoadingChildManualAlerts.value = false
+    }
+  }
+
+  watch(
+    () => collegeTableData.value.map(row => (row.type === 'child' ? row.child?.id : '')).join(','),
+    () => {
+      void loadChildManualAlertLevels()
+    },
+    { immediate: true }
+  )
+
+  const handleChildManualAlertChange = async (
+    child: StrategicIndicator,
+    selectedSeverity: ManualAlertSeverity
+  ) => {
+    const previousSeverity = childManualAlertLevels.value[String(child.id)] ?? null
+    if (previousSeverity === selectedSeverity) {
+      return
+    }
+
+    const label =
+      selectedSeverity === null
+        ? '无预警'
+        : selectedSeverity === 'INFO'
+          ? '一般滞后'
+          : selectedSeverity === 'WARNING'
+            ? '严重滞后'
+            : '重大滞后'
+
+    try {
+      await ElMessageBox.confirm(
+        `确认将「${child.name || '该子指标'}」的预警等级调整为「${label}」？确认后会通知对应下级部门。`,
+        '调整预警等级',
+        {
+          confirmButtonText: '确认调整',
+          cancelButtonText: '取消',
+          type: selectedSeverity ? 'warning' : 'info'
+        }
+      )
+
+      savingChildManualAlertId.value = String(child.id)
+      await alertApi.setManualAlertLevel(String(child.id), selectedSeverity)
+      childManualAlertLevels.value = {
+        ...childManualAlertLevels.value,
+        [String(child.id)]: selectedSeverity
+      }
+      ElMessage.success(selectedSeverity ? '预警等级已调整，并已通知对应下级部门' : '预警已取消')
+    } catch (error) {
+      if (error !== 'cancel' && error !== 'close') {
+        ElMessage.error(
+          error instanceof Error && error.message ? error.message : '预警等级调整失败'
+        )
+      }
+    } finally {
+      savingChildManualAlertId.value = null
+    }
+  }
+
+  const getChildManualAlertLabel = (severity: ManualAlertSeverity): string => {
+    if (severity === 'INFO') {
+      return '一般滞后'
+    }
+    if (severity === 'WARNING') {
+      return '严重滞后'
+    }
+    if (severity === 'CRITICAL') {
+      return '重大滞后'
+    }
+    return '无预警'
+  }
+
+  const getChildManualAlertTagType = (
+    severity: ManualAlertSeverity
+  ): 'success' | 'info' | 'warning' | 'danger' => {
+    if (severity === 'INFO') {
+      return 'info'
+    }
+    if (severity === 'WARNING') {
+      return 'warning'
+    }
+    if (severity === 'CRITICAL') {
+      return 'danger'
+    }
+    return 'success'
+  }
+
   // 获取行的 class 名称（用于标识新增子指标行）
   const getRowClassName = ({ row }: { row: TableRowData }) => {
     if (row.type === 'child' && isDeletingChild(row.child as StrategicIndicator | undefined)) {
@@ -4914,6 +5062,15 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     collegeOverallStatus,
     collegeTableData,
     collegeTotalWeight,
+    // ===== 子指标预警等级（与战略任务管理页同一后端能力；写权限后续按角色放开）=====
+    canEditChildManualAlert,
+    childManualAlertEditable,
+    childManualAlertLevels,
+    getChildManualAlertLabel,
+    getChildManualAlertSeverity,
+    getChildManualAlertTagType,
+    handleChildManualAlertChange,
+    savingChildManualAlertId,
     colleges,
     closeCopyIndicatorsDialog,
     confirmDepartmentPlanApprovalSubmission,

@@ -15,6 +15,7 @@ import {
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import type { StrategicIndicator } from '@/shared/types'
+import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import {
   buildAttachmentCell,
   buildExportFileName,
@@ -96,6 +97,13 @@ const {
   collegeOverallStatus,
   collegeTableData,
   collegeTotalWeight,
+  canEditChildManualAlert,
+  childManualAlertEditable,
+  getChildManualAlertLabel,
+  getChildManualAlertSeverity,
+  getChildManualAlertTagType,
+  handleChildManualAlertChange,
+  savingChildManualAlertId,
   colleges,
   closeCopyIndicatorsDialog,
   confirmDepartmentPlanApprovalSubmission,
@@ -166,7 +174,6 @@ const {
   getDisplayedReportedProgress,
   getIndicatorTaskId,
   getIndicatorTypeLabel,
-  getMilestonesTooltip,
   getMyCollegeIndicators,
   getOrgIdByDeptName,
   getPlanIndicatorNumber,
@@ -195,7 +202,6 @@ const {
   isDeletingChild,
   isFunctionalDept,
   isInteractingWithCollegeSelect,
-  isMilestoneCompleted,
   isQualitativeIndicator,
   isSameDepartment,
   isSavingChildCell,
@@ -225,7 +231,6 @@ const {
   openAddIndicatorForm,
   openCopyIndicatorsDialog,
   openDistributionApprovalSetupDialog,
-  openMilestonesDialog,
   orgStore,
   pageBootstrapPromise,
   parseColleges,
@@ -291,6 +296,20 @@ type DistributionExportChild = Partial<StrategicIndicator> & {
   pendingAttachmentDetails?: unknown[]
 }
 
+// 预警等级判定（与战略任务管理页同一套选项；当前编辑权限仅战略部负责人/分管校领导/系统管理员）
+type ManualAlertSelectValue = Exclude<ManualAlertSeverity, null> | ''
+
+const manualAlertOptions: Array<{
+  label: string
+  value: ManualAlertSelectValue
+  type: 'success' | 'info' | 'warning' | 'danger'
+}> = [
+  { label: '无预警', value: '', type: 'success' },
+  { label: '一般滞后', value: 'INFO', type: 'info' },
+  { label: '严重滞后', value: 'WARNING', type: 'warning' },
+  { label: '重大滞后', value: 'CRITICAL', type: 'danger' }
+]
+
 interface DistributionExportRow {
   exportCollege: string
   type: 'child' | 'new-child'
@@ -343,7 +362,12 @@ const distributionExportColumns: ExcelExportColumn<DistributionExportRow>[] = [
         row.type === 'child' ? getDisplayedReportedProgress(row.child as StrategicIndicator) : null
       )
   },
-  { header: '里程碑', width: 34, getValue: row => formatMilestones(row.child.milestones) },
+  {
+    header: '预警等级判定',
+    width: 18,
+    align: 'center',
+    getValue: row => getChildManualAlertLabel(getChildManualAlertSeverity(row.child))
+  },
   {
     header: '附件',
     width: 42,
@@ -1001,103 +1025,64 @@ const handleDistributionImportCommitted = async () => {
 
                 <!-- 学院模式下不显示学院列 -->
 
-                <!-- 里程碑列 -->
-                <el-table-column label="里程碑" width="100" align="center">
+                <!-- 预警等级判定列（按业务要求替代原里程碑列；控件与战略任务管理页一致） -->
+                <el-table-column label="预警等级判定" width="140" align="center">
                   <template #default="{ row }">
-                    <template v-if="row.type === 'indicator-only'">
-                      <span class="milestone-count">-</span>
+                    <template v-if="row.type !== 'child'">
+                      <span class="manual-alert-placeholder">-</span>
                     </template>
-                    <template v-else-if="row.type === 'child'">
-                      <el-popover
-                        placement="left"
-                        :width="320"
-                        trigger="hover"
-                        :disabled="!row.child?.milestones?.length"
-                      >
-                        <template #reference>
-                          <div
-                            class="milestone-cell"
-                            :class="{
-                              editable: canManageChildDraft(row.child)
-                            }"
-                            @dblclick="
-                              canManageChildDraft(row.child) && openMilestonesDialog(row.child)
-                            "
+                    <template v-else>
+                      <div class="manual-alert-cell">
+                        <template v-if="canEditChildManualAlert">
+                          <el-tooltip
+                            :disabled="childManualAlertEditable"
+                            content="计划正式下发后才能调整预警等级"
+                            placement="top"
                           >
-                            <span class="milestone-count">
-                              {{ row.child?.milestones?.length || 0 }} 个里程碑
-                            </span>
-                          </div>
-                        </template>
-                        <div class="milestone-popover">
-                          <div class="milestone-popover-title">里程碑列表</div>
-                          <div
-                            v-for="(ms, idx) in getMilestonesTooltip(row.child)"
-                            :key="ms.id"
-                            class="milestone-item"
-                            :class="{
-                              'milestone-completed': isMilestoneCompleted(row.child, ms.progress)
-                            }"
-                          >
-                            <div class="milestone-item-header">
-                              <span class="milestone-index">{{ idx + 1 }}.</span>
-                              <span class="milestone-name">{{ ms.name || '未命名' }}</span>
-                              <el-icon
-                                v-if="isMilestoneCompleted(row.child, ms.progress)"
-                                class="milestone-check-icon"
+                            <div
+                              class="manual-alert-select-wrapper"
+                              :class="{
+                                'manual-alert-select-wrapper--locked': !childManualAlertEditable
+                              }"
+                            >
+                              <el-select
+                                :model-value="getChildManualAlertSeverity(row.child)"
+                                size="small"
+                                class="manual-alert-select"
+                                :disabled="
+                                  !childManualAlertEditable ||
+                                  savingChildManualAlertId === String(row.child?.id)
+                                "
+                                :loading="savingChildManualAlertId === String(row.child?.id)"
+                                @change="
+                                  value =>
+                                    handleChildManualAlertChange(
+                                      row.child,
+                                      value as ManualAlertSelectValue
+                                    )
+                                "
                               >
-                                <Check />
-                              </el-icon>
+                                <el-option
+                                  v-for="option in manualAlertOptions"
+                                  :key="option.value || 'NONE'"
+                                  :label="option.label"
+                                  :value="option.value"
+                                />
+                              </el-select>
                             </div>
-                            <div class="milestone-item-info">
-                              <span>预期: {{ ms.expectedDate || '未设置' }}</span>
-                              <span>进度: {{ ms.progress }}%</span>
-                            </div>
-                          </div>
-                          <div v-if="!row.child?.milestones?.length" class="milestone-empty">
-                            暂无里程碑
-                          </div>
-                        </div>
-                      </el-popover>
-                    </template>
-                    <template v-else-if="row.type === 'new-child'">
-                      <el-popover
-                        placement="left"
-                        :width="320"
-                        trigger="hover"
-                        :disabled="!row.child?.milestones?.length"
-                      >
-                        <template #reference>
-                          <div
-                            class="milestone-cell editable"
-                            @dblclick.stop="openMilestonesDialog(row.child)"
-                          >
-                            <span class="milestone-count">
-                              {{ row.child?.milestones?.length || 0 }} 个里程碑
-                            </span>
-                          </div>
+                          </el-tooltip>
                         </template>
-                        <div class="milestone-popover">
-                          <div class="milestone-popover-title">里程碑列表</div>
-                          <div
-                            v-for="(ms, idx) in getMilestonesTooltip(row.child)"
-                            :key="ms.id"
-                            class="milestone-item"
+                        <template v-else>
+                          <el-tag
+                            :type="
+                              getChildManualAlertTagType(getChildManualAlertSeverity(row.child))
+                            "
+                            size="small"
                           >
-                            <div class="milestone-item-header">
-                              <span class="milestone-index">{{ idx + 1 }}.</span>
-                              <span class="milestone-name">{{ ms.name || '未命名' }}</span>
-                            </div>
-                            <div class="milestone-item-info">
-                              <span>预期: {{ ms.expectedDate || '未设置' }}</span>
-                              <span>进度: {{ ms.progress }}%</span>
-                            </div>
-                          </div>
-                          <div v-if="!row.child?.milestones?.length" class="milestone-empty">
-                            暂无里程碑
-                          </div>
-                        </div>
-                      </el-popover>
+                            {{ getChildManualAlertLabel(getChildManualAlertSeverity(row.child)) }}
+                          </el-tag>
+                        </template>
+                      </div>
                     </template>
                   </template>
                 </el-table-column>
@@ -1856,3 +1841,18 @@ const handleDistributionImportCommitted = async () => {
 
 <style scoped src="./IndicatorDistributeView.css"></style>
 <style src="./IndicatorDistributeView.global.css"></style>
+<style scoped>
+/* 预警等级判定列（与战略任务管理页一致） */
+.manual-alert-cell {
+  display: inline-flex;
+  align-items: center;
+}
+
+.manual-alert-select {
+  width: 120px;
+}
+
+.manual-alert-select-wrapper--locked {
+  cursor: not-allowed;
+}
+</style>
