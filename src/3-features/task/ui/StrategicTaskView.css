@@ -414,6 +414,17 @@
   gap: var(--spacing-lg);
 }
 
+/* 信息区块 */
+.info-section,
+.progress-section {
+  margin-bottom: var(--spacing-2xl);
+}
+
+.info-section:last-child,
+.progress-section:last-child {
+  margin-bottom: 0;
+}
+
 .section-title {
   font-weight: 600;
   font-size: 16px;
@@ -500,15 +511,6 @@
   gap: var(--spacing-sm);
   align-items: center;
 }
-
-/* 里程碑输入行样式 */
-.milestone-input-row {
-  display: flex;
-  align-items: center;
-  margin-bottom: var(--spacing-sm);
-  gap: var(--spacing-sm);
-}
-
 /* ========================================
      任务下发相关样式
      ======================================== */
@@ -991,58 +993,6 @@
   resize: none;
   line-height: 1.5;
 }
-
-/* 里程碑表单区域 */
-.milestone-form-area {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.milestone-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 4px;
-  max-height: 300px;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-
-.milestone-list::-webkit-scrollbar {
-  width: 4px;
-}
-
-.milestone-list::-webkit-scrollbar-thumb {
-  background: var(--border-color);
-  border-radius: 2px;
-}
-
-.milestone-index {
-  font-size: 12px;
-  color: var(--text-secondary);
-  min-width: 20px;
-}
-
-.milestone-form-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: var(--bg-white);
-  border-radius: var(--radius-sm);
-  border-bottom: 1px dashed var(--border-light, #e2e8f0);
-}
-
-.milestone-form-item:last-child {
-  border-bottom: none;
-}
-
-.milestone-hint {
-  font-size: 12px;
-  color: var(--text-placeholder);
-}
-
 /* 新增行内联表单 */
 .add-row-inline {
   display: flex;
@@ -1114,13 +1064,6 @@
   background: var(--border-color);
   margin: var(--spacing-2xl) 0;
 }
-
-.milestone-section h4 {
-  font-size: 16px;
-  color: var(--text-main);
-  margin: 0 0 var(--spacing-lg) 0;
-}
-
 .timeline-card {
   padding: var(--spacing-md);
   background: var(--bg-page);
@@ -1582,111 +1525,6 @@
   justify-content: center;
   width: 100%;
 }
-
-/* ========================================
-     目标进度列 - 里程碑样式
-     ======================================== */
-.milestone-cell {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 4px 8px;
-  border-radius: 4px;
-  transition: background 0.2s ease;
-}
-
-.milestone-cell:hover {
-  background: rgba(44, 82, 130, 0.05);
-}
-
-.milestone-count {
-  font-size: 12px;
-  color: var(--color-qualitative, #9333ea);
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-/* 里程碑弹出层 */
-.milestone-popover {
-  padding: 4px 0;
-}
-
-.milestone-popover-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-main, #1e293b);
-  margin-bottom: 8px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border-light, #f1f5f9);
-}
-
-.milestone-item {
-  padding: 8px 10px;
-  border-radius: 6px;
-  margin-bottom: 6px;
-  background: var(--bg-white, #fff);
-  border: 1px solid transparent;
-  transition: all 0.2s;
-}
-
-.milestone-item:last-child {
-  margin-bottom: 0;
-}
-
-/* 里程碑完成状态样式 */
-.milestone-item.milestone-completed {
-  background: linear-gradient(135deg, rgba(34, 197, 94, 0.08) 0%, rgba(34, 197, 94, 0.15) 100%);
-  border-color: rgba(34, 197, 94, 0.2);
-}
-
-.milestone-item.milestone-completed .milestone-index {
-  color: var(--el-color-success, #67c23a);
-}
-
-.milestone-item.milestone-completed .milestone-name {
-  color: var(--el-color-success-dark-2, #529b2e);
-}
-
-.milestone-check-icon {
-  color: var(--el-color-success, #67c23a);
-  font-size: 16px;
-  margin-left: auto;
-}
-
-.milestone-item-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
-}
-
-.milestone-index {
-  font-size: 12px;
-  color: var(--text-placeholder, #94a3b8);
-  font-weight: 500;
-}
-
-.milestone-name {
-  font-size: 13px;
-  color: var(--text-main, #1e293b);
-  font-weight: 500;
-}
-
-.milestone-item-info {
-  display: flex;
-  gap: 16px;
-  font-size: 12px;
-  color: var(--text-secondary, #64748b);
-  padding-left: 18px;
-}
-
-.milestone-empty {
-  font-size: 12px;
-  color: var(--text-placeholder, #94a3b8);
-  text-align: center;
-  padding: 12px 0;
-}
-
 /* ========================================
      卡片视图样式
      ======================================== */
@@ -1778,20 +1616,6 @@
   padding: var(--spacing-xl);
   overflow-y: auto;
 }
-
-/* 信息区块 */
-.info-section,
-.progress-section,
-.milestone-section {
-  margin-bottom: var(--spacing-2xl);
-}
-
-.info-section:last-child,
-.progress-section:last-child,
-.milestone-section:last-child {
-  margin-bottom: 0;
-}
-
 .section-title {
   font-size: 16px;
   font-weight: 600;
@@ -2169,61 +1993,6 @@
     box-shadow: 0 0 0 0 rgba(245, 108, 108, 0);
   }
 }
-
-/* 里程碑列表 */
-.milestone-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-md);
-}
-
-.milestone-item-card {
-  padding: var(--spacing-lg);
-  background: var(--bg-page);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-color);
-  transition: box-shadow var(--transition-fast);
-}
-
-.milestone-item-card:hover {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.milestone-header {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  margin-bottom: var(--spacing-sm);
-}
-
-.milestone-index {
-  font-size: 14px;
-  color: var(--text-placeholder);
-  font-weight: 600;
-  min-width: 24px;
-}
-
-.milestone-name {
-  font-size: 15px;
-  color: var(--text-main);
-  font-weight: 500;
-  flex: 1;
-}
-
-.milestone-details {
-  display: flex;
-  gap: var(--spacing-xl);
-  font-size: 13px;
-  color: var(--text-secondary);
-  padding-left: 32px;
-}
-
-.milestone-progress,
-.milestone-deadline {
-  display: flex;
-  align-items: center;
-}
-
 /* 空状态 */
 .empty-state {
   flex: 1;
@@ -2232,14 +2001,6 @@
   justify-content: center;
   padding: var(--spacing-2xl);
 }
-
-/* ========================================
-     里程碑编辑弹窗样式
-     ======================================== */
-.milestone-edit-dialog {
-  padding: 0;
-}
-
 .indicator-info-header {
   display: flex;
   gap: 24px;
@@ -2265,63 +2026,6 @@
   font-weight: 500;
   color: var(--text-main, #1e293b);
 }
-
-.milestone-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 20px;
-}
-
-.milestone-count-hint {
-  margin-left: auto;
-  font-size: 13px;
-  color: var(--text-secondary, #64748b);
-}
-
-.milestone-edit-list {
-  max-height: 500px;
-  overflow-y: auto;
-  padding: 4px;
-}
-
-.milestone-edit-item {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  padding: 12px;
-  background: var(--bg-white, #fff);
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 8px;
-  margin-bottom: 12px;
-  transition: all 0.3s;
-}
-
-.milestone-edit-item:hover {
-  border-color: var(--color-primary, #2c5282);
-  box-shadow: 0 2px 8px rgba(44, 82, 130, 0.1);
-}
-
-.milestone-index {
-  width: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text-secondary, #64748b);
-  flex-shrink: 0;
-  margin-top: 4px;
-}
-
-.milestone-fields {
-  flex: 1;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
 .field-name {
   flex: 1;
   min-width: 160px;
@@ -2334,24 +2038,6 @@
 .field-date {
   width: 150px;
 }
-
-.milestone-edit-list::-webkit-scrollbar {
-  width: 6px;
-}
-
-.milestone-edit-list::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.milestone-edit-list::-webkit-scrollbar-thumb {
-  background: var(--border-color, #e2e8f0);
-  border-radius: 3px;
-}
-
-.milestone-edit-list::-webkit-scrollbar-thumb:hover {
-  background: var(--border-light, #cbd5e1);
-}
-
 :global(.sism-select-popper--visible-scrollbar .el-select-dropdown__wrap) {
   scrollbar-width: auto;
   scrollbar-color: rgba(37, 99, 235, 0.95) rgba(191, 219, 254, 0.72);
@@ -2390,18 +2076,6 @@
   background: linear-gradient(180deg, rgba(59, 130, 246, 0.96), rgba(37, 99, 235, 0.96));
   border-radius: 999px;
 }
-
-/* 里程碑单元格可编辑提示 */
-.milestone-cell.editable {
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.milestone-cell.editable:hover {
-  background: var(--bg-page, #f8fafc);
-  border-radius: 4px;
-}
-
 .approval-setup-dialog {
   min-height: 120px;
 }
@@ -2560,10 +2234,4 @@
   .progress-main {
     flex-direction: column;
     text-align: center;
-  }
-
-  .milestone-details {
-    flex-direction: column;
-    gap: var(--spacing-sm);
-  }
-}
+  }}

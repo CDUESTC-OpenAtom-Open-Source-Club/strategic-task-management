@@ -8,15 +8,12 @@ import {
   ArrowDown,
   Check,
   Loading,
-  Timer,
   Upload
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import AppAvatar from '@/shared/ui/avatar/AppAvatar.vue'
-import IndicatorMilestoneTimeline from '@/features/indicator/ui/IndicatorMilestoneTimeline.vue'
 import { DistributionApprovalProgressDrawer } from '@/features/approval'
 import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
-import { resolveMilestoneDisplayState } from '@/shared/lib/utils/milestoneDisplay'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
 import type { StrategicIndicator } from '@/shared/types'
 import {
@@ -50,12 +47,10 @@ const {
   PLAN_APPROVAL_HISTORY_WORKFLOW_CODES,
   PLAN_APPROVAL_SUBMIT_WORKFLOW_CODE,
   _addIndicatorToCategory,
-  _calculateMilestoneStatus,
   _currentDate,
   _currentTask,
   _deleteIndicator,
   _formatUpdateTime,
-  _getMilestoneProgressText,
   _getProgressClass,
   _goToIndicator,
   _groupedBasicIndicators,
@@ -65,7 +60,6 @@ const {
   _handleBatchWithdrawByTask,
   _handleDoubleClick,
   _handleTableScroll,
-  _handleViewMilestones,
   _handleWithdraw,
   _handleWithdrawTask,
   _hasPendingApprovalForDept,
@@ -74,8 +68,6 @@ const {
   _selectTask,
   _tableScrollRef,
   _toggleViewMode,
-  addMilestone,
-  addMilestoneInDialog,
   addNewRow,
   addRowFormRef,
   approvalEntryButtonText,
@@ -107,12 +99,10 @@ const {
   cancelAdd,
   cancelEdit,
   cancelIndicatorEdit,
-  cancelMilestoneEdit,
   closeDistributeDialog,
   confirmAssignment,
   confirmDistribute,
   confirmPlanApprovalSubmission,
-  createTempMilestoneId,
   currentApprovalApproverName,
   currentApprovalCandidateNames,
   currentApprovalFlowName,
@@ -127,7 +117,6 @@ const {
   currentIndicatorIndex,
   currentIndicatorWorkflow,
   currentIndicatorWorkflowLoading,
-  currentMilestoneIndicator,
   currentPlan,
   currentPlanReportSummary,
   currentPlanScopeLoading,
@@ -159,25 +148,19 @@ const {
   editingIndicatorField,
   editingIndicatorId,
   editingIndicatorValue,
-  editingMilestoneIndicator,
-  editingMilestones,
   editingValue,
   ensurePersistedTaskIdForIndicator,
   ensurePlanCanDistribute,
   existingTaskNames,
-  extractMilestones,
   findCurrentPlanByDepartment,
   findCurrentPlanByOrgId,
   findExistingTaskIdByName,
   formatDetailDate,
   functionalDepartments,
-  generateMonthlyMilestones,
-  generateMonthlyMilestonesInDialog,
   getCategoryColor,
   getCategoryText,
   getDisplayedReportedProgress,
   getCurrentActorUserId,
-  getCurrentScopeIndicatorsForMilestones,
   getIndicatorCategoryLabel,
   getIndicatorMappedTaskType,
   getIndicatorTaskId,
@@ -205,12 +188,8 @@ const {
   handleDeleteIndicator,
   handleDistributeAll,
   handleDistributeOrWithdraw,
-  handleEditMilestones,
-  handleEditingMilestoneProgressChange,
   handleGlobalClick,
   handleIndicatorDblClick,
-  handleMilestoneDeadlineChange,
-  handleNewRowMilestoneProgressChange,
   handleOpenApproval,
   handleRejectCurrentIndicatorWorkflow,
   handleSelectionChange,
@@ -242,7 +221,6 @@ const {
   isReadOnly,
   isSavingIndicatorCell,
   isSavingIndicatorEdit,
-  isSavingMilestoneEdit,
   isStrategicDept,
   isTableScrolling,
   lastEditTime,
@@ -250,22 +228,10 @@ const {
   loadBackendTaskTypeMap,
   loadCurrentPlanTaskScope,
   loadIndicatorWorkflowSnapshot,
-  loadMilestonePayloads,
-  loadMilestonePayloadsIndividually,
-  loadMilestonesForCurrentScope,
   loadPendingPlanApprovalCount,
-  loadedMilestoneIds,
-  loadingMilestoneIds,
-  milestoneCache,
-  milestoneDrawerVisible,
-  milestoneEditDialogVisible,
-  milestoneFallbackConcurrency,
-  milestoneLoadRequestId,
-  milestoneMap,
   newRow,
   normalizeDepartmentName,
   normalizeEditableText,
-  normalizeMilestone,
   normalizePreviewCandidateDisplayName,
   normalizeTaskId,
   normalizeWorkflowStepName,
@@ -278,7 +244,6 @@ const {
   pendingApprovalCount,
   pendingPlanApprovalCount,
   permissionUtil,
-  persistNewIndicatorMilestones,
   persistTaskContentEdit,
   planStore,
   planUiPhase,
@@ -295,9 +260,6 @@ const {
   refreshTaskPageAfterIndicatorMutation,
   registerTaskLocally,
   rejectIndicatorReview,
-  reloadMilestonesForIndicator,
-  removeMilestone,
-  removeMilestoneInDialog,
   resetApprovalSetupDialog,
   resetApprovalWorkflowStateCache,
   resetNewRow,
@@ -308,7 +270,6 @@ const {
   route,
   router,
   saveIndicatorEdit,
-  saveMilestoneEdit,
   saveNewRow,
   savingIndicatorField,
   savingIndicatorId,
@@ -327,9 +288,6 @@ const {
   taskTypeMap,
   taskTypeMapLoading,
   timeContext,
-  toMilestoneDueDate,
-  toMilestoneRequestStatus,
-  toMilestoneStatus,
   triggerApprovalForDistribution,
   updateEditTime,
   viewMode
@@ -1425,43 +1383,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     </div>
                   </div>
                 </div>
-
-                <!-- 里程碑信息 -->
-                <div
-                  v-if="currentIndicator.milestones && currentIndicator.milestones.length > 0"
-                  class="milestone-section"
-                >
-                  <h4 class="section-title">里程碑节点</h4>
-                  <div class="milestone-list">
-                    <div
-                      v-for="(milestone, index) in currentIndicator.milestones"
-                      :key="milestone.id"
-                      class="milestone-item-card"
-                    >
-                      <div class="milestone-header">
-                        <span class="milestone-index">{{ index + 1 }}.</span>
-                        <span class="milestone-name">{{ milestone.name }}</span>
-                        <el-tag
-                          size="small"
-                          :type="
-                            resolveMilestoneDisplayState(milestone, currentIndicator.progress)
-                              .tagType
-                          "
-                        >
-                          {{
-                            resolveMilestoneDisplayState(milestone, currentIndicator.progress).label
-                          }}
-                        </el-tag>
-                      </div>
-                      <div class="milestone-details">
-                        <span class="milestone-progress"
-                          >目标进度: {{ milestone.targetProgress }}%</span
-                        >
-                        <span class="milestone-deadline">截止日期: {{ milestone.deadline }}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
               </div>
             </div>
 
@@ -1525,15 +1446,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                 <el-col :span="4">
                   <el-form-item class="required-form-item">
                     <template #label><span class="required-asterisk">*</span>指标类型</template>
-                    <el-select
-                      v-model="newRow.type1"
-                      style="width: 100%"
-                      @change="
-                        (val: string) => {
-                          if (val === '定量') generateMonthlyMilestones()
-                        }
-                      "
-                    >
+                    <el-select v-model="newRow.type1" style="width: 100%">
                       <el-option label="定性" value="定性" />
                       <el-option label="定量" value="定量" />
                     </el-select>
@@ -1574,67 +1487,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       :autosize="{ minRows: 3, maxRows: 15 }"
                       placeholder="输入指标备注"
                     />
-                  </el-form-item>
-                </el-col>
-              </el-row>
-              <!-- 里程碑编辑入口已按业务要求隐藏：后端保存时仍按类型自动注入默认里程碑，仅前端不展示 -->
-              <el-row v-if="false" :gutter="16">
-                <el-col :span="24">
-                  <el-form-item class="required-form-item">
-                    <template #label><span class="required-asterisk">*</span>里程碑</template>
-                    <div class="milestone-form-area">
-                      <el-button
-                        v-if="newRow.type1 === '定性'"
-                        size="small"
-                        type="primary"
-                        plain
-                        @click="addMilestone"
-                      >
-                        <el-icon><Plus /></el-icon> 添加里程碑
-                      </el-button>
-                      <div v-if="newRow.milestones.length > 0" class="milestone-list">
-                        <div
-                          v-for="(ms, idx) in newRow.milestones"
-                          :key="ms.id"
-                          class="milestone-form-item"
-                        >
-                          <span class="milestone-index">{{ idx + 1 }}.</span>
-                          <el-input
-                            v-model="ms.name"
-                            placeholder="里程碑名称"
-                            style="width: 160px"
-                            size="small"
-                          />
-                          <el-input-number
-                            :model-value="ms.targetProgress"
-                            :min="0"
-                            :max="100"
-                            placeholder="目标进度%"
-                            size="small"
-                            style="width: 110px"
-                            @update:model-value="
-                              value => handleNewRowMilestoneProgressChange(ms, value)
-                            "
-                          />
-                          <el-date-picker
-                            v-model="ms.deadline"
-                            type="date"
-                            placeholder="截止日期"
-                            size="small"
-                            style="width: 130px"
-                            value-format="YYYY-MM-DD"
-                          />
-                          <el-button type="danger" size="small" text @click="removeMilestone(idx)">
-                            <el-icon><Delete /></el-icon>
-                          </el-button>
-                        </div>
-                      </div>
-                      <span v-else class="milestone-hint">{{
-                        newRow.type1 === '定量'
-                          ? '选择定量后自动生成12月里程碑'
-                          : '暂无里程碑，点击添加'
-                      }}</span>
-                    </div>
                   </el-form-item>
                 </el-col>
               </el-row>
@@ -1791,19 +1643,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             currentDetail.remark
           }}</el-descriptions-item>
         </el-descriptions>
-
-        <!-- 里程碑信息 -->
-        <div
-          v-if="currentDetail.milestones && currentDetail.milestones.length > 0"
-          class="milestone-section"
-        >
-          <div class="divider"></div>
-          <h4>里程碑节点</h4>
-          <IndicatorMilestoneTimeline
-            :milestones="currentDetail.milestones"
-            :current-progress="currentDetail.progress"
-          />
-        </div>
       </div>
     </el-drawer>
 
@@ -2023,109 +1862,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
       @close="taskApprovalVisible = false"
       @refresh="handleApprovalRefresh"
     />
-
-    <!-- 里程碑编辑弹窗 -->
-    <el-dialog
-      v-model="milestoneEditDialogVisible"
-      title="编辑里程碑"
-      width="700px"
-      :close-on-click-modal="false"
-      :close-on-press-escape="!isSavingMilestoneEdit"
-      :show-close="!isSavingMilestoneEdit"
-      @close="cancelMilestoneEdit"
-    >
-      <div v-if="editingMilestoneIndicator" class="milestone-edit-dialog">
-        <!-- 指标信息 -->
-        <div class="indicator-info-header">
-          <div class="info-item">
-            <span class="label">指标名称：</span>
-            <span class="value">{{ editingMilestoneIndicator.name }}</span>
-          </div>
-          <div class="info-item">
-            <span class="label">指标类型：</span>
-            <el-tag
-              size="small"
-              :type="editingMilestoneIndicator.type1 === '定量' ? 'primary' : 'warning'"
-            >
-              {{ editingMilestoneIndicator.type1 }}
-            </el-tag>
-          </div>
-        </div>
-
-        <el-divider />
-
-        <!-- 操作按钮 -->
-        <div class="milestone-actions">
-          <el-button size="small" type="primary" :icon="Plus" @click="addMilestoneInDialog">
-            添加里程碑
-          </el-button>
-          <el-button
-            v-if="editingMilestoneIndicator.type1 === '定量'"
-            size="small"
-            type="success"
-            :icon="Timer"
-            @click="generateMonthlyMilestonesInDialog"
-          >
-            生成12个月里程碑
-          </el-button>
-          <span class="milestone-count-hint"> 当前共 {{ editingMilestones.length }} 个里程碑 </span>
-        </div>
-
-        <!-- 里程碑列表 -->
-        <div class="milestone-edit-list">
-          <el-empty
-            v-if="editingMilestones.length === 0"
-            description="暂无里程碑，点击上方按钮添加"
-            :image-size="80"
-          />
-
-          <!-- 里程碑编辑表单 -->
-          <div v-for="(ms, idx) in editingMilestones" :key="ms.id" class="milestone-edit-item">
-            <div class="milestone-index">{{ idx + 1 }}.</div>
-            <div class="milestone-fields">
-              <el-input
-                v-model="ms.name"
-                placeholder="里程碑名称"
-                size="small"
-                class="field-name"
-              />
-              <el-input-number
-                :model-value="ms.targetProgress"
-                :min="0"
-                :max="100"
-                placeholder="目标进度%"
-                size="small"
-                class="field-progress"
-                @update:model-value="value => handleEditingMilestoneProgressChange(ms, value)"
-              />
-              <el-date-picker
-                v-model="ms.deadline"
-                type="date"
-                placeholder="截止日期"
-                size="small"
-                value-format="YYYY-MM-DD"
-                class="field-date"
-                @change="handleMilestoneDeadlineChange"
-              />
-              <el-button
-                type="danger"
-                size="small"
-                :icon="Delete"
-                circle
-                @click="removeMilestoneInDialog(idx)"
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <template #footer>
-        <el-button :disabled="isSavingMilestoneEdit" @click="cancelMilestoneEdit">取消</el-button>
-        <el-button type="primary" :loading="isSavingMilestoneEdit" @click="saveMilestoneEdit">
-          保存
-        </el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
