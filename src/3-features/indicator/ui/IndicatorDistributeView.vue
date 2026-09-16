@@ -1328,7 +1328,8 @@ const handleDistributionImportCommitted = async () => {
                       </el-form-item>
                     </el-col>
                   </el-row>
-                  <el-row :gutter="16">
+                  <!-- 里程碑编辑入口已按业务要求隐藏：后端保存时仍按类型自动注入默认里程碑，仅前端不展示 -->
+                  <el-row v-if="false" :gutter="16">
                     <el-col :span="24">
                       <el-form-item class="required-form-item">
                         <template #label><span class="required-asterisk">*</span>里程碑</template>
