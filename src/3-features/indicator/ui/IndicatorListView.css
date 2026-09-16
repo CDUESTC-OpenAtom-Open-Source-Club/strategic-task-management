@@ -388,25 +388,21 @@
 
 /* ============================================================
    进度状态颜色样式
-   用于根据里程碑进度判断显示不同颜色
-
-   【可配置项】预警天数阈值在 script 部分的 PROGRESS_WARNING_DAYS 常量
-   位置：strategic-task-management/src/views/IndicatorListView.vue
    ============================================================ */
 
-/* 延期状态 - 红色：当前进度未达到已过期里程碑的目标 */
+/* 延期状态 - 红色 */
 .progress-number.progress-delayed {
   color: #f56c6c;
   font-weight: 600;
 }
 
-/* 预警状态 - 黄色：距离最近里程碑还有5天内且未达标 */
+/* 预警状态 - 黄色 */
 .progress-number.progress-warning {
   color: #e6a23c;
   font-weight: 600;
 }
 
-/* 超前完成 - 绿色：当前进度已达到最近里程碑的目标 */
+/* 超前完成 - 绿色 */
 .progress-number.progress-ahead {
   color: #67c23a;
   font-weight: 600;
@@ -558,13 +554,6 @@
 .detail-desc {
   margin-bottom: var(--spacing-2xl);
 }
-
-.milestone-section h4 {
-  font-size: 16px;
-  color: var(--text-main);
-  margin: 0 0 var(--spacing-lg) 0;
-}
-
 .timeline-card {
   padding: var(--spacing-md);
   background: var(--bg-page);
@@ -719,12 +708,6 @@
   color: var(--text-main);
   font-size: 14px;
 }
-
-.report-indicator-info .info-value.milestone-target {
-  cursor: help;
-  border-bottom: 1px dashed var(--color-primary);
-}
-
 .report-indicator-info .info-value.highlight {
   color: var(--color-primary);
   font-weight: 600;
@@ -843,106 +826,6 @@
 .report-tips :deep(.el-alert) {
   border-radius: var(--radius-sm);
 }
-
-/* ========================================
-   里程碑列样式
-   ======================================== */
-.milestone-cell {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 4px 8px;
-  cursor: default;
-}
-
-.milestone-count {
-  font-size: 13px;
-  color: var(--text-regular, #475569);
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-/* 里程碑弹出层 */
-.milestone-popover {
-  padding: 4px 0;
-}
-
-.milestone-popover-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-main, #1e293b);
-  margin-bottom: 8px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border-light, #f1f5f9);
-}
-
-.milestone-item {
-  padding: 8px 10px;
-  border-radius: 6px;
-  margin-bottom: 6px;
-  background: var(--bg-white, #fff);
-  border: 1px solid transparent;
-  transition: all 0.2s;
-}
-
-.milestone-item:last-child {
-  margin-bottom: 0;
-}
-
-/* 里程碑完成状态样式 */
-.milestone-item.milestone-completed {
-  background: linear-gradient(135deg, rgba(34, 197, 94, 0.08) 0%, rgba(34, 197, 94, 0.15) 100%);
-  border-color: rgba(34, 197, 94, 0.2);
-}
-
-.milestone-item.milestone-completed .milestone-index {
-  color: var(--el-color-success, #67c23a);
-}
-
-.milestone-item.milestone-completed .milestone-name {
-  color: var(--el-color-success-dark-2, #529b2e);
-}
-
-.milestone-check-icon {
-  color: var(--el-color-success, #67c23a);
-  font-size: 16px;
-  margin-left: auto;
-}
-
-.milestone-item-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
-}
-
-.milestone-index {
-  font-size: 12px;
-  color: var(--text-placeholder, #94a3b8);
-  font-weight: 500;
-}
-
-.milestone-name {
-  font-size: 13px;
-  color: var(--text-main, #1e293b);
-  font-weight: 500;
-}
-
-.milestone-item-info {
-  display: flex;
-  gap: 16px;
-  font-size: 12px;
-  color: var(--text-secondary, #64748b);
-  padding-left: 18px;
-}
-
-.milestone-empty {
-  font-size: 12px;
-  color: var(--text-placeholder, #94a3b8);
-  text-align: center;
-  padding: 12px 0;
-}
-
 /* ========================================
    状态列样式
    Requirements: 2.9, 3.1, 3.2 - 清晰分离生命周期状态和审批状态

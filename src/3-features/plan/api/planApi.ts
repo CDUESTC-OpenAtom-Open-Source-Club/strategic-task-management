@@ -104,8 +104,6 @@ export interface IndicatorFillVO {
   auditComment?: string
   auditedBy?: string
   auditedAt?: string
-  milestoneId?: number
-  milestoneName?: string
 }
 
 export interface PlanFillVO {
@@ -528,9 +526,7 @@ const mockIndicatorFills: IndicatorFillVO[] = [
     filledByName: '张老师',
     createdAt: '2025-02-15T14:20:00',
     updatedAt: '2025-02-15T14:20:00',
-    status: 'SUBMITTED',
-    milestoneId: 1,
-    milestoneName: '第一季度里程碑'
+    status: 'SUBMITTED'
   },
   {
     fillId: 3,
@@ -645,7 +641,6 @@ function convertIndicatorVOToIndicator(vo: PlanIndicatorVO): Indicator {
     task_id: vo.taskId,
     name: vo.name,
     definition: vo.definition,
-    milestones: [], // 里程碑将单独获取
     createdAt: vo.createdAt,
     updatedAt: vo.updatedAt,
     latest_progress: latestFill?.progress,
@@ -671,9 +666,7 @@ function convertIndicatorFillVOToIndicatorFill(vo: IndicatorFillVO): IndicatorFi
     status: vo.status ? convertFillStatus(vo.status) : undefined,
     audit_comment: vo.auditComment,
     audited_by: vo.auditedBy,
-    audited_at: vo.auditedAt,
-    milestone_id: vo.milestoneId,
-    milestone_name: vo.milestoneName
+    audited_at: vo.auditedAt
   }
 }
 
@@ -712,7 +705,6 @@ interface PlanReportIndicatorDetailResponse {
   indicatorId: number
   progress?: number | null
   comment?: string | null
-  milestoneNote?: string | null
   attachments?: Attachment[] | null
 }
 
@@ -1637,7 +1629,6 @@ export const planApi = {
                 task_id: planId,
                 name: ind.indicatorName || ind.name || '',
                 definition: ind.indicatorDesc || ind.description || '',
-                milestones: [],
                 createdAt: ind.createdAt,
                 updatedAt: ind.updatedAt,
                 latest_progress: ind.progress,
@@ -2210,8 +2201,7 @@ export const indicatorFillApi = {
         filled_by: 'current_user',
         filled_by_name: '当前用户',
         created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        milestone_id: form.milestone_id
+        updated_at: new Date().toISOString()
       }
 
       mockIndicatorFills.push({
@@ -2225,8 +2215,7 @@ export const indicatorFillApi = {
         filledBy: newFill.filled_by,
         filledByName: newFill.filled_by_name,
         createdAt: newFill.created_at,
-        updatedAt: newFill.updated_at,
-        milestoneId: newFill.milestone_id as number
+        updatedAt: newFill.updated_at
       })
 
       return {
@@ -2255,7 +2244,6 @@ export const indicatorFillApi = {
               indicator_name: context.indicatorName,
               progress: form.progress,
               content: form.content,
-              milestone_id: form.milestone_id,
               attachment_ids: []
             }
           ]
@@ -2265,7 +2253,6 @@ export const indicatorFillApi = {
         indicatorName: String(item.indicator_name || ''),
         progress: Number(item.progress),
         content: String(item.content || ''),
-        milestoneId: item.milestone_id,
         attachmentIds: Array.isArray((item as { attachment_ids?: unknown[] }).attachment_ids)
           ? ((item as { attachment_ids?: unknown[] }).attachment_ids ?? [])
               .map(value => Number(value))
@@ -2319,7 +2306,6 @@ export const indicatorFillApi = {
           progress: item.progress,
           issues: item.content,
           nextPlan: item.content,
-          milestoneNote: item.milestoneId ? String(item.milestoneId) : null,
           attachmentIds: item.attachmentIds
         }))
       }
@@ -2558,7 +2544,6 @@ export const indicatorFillApi = {
         progress: isTarget ? normalizedProgress : Number(detail.progress ?? 0),
         issues: content,
         nextPlan: content,
-        milestoneNote: detail.milestoneNote ?? null,
         attachmentIds: Array.isArray(detail.attachments)
           ? detail.attachments
               .map(attachment => Number(attachment.id))

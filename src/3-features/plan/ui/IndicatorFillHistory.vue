@@ -144,10 +144,6 @@ void loadHistory()
 
         <p v-if="fill.content" class="history-content">{{ fill.content }}</p>
 
-        <div v-if="fill.milestone_name" class="history-extra">
-          <span class="pill">里程碑: {{ fill.milestone_name }}</span>
-        </div>
-
         <div v-if="fill.audit_comment" class="history-extra">
           <span class="muted-label">审核意见</span>
           <p class="history-comment">{{ fill.audit_comment }}</p>

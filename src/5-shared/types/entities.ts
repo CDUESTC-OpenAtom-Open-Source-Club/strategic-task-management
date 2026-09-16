@@ -7,7 +7,6 @@
  * 后端表名映射:
  * - strategic_task → StrategicTask
  * - indicator → Indicator
- * - milestone → Milestone
  * - app_user → User
  * - assessment_cycle → AssessmentCycle
  * - progress_report → ProgressReport
@@ -26,17 +25,6 @@ export const TaskType = {
   QUANTITATIVE: '定量'
 } as const
 export type TaskType = (typeof TaskType)[keyof typeof TaskType]
-
-/**
- * 里程碑状态枚举
- * @requirement 后端 MilestoneStatus 枚举
- */
-export const MilestoneStatus = {
-  PENDING: 'pending',
-  COMPLETED: 'completed',
-  OVERDUE: 'overdue'
-} as const
-export type MilestoneStatus = (typeof MilestoneStatus)[keyof typeof MilestoneStatus]
 
 /**
  * 进度审批状态枚举
@@ -206,48 +194,6 @@ export interface Indicator {
   displayStatus?: 'DRAFT' | 'PENDING_APPROVAL' | 'DISTRIBUTED'
   /** 备注 (后端: remark) */
   remark: string | null
-  /** 创建时间 (后端: created_at) */
-  createdAt: string
-  /** 更新时间 (后端: updated_at) */
-  updatedAt: string
-  /** 关联的里程碑列表 (后端关联: milestone) */
-  milestones?: Milestone[]
-}
-
-/**
- * 里程碑实体
- * 对应后端表: milestone
- * 对应后端类: Milestone.java
- *
- * @requirement 后端字段完全对齐
- */
-export interface Milestone {
-  /** 里程碑ID (后端: milestone_id) */
-  milestoneId: number
-  /** 前端兼容ID */
-  id?: number | string
-  /** 指标ID (后端: indicator_id) */
-  indicatorId: number | null
-  /** 里程碑名称 (后端: milestone_name) */
-  milestoneName: string
-  /** 前端兼容名称 */
-  name?: string
-  /** 里程碑描述 (后端: milestone_desc) */
-  milestoneDesc: string | null
-  /** 目标进度 (后端: target_progress) */
-  targetProgress: number
-  /** 截止时间 (后端: due_date) */
-  dueDate: string
-  /** 前端兼容日期字段 */
-  deadline?: string
-  /** 权重百分比 (后端: weight_percent) */
-  weightPercent: number
-  /** 排序顺序 (后端: sort_order) */
-  sortOrder: number
-  /** 状态 (后端: status) */
-  status: MilestoneStatus
-  /** 是否已配对 (后端: is_paired) */
-  isPaired: boolean
   /** 创建时间 (后端: created_at) */
   createdAt: string
   /** 更新时间 (后端: updated_at) */
@@ -503,31 +449,4 @@ export interface ApproveProgressRequest {
   indicatorId: number
   action: 'approve' | 'reject'
   comment: string | null
-}
-
-/**
- * 创建里程碑请求
- */
-export interface CreateMilestoneRequest {
-  indicatorId: number
-  milestoneName: string
-  milestoneDesc: string | null
-  targetProgress: number
-  dueDate: string
-  weightPercent: number
-  sortOrder: number
-}
-
-/**
- * 更新里程碑请求
- */
-export interface UpdateMilestoneRequest {
-  milestoneId: number
-  milestoneName?: string
-  milestoneDesc?: string | null
-  targetProgress?: number
-  dueDate?: string
-  weightPercent?: number
-  sortOrder?: number
-  status?: MilestoneStatus
 }

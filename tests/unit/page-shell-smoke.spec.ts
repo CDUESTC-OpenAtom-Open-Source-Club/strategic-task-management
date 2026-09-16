@@ -77,7 +77,6 @@ function createViewModel(overrides: Record<string, unknown> = {}) {
     pageHasError: false,
     filterForm: {},
     newRow: {
-      milestones: [],
       type1: '定性',
       type2: '基础性',
       weight: 0,
@@ -86,7 +85,6 @@ function createViewModel(overrides: Record<string, unknown> = {}) {
       taskContent: ''
     },
     newIndicatorForm: {
-      milestones: [],
       type1: '定性',
       type2: '基础性',
       weight: 0,

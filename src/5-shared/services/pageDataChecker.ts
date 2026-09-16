@@ -120,26 +120,6 @@ export class PageDataChecker {
     const issues: DataIssue[] = []
     const suggestions: string[] = []
 
-    // 检查里程碑数据完整性
-    indicators.forEach((indicator, index) => {
-      if (indicator.milestones) {
-        indicator.milestones.forEach((milestone, mIndex) => {
-          const result = this.validator.validateMilestone(milestone)
-          if (!result.isValid) {
-            result.errors.forEach(err => {
-              issues.push({
-                severity: 'warning',
-                category: 'missing',
-                field: `indicators[${index}].milestones[${mIndex}].${err.field}`,
-                description: err.message,
-                currentValue: err.value
-              })
-            })
-          }
-        })
-      }
-    })
-
     return {
       pageName: 'IndicatorListView',
       timestamp: new Date(),

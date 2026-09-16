@@ -28,7 +28,7 @@ import { generateCacheKey, shouldCache, getCacheValidationHeaders } from '@/shar
 import { USE_MOCK } from '@/shared/config/api'
 
 // 需要签名验证的敏感操作路径
-const SENSITIVE_PATHS = ['/auth/password', '/indicators', '/tasks', '/milestones']
+const SENSITIVE_PATHS = ['/auth/password', '/indicators', '/tasks']
 const PUBLIC_AUTH_PATHS = [
   '/auth/login',
   '/auth/refresh',

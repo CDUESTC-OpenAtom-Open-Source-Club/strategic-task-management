@@ -321,13 +321,6 @@ defineExpose({
               <span class="attachments-count">{{ fill.attachments.length }} 个文件</span>
             </div>
 
-            <!-- 里程碑关联 -->
-            <div v-if="fill.milestone_name" class="fill-milestone">
-              <ElTag size="small" type="info" effect="plain">
-                里程碑: {{ fill.milestone_name }}
-              </ElTag>
-            </div>
-
             <div class="fill-item-footer">
               <span class="fill-author">{{ fill.filled_by_name }}</span>
               <span class="fill-date">{{ formatDate(fill.fill_date) }}</span>
@@ -553,10 +546,6 @@ defineExpose({
 
 .attachments-count {
   font-weight: 500;
-}
-
-.fill-milestone {
-  margin-bottom: 8px;
 }
 
 .fill-item-footer {

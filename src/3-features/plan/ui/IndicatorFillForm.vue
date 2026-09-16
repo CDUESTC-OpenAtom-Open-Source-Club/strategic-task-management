@@ -16,15 +16,9 @@ import {
   type UploadProps
 } from 'element-plus'
 import { Delete as _Delete, UploadFilled } from '@element-plus/icons-vue'
-import type {
-  Indicator,
-  IndicatorFill,
-  IndicatorFillForm,
-  Milestone as _Milestone
-} from '@/shared/types'
+import type { Indicator, IndicatorFill, IndicatorFillForm } from '@/shared/types'
 import { usePlanStore } from '@/features/plan/model/store'
 import { logger } from '@/shared/lib/utils/logger'
-import { sortMilestonesByProgress } from '@/shared/lib/utils/milestoneSort'
 
 const props = defineProps<{
   indicator: Indicator
@@ -43,8 +37,7 @@ const planStore = usePlanStore()
 const formData = ref<IndicatorFillForm>({
   indicator_id: props.indicator.id,
   progress: 0,
-  content: '',
-  milestone_id: undefined
+  content: ''
 })
 
 const fileList = ref<UploadUserFile[]>([])
@@ -63,22 +56,12 @@ const rules = {
   ]
 }
 
-const currentMilestone = computed(() => {
-  if (!props.indicator.milestones || props.indicator.milestones.length === 0) {
-    return null
-  }
-
-  const sortedMilestones = sortMilestonesByProgress(props.indicator.milestones)
-  return sortedMilestones.find(m => m.status !== 'completed') || sortedMilestones[0]
-})
-
 const initFormData = () => {
   if (props.fill) {
     formData.value = {
       indicator_id: props.fill.indicator_id,
       progress: props.fill.progress,
-      content: props.fill.content,
-      milestone_id: props.fill.milestone_id
+      content: props.fill.content
     }
 
     if (props.fill.attachments && props.fill.attachments.length > 0) {
@@ -93,8 +76,7 @@ const initFormData = () => {
     formData.value = {
       indicator_id: props.indicator.id,
       progress: props.indicator.latest_progress || 0,
-      content: '',
-      milestone_id: currentMilestone.value?.id
+      content: ''
     }
   }
 }
@@ -202,13 +184,6 @@ watch(
         <h3 class="indicator-name">{{ indicator.name }}</h3>
         <p class="indicator-definition">{{ indicator.definition }}</p>
       </div>
-
-      <div v-if="currentMilestone" class="milestone-tag">
-        <el-tag type="info" effect="light">
-          <el-icon><Document /></el-icon>
-          {{ currentMilestone.name }} (目标: {{ currentMilestone.targetProgress }}%)
-        </el-tag>
-      </div>
     </div>
 
     <ElForm ref="formRef" :model="formData" :rules="rules" label-position="top" class="fill-form">
@@ -243,12 +218,6 @@ watch(
           placeholder="请填写本次填报说明、完成情况、存在问题等"
           :disabled="readonly"
         />
-      </ElFormItem>
-
-      <ElFormItem v-if="currentMilestone" label="关联里程碑">
-        <ElTag type="success" effect="plain">
-          {{ currentMilestone.name }} - 截止 {{ currentMilestone.deadline }}
-        </ElTag>
       </ElFormItem>
 
       <ElFormItem label="附件">

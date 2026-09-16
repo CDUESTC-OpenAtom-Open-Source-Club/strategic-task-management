@@ -13,10 +13,6 @@ vi.mock('@/features/indicator/api', () => ({
   }
 }))
 
-vi.mock('@/entities/milestone/api/milestoneApi', () => ({
-  milestoneApi: {}
-}))
-
 vi.mock('@/features/task/api/strategicApi', () => ({
   strategicApi: {}
 }))
@@ -74,7 +70,6 @@ describe('useStrategicStore addIndicator', () => {
       createTime: '2026-03-29',
       remark: '测试',
       canWithdraw: true,
-      milestones: [],
       targetValue: 100,
       unit: '%',
       responsibleDept: '教务部',

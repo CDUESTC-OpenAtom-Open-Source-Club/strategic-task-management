@@ -8,8 +8,6 @@ import {
   View,
   Search,
   RefreshLeft,
-  Timer,
-  Delete,
   Download,
   Upload
 } from '@element-plus/icons-vue'
@@ -21,15 +19,11 @@ import {
   buildExportFileName,
   exportRowsToExcel,
   exportSheetsToExcel,
-  formatMilestones,
   formatProgress,
-  hasReachedMilestone,
-  MILESTONE_REACHED_TEXT_COLOR,
   type ExcelExportColumn,
   type ExcelExportSheet,
   type ExcelRowTone
 } from '@/shared/lib/export/excel'
-import IndicatorMilestoneTimeline from '@/features/indicator/ui/IndicatorMilestoneTimeline.vue'
 import { DistributionApprovalProgressDrawer } from '@/features/approval'
 import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
 import {
@@ -45,9 +39,7 @@ const {
   _distributeNewChildren,
   _formatColleges,
   _formatCollegesShort,
-  _formatMilestones,
   _getChildIndicators,
-  _getCurrentMonthTargetProgress,
   _getIndicatorTypeColor,
   _getPendingChildCount,
   _getStatusTagType,
@@ -61,8 +53,6 @@ const {
   _newIndicatorList,
   _selectParentSpanMethod,
   _selectingParentForIndex,
-  addFormMilestone,
-  addMilestone,
   addRowFormRef,
   addingParentId,
   applyLocalCollegePlanPatch,
@@ -79,8 +69,6 @@ const {
   approvalWorkflowReportSummary,
   authStore,
   availableParentIndicators,
-  buildDraftMilestonesFromForm,
-  buildLocalMilestonesFromForm,
   buildTaskTypeMap,
   canCurrentUserApproveCurrentPlan,
   canCurrentUserSubmitCurrentDepartmentDistribution,
@@ -91,7 +79,6 @@ const {
   canWithdrawCurrentCollegePlan,
   cancelAddIndicator,
   cancelChildEdit,
-  cloneParentMilestonesForForm,
   collegeDropdownVisible,
   collegeIndicators,
   collegeOverallStatus,
@@ -155,22 +142,14 @@ const {
   editingChildField,
   editingChildId,
   editingChildValue,
-  editingMilestones,
-  editingMilestonesChild,
   editingNewChildId,
   filteredColleges,
   formatDetailDate,
-  generateMonthlyMilestones,
-  generateMonthlyMilestonesForExisting,
-  generateMonthlyMilestonesForForm,
-  generateMonthlyMilestonesLocal,
   getChildLifecycleStatus,
   getChildStatus,
   getCollegeChildCount,
   getCollegeStatus,
   getDeptNameByOrgId,
-  getEditingChildName,
-  getEditingChildType,
   getDisplayedReportedProgress,
   getIndicatorTaskId,
   getIndicatorTypeLabel,
@@ -179,16 +158,13 @@ const {
   getPlanIndicatorNumber,
   getPlanIndicatorText,
   getRowClassName,
-  getSortedMilestones,
   handleApprovalRefresh,
   handleApprovalStatusPopoverShow,
   handleBatchDistribute,
   handleBatchWithdraw,
   handleChildDblClick,
   handleCloseApprovalSetupDialog,
-  handleFormIndicatorTypeChange,
   handleGlobalMousedown,
-  handleMilestoneDateChange,
   handleNewChildRowClick,
   handleOpenApproval,
   handleParentIndicatorChange,
@@ -206,7 +182,6 @@ const {
   isSameDepartment,
   isSavingChildCell,
   isSavingIndicator,
-  isSavingMilestones,
   isStrategicDept,
   lastEditTime,
   latestCollegePlanReportSummary,
@@ -217,7 +192,6 @@ const {
   matchesCurrentDepartmentPlanContext,
   matchesCurrentSelectedCollegePlanContext,
   matchesDepartment,
-  milestonesDialogVisible,
   newChildIndicators,
   newIndicatorForm,
   normalizeDepartmentName,
@@ -236,7 +210,6 @@ const {
   parseColleges,
   pendingApprovalCount,
   pendingCollegePlanUiState,
-  persistIndicatorMilestones,
   planStore,
   plansWithIndicators,
   preloadCurrentCollegeWorkflowDetail,
@@ -244,8 +217,6 @@ const {
   refreshDistributionData,
   refreshDistributionPromise,
   removeChildIndicator,
-  removeFormMilestone,
-  removeMilestone,
   removeNewChildRow,
   resetApprovalSetupDialog,
   resolveCurrentStepExpectedRoleCodes,
@@ -254,7 +225,6 @@ const {
   resolvePlanYear,
   routeApprovalPlan,
   saveChildEdit,
-  saveMilestones,
   saveNewIndicator,
   savingChildField,
   savingChildId,
@@ -267,15 +237,11 @@ const {
   selectedCollege,
   selectedCollegePlanUiStatus,
   shouldShowReportedProgress,
-  sortLocalMilestonesByDate,
   strategicStore,
   syncSelectedCollegeFromApprovalRoute,
   taskApprovalVisible,
   timeContext,
-  toBatchDistributionMilestones,
-  toMilestoneBatchPayload,
   validateAndSaveNewChild,
-  validateMilestoneProgress,
   waitForPageBootstrap,
   withdrawButtonDisabled,
   withdrawButtonDisabledReason,
@@ -291,7 +257,6 @@ type DistributionExportChild = Partial<StrategicIndicator> & {
   type1?: string | null
   indicatorType1?: string | null
   progress?: number | string | null
-  milestones?: unknown[]
   pendingAttachments?: unknown
   pendingAttachmentDetails?: unknown[]
 }
@@ -459,9 +424,8 @@ const getDistributionExportRowTextColor = (row: DistributionExportRow): string |
     return undefined
   }
 
-  return hasReachedMilestone(row.child.progress, getSortedMilestones(row.child.milestones))
-    ? MILESTONE_REACHED_TEXT_COLOR
-    : undefined
+  // 里程碑移除后不再依据里程碑进度渲染导出文字颜色
+  return undefined
 }
 
 const buildDistributionExportSheet = (
@@ -1262,13 +1226,7 @@ const handleDistributionImportCommitted = async () => {
                     <el-col :span="8">
                       <el-form-item class="required-form-item">
                         <template #label><span class="required-asterisk">*</span>指标类型</template>
-                        <el-select
-                          v-model="newIndicatorForm.type1"
-                          style="width: 100%"
-                          @change="
-                            (val: string) => handleFormIndicatorTypeChange(val as '定量' | '定性')
-                          "
-                        >
+                        <el-select v-model="newIndicatorForm.type1" style="width: 100%">
                           <el-option label="定性" value="定性" />
                           <el-option label="定量" value="定量" />
                         </el-select>
@@ -1310,71 +1268,6 @@ const handleDistributionImportCommitted = async () => {
                           :autosize="{ minRows: 2, maxRows: 10 }"
                           placeholder="输入备注内容（选填）"
                         />
-                      </el-form-item>
-                    </el-col>
-                  </el-row>
-                  <!-- 里程碑编辑入口已按业务要求隐藏：后端保存时仍按类型自动注入默认里程碑，仅前端不展示 -->
-                  <el-row v-if="false" :gutter="16">
-                    <el-col :span="24">
-                      <el-form-item class="required-form-item">
-                        <template #label><span class="required-asterisk">*</span>里程碑</template>
-                        <div class="milestone-form-area">
-                          <el-button
-                            v-if="newIndicatorForm.type1 === '定性'"
-                            size="small"
-                            type="primary"
-                            plain
-                            @click="addFormMilestone"
-                          >
-                            <el-icon><Plus /></el-icon> 添加里程碑
-                          </el-button>
-                          <div v-if="newIndicatorForm.milestones.length > 0" class="milestone-list">
-                            <div
-                              v-for="(ms, idx) in newIndicatorForm.milestones"
-                              :key="ms.id"
-                              class="milestone-form-item"
-                            >
-                              <span class="milestone-index">{{ idx + 1 }}.</span>
-                              <el-input
-                                v-model="ms.name"
-                                placeholder="里程碑名称"
-                                style="width: 160px"
-                                size="small"
-                              />
-                              <el-input-number
-                                v-model="ms.targetProgress"
-                                :min="0"
-                                :max="100"
-                                placeholder="目标进度%"
-                                size="small"
-                                style="width: 110px"
-                              />
-                              <el-date-picker
-                                v-model="ms.deadline"
-                                type="date"
-                                placeholder="截止日期"
-                                size="small"
-                                style="width: 130px"
-                                value-format="YYYY-MM-DD"
-                              />
-                              <el-button
-                                type="danger"
-                                size="small"
-                                text
-                                @click="removeFormMilestone(idx)"
-                              >
-                                <el-icon><Delete /></el-icon>
-                              </el-button>
-                            </div>
-                          </div>
-                          <span v-else class="milestone-hint">
-                            {{
-                              newIndicatorForm.type1 === '定量'
-                                ? '选择定量后自动生成12月里程碑'
-                                : '暂无里程碑，点击添加'
-                            }}
-                          </span>
-                        </div>
                       </el-form-item>
                     </el-col>
                   </el-row>
@@ -1483,18 +1376,6 @@ const handleDistributionImportCommitted = async () => {
             {{ currentDetailIndicator.remark || '暂无备注' }}
           </el-descriptions-item>
         </el-descriptions>
-
-        <div
-          v-if="currentDetailIndicator.milestones && currentDetailIndicator.milestones.length > 0"
-          class="milestone-section"
-        >
-          <div class="divider"></div>
-          <h4>里程碑节点</h4>
-          <IndicatorMilestoneTimeline
-            :milestones="currentDetailIndicator.milestones"
-            :current-progress="currentDetailIndicator.progress"
-          />
-        </div>
       </div>
     </el-drawer>
 
@@ -1680,107 +1561,6 @@ const handleDistributionImportCommitted = async () => {
       @close="taskApprovalVisible = false"
       @refresh="handleApprovalRefresh"
     />
-
-    <!-- 里程碑编辑弹窗 -->
-    <el-dialog
-      v-model="milestonesDialogVisible"
-      title="编辑里程碑"
-      width="700px"
-      :close-on-click-modal="false"
-      :close-on-press-escape="!isSavingMilestones"
-      :show-close="!isSavingMilestones"
-    >
-      <div v-if="editingMilestonesChild" class="milestone-edit-dialog">
-        <!-- 指标信息 -->
-        <div class="indicator-info-header">
-          <div class="info-item">
-            <span class="label">指标名称：</span>
-            <span class="value">{{ getEditingChildName() }}</span>
-          </div>
-          <div class="info-item">
-            <span class="label">指标类型：</span>
-            <el-tag size="small" :type="getEditingChildType() === '定量' ? 'primary' : 'warning'">
-              {{ getEditingChildType() }}
-            </el-tag>
-          </div>
-        </div>
-
-        <el-divider />
-
-        <!-- 操作按钮 -->
-        <div class="milestone-actions">
-          <el-button size="small" type="primary" :icon="Plus" @click="addMilestone">
-            添加里程碑
-          </el-button>
-          <el-button
-            v-if="getEditingChildType() === '定量'"
-            size="small"
-            type="success"
-            :icon="Timer"
-            @click="generateMonthlyMilestones"
-          >
-            生成12个月里程碑
-          </el-button>
-          <span class="milestone-count-hint"> 当前共 {{ editingMilestones.length }} 个里程碑 </span>
-        </div>
-
-        <!-- 里程碑列表 -->
-        <div class="milestone-edit-list">
-          <el-empty
-            v-if="editingMilestones.length === 0"
-            description="暂无里程碑，点击上方按钮添加"
-            :image-size="80"
-          />
-
-          <!-- 里程碑编辑表单 -->
-          <div v-for="(ms, idx) in editingMilestones" :key="ms.id" class="milestone-edit-item">
-            <div class="milestone-index">{{ idx + 1 }}.</div>
-            <div class="milestone-fields">
-              <el-input
-                v-model="ms.name"
-                placeholder="里程碑名称"
-                size="small"
-                class="field-name"
-              />
-              <el-input-number
-                v-model="ms.progress"
-                :min="0"
-                :max="100"
-                placeholder="目标进度%"
-                size="small"
-                class="field-progress"
-                @change="validateMilestoneProgress(idx)"
-              />
-              <el-date-picker
-                v-model="ms.expectedDate"
-                type="date"
-                placeholder="截止日期"
-                size="small"
-                value-format="YYYY-MM-DD"
-                class="field-date"
-                @change="handleMilestoneDateChange"
-              />
-              <el-button
-                type="danger"
-                size="small"
-                :icon="Delete"
-                circle
-                @click="removeMilestone(idx)"
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <template #footer>
-        <el-button :disabled="isSavingMilestones" @click="milestonesDialogVisible = false">
-          取消
-        </el-button>
-        <el-button type="primary" :loading="isSavingMilestones" @click="saveMilestones">
-          保存
-        </el-button>
-      </template>
-    </el-dialog>
 
     <!-- 选择关联核心指标弹框（已改为内联选择，此弹窗已不再使用，可删除） -->
     <!-- 选择关联核心指标弹框 -->

@@ -162,28 +162,6 @@ export const BUSINESS_ERRORS: Record<string, ErrorCodeDefinition> = {
     severity: ErrorSeverity.WARNING,
     retryable: false
   },
-  MILESTONE_NOT_REACHED: {
-    code: `${ErrorCodePrefix.BIZ}_006`,
-    message: '里程碑未达成',
-    description: '当前进度未达到里程碑要求',
-    solution: '请继续推进工作直到达成里程碑',
-    severity: ErrorSeverity.INFO,
-    retryable: false
-  }
-}
-
-/**
- * 系统错误码
- */
-export const SYSTEM_ERRORS: Record<string, ErrorCodeDefinition> = {
-  INTERNAL_ERROR: {
-    code: `${ErrorCodePrefix.SYS}_001`,
-    message: '系统内部错误',
-    description: '服务器发生未知错误',
-    solution: '请稍后重试，如问题持续请联系管理员',
-    severity: ErrorSeverity.CRITICAL,
-    retryable: true
-  },
   DATABASE_ERROR: {
     code: `${ErrorCodePrefix.SYS}_002`,
     message: '数据库错误',

@@ -9,7 +9,6 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { StrategicIndicator, StrategicTask } from '@/shared/types'
 import { indicatorApi } from '@/features/indicator/api'
-import { milestoneApi } from '@/entities/milestone/api/milestoneApi'
 import { strategicApi } from '@/features/task/api/strategicApi'
 import { alertApi, type ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import { logger } from '@/shared/lib/utils/logger'
@@ -210,19 +209,6 @@ function toBackendIndicatorType(...values: unknown[]): '定性' | '定量' {
   return normalizeIndicatorType(...values)
 }
 
-function normalizeMilestoneStatus(status: unknown): 'pending' | 'completed' | 'overdue' {
-  const normalized = String(status || '')
-    .trim()
-    .toUpperCase()
-  if (normalized === 'COMPLETED') {
-    return 'completed'
-  }
-  if (normalized === 'DELAYED' || normalized === 'CANCELED' || normalized === 'OVERDUE') {
-    return 'overdue'
-  }
-  return 'pending'
-}
-
 function normalizeIndicatorType(...values: unknown[]): '定性' | '定量' {
   for (const value of values) {
     const normalized = String(value || '')
@@ -242,26 +228,6 @@ function normalizeIndicatorType(...values: unknown[]): '定性' | '定量' {
   }
 
   return '定量'
-}
-
-function normalizeMilestones(rawMilestones: unknown): StrategicIndicator['milestones'] {
-  if (!Array.isArray(rawMilestones)) {
-    return []
-  }
-
-  return rawMilestones.map((milestone, index) => {
-    const item = getRecord(milestone)
-    return {
-      id: getString(item, 'id', 'milestoneId') || `milestone-${index}`,
-      name: getString(item, 'name', 'milestoneName') || `里程碑${index + 1}`,
-      targetProgress: getNumber(item, 'targetProgress', 'weightPercent'),
-      deadline: getString(item, 'deadline', 'dueDate'),
-      status: normalizeMilestoneStatus(item.status),
-      isPaired: getBoolean(item, 'isPaired') ?? false,
-      weightPercent: getNumber(item, 'weightPercent', 'targetProgress'),
-      sortOrder: getNumber(item, 'sortOrder') || index
-    }
-  })
 }
 
 function normalizeType2FromTaskType(taskType: unknown): '发展性' | '基础性' {
@@ -343,7 +309,6 @@ export function toStrategicIndicator(raw: unknown): StrategicIndicator {
     remark: getString(item, 'remark'),
     canWithdraw: getBoolean(item, 'canWithdraw') ?? status === 'DISTRIBUTED',
     taskContent: taskContent,
-    milestones: normalizeMilestones(item.milestones),
     targetValue: getNumber(item, 'targetValue') || 100,
     actualValue: getNumber(item, 'actualValue', 'progress'),
     unit: getString(item, 'unit') || '%',
@@ -477,41 +442,6 @@ function applyTaskMetadata(
       taskContent: taskInfo.taskName || indicator.taskContent
     }
   })
-}
-
-async function hydrateIndicatorMilestones(
-  list: StrategicIndicator[]
-): Promise<StrategicIndicator[]> {
-  const indicatorsWithoutMilestones = list.filter(indicator => !indicator.milestones?.length)
-  if (indicatorsWithoutMilestones.length === 0) {
-    return list
-  }
-
-  // 批量查询：1 个请求替代 N 个请求，消除 N+1 问题
-  const indicatorIds = indicatorsWithoutMilestones
-    .map(i => Number(i.id))
-    .filter(id => Number.isFinite(id))
-
-  const milestoneMap = new Map<string, StrategicIndicator['milestones']>()
-
-  if (indicatorIds.length > 0) {
-    try {
-      const response = await milestoneApi.getMilestonesByIndicatorIds(indicatorIds)
-      if (response?.success && response.data) {
-        // response.data 是 Record<number, Milestone[]>
-        for (const [idStr, rawMilestones] of Object.entries(response.data)) {
-          milestoneMap.set(idStr, normalizeMilestones(rawMilestones))
-        }
-      }
-    } catch (err) {
-      logger.warn('[Strategic Store] Batch milestones fetch failed, falling back to empty', err)
-    }
-  }
-
-  return list.map(indicator => ({
-    ...indicator,
-    milestones: milestoneMap.get(String(indicator.id)) ?? indicator.milestones ?? []
-  }))
 }
 
 function normalizeIndicators(
@@ -812,8 +742,7 @@ export const useStrategicStore = defineStore('strategic', () => {
           const normalized = normalizeIndicators(response.data as BackendIndicatorListPayload)
           const taskLookup = buildTaskLookup(tasksResponse.data)
           const aligned = applyTaskMetadata(normalized, taskLookup)
-          const hydrated = await hydrateIndicatorMilestones(aligned)
-          const alertHydrated = await hydrateManualAlertLevels(hydrated)
+          const alertHydrated = await hydrateManualAlertLevels(aligned)
 
           // 统一部门字段：ID/别名 -> 标准部门名（含合并名称），避免跨页面筛选不命中
           const orgStore = useOrgStore()

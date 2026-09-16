@@ -65,8 +65,6 @@ const {
   filteredMonthIndicators,
   getCollegeRankingData,
   getCollegeStatsForFunctionalDept,
-  getCurrentMilestoneIndex,
-  getCurrentTargetProgress,
   getDeptStatsAtMonth,
   getIndicatorStatus,
   getStatusClass,
@@ -87,6 +85,9 @@ const {
   handleResize,
   handleSankeyLinkClick,
   handleSankeyNodeClick,
+  handleIndicatorRowClick,
+  handleCloseIndicatorDetail,
+  selectedIndicatorDetail,
   handleSourceClick,
   handleStatusFilterClick,
   handleUrge,
@@ -493,7 +494,14 @@ const {
                     popper-class="indicator-detail-popover"
                   >
                     <template #reference>
-                      <div class="indicator-status-item" :class="getStatusClass(indicator.status)">
+                      <div
+                        class="indicator-status-item indicator-status-item--clickable"
+                        :class="getStatusClass(indicator.status)"
+                        role="button"
+                        tabindex="0"
+                        @click="handleIndicatorRowClick(indicator)"
+                        @keydown.enter="handleIndicatorRowClick(indicator)"
+                      >
                         <div class="indicator-info">
                           <div class="indicator-name" :title="indicator.name">
                             {{ indicator.name }}
@@ -541,21 +549,6 @@ const {
                             style="width: 120px; display: inline-flex"
                           />
                         </span>
-                      </div>
-                      <div
-                        v-if="indicator.targetProgress !== null || indicator.milestoneIndex"
-                        class="detail-row"
-                      >
-                        <span class="detail-label">目标进度</span>
-                        <span class="detail-value"
-                          >{{
-                            indicator.targetProgress !== null
-                              ? indicator.targetProgress + '%'
-                              : '-'
-                          }}{{
-                            indicator.milestoneIndex ? ' (' + indicator.milestoneIndex + ')' : ''
-                          }}</span
-                        >
                       </div>
                       <div class="detail-row">
                         <span class="detail-label">权重</span>
@@ -676,7 +669,14 @@ const {
                     popper-class="indicator-detail-popover"
                   >
                     <template #reference>
-                      <div class="indicator-status-item" :class="getStatusClass(indicator.status)">
+                      <div
+                        class="indicator-status-item indicator-status-item--clickable"
+                        :class="getStatusClass(indicator.status)"
+                        role="button"
+                        tabindex="0"
+                        @click="handleIndicatorRowClick(indicator)"
+                        @keydown.enter="handleIndicatorRowClick(indicator)"
+                      >
                         <div class="indicator-info">
                           <div class="indicator-name" :title="indicator.name">
                             {{ indicator.name }}
@@ -724,21 +724,6 @@ const {
                             style="width: 120px; display: inline-flex"
                           />
                         </span>
-                      </div>
-                      <div
-                        v-if="indicator.targetProgress !== null || indicator.milestoneIndex"
-                        class="detail-row"
-                      >
-                        <span class="detail-label">目标进度</span>
-                        <span class="detail-value"
-                          >{{
-                            indicator.targetProgress !== null
-                              ? indicator.targetProgress + '%'
-                              : '-'
-                          }}{{
-                            indicator.milestoneIndex ? ' (' + indicator.milestoneIndex + ')' : ''
-                          }}</span
-                        >
                       </div>
                       <div class="detail-row">
                         <span class="detail-label">权重</span>
@@ -937,7 +922,14 @@ const {
                     popper-class="indicator-detail-popover"
                   >
                     <template #reference>
-                      <div class="indicator-status-item" :class="getStatusClass(indicator.status)">
+                      <div
+                        class="indicator-status-item indicator-status-item--clickable"
+                        :class="getStatusClass(indicator.status)"
+                        role="button"
+                        tabindex="0"
+                        @click="handleIndicatorRowClick(indicator)"
+                        @keydown.enter="handleIndicatorRowClick(indicator)"
+                      >
                         <div class="indicator-info">
                           <div class="indicator-name" :title="indicator.name">
                             {{ indicator.name }}
@@ -985,21 +977,6 @@ const {
                             style="width: 120px; display: inline-flex"
                           />
                         </span>
-                      </div>
-                      <div
-                        v-if="indicator.targetProgress !== null || indicator.milestoneIndex"
-                        class="detail-row"
-                      >
-                        <span class="detail-label">目标进度</span>
-                        <span class="detail-value"
-                          >{{
-                            indicator.targetProgress !== null
-                              ? indicator.targetProgress + '%'
-                              : '-'
-                          }}{{
-                            indicator.milestoneIndex ? ' (' + indicator.milestoneIndex + ')' : ''
-                          }}</span
-                        >
                       </div>
                       <div class="detail-row">
                         <span class="detail-label">权重</span>
@@ -1372,6 +1349,53 @@ const {
       </template> </template
     ><!-- 结束 v-else 正常数据展示 -->
   </div>
+  <!-- A5 点行下钻：指标完整详情对话框 -->
+  <ElDialog
+    :model-value="selectedIndicatorDetail !== null"
+    :title="selectedIndicatorDetail?.dashboard?.name || '指标详情'"
+    width="480px"
+    append-to-body
+    @update:model-value="handleCloseIndicatorDetail"
+  >
+    <div v-if="selectedIndicatorDetail?.dashboard" class="indicator-full-detail">
+      <div class="detail-row">
+        <span class="detail-label">指标类型</span>
+        <span class="detail-value">{{ selectedIndicatorDetail.dashboard.type1 }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">当前进度</span>
+        <span class="detail-value">{{ selectedIndicatorDetail.dashboard.progress }}%</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">权重</span>
+        <span class="detail-value">{{ selectedIndicatorDetail.dashboard.weight }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">责任部门</span>
+        <span class="detail-value">{{ selectedIndicatorDetail.dashboard.responsibleDept }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">所属战略任务</span>
+        <span class="detail-value">{{
+          selectedIndicatorDetail.dashboard.taskContent || '未关联'
+        }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">完成状态</span>
+        <span class="detail-value">
+          <span
+            class="status-tag"
+            :class="getStatusClass(selectedIndicatorDetail.dashboard.status)"
+          >
+            {{ getStatusText(selectedIndicatorDetail.dashboard.status) }}
+          </span>
+        </span>
+      </div>
+    </div>
+    <template #footer>
+      <ElButton @click="handleCloseIndicatorDetail">关闭</ElButton>
+    </template>
+  </ElDialog>
 </template>
 
 <style scoped src="./DashboardView.css"></style>

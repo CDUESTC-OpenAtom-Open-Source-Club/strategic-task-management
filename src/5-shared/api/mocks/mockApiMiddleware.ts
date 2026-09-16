@@ -1,11 +1,5 @@
 import { IncomingMessage, ServerResponse } from 'http'
-import {
-  mockUsers,
-  mockAssessmentCycles,
-  mockStrategicTasks,
-  mockIndicators,
-  mockMilestones
-} from './fixtures'
+import { mockUsers, mockAssessmentCycles, mockStrategicTasks, mockIndicators } from './fixtures'
 import { mockDashboardData } from './fixtures/mockDashboardData'
 
 const mockAnnouncements = [
@@ -559,17 +553,11 @@ export function mockApiMiddleware(req: IncomingMessage, res: ServerResponse, nex
         }) as Record<string, any> | undefined
 
         const normalizedIndicator = toBackendIndicatorShape(matched, requestedId)
-        const milestones = mockMilestones.filter(
-          milestone => milestone.indicatorId === normalizedIndicator.indicatorId
-        )
 
         sendJson(res, 200, {
           code: 200,
           success: true,
-          data: {
-            ...normalizedIndicator,
-            milestones
-          },
+          data: normalizedIndicator,
           message: '获取指标详情成功',
           timestamp: Date.now()
         })

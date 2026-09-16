@@ -29,7 +29,6 @@ const strategicImportGuide: ImportTemplateGuide = {
     { key: 'indicatorName', label: '核心指标', required: true },
     { key: 'indicatorType', label: '指标类型', required: true },
     { key: 'weight', label: '权重' },
-    { key: 'milestones', label: '里程碑明细' },
     { key: 'remark', label: '备注' }
   ],
   rows: [
@@ -40,8 +39,6 @@ const strategicImportGuide: ImportTemplateGuide = {
       indicatorName: '建设智慧教学质量监测体系',
       indicatorType: '定量',
       weight: '20%',
-      milestones:
-        '1. 完成方案设计（2026-03-31，30%）\n2. 完成平台试运行（2026-06-30，70%）\n3. 完成年度评估（2026-12-31，100%）',
       remark: '可填写说明'
     },
     {
@@ -51,15 +48,13 @@ const strategicImportGuide: ImportTemplateGuide = {
       indicatorName: '完成重点专业年度质量报告',
       indicatorType: '定性',
       weight: '15',
-      milestones: '质量报告初稿（2026-09-30，60%）\n正式提交（2026-12-31，100%）',
       remark: ''
     }
   ],
   rules: [
     '表头建议放在第一行，列顺序可以调整，系统会按列名识别。',
     '必填列：任务类型、战略任务、核心指标、指标类型；如果填写职能部门，必须和当前选择的职能部门一致。',
-    '权重支持 10、10%、0.1 三种写法，系统会统一换算为百分制。',
-    '里程碑可以放在一个单元格内多行填写，日期支持 2026-03-31 或 2026-03-31 00:00。'
+    '权重支持 10、10%、0.1 三种写法，系统会统一换算为百分制。'
   ]
 }
 
@@ -73,7 +68,6 @@ const distributionImportGuide: ImportTemplateGuide = {
     { key: 'indicatorName', label: '子指标名称', required: true },
     { key: 'indicatorType', label: '指标类型', required: true },
     { key: 'weight', label: '权重' },
-    { key: 'milestones', label: '里程碑明细' },
     { key: 'remark', label: '备注' }
   ],
   rows: [
@@ -84,8 +78,6 @@ const distributionImportGuide: ImportTemplateGuide = {
       indicatorName: '完成学院课程质量数据接入',
       indicatorType: '定量',
       weight: '40%',
-      milestones:
-        '1. 完成课程清单梳理（2026-04-30，40%）\n2. 完成数据接入与核验（2026-09-30，80%）\n3. 完成年度归档（2026-12-31，100%）',
       remark: '按父级指标拆分'
     },
     {
@@ -95,7 +87,6 @@ const distributionImportGuide: ImportTemplateGuide = {
       indicatorName: '提交学院专业质量分析报告',
       indicatorType: '定性',
       weight: '60',
-      milestones: '报告初稿（2026-10-31，70%）\n正式提交（2026-12-20，100%）',
       remark: ''
     }
   ],
@@ -118,7 +109,7 @@ export function buildImportTemplateSheet(
 
   const columns: ExcelExportColumn<Record<string, string>>[] = guide.columns.map(column => ({
     header: column.label,
-    width: column.key === 'milestones' ? 30 : 22,
+    width: 22,
     getValue: row => row[column.key] || ''
   }))
 

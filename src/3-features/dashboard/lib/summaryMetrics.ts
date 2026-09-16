@@ -2,71 +2,14 @@ import type { DashboardData, Indicator } from '@/shared/types'
 
 export type DashboardIndicatorStatus = 'normal' | 'ahead' | 'warning' | 'delayed'
 
-type NormalizedMilestone = {
-  dueDate: Date
-  targetProgress: number
-}
-
-const parseMilestones = (indicator: Indicator): NormalizedMilestone[] => {
-  const rawMilestones = Array.isArray(indicator.milestones) ? indicator.milestones : []
-
-  return rawMilestones
-    .map(milestone => {
-      const record = milestone as Record<string, unknown>
-      const rawDate = record.dueDate ?? record.targetDate ?? record.deadline
-      const rawTarget =
-        record.targetProgress ?? record.progressTarget ?? record.target ?? record.expectedProgress
-
-      const dueDate = rawDate ? new Date(String(rawDate)) : null
-      const targetProgress = Number(rawTarget)
-
-      if (!dueDate || Number.isNaN(dueDate.getTime()) || !Number.isFinite(targetProgress)) {
-        return null
-      }
-
-      dueDate.setHours(23, 59, 59, 999)
-
-      return {
-        dueDate,
-        targetProgress
-      }
-    })
-    .filter((milestone): milestone is NormalizedMilestone => milestone !== null)
-    .sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime())
-}
-
+// 里程碑机制已移除：状态不再由里程碑推导，统一回落为正常。
+// 延后判断改由上报链路的上级鉴定等级承载。
 export const getIndicatorStatusAtMonth = (
-  indicator: Indicator,
-  month: number,
-  year: number
+  _indicator: Indicator,
+  _month: number,
+  _year: number
 ): DashboardIndicatorStatus => {
-  const milestones = parseMilestones(indicator)
-  if (milestones.length === 0) {
-    return 'normal'
-  }
-
-  const monthEnd = new Date(year, month, 0)
-  monthEnd.setHours(23, 59, 59, 999)
-
-  const milestonesUpToMonth = milestones.filter(milestone => milestone.dueDate <= monthEnd)
-  if (milestonesUpToMonth.length === 0) {
-    return 'normal'
-  }
-
-  const currentProgress = Number(indicator.progress ?? 0)
-
-  for (const milestone of milestonesUpToMonth) {
-    if (milestone.dueDate < monthEnd && currentProgress < milestone.targetProgress) {
-      return 'delayed'
-    }
-  }
-
-  const lastMilestoneInMonth = milestonesUpToMonth[milestonesUpToMonth.length - 1]
-  if (currentProgress >= lastMilestoneInMonth.targetProgress) {
-    return 'ahead'
-  }
-
-  return 'warning'
+  return 'normal'
 }
 
 export const buildDashboardSummary = (

@@ -182,30 +182,6 @@ function convertTaskVOToStrategicTask(vo: StrategicTaskVO): StrategicTask {
 function convertIndicatorVOToStrategicIndicator(vo: IndicatorVO): StrategicIndicator {
   const resolvedYear = typeof vo.year === 'number' ? vo.year : new Date().getFullYear()
 
-  // 转换里程碑状态
-  const convertMilestoneStatus = (status: string): 'pending' | 'completed' | 'overdue' => {
-    if (status === 'COMPLETED') {
-      return 'completed'
-    }
-    if (status === 'DELAYED' || status === 'CANCELED') {
-      return 'overdue'
-    }
-    return 'pending' // NOT_STARTED, IN_PROGRESS 都映射为 pending
-  }
-
-  // 转换里程碑
-  const milestones =
-    vo.milestones?.map(m => ({
-      id: String(m.milestoneId),
-      name: m.milestoneName,
-      targetProgress: m.targetProgress ?? m.weightPercent,
-      deadline: m.dueDate,
-      status: convertMilestoneStatus(m.status),
-      isPaired: m.isPaired ?? false,
-      weightPercent: m.weightPercent,
-      sortOrder: m.sortOrder
-    })) || []
-
   // 转换进度审批状态
   const convertProgressApprovalStatus = (
     status?: string
@@ -254,14 +230,13 @@ function convertIndicatorVOToStrategicIndicator(vo: IndicatorVO): StrategicIndic
       (vo.indicatorType === '定量' ? '定量' : vo.indicatorType === '定性' ? '定性' : '定量'),
     type2:
       (vo.type2 as '发展性' | '基础性') ?? (vo.level === 'STRAT_TO_FUNC' ? '发展性' : '基础性'),
-    progress: vo.progress ?? calculateProgress(milestones),
+    progress: vo.progress ?? 0,
     manualAlertSeverity: vo.manualAlertSeverity ?? null,
     createTime: new Date(vo.createdAt).toLocaleDateString('zh-CN'),
     weight: vo.weightPercent,
     remark: vo.remark || '',
     canWithdraw: vo.canWithdraw ?? vo.level === 'STRAT_TO_FUNC',
     taskContent: vo.taskName,
-    milestones,
     targetValue: vo.targetValue ?? 100,
     actualValue: vo.actualValue,
     unit: vo.unit ?? '%',
@@ -278,17 +253,6 @@ function convertIndicatorVOToStrategicIndicator(vo: IndicatorVO): StrategicIndic
     pendingAttachments,
     statusAudit
   }
-}
-
-/**
- * 根据里程碑计算进度
- */
-function calculateProgress(milestones: { status: string }[]): number {
-  if (milestones.length === 0) {
-    return 0
-  }
-  const completed = milestones.filter(m => m.status === 'completed').length
-  return Math.round((completed / milestones.length) * 100)
 }
 
 export const strategicApi = {

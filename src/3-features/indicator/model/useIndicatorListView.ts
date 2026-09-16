@@ -60,8 +60,6 @@ import {
   GLOBAL_DATA_REFRESH_REQUEST_EVENT,
   type GlobalDataRefreshDetail
 } from '@/5-shared/lib/dataFreshness'
-import { resolveMilestoneDisplayState } from '@/shared/lib/utils/milestoneDisplay'
-import { sortMilestonesByProgress } from '@/shared/lib/utils/milestoneSort'
 import {
   canCurrentUserHandleIndicatorWorkflow,
   getIndicatorWorkflowStatusLabel,
@@ -77,8 +75,6 @@ import {
 } from '@/features/indicator/lib/collegePlanModule'
 import { canViewReceivedPlanContent as canViewReceivedPlanContentByStatus } from '@/features/indicator/lib/visibility'
 import {
-  milestoneDefaultValues as _milestoneDefaultValues,
-  MILESTONE_STATUS_VALUES,
   PROGRESS_APPROVAL_STATUS_VALUES,
   type ProgressApprovalStatusValue
 } from '@/shared/config/validationRules'
@@ -322,9 +318,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     })
   }
 
-  // 使用数据验证器 - 用于验证里程碑数据完整性
-  // @requirement 2.4 - Milestone data validation with complete fields
-  const { validateMilestone, safeGet, validateEnum } = useDataValidator({ logErrors: true })
+  // 使用数据验证器
+  const { safeGet, validateEnum } = useDataValidator({ logErrors: true })
 
   // ============================================================================
   // 审批状态枚举值验证与容错处理
@@ -1235,40 +1230,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     return attachments
   }
 
-  function normalizePlanMilestoneStatus(status: unknown): 'pending' | 'completed' | 'overdue' {
-    const normalized = String(status || '')
-      .trim()
-      .toUpperCase()
-    if (normalized === 'COMPLETED') {
-      return 'completed'
-    }
-    if (normalized === 'DELAYED' || normalized === 'OVERDUE' || normalized === 'CANCELED') {
-      return 'overdue'
-    }
-    return 'pending'
-  }
-
-  function normalizePlanMilestones(rawMilestones: unknown): StrategicIndicator['milestones'] {
-    if (!Array.isArray(rawMilestones)) {
-      return []
-    }
-
-    return rawMilestones.map((milestone, index) => {
-      const item =
-        milestone && typeof milestone === 'object' ? (milestone as Record<string, unknown>) : {}
-      return {
-        id: getPlanIndicatorText(item, 'id', 'milestoneId') || `milestone-${index}`,
-        name: getPlanIndicatorText(item, 'name', 'milestoneName') || `里程碑${index + 1}`,
-        targetProgress: getPlanIndicatorNumber(item, 'targetProgress', 'weightPercent'),
-        deadline: getPlanIndicatorText(item, 'deadline', 'dueDate'),
-        status: normalizePlanMilestoneStatus(item.status),
-        isPaired: String(item.isPaired).toLowerCase() === 'true',
-        weightPercent: getPlanIndicatorNumber(item, 'weightPercent', 'targetProgress'),
-        sortOrder: getPlanIndicatorNumber(item, 'sortOrder') || index
-      }
-    })
-  }
-
   function resolveIndicatorType2(
     taskType: unknown,
     fallback: StrategicIndicator['type2'] = '其他'
@@ -1387,12 +1348,11 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     )
 
     // Plan 详情接口字段仍然偏瘦，这里优先复用 strategicStore 已标准化的数据，
-    // 再用当前 plan 明细里的实时字段覆盖，避免任务名/里程碑被硬编码丢失。
+    // 再用当前 plan 明细里的实时字段覆盖，避免任务名等字段被硬编码丢失。
     const mappedIndicators = plan.indicators.map((ind: any) => {
       const source = ind && typeof ind === 'object' ? (ind as Record<string, unknown>) : {}
       const indicatorId = String(source.id ?? source.indicatorId ?? '')
       const storeIndicator = indicatorId ? storeIndicatorMap.get(indicatorId) : undefined
-      const normalizedMilestones = normalizePlanMilestones(source.milestones)
       const progress = getPlanIndicatorOptionalNumber(source, 'progress')
       const weight = getPlanIndicatorOptionalNumber(source, 'weightPercent', 'weight')
       const reportProgress = getPlanIndicatorOptionalNumber(
@@ -1474,8 +1434,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         pendingRemark: pendingRemark || storeIndicator?.pendingRemark || null,
         pendingAttachments: pendingAttachments ?? storeIndicator?.pendingAttachments ?? [],
         pendingAttachmentDetails,
-        milestones:
-          normalizedMilestones.length > 0 ? normalizedMilestones : storeIndicator?.milestones || [],
         createdAt:
           getPlanIndicatorText(source, 'createdAt') ||
           (storeIndicator as StrategicIndicator & { createdAt?: string })?.createdAt ||
@@ -2944,14 +2902,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     type1: '定性' as '定性' | '定量',
     type2: '基础性' as '发展性' | '基础性',
     weight: '',
-    remark: '',
-    milestones: [] as Array<{
-      id: number
-      name: string
-      targetProgress: number
-      deadline: string
-      status: 'pending' | 'completed' | 'overdue'
-    }>
+    remark: ''
   })
 
   // 获取任务选项列表（从 Store 中的 tasks 获取）
@@ -2962,29 +2913,10 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }))
   )
 
-  // 里程碑输入状态
-  const _showMilestoneInput = ref(false)
-
   // 任务下发相关状态
   const showAssignmentDialog = ref(false)
   const assignmentTarget = ref('')
   const assignmentMethod = ref<'self' | 'college'>('self')
-
-  // 添加新里程碑
-  const _addMilestone = () => {
-    newRow.value.milestones.push({
-      id: Date.now(),
-      name: '',
-      targetProgress: 0,
-      deadline: '',
-      status: 'pending'
-    })
-  }
-
-  // 删除里程碑
-  const _removeMilestone = (index: number) => {
-    newRow.value.milestones.splice(index, 1)
-  }
 
   // 当前日期
   const currentDate = '2025年12月5日'
@@ -3096,8 +3028,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       type1: '定性',
       type2: '基础性',
       weight: '',
-      remark: '',
-      milestones: []
+      remark: ''
     }
   }
 
@@ -3122,7 +3053,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       weight: Number(newRow.value.weight) || 0,
       remark: newRow.value.remark || '无备注',
       canWithdraw: true,
-      milestones: [...newRow.value.milestones],
       targetValue: 100,
       unit: '%',
       responsibleDept: authStore.userDepartment || '未分配',
@@ -3133,107 +3063,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     })
     ElMessage.success('指标添加成功')
     cancelAdd()
-  }
-
-  // 里程碑状态计算
-  // @requirement 2.4 - Milestone data validation with complete fields
-  const _calculateMilestoneStatus = (
-    indicator: StrategicIndicator
-  ): 'success' | 'warning' | 'exception' => {
-    if (!indicator.milestones || indicator.milestones.length === 0) {
-      return getProgressStatus(indicator.progress)
-    }
-
-    const currentDate = new Date()
-
-    const hasOverdueMilestone = indicator.milestones.some(milestone => {
-      // 使用 safeGet 安全获取字段值，缺失时使用默认值
-      const deadline = safeGet(milestone, 'deadline', '')
-      const status = safeGet(milestone, 'status', 'pending')
-
-      if (!deadline) {
-        return false
-      } // 没有截止日期的里程碑不算逾期
-
-      const deadlineDate = new Date(deadline)
-      if (isNaN(deadlineDate.getTime())) {
-        return false
-      } // 无效日期不算逾期
-
-      return status === 'pending' && deadlineDate < currentDate
-    })
-
-    const hasUpcomingMilestone = indicator.milestones.some(milestone => {
-      const status = String(safeGet(milestone, 'status', 'pending'))
-      const deadline = safeGet(milestone, 'deadline', '')
-
-      if (status === 'completed') {
-        return false
-      }
-      if (!deadline) {
-        return false
-      } // 没有截止日期的里程碑不算即将到期
-
-      const deadlineDate = new Date(deadline)
-      if (isNaN(deadlineDate.getTime())) {
-        return false
-      } // 无效日期不算即将到期
-
-      const daysUntilDeadline = Math.ceil(
-        (deadlineDate.getTime() - currentDate.getTime()) / (1000 * 60 * 60 * 24)
-      )
-      return daysUntilDeadline > 0 && daysUntilDeadline <= 30
-    })
-
-    if (hasOverdueMilestone) {
-      return 'exception'
-    } else if (hasUpcomingMilestone) {
-      return 'warning'
-    } else {
-      return 'success'
-    }
-  }
-
-  // 获取里程碑进度文本
-  // @requirement 2.4 - Milestone data validation with complete fields
-  const _getMilestoneProgressText = (indicator: StrategicIndicator): string => {
-    if (!indicator.milestones || indicator.milestones.length === 0) {
-      return `当前进度: ${indicator.progress}%`
-    }
-
-    // 使用 safeGet 安全获取状态字段
-    const pendingMilestones = indicator.milestones.filter(m => {
-      const status = safeGet(m, 'status', 'pending')
-      return status === 'pending'
-    }).length
-
-    const currentDate = new Date()
-    const overdueMilestonesCount = indicator.milestones.filter(m => {
-      const status = safeGet(m, 'status', 'pending')
-      const deadline = safeGet(m, 'deadline', '')
-
-      if (status !== 'pending') {
-        return false
-      }
-      if (!deadline) {
-        return false
-      } // 没有截止日期的里程碑不算逾期
-
-      const deadlineDate = new Date(deadline)
-      if (isNaN(deadlineDate.getTime())) {
-        return false
-      } // 无效日期不算逾期
-
-      return deadlineDate < currentDate
-    }).length
-
-    if (overdueMilestonesCount > 0) {
-      return `逾期: ${overdueMilestonesCount} 个里程碑`
-    } else if (pendingMilestones > 0) {
-      return `待完成: ${pendingMilestones} 个里程碑`
-    } else {
-      return '所有里程碑已完成'
-    }
   }
 
   // ============================================================
@@ -3290,77 +3119,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }
     return classMap[status]
   }
-
-  // 获取里程碑列表用于tooltip显示
-  // @requirement 2.4 - Milestone data validation with complete fields
-  interface MilestoneTooltipItem {
-    id: string | number
-    name: string
-    expectedDate: string
-    progress: number
-    status: string
-    isValid: boolean
-  }
-
-  /**
-   * 验证并获取里程碑数据用于tooltip显示
-   *
-   * 对每个里程碑进行数据完整性验证，缺失字段时显示默认值
-   *
-   * @param indicator - 指标对象
-   * @returns 验证后的里程碑列表，包含默认值填充
-   *
-   * @requirement 2.4 - Milestone data validation with complete fields
-   */
-  const getMilestonesTooltip = (indicator: StrategicIndicator): MilestoneTooltipItem[] => {
-    const milestones = sortMilestonesByProgress(indicator.milestones || [])
-
-    return milestones.map((m, index) => {
-      // 验证里程碑数据完整性
-      const validationResult = validateMilestone(m)
-
-      // 使用 safeGet 安全获取字段值，缺失时使用默认值
-      const id = safeGet(m, 'id', `milestone-${index}`)
-      const name = safeGet(m, 'name', '未命名里程碑')
-      const deadline = safeGet(m, 'deadline', '')
-      const targetProgress = safeGet(m, 'targetProgress', 0)
-      const status = safeGet(m, 'status', 'pending')
-
-      // 验证状态是否为有效枚举值
-      const validStatus = MILESTONE_STATUS_VALUES.includes(
-        status as (typeof MILESTONE_STATUS_VALUES)[number]
-      )
-        ? status
-        : 'pending'
-
-      // 格式化日期显示
-      let expectedDate = ''
-      if (deadline) {
-        try {
-          const date = new Date(deadline)
-          if (!isNaN(date.getTime())) {
-            expectedDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-          }
-        } catch {
-          expectedDate = '日期格式错误'
-        }
-      } else {
-        expectedDate = '未设置'
-      }
-
-      return {
-        id,
-        name,
-        expectedDate,
-        progress: typeof targetProgress === 'number' ? targetProgress : 0,
-        status: validStatus,
-        isValid: validationResult.isValid
-      }
-    })
-  }
-
-  const getSortedMilestones = (milestones?: StrategicIndicator['milestones']) =>
-    sortMilestonesByProgress(milestones || [])
 
   const _selectDepartment = (dept: string) => {
     selectedDepartment.value = dept
@@ -3501,56 +3259,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     attachments: [] as string[]
   })
 
-  // 计算离当前进度最近的里程碑目标
-  // 优先返回“当前进度尚未达到的最近一个里程碑”；
-  // 若当前进度已超过所有里程碑，则回退到最后一个里程碑。
-  // @requirement 2.4 - Milestone data validation with complete fields
-  const nearestMilestone = computed(() => {
-    if (!currentReportIndicator.value?.milestones?.length) {
-      return null
-    }
-
-    const currentProgress = Number(currentReportIndicator.value.progress || 0)
-    const normalizedMilestones = currentReportIndicator.value.milestones
-      .map(m => {
-        const deadline = safeGet(m, 'deadline', '')
-        const name = safeGet(m, 'name', '未命名里程碑')
-        const targetProgress = Number(safeGet(m, 'targetProgress', 0))
-        const id = safeGet(m, 'id', '')
-        const status = safeGet(m, 'status', 'pending')
-
-        return {
-          id,
-          name,
-          targetProgress,
-          deadline,
-          status
-        }
-      })
-      .filter(m => Number.isFinite(m.targetProgress))
-      .sort((a, b) => a.targetProgress - b.targetProgress)
-
-    const nextMilestone = normalizedMilestones.find(m => m.targetProgress >= currentProgress)
-    if (nextMilestone) {
-      return nextMilestone
-    }
-
-    return normalizedMilestones[normalizedMilestones.length - 1] || null
-  })
-
-  // 格式化里程碑日期
-  // @requirement 2.4 - Milestone data validation with complete fields
-  const formatMilestoneDate = (deadline: string) => {
-    if (!deadline) {
-      return '未设置'
-    }
-    const date = new Date(deadline)
-    if (isNaN(date.getTime())) {
-      return '日期格式错误'
-    }
-    return `${date.getMonth() + 1}月${date.getDate()}日`
-  }
-
   function resolveDialogAttachments(
     row: StrategicIndicator,
     persistedDraft?: PersistedIndicatorDraft | null
@@ -3600,15 +3308,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         return indicator
       }
 
-      const latestRecord = latest as Record<string, unknown>
-      const normalizedMilestones = Array.isArray(latestRecord.milestones)
-        ? normalizePlanMilestones(latestRecord.milestones)
-        : indicator.milestones
-
       const mergedIndicator = {
         ...indicator,
         ...(latest as Partial<StrategicIndicator>),
-        milestones: normalizedMilestones,
         reportProgress: (indicator as StrategicIndicator & { reportProgress?: number | null })
           .reportProgress,
         pendingProgress: indicator.pendingProgress,
@@ -4136,7 +3838,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
             indicator_name: item.name,
             progress: Number(reportProgress),
             content: reportRemark,
-            milestone_id: undefined,
             attachment_ids: isCurrentIndicator ? attachmentIds : []
           }
         })
@@ -4148,7 +3849,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         content: reportForm.value.remark,
         attachments: [],
         // Attachments are uploaded first and linked by attachment_ids in batch_items.
-        milestone_id: undefined,
         batch_items: batchItems
       })
 
@@ -4742,14 +4442,11 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     PLAN_REPORT_UI_STATE_KEY,
     PROGRESS_WARNING_DAYS,
     _addIndicatorToCategory,
-    _addMilestone,
     _basicIndicators,
     _batchDistributeToDepartments,
-    _calculateMilestoneStatus,
     _confirmAssignment,
     _currentTask,
     _developmentIndicators,
-    _getMilestoneProgressText,
     _getTaskGroup,
     _handleBatchDistributeByTask,
     _handleBatchFillByTask,
@@ -4758,11 +4455,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     _handleDoubleClick,
     _handleTableScroll,
     _pendingApprovalCount,
-    _removeMilestone,
     _saveEdit,
     _selectDepartment,
     _selectTask,
-    _showMilestoneInput,
     _tableScrollRef,
     addNewRow,
     allIndicatorsFilled,
@@ -4843,7 +4538,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     filterType1,
     filterType2,
     formatDetailDate,
-    formatMilestoneDate,
     functionalDepartments,
     getAttachmentExtension,
     getCurrentPlanId,
@@ -4852,7 +4546,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     getIndicatorDraftStorageKey,
     getIndicatorProgressStatus,
     getIndicatorWorkflowSnapshot,
-    getMilestonesTooltip,
     getPlanIndicatorAttachments,
     getPlanIndicatorIds,
     getPlanIndicatorNumber,
@@ -4860,7 +4553,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     getPlanIndicatorText,
     getProgressStatusClass,
     getSafeApprovalStatus,
-    getSortedMilestones,
     getSpanMethod,
     getTaskTypeColor,
     handleApprovalStatusPopoverShow,
@@ -4915,10 +4607,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     loadCurrentPlanReportSummary,
     loadCurrentPlanWorkflowDetail,
     loadIndicatorWorkflowSnapshot,
-    nearestMilestone,
     newRow,
-    normalizePlanMilestoneStatus,
-    normalizePlanMilestones,
     normalizePreviewCandidateDisplayName,
     normalizedCurrentPlanReportStatus,
     normalizedCurrentPlanStatus,
@@ -4951,7 +4640,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     reportForm,
     reportUploadFiles,
     resetFilters,
-    resolveMilestoneDisplayState,
     resolveDialogAttachments,
     resolveExpectedApproverOrgIdForPage,
     resolveExpectedApproverRoleCodesForPage,

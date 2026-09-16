@@ -13,18 +13,6 @@ export const UserSchema = z.object({
   avatar: z.string().url().optional()
 })
 
-export const MilestoneSchema = z.object({
-  id: z.union([z.string(), z.number()]),
-  name: z.string().min(1),
-  targetProgress: z.number().min(0).max(100),
-  deadline: z.string(),
-  status: z.enum(['pending', 'completed', 'overdue']),
-  weightPercent: z.number().optional(),
-  sortOrder: z.number().optional(),
-  indicatorId: z.union([z.string(), z.number()]).optional(),
-  isPaired: z.boolean().optional()
-})
-
 export const StrategicIndicatorSchema = z.object({
   id: z.union([z.string(), z.number()]),
   name: z.string().min(1),
@@ -42,7 +30,6 @@ export const StrategicIndicatorSchema = z.object({
   status: z.enum(['DRAFT', 'PENDING_REVIEW', 'DISTRIBUTED', 'ACTIVE', 'ARCHIVED']),
   isStrategic: z.boolean(),
   year: z.number(),
-  milestones: z.array(MilestoneSchema),
   statusAudit: z.array(z.unknown()),
   manualAlertSeverity: z.enum(['INFO', 'WARNING', 'CRITICAL']).nullable().optional(),
   parentIndicatorId: z.union([z.string(), z.number()]).optional()
@@ -73,10 +60,6 @@ export function validateUser(value: unknown) {
 
 export function validateIndicator(value: unknown) {
   return toValidationResult(StrategicIndicatorSchema, value)
-}
-
-export function validateMilestone(value: unknown) {
-  return toValidationResult(MilestoneSchema, value)
 }
 
 export function validateLoginCredentials(value: unknown) {

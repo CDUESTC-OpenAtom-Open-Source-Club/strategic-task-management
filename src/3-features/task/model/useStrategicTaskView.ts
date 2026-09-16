@@ -29,9 +29,7 @@ import { usePermission } from '@/5-shared/lib/permissions'
 import AppAvatar from '@/shared/ui/avatar/AppAvatar.vue'
 import { logger } from '@/shared/lib/utils/logger'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
-import { sortMilestonesByProgress } from '@/shared/lib/utils/milestoneSort'
 import { buildQueryKey, fetchWithCache, invalidateQueries } from '@/shared/lib/utils/cache'
-import { resolveMilestoneDisplayState } from '@/shared/lib/utils/milestoneDisplay'
 import strategicApi, { approvalApi as taskApprovalApi } from '@/features/task/api/strategicApi'
 import {
   getWorkflowDefinitionPreviewByCode,
@@ -41,7 +39,6 @@ import {
   approveTask,
   rejectTask
 } from '@/features/workflow/api'
-import { milestoneApi } from '@/entities/milestone/api/milestoneApi'
 import {
   getStatusText as _getStatusText,
   getStatusType as _getStatusType,
@@ -55,7 +52,6 @@ import {
 } from '@/features/approval/lib'
 import { useApprovalRouteAutopen } from '@/features/approval/lib'
 import { useApprovalStore } from '@/features/approval/model/store'
-import _MilestoneList from '@/features/milestone/ui/MilestoneList.vue'
 import { indicatorApi } from '@/features/indicator/api'
 import { usePlanStore } from '@/features/plan/model/store'
 import { indicatorFillApi } from '@/features/plan/api/planApi'
@@ -403,8 +399,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     Array.from(currentPlanTaskIdSet.value).sort().join(',')
   )
 
-  const milestoneCache = ref<Record<string, Record<string, Array<Record<string, unknown>>>>>({}) // key: "部门名_指标ID"
-
   const normalizeTaskId = (value: unknown): string => {
     const normalized = String(value ?? '').trim()
     return normalized
@@ -742,300 +736,18 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     { immediate: true }
   )
 
-  const milestoneMap = ref<Record<string, Array<Record<string, unknown>>>>({})
-  const loadedMilestoneIds = ref(new Set<string>())
-  const loadingMilestoneIds = ref(new Set<string>())
-  const milestoneLoadRequestId = ref(0)
-  const milestoneFallbackConcurrency = 4
-
-  const toMilestoneStatus = (status?: string): 'pending' | 'completed' | 'overdue' => {
-    const normalized = String(status || '').toUpperCase()
-    if (normalized === 'COMPLETED') {
-      return 'completed'
-    }
-    if (normalized === 'DELAYED' || normalized === 'CANCELED' || normalized === 'OVERDUE') {
-      return 'overdue'
-    }
-    return 'pending'
-  }
-
-  const normalizeMilestone = (raw: Record<string, unknown>, index: number) => ({
-    id: String(raw.id ?? raw.milestoneId ?? `milestone-${index}`),
-    name: String(raw.name ?? raw.milestoneName ?? `里程碑${index + 1}`),
-    targetProgress: Number(raw.targetProgress ?? raw.weightPercent ?? 0),
-    deadline: String(raw.deadline ?? raw.dueDate ?? ''),
-    status: toMilestoneStatus(String(raw.status ?? '')),
-    isPaired: Boolean(raw.isPaired ?? false),
-    weightPercent: Number(raw.weightPercent ?? 0),
-    sortOrder: Number(raw.sortOrder ?? index)
-  })
-
-  const toMilestoneRequestStatus = (status: unknown): string => {
-    const normalized = String(status || '')
-      .trim()
-      .toUpperCase()
-    if (
-      normalized === 'COMPLETED' ||
-      normalized === 'IN_PROGRESS' ||
-      normalized === 'NOT_STARTED'
-    ) {
-      return normalized
-    }
-    if (normalized === 'OVERDUE' || normalized === 'DELAYED') {
-      return 'DELAYED'
-    }
-    return 'NOT_STARTED'
-  }
-
-  const toMilestoneDueDate = (deadline: unknown): string | null => {
-    const text = String(deadline || '').trim()
-    if (!text) {
-      return null
-    }
-
-    if (text.includes('T')) {
-      return text
-    }
-
-    return `${text}T23:59:59`
-  }
-
-  const extractMilestones = (payload: unknown): Array<Record<string, unknown>> => {
-    if (Array.isArray(payload)) {
-      return payload as Array<Record<string, unknown>>
-    }
-    if (payload && typeof payload === 'object') {
-      const record = payload as Record<string, unknown>
-      if (Array.isArray(record.items)) {
-        return record.items as Array<Record<string, unknown>>
-      }
-    }
-    return []
-  }
-
   const normalizedIndicators = computed(() =>
-    strategicStore.indicators.map(i => {
-      const indicatorId = String(i.id)
-      const mappedMilestones = milestoneMap.value[indicatorId]
-      return {
-        ...i,
-        ownerDept: normalizeDepartmentName(i.ownerDept),
-        responsibleDept: normalizeDepartmentName(i.responsibleDept),
-        milestones: mappedMilestones ?? i.milestones ?? []
-      }
-    })
-  )
-
-  const getCurrentScopeIndicatorsForMilestones = () => indicators.value
-
-  const loadMilestonePayloadsIndividually = async (indicatorIds: string[]) => {
-    const payloadMap: Record<string, unknown> = {}
-    const concurrency = Math.min(milestoneFallbackConcurrency, indicatorIds.length)
-    let currentIndex = 0
-
-    await Promise.all(
-      Array.from({ length: concurrency }, async () => {
-        while (currentIndex < indicatorIds.length) {
-          const indicatorId = indicatorIds[currentIndex]
-          currentIndex += 1
-
-          try {
-            const response = await milestoneApi.getMilestonesByIndicator(indicatorId)
-            payloadMap[indicatorId] = response.success ? response.data : []
-          } catch (error) {
-            logger.warn(`[StrategicTaskView] 加载指标 ${indicatorId} 里程碑失败`, error)
-            payloadMap[indicatorId] = []
-          }
-        }
-      })
-    )
-
-    return payloadMap
-  }
-
-  const loadMilestonePayloads = async (indicatorIds: string[]) => {
-    const payloadMap: Record<string, unknown> = {}
-    const persistedIndicatorIds = indicatorIds
-      .filter(id => /^\d+$/.test(id))
-      .map(id => Number(id))
-      .sort((a, b) => a - b)
-    const transientIndicatorIds = indicatorIds.filter(id => !/^\d+$/.test(id))
-
-    transientIndicatorIds.forEach(id => {
-      payloadMap[id] = []
-    })
-
-    if (persistedIndicatorIds.length === 0) {
-      return payloadMap
-    }
-
-    if (persistedIndicatorIds.length === 1) {
-      const indicatorId = String(persistedIndicatorIds[0])
-      const response = await milestoneApi.getMilestonesByIndicator(indicatorId)
-      payloadMap[indicatorId] = response.success ? response.data : []
-      return payloadMap
-    }
-
-    try {
-      const response = await milestoneApi.getMilestonesByIndicatorIds(persistedIndicatorIds)
-      if (!response.success || !response.data || typeof response.data !== 'object') {
-        throw new Error(response.message || '批量加载里程碑返回异常')
-      }
-
-      const batchPayload = response.data as Record<string, unknown>
-      persistedIndicatorIds.forEach(indicatorId => {
-        payloadMap[String(indicatorId)] = batchPayload[String(indicatorId)] ?? []
-      })
-
-      return payloadMap
-    } catch (error) {
-      logger.warn('[StrategicTaskView] 批量加载里程碑失败，回退逐个加载', error)
-      const fallbackPayloadMap = await loadMilestonePayloadsIndividually(
-        persistedIndicatorIds.map(indicatorId => String(indicatorId))
-      )
-      return {
-        ...payloadMap,
-        ...fallbackPayloadMap
-      }
-    }
-  }
-
-  const loadMilestonesForCurrentScope = async () => {
-    const dept = selectedDepartment.value
-    if (!dept) {
-      return
-    }
-
-    const requestId = milestoneLoadRequestId.value + 1
-    milestoneLoadRequestId.value = requestId
-
-    const indicatorsToLoad = getCurrentScopeIndicatorsForMilestones()
-
-    // 当前部门的里程碑缓存
-    const deptMilestoneCache = milestoneCache.value[dept] || {}
-
-    // 分离需要请求的指标和可以直接从缓存读取的指标
-    const needRequestIds: string[] = []
-
-    indicatorsToLoad.forEach(i => {
-      const id = String(i.id ?? '').trim()
-      if (!id) return
-
-      if (deptMilestoneCache[id]) {
-        // 从缓存读取
-        milestoneMap.value[id] = deptMilestoneCache[id]
-        loadedMilestoneIds.value.add(id)
-      } else if (!loadedMilestoneIds.value.has(id) && !loadingMilestoneIds.value.has(id)) {
-        needRequestIds.push(id)
-      }
-    })
-
-    // 处理需要请求的指标
-    if (needRequestIds.length === 0) {
-      return
-    }
-
-    needRequestIds.forEach(indicatorId => {
-      loadingMilestoneIds.value.add(indicatorId)
-    })
-
-    try {
-      const payloadMap = await loadMilestonePayloads(needRequestIds)
-      const nextMilestoneMap = { ...milestoneMap.value }
-      const nextDeptMilestoneCache = {
-        ...(milestoneCache.value[dept] || {})
-      }
-
-      needRequestIds.forEach(indicatorId => {
-        const rawMilestones = extractMilestones(payloadMap[indicatorId] ?? [])
-        const normalizedMilestones = rawMilestones.map((m, idx) => normalizeMilestone(m, idx))
-        nextMilestoneMap[indicatorId] = normalizedMilestones
-        nextDeptMilestoneCache[indicatorId] = normalizedMilestones
-      })
-
-      milestoneCache.value = {
-        ...milestoneCache.value,
-        [dept]: nextDeptMilestoneCache
-      }
-
-      if (milestoneLoadRequestId.value === requestId && selectedDepartment.value === dept) {
-        milestoneMap.value = nextMilestoneMap
-      }
-    } catch (error) {
-      logger.warn('[StrategicTaskView] 加载当前范围里程碑失败', error)
-
-      const nextMilestoneMap = { ...milestoneMap.value }
-      const nextDeptMilestoneCache = {
-        ...(milestoneCache.value[dept] || {})
-      }
-
-      needRequestIds.forEach(indicatorId => {
-        nextMilestoneMap[indicatorId] = []
-        nextDeptMilestoneCache[indicatorId] = []
-      })
-
-      milestoneCache.value = {
-        ...milestoneCache.value,
-        [dept]: nextDeptMilestoneCache
-      }
-
-      if (milestoneLoadRequestId.value === requestId && selectedDepartment.value === dept) {
-        milestoneMap.value = nextMilestoneMap
-      }
-    } finally {
-      needRequestIds.forEach(indicatorId => {
-        loadingMilestoneIds.value.delete(indicatorId)
-        loadedMilestoneIds.value.add(indicatorId)
-      })
-    }
-  }
-
-  const reloadMilestonesForIndicator = async (indicatorId: string, dept: string) => {
-    const response = await milestoneApi.getMilestonesByIndicator(indicatorId)
-    const rawMilestones = response.success ? extractMilestones(response.data) : []
-    const normalizedMilestones = rawMilestones.map((m, idx) => normalizeMilestone(m, idx))
-
-    milestoneMap.value[indicatorId] = normalizedMilestones
-    milestoneCache.value[dept] = milestoneCache.value[dept] || {}
-    milestoneCache.value[dept][indicatorId] = normalizedMilestones
-    loadedMilestoneIds.value.add(indicatorId)
-
-    return normalizedMilestones
-  }
-
-  const isMilestoneLoading = (indicatorId: string | number): boolean =>
-    loadingMilestoneIds.value.has(String(indicatorId))
-
-  watch(
-    [
-      selectedDepartment,
-      () => strategicStore.indicators.length,
-      () => orgStore.departments.length,
-      () => timeContext.currentYear,
-      currentPlanTaskIdSetSignature
-    ],
-    () => {
-      if (isBootstrappingPage.value) {
-        return
-      }
-      void loadMilestonesForCurrentScope()
-    }
-    // 移除 immediate: true，因为初始执行时 selectedDepartment 为空会导致加载错误的指标范围
-    // 里程碑加载改为在 onMounted 中显式调用，确保与主数据同时加载
+    strategicStore.indicators.map(i => ({
+      ...i,
+      ownerDept: normalizeDepartmentName(i.ownerDept),
+      responsibleDept: normalizeDepartmentName(i.responsibleDept)
+    }))
   )
 
   watch(
     () => timeContext.currentYear,
     () => {
-      milestoneMap.value = {}
-      loadedMilestoneIds.value = new Set<string>()
-      loadingMilestoneIds.value = new Set<string>()
-      milestoneCache.value = {}
       invalidateQueries(['task.scope'])
-      if (isBootstrappingPage.value) {
-        return
-      }
-      void loadMilestonesForCurrentScope()
     }
   )
 
@@ -3159,248 +2871,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       })
   }
 
-  // 查看里程碑
-  const milestoneDrawerVisible = ref(false)
-  const currentMilestoneIndicator = ref<StrategicIndicator | null>(null)
-
-  const _handleViewMilestones = (row: StrategicIndicator) => {
-    currentMilestoneIndicator.value = row
-    milestoneDrawerVisible.value = true
-  }
-
-  // 里程碑编辑弹窗
-  const milestoneEditDialogVisible = ref(false)
-  const editingMilestoneIndicator = ref<StrategicIndicator | null>(null)
-  const editingMilestones = ref<Milestone[]>([])
-  const isSavingMilestoneEdit = ref(false)
-  const createTempMilestoneId = () => -Date.now() - Math.floor(Math.random() * 1000)
-
-  const sortMilestoneListByProgress = (milestones: Milestone[]): Milestone[] =>
-    sortMilestonesByProgress(milestones).map((milestone, index) => {
-      milestone.sortOrder = index + 1
-      return milestone
-    })
-
-  const sortNewRowMilestonesByProgress = () => {
-    newRow.value.milestones = sortMilestoneListByProgress(newRow.value.milestones)
-  }
-
-  const sortEditingMilestonesByProgress = () => {
-    editingMilestones.value = sortMilestoneListByProgress(editingMilestones.value)
-  }
-
-  const toEditableMilestoneProgress = (value: number | null | undefined): number => {
-    const numericValue = Number(value ?? 0)
-    if (!Number.isFinite(numericValue)) {
-      return 0
-    }
-    return Math.min(100, Math.max(0, numericValue))
-  }
-
-  const handleNewRowMilestoneProgressChange = (
-    milestone: Milestone,
-    value: number | null | undefined
-  ) => {
-    milestone.targetProgress = toEditableMilestoneProgress(value)
-    void nextTick(sortNewRowMilestonesByProgress)
-  }
-
-  const handleEditingMilestoneProgressChange = (
-    milestone: Milestone,
-    value: number | null | undefined
-  ) => {
-    milestone.targetProgress = toEditableMilestoneProgress(value)
-    void nextTick(sortEditingMilestonesByProgress)
-  }
-
-  // 打开里程碑编辑弹窗
-  const handleEditMilestones = (row: StrategicIndicator) => {
-    // 只有未下发状态且有编辑权限时才能编辑
-    if (!canEditIndicators.value) {
-      ElMessage.warning('已下发的指标不可编辑里程碑')
-      return
-    }
-
-    logger.info(`[StrategicTaskView] Opening milestone editor for indicator:`, {
-      id: row.id,
-      name: row.name,
-      indicator_desc: row.indicator_desc,
-      responsibleDept: row.responsibleDept,
-      milestonesCount: row.milestones?.length || 0
-    })
-
-    editingMilestoneIndicator.value = row
-    // 深拷贝里程碑数据
-    editingMilestones.value = sortMilestoneListByProgress(
-      JSON.parse(JSON.stringify(row.milestones || []))
-    )
-    milestoneEditDialogVisible.value = true
-  }
-
-  // 通过索引编辑里程碑（避免表格合并导致的行数据错位）
-  const handleEditMilestonesByIndex = (index: number) => {
-    const row = indicators.value[index]
-    if (!row) {
-      logger.error(`[StrategicTaskView] Cannot find indicator at index ${index}`)
-      return
-    }
-    handleEditMilestones(row)
-  }
-
-  // 添加里程碑（编辑弹窗内）
-  const addMilestoneInDialog = () => {
-    const autoName =
-      editingMilestoneIndicator.value?.type1 === '定量' ? editingMilestoneIndicator.value?.name : ''
-    editingMilestones.value.push({
-      id: createTempMilestoneId(),
-      name: autoName,
-      targetProgress: 0,
-      deadline: '',
-      status: 'pending'
-    })
-    sortEditingMilestonesByProgress()
-  }
-
-  // 生成12个月里程碑（编辑弹窗内）
-  const generateMonthlyMilestonesInDialog = () => {
-    const _currentYear = timeContext.currentYear
-    // 获取指标名称并清理空白字符
-    const rawName =
-      editingMilestoneIndicator.value?.name ||
-      editingMilestoneIndicator.value?.indicator_desc ||
-      '指标完成'
-    const indicatorName = rawName.trim() // 清理首尾空白
-
-    logger.info(
-      `[generateMonthlyMilestonesInDialog] Generating milestones for indicator: ${indicatorName}`,
-      {
-        indicator: editingMilestoneIndicator.value,
-        name: editingMilestoneIndicator.value?.name,
-        indicator_desc: editingMilestoneIndicator.value?.indicator_desc,
-        rawNameLength: rawName.length,
-        trimmedNameLength: indicatorName.length
-      }
-    )
-    editingMilestones.value = []
-
-    for (let month = 1; month <= 12; month++) {
-      const lastDay = new Date(_currentYear, month, 0).getDate()
-      const deadline = `${_currentYear}-${String(month).padStart(2, '0')}-${lastDay}`
-      const progress = Math.round((month / 12) * 100)
-
-      editingMilestones.value.push({
-        id: -month, // 使用负数作为临时 ID，避免 Vue key 重复，后端会识别为新里程碑
-        name: `${indicatorName} - ${month}月`,
-        targetProgress: progress,
-        deadline: deadline,
-        status: 'NOT_STARTED' // 使用后端枚举值
-      })
-    }
-    sortEditingMilestonesByProgress()
-    logger.info(
-      `[generateMonthlyMilestonesInDialog] Generated ${editingMilestones.value.length} milestones`
-    )
-  }
-
-  // 删除里程碑（编辑弹窗内）
-  const removeMilestoneInDialog = (index: number) => {
-    editingMilestones.value.splice(index, 1)
-  }
-
-  const handleMilestoneDeadlineChange = () => {
-    sortEditingMilestonesByProgress()
-  }
-
-  // 保存里程碑编辑
-  const saveMilestoneEdit = async () => {
-    if (!editingMilestoneIndicator.value || isSavingMilestoneEdit.value) {
-      return
-    }
-
-    // 验证里程碑数据
-    for (const ms of editingMilestones.value) {
-      if (!ms.name || !ms.name.trim()) {
-        ElMessage.warning('请填写里程碑名称')
-        return
-      }
-      if (!ms.deadline) {
-        ElMessage.warning('请设置里程碑截止日期')
-        return
-      }
-      if (ms.targetProgress < 0 || ms.targetProgress > 100) {
-        ElMessage.warning('目标进度必须在0-100之间')
-        return
-      }
-    }
-
-    isSavingMilestoneEdit.value = true
-
-    try {
-      // 从当前指标列表中查找最新的指标对象（使用 id 匹配）
-      const currentIndicator = indicators.value.find(
-        i => i.id === editingMilestoneIndicator.value?.id
-      )
-
-      if (!currentIndicator) {
-        ElMessage.error('找不到对应的指标，请刷新页面后重试')
-        return
-      }
-
-      const indicatorId = currentIndicator.id.toString()
-      const deptKey = selectedDepartment.value || ''
-      const sortedMilestones = sortMilestoneListByProgress(editingMilestones.value)
-      editingMilestones.value = sortedMilestones
-
-      logger.info(
-        `[StrategicTaskView] Saving ${sortedMilestones.length} milestones for indicator ${indicatorId}`
-      )
-
-      await milestoneApi.saveMilestonesForIndicator(
-        indicatorId,
-        sortedMilestones.map((milestone, index) => {
-          const milestoneId = Number(milestone.id)
-          return {
-            id: Number.isFinite(milestoneId) && milestoneId > 0 ? milestoneId : undefined,
-            milestoneName: String(milestone.name || '').trim(),
-            description: '',
-            dueDate: toMilestoneDueDate(milestone.deadline),
-            targetProgress: Number(milestone.targetProgress || 0),
-            status: toMilestoneRequestStatus(milestone.status),
-            sortOrder: index + 1,
-            isPaired: Boolean((milestone as { isPaired?: boolean }).isPaired ?? false),
-            inheritedFrom: null as number | null
-          }
-        })
-      )
-
-      const refreshedMilestones = await reloadMilestonesForIndicator(indicatorId, deptKey)
-      logger.info(
-        `[StrategicTaskView] Milestones synced for indicator ${indicatorId}, count=${refreshedMilestones.length}`
-      )
-
-      ElMessage.success('里程碑已更新')
-      milestoneEditDialogVisible.value = false
-      editingMilestoneIndicator.value = null
-      editingMilestones.value = []
-      updateEditTime()
-    } catch (error) {
-      logger.error('Failed to save milestones:', error)
-      ElMessage.error('里程碑更新失败')
-    } finally {
-      isSavingMilestoneEdit.value = false
-    }
-  }
-
-  // 取消里程碑编辑
-  const cancelMilestoneEdit = () => {
-    if (isSavingMilestoneEdit.value) {
-      return
-    }
-    milestoneEditDialogVisible.value = false
-    editingMilestoneIndicator.value = null
-    editingMilestones.value = []
-  }
-
   // 格式化更新时间
   const _formatUpdateTime = (time: string | Date | undefined) => {
     if (!time) {
@@ -3547,55 +3017,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     type1: '定量' as '定性' | '定量',
     type2: '基础性' as '发展性' | '基础性',
     weight: 0,
-    remark: '',
-    milestones: [] as Milestone[]
+    remark: ''
   })
 
   // 任务下发相关状态
   const showAssignmentDialog = ref(false)
   const assignmentTarget = ref('')
   const assignmentMethod = ref<'self' | 'college'>('self')
-
-  // 添加新里程碑（单个）
-  const addMilestone = () => {
-    // 定量指标时，里程碑名称自动填充为核心指标内容
-    const autoName = newRow.value.type1 === '定量' ? newRow.value.name : ''
-    newRow.value.milestones.push({
-      id: Date.now(),
-      name: autoName,
-      targetProgress: 0,
-      deadline: '',
-      status: 'pending'
-    })
-    sortNewRowMilestonesByProgress()
-  }
-
-  // 生成12个月里程碑（定量指标默认）
-  const generateMonthlyMilestones = () => {
-    const _currentYear = timeContext.currentYear
-    const indicatorName = newRow.value.name || '指标完成'
-    newRow.value.milestones = []
-
-    for (let month = 1; month <= 12; month++) {
-      const lastDay = new Date(_currentYear, month, 0).getDate()
-      const deadline = `${_currentYear}-${String(month).padStart(2, '0')}-${lastDay}`
-      const progress = Math.round((month / 12) * 100)
-
-      newRow.value.milestones.push({
-        id: 0, // 使用 0 表示新里程碑，后端会创建新记录
-        name: `${indicatorName} - ${month}月`,
-        targetProgress: progress,
-        deadline: deadline,
-        status: 'pending'
-      })
-    }
-    sortNewRowMilestonesByProgress()
-  }
-
-  // 删除里程碑
-  const removeMilestone = (index: number) => {
-    newRow.value.milestones.splice(index, 1)
-  }
 
   // 当前日期
   const _currentDate = '2025年12月5日'
@@ -3853,8 +3281,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     await refreshCurrentDepartmentView({ force: true })
     isBootstrappingPage.value = false
 
-    void loadMilestonesForCurrentScope()
-
     document.addEventListener('click', handleGlobalClick, true)
     if (typeof window !== 'undefined') {
       window.addEventListener(
@@ -3964,8 +3390,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       type1: overrides.type1 ?? '定量',
       type2: overrides.type2 ?? '基础性',
       weight: 0,
-      remark: '',
-      milestones: []
+      remark: ''
     }
   }
 
@@ -3982,10 +3407,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       newRow.value.taskId = overrides.taskId
     }
     isAddingOrEditing.value = true
-
-    if (newRow.value.type1 === '定量') {
-      generateMonthlyMilestones()
-    }
   }
 
   const addNewRow = () => {
@@ -4018,30 +3439,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     const userRecord = authStore.user as { id?: string | number; userId?: string | number } | null
     const candidateId = Number(userRecord?.userId ?? userRecord?.id ?? NaN)
     return Number.isFinite(candidateId) && candidateId > 0 ? candidateId : null
-  }
-
-  const persistNewIndicatorMilestones = async (indicatorId: number, milestones: Milestone[]) => {
-    if (!Number.isFinite(indicatorId) || indicatorId <= 0 || milestones.length === 0) {
-      return
-    }
-
-    const orderedMilestones = sortMilestoneListByProgress(milestones)
-
-    await milestoneApi.saveMilestonesForIndicator(
-      String(indicatorId),
-      orderedMilestones.map((milestone, index) => ({
-        milestoneName: String(milestone.name || '').trim() || `里程碑 ${index + 1}`,
-        targetProgress: Number(milestone.targetProgress) || 0,
-        dueDate: milestone.deadline || null,
-        status: milestone.status === 'completed' ? 'COMPLETED' : 'NOT_STARTED',
-        sortOrder: index + 1
-      }))
-    )
-
-    await reloadMilestonesForIndicator(
-      String(indicatorId),
-      selectedDepartment.value || '战略发展部'
-    )
   }
 
   // 保存新行
@@ -4084,9 +3481,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         `[StrategicTaskView] Saving indicator with taskContent: "${newRow.value.taskContent}"`
       )
 
-      const orderedMilestones = sortMilestoneListByProgress(newRow.value.milestones)
-      newRow.value.milestones = orderedMilestones
-
       // 调用 Store 添加指标（现在是异步的，会调用后端 API）
       const createdIndicatorResponse = await strategicStore.addIndicator({
         id: Date.now().toString(),
@@ -4101,7 +3495,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         weight,
         remark: newRow.value.remark || '无备注',
         canWithdraw: true,
-        milestones: [...orderedMilestones],
         targetValue: 100,
         unit: '%',
         responsibleDept: selectedDepartment.value || '战略发展部', // 责任部门是选中的部门
@@ -4116,10 +3509,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       const createdIndicatorId = Number(
         createdIndicatorResponse?.data?.indicatorId ?? createdIndicatorResponse?.data?.id ?? NaN
       )
-      if (Number.isFinite(createdIndicatorId) && orderedMilestones.length > 0) {
-        await persistNewIndicatorMilestones(createdIndicatorId, orderedMilestones)
-      }
-
       // 统一走“变更后刷新”链路，避免新增后被旧缓存覆盖，导致主页仍显示上一版状态。
       logger.info('[StrategicTaskView] Refreshing task page after successful indicator creation...')
       await refreshTaskPageAfterIndicatorMutation()
@@ -4180,94 +3569,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const updateEditTime = () => {
     lastEditTime.value = new Date().toLocaleString()
   }
-
-  // 里程碑状态计算
-  const _calculateMilestoneStatus = (
-    indicator: StrategicIndicator
-  ): 'success' | 'warning' | 'exception' => {
-    if (!indicator.milestones || indicator.milestones.length === 0) {
-      return getProgressStatus(indicator.progress)
-    }
-
-    const _currentDate = new Date()
-    const _currentYear = _currentDate.getFullYear()
-
-    // 检查是否有逾期未完成的里程碑
-    const hasOverdueMilestone = indicator.milestones.some(milestone => {
-      const deadlineDate = new Date(milestone.deadline)
-      return milestone.status === 'pending' && deadlineDate < _currentDate
-    })
-
-    // 检查是否有即将到期的里程碑（30天内）
-    const hasUpcomingMilestone = indicator.milestones.some(milestone => {
-      if (milestone.status === 'completed') {
-        return false
-      }
-      const deadlineDate = new Date(milestone.deadline)
-      const daysUntilDeadline = Math.ceil(
-        (deadlineDate.getTime() - _currentDate.getTime()) / (1000 * 60 * 60 * 24)
-      )
-      return daysUntilDeadline > 0 && daysUntilDeadline <= 30
-    })
-
-    // 判断状态逻辑
-    if (hasOverdueMilestone) {
-      return 'exception' // 红色：逾期未完成
-    } else if (hasUpcomingMilestone) {
-      return 'warning' // 黄色：即将到期
-    } else {
-      return 'success' // 绿色：按计划进行
-    }
-  }
-
-  // 获取里程碑进度文本
-  const _getMilestoneProgressText = (indicator: StrategicIndicator): string => {
-    if (!indicator.milestones || indicator.milestones.length === 0) {
-      return `当前进度: ${indicator.progress}%`
-    }
-
-    const _totalMilestones = indicator.milestones.length
-    const _completedMilestones = indicator.milestones.filter(m => m.status === 'completed').length
-    const _overdueMilestones = indicator.milestones.filter(m => m.status === 'overdue').length
-    const pendingMilestones = indicator.milestones.filter(m => m.status === 'pending').length
-
-    const _currentDate = new Date()
-    const overdueMilestonesCount = indicator.milestones.filter(m => {
-      if (m.status !== 'pending') {
-        return false
-      }
-      const deadlineDate = new Date(m.deadline)
-      return deadlineDate < _currentDate
-    }).length
-
-    if (overdueMilestonesCount > 0) {
-      return `逾期: ${overdueMilestonesCount} 个里程碑`
-    } else if (pendingMilestones > 0) {
-      return `待完成: ${pendingMilestones} 个里程碑`
-    } else {
-      return '所有里程碑已完成'
-    }
-  }
-
-  // 获取里程碑列表用于tooltip显示
-  interface MilestoneTooltipItem {
-    id: string | number
-    name: string
-    expectedDate: string
-    progress: number
-  }
-
-  const getMilestonesTooltip = (indicator: StrategicIndicator): MilestoneTooltipItem[] => {
-    return sortMilestonesByProgress(indicator.milestones || []).map(m => ({
-      id: m.id || '',
-      name: m.name,
-      expectedDate: m.deadline || '',
-      progress: m.targetProgress || 0
-    }))
-  }
-
-  const getSortedMilestones = (milestones?: StrategicIndicator['milestones']) =>
-    sortMilestonesByProgress(milestones || [])
 
   const selectDepartment = (dept: string) => {
     if (selectedDepartment.value === dept) {
@@ -5429,23 +4730,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     const targetValue = row.targetValue || 100
     const isAchieved = progress >= targetValue
 
-    // 检查是否有里程碑及其截止日期
-    const _currentDate = new Date()
-    let isOverdue = false
-
-    if (row.milestones && row.milestones.length > 0) {
-      // 检查最后一个里程碑的截止日期
-      const lastMilestone = row.milestones[row.milestones.length - 1]
-      if (lastMilestone.deadline) {
-        const deadlineDate = new Date(lastMilestone.deadline)
-        isOverdue = _currentDate > deadlineDate
-      }
-    }
-
+    // 里程碑移除后无法依据里程碑截止日期判断是否超期，未达标统一显示黄色
     if (isAchieved) {
       return 'var(--color-success)' // 绿色：已达标
-    } else if (isOverdue) {
-      return 'var(--color-danger)' // 红色：超过任务周期未达标
     } else {
       return 'var(--color-warning)' // 黄色：任务周期内未达标
     }
@@ -5509,12 +4796,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     PLAN_APPROVAL_HISTORY_WORKFLOW_CODES,
     PLAN_APPROVAL_SUBMIT_WORKFLOW_CODE,
     _addIndicatorToCategory,
-    _calculateMilestoneStatus,
     _currentDate,
     _currentTask,
     _deleteIndicator,
     _formatUpdateTime,
-    _getMilestoneProgressText,
     _getProgressClass,
     _goToIndicator,
     _groupedBasicIndicators,
@@ -5524,7 +4809,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     _handleBatchWithdrawByTask,
     _handleDoubleClick,
     _handleTableScroll,
-    _handleViewMilestones,
     _handleWithdraw,
     _handleWithdrawTask,
     _hasPendingApprovalForDept,
@@ -5533,8 +4817,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     _selectTask,
     _tableScrollRef,
     _toggleViewMode,
-    addMilestone,
-    addMilestoneInDialog,
     addNewRow,
     addRowFormRef,
     approvalEntryButtonText,
@@ -5566,12 +4848,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     cancelAdd,
     cancelEdit,
     cancelIndicatorEdit,
-    cancelMilestoneEdit,
     closeDistributeDialog,
     confirmAssignment,
     confirmDistribute,
     confirmPlanApprovalSubmission,
-    createTempMilestoneId,
     currentApprovalApproverName,
     currentApprovalCandidateNames,
     currentApprovalFlowName,
@@ -5586,7 +4866,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     currentIndicatorIndex,
     currentIndicatorWorkflow,
     currentIndicatorWorkflowLoading,
-    currentMilestoneIndicator,
     currentPlan,
     currentPlanReportSummary,
     currentPlanScopeLoading,
@@ -5618,36 +4897,28 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     editingIndicatorField,
     editingIndicatorId,
     editingIndicatorValue,
-    editingMilestoneIndicator,
-    editingMilestones,
     editingValue,
     ensurePersistedTaskIdForIndicator,
     ensurePlanCanDistribute,
     existingTaskNames,
-    extractMilestones,
     findCurrentPlanByDepartment,
     findCurrentPlanByOrgId,
     findExistingTaskIdByName,
     formatDetailDate,
     functionalDepartments,
-    generateMonthlyMilestones,
-    generateMonthlyMilestonesInDialog,
     getCategoryColor,
     getCategoryText,
     getCurrentActorUserId,
     getCurrentCycleId,
-    getCurrentScopeIndicatorsForMilestones,
     getIndicatorCategoryLabel,
     getIndicatorMappedTaskType,
     getIndicatorTaskId,
-    getMilestonesTooltip,
     getPersistedWithdrawableRows,
     getProgressColor,
     getProgressStatus,
     getDisplayedReportedProgress,
     getPendingProgressDelta,
     getRouteQueryText,
-    getSortedMilestones,
     getSpanMethod,
     getTaskCategoryLabel,
     getTaskGroup,
@@ -5668,13 +4939,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     handleDeleteIndicator,
     handleDistributeAll,
     handleDistributeOrWithdraw,
-    handleEditMilestones,
-    handleEditMilestonesByIndex,
-    handleEditingMilestoneProgressChange,
     handleGlobalClick,
     handleIndicatorDblClick,
-    handleMilestoneDeadlineChange,
-    handleNewRowMilestoneProgressChange,
     handleOpenApproval,
     handleRejectCurrentIndicatorWorkflow,
     handleSelectionChange,
@@ -5702,12 +4968,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     isIndicatorInCurrentPlanScope,
     isIndicatorInFlowStage,
     isInitialDataLoading,
-    isMilestoneLoading,
     isPlanDistributed,
     isReadOnly,
     isSavingIndicatorCell,
     isSavingIndicatorEdit,
-    isSavingMilestoneEdit,
     isStrategicDept,
     isTableScrolling,
     lastEditTime,
@@ -5715,22 +4979,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     loadBackendTaskTypeMap,
     loadCurrentPlanTaskScope,
     loadIndicatorWorkflowSnapshot,
-    loadMilestonePayloads,
-    loadMilestonePayloadsIndividually,
-    loadMilestonesForCurrentScope,
     loadPendingPlanApprovalCount,
-    loadedMilestoneIds,
-    loadingMilestoneIds,
-    milestoneCache,
-    milestoneDrawerVisible,
-    milestoneEditDialogVisible,
-    milestoneFallbackConcurrency,
-    milestoneLoadRequestId,
-    milestoneMap,
     newRow,
     normalizeDepartmentName,
     normalizeEditableText,
-    normalizeMilestone,
     normalizePreviewCandidateDisplayName,
     normalizeTaskId,
     normalizeWorkflowStepName,
@@ -5743,7 +4995,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     pendingApprovalCount,
     pendingPlanApprovalCount,
     permissionUtil,
-    persistNewIndicatorMilestones,
     persistTaskContentEdit,
     planStore,
     planUiPhase,
@@ -5760,9 +5011,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     refreshTaskPageAfterIndicatorMutation,
     registerTaskLocally,
     rejectIndicatorReview,
-    reloadMilestonesForIndicator,
-    removeMilestone,
-    removeMilestoneInDialog,
     resetApprovalSetupDialog,
     resetApprovalWorkflowStateCache,
     resetNewRow,
@@ -5773,7 +5021,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     route,
     router,
     saveIndicatorEdit,
-    saveMilestoneEdit,
     saveNewRow,
     savingIndicatorField,
     savingIndicatorId,
@@ -5791,9 +5038,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     taskTypeMap,
     taskTypeMapLoading,
     timeContext,
-    toMilestoneDueDate,
-    toMilestoneRequestStatus,
-    toMilestoneStatus,
     triggerApprovalForDistribution,
     updateEditTime,
     viewMode

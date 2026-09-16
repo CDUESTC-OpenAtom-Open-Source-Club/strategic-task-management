@@ -1,7 +1,6 @@
-import type { Indicator, StrategicTask, Milestone } from '@/shared/types/entities'
+import type { Indicator, StrategicTask } from '@/shared/types/entities'
 import { mockIndicators } from './mockIndicators'
 import { mockStrategicTasks } from './mockStrategicTasks'
-import { mockMilestones } from './mockMilestones'
 
 /**
  * 仪表板数据生成器
@@ -17,8 +16,6 @@ export interface DashboardStats {
     averageProgress: number
     totalTasks: number
     completedTasks: number
-    totalMilestones: number
-    completedMilestones: number
   }
   departmentProgress: Array<{
     name: string
@@ -29,7 +26,7 @@ export interface DashboardStats {
   }>
   recentActivities: Array<{
     id: string
-    type: 'indicator_update' | 'task_complete' | 'milestone_reached' | 'approval_pending'
+    type: 'indicator_update' | 'task_complete' | 'approval_pending'
     title: string
     user: string
     department: string
@@ -85,10 +82,7 @@ function calculateDepartmentStats(indicators: Indicator[]): DashboardStats['depa
   }))
 }
 
-function generateRecentActivities(
-  indicators: Indicator[],
-  milestones: Milestone[]
-): DashboardStats['recentActivities'] {
+function generateRecentActivities(indicators: Indicator[]): DashboardStats['recentActivities'] {
   const activities: DashboardStats['recentActivities'] = []
 
   // 从指标审计日志生成活动
@@ -105,20 +99,6 @@ function generateRecentActivities(
       })
     }
   })
-
-  // 从里程碑生成活动
-  milestones
-    .filter(m => m.status === 'COMPLETED')
-    .forEach(milestone => {
-      activities.push({
-        id: `ACT-MIL-${milestone.milestoneId}`,
-        type: 'milestone_reached',
-        title: `达到了"${milestone.milestoneName}"里程碑`,
-        user: '系统',
-        department: '',
-        time: milestone.updatedAt
-      })
-    })
 
   // 待审批的指标
   indicators
@@ -142,8 +122,7 @@ function generateRecentActivities(
 
 function calculateOverview(
   indicators: Indicator[],
-  tasks: StrategicTask[],
-  milestones: Milestone[]
+  tasks: StrategicTask[]
 ): DashboardStats['overview'] {
   const completedIndicators = indicators.filter(i => i.progress >= 100).length
   const inProgressIndicators = indicators.filter(i => i.progress > 0 && i.progress < 100).length
@@ -152,8 +131,6 @@ function calculateOverview(
   const averageProgress =
     indicators.length > 0 ? Math.round((totalProgress / indicators.length) * 10) / 10 : 0
 
-  const completedMilestones = milestones.filter(m => m.status === 'COMPLETED').length
-
   return {
     totalIndicators: indicators.length,
     completedIndicators,
@@ -161,9 +138,7 @@ function calculateOverview(
     pendingIndicators,
     averageProgress,
     totalTasks: tasks.length,
-    completedTasks: 0, // 简化处理
-    totalMilestones: milestones.length,
-    completedMilestones
+    completedTasks: 0 // 简化处理
   }
 }
 
@@ -193,9 +168,9 @@ function generateTrend(): DashboardStats['trend'] {
 
 export function generateMockDashboardData(): DashboardData {
   const dashboardStats = {
-    overview: calculateOverview(mockIndicators, mockStrategicTasks, mockMilestones),
+    overview: calculateOverview(mockIndicators, mockStrategicTasks),
     departmentProgress: calculateDepartmentStats(mockIndicators),
-    recentActivities: generateRecentActivities(mockIndicators, mockMilestones),
+    recentActivities: generateRecentActivities(mockIndicators),
     trend: generateTrend(),
     distribution: generateDistribution(mockIndicators)
   }
