@@ -1247,6 +1247,18 @@ export function useApprovalProgressState(
     return true
   })
 
+  /**
+   * 无工作流详情时的降级判权：只校验当前用户是否持有任一计划审批角色。
+   * 真正的节点归属仍由后端 decision 接口兜底。
+   * 修复点：与 useApprovalProgressDrawer 相同——原「一键通过/一键驳回」
+   * 在 !hasPlanWorkflowData 分支下恒不可见（死分支）。
+   */
+  const hasAnyPlanApprovalRole = computed(() => {
+    return currentUserRoleCodes.value.some(roleCode =>
+      ['ROLE_APPROVER', 'ROLE_STRATEGY_DEPT_HEAD', 'ROLE_VICE_PRESIDENT'].includes(roleCode)
+    )
+  })
+
   function resolveExpectedApproverRoleCodes(): string[] {
     const stepName = String(activePlanWorkflow.value?.currentStepName || '').trim()
     if (!stepName) {
@@ -1299,12 +1311,22 @@ export function useApprovalProgressState(
   }
 
   const canCurrentUserHandlePlanApproval = computed(() => {
-    if (
-      !hasPlanWorkflowData.value ||
-      !isPlanPendingApproval.value ||
-      !hasPlanApprovalPermission.value
-    ) {
+    if (!hasPlanWorkflowData.value || !isPlanPendingApproval.value) {
       return false
+    }
+
+    // 不再以 hasPlanApprovalPermission 作为前置门，且补上「被指派审批人 = 本人」
+    // 这条最强证据（与 useApprovalProgressDrawer / approverMatch 对齐）。
+    const explicitAssigneeId = parsePositiveUserId(
+      planWorkflowTasks.value.find(
+        task =>
+          String(task.status || '')
+            .trim()
+            .toUpperCase() === 'PENDING'
+      )?.assigneeId
+    )
+    if (explicitAssigneeId && explicitAssigneeId === Number(currentUserId.value)) {
+      return true
     }
 
     const expectedApproverRoleCodes = resolveExpectedApproverRoleCodes()
@@ -2564,7 +2586,7 @@ export function useApprovalProgressState(
   }
 
   async function handleApprovePlanBatch() {
-    if (!hasPlanApprovalPermission.value) {
+    if (!hasPlanApprovalPermission.value && !hasAnyPlanApprovalRole.value) {
       ElMessage.warning('当前角色或组织范围不匹配该审批节点，无法执行审批通过')
       return
     }
@@ -2702,7 +2724,7 @@ export function useApprovalProgressState(
   }
 
   async function handleRejectPlanBatch() {
-    if (!hasPlanApprovalPermission.value) {
+    if (!hasPlanApprovalPermission.value && !hasAnyPlanApprovalRole.value) {
       ElMessage.warning('当前角色或组织范围不匹配该审批节点，无法执行审批驳回')
       return
     }
@@ -3040,6 +3062,7 @@ export function useApprovalProgressState(
     hasApprovalData,
     hasDisplayableApprovalContent,
     hasPlanApprovalPermission,
+    hasAnyPlanApprovalRole,
     hasRelatedPlanReportActiveWorkflow,
     hasPlanWorkflowData,
     hasWorkflowTabContent,
