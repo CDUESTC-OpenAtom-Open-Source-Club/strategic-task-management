@@ -20,7 +20,7 @@ import { getIndicatorStatusAtMonth } from '@/features/dashboard/lib/summaryMetri
  * 计算指标状态
  *
  * 口径依据《SISM-业务口径决议录-2026-09-16》：里程碑机制已移除，
- * 状态改由「人工预警等级 + 生命周期状态 + 进度」推导，详见 summaryMetrics。
+ * 状态改由「人工进度等级 + 生命周期状态 + 进度」推导，详见 summaryMetrics。
  */
 export function getIndicatorStatus(indicator: StrategicIndicator): IndicatorStatus {
   const now = new Date()

@@ -261,7 +261,7 @@ type DistributionExportChild = Partial<StrategicIndicator> & {
   pendingAttachmentDetails?: unknown[]
 }
 
-// 预警等级判定（与战略任务管理页同一套选项；当前编辑权限仅战略部负责人/分管校领导/系统管理员）
+// 进度等级判定（与战略任务管理页同一套选项；当前编辑权限仅战略部负责人/分管校领导/系统管理员）
 type ManualAlertSelectValue = Exclude<ManualAlertSeverity, null> | ''
 
 const manualAlertOptions: Array<{
@@ -328,7 +328,7 @@ const distributionExportColumns: ExcelExportColumn<DistributionExportRow>[] = [
       )
   },
   {
-    header: '预警等级判定',
+    header: '进度等级判定',
     width: 18,
     align: 'center',
     getValue: row => getChildManualAlertLabel(getChildManualAlertSeverity(row.child))
@@ -989,8 +989,8 @@ const handleDistributionImportCommitted = async () => {
 
                 <!-- 学院模式下不显示学院列 -->
 
-                <!-- 预警等级判定列（按业务要求替代原里程碑列；控件与战略任务管理页一致） -->
-                <el-table-column label="预警等级判定" width="140" align="center">
+                <!-- 进度等级判定列（按业务要求替代原里程碑列；控件与战略任务管理页一致） -->
+                <el-table-column label="进度等级判定" width="140" align="center">
                   <template #default="{ row }">
                     <template v-if="row.type !== 'child'">
                       <span class="manual-alert-placeholder">-</span>
@@ -1000,7 +1000,7 @@ const handleDistributionImportCommitted = async () => {
                         <template v-if="canEditChildManualAlert">
                           <el-tooltip
                             :disabled="childManualAlertEditable"
-                            content="计划正式下发后才能调整预警等级"
+                            content="计划正式下发后才能调整进度等级"
                             placement="top"
                           >
                             <div
@@ -1622,7 +1622,7 @@ const handleDistributionImportCommitted = async () => {
 <style scoped src="./IndicatorDistributeView.css"></style>
 <style src="./IndicatorDistributeView.global.css"></style>
 <style scoped>
-/* 预警等级判定列（与战略任务管理页一致） */
+/* 进度等级判定列（与战略任务管理页一致） */
 .manual-alert-cell {
   display: inline-flex;
   align-items: center;

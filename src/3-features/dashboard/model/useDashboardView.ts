@@ -53,8 +53,9 @@ export function useDashboardView(props: DashboardViewProps) {
       '预警任务按所选月份状态统计：预警表示该指标被判定为存在偏差，严重表示偏差较大需上级介入。',
     scoreComposition: '展示基础性指标和发展性指标的得分占比，帮助了解整体得分构成。',
     alertDistribution:
-      '按所选月份统计指标状态：严重表示预警等级为严重或已驳回，中度表示预警等级为警告或尚未下发。',
-    completionRate: '完成率 = 所选月份状态为正常或超前的指标数 / 总指标数 × 100%。未下发或预警指标不计入完成。',
+      '按所选月份统计指标状态：严重表示进度等级为严重或已驳回，中度表示进度等级为警告或尚未下发。',
+    completionRate:
+      '完成率 = 所选月份状态为正常或超前的指标数 / 总指标数 × 100%。未下发或预警指标不计入完成。',
     departmentProgress:
       '展示各部门的指标完成进度，进度条颜色表示状态：绿色（≥80%）、黄色（50%-80%）、红色（<50%）。',
     benchmark: '展示各部门执行进度与基准线对比，红色表示低于基准线，蓝色表示达标。',
@@ -119,7 +120,7 @@ export function useDashboardView(props: DashboardViewProps) {
 
   // 计算指标状态的函数
   // 口径依据《SISM-业务口径决议录-2026-09-16》：里程碑移除后改由
-  // 「人工预警等级 + 生命周期状态 + 进度」推导，详见 dashboard/lib/summaryMetrics。
+  // 「人工进度等级 + 生命周期状态 + 进度」推导，详见 dashboard/lib/summaryMetrics。
   const getIndicatorStatus = (indicator: Indicator): IndicatorStatus => {
     return getIndicatorStatusAtMonth(indicator, selectedMonth.value, timeContext.currentYear)
   }

@@ -298,7 +298,7 @@ const indicatorListExportColumns: ExcelExportColumn<StrategicIndicator>[] = [
     getValue: row => formatProgress(getDisplayProgress(row), getDisplayedReportedProgress(row))
   },
   {
-    header: '预警等级判定',
+    header: '进度等级判定',
     width: 18,
     align: 'center',
     getValue: row => getManualAlertLabel(row.manualAlertSeverity)
@@ -697,7 +697,7 @@ const handleExportIndicatorList = async () => {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column label="预警等级判定" width="150" align="center">
+              <el-table-column label="进度等级判定" width="150" align="center">
                 <template #default="{ row }">
                   <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
                     {{ getManualAlertLabel(row.manualAlertSeverity) }}
@@ -892,7 +892,7 @@ const handleExportIndicatorList = async () => {
             </template>
             <span v-else style="color: #909399">暂无填报</span>
           </el-descriptions-item>
-          <el-descriptions-item label="预警等级判定">
+          <el-descriptions-item label="进度等级判定">
             <el-tag :type="getManualAlertTagType(currentDetail.manualAlertSeverity)" size="small">
               {{ getManualAlertLabel(currentDetail.manualAlertSeverity) }}
             </el-tag>

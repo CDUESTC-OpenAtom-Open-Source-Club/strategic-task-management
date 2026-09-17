@@ -4119,8 +4119,8 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     return data
   })
 
-  // ==================== 子指标预警等级（与战略任务管理页共用后端能力） ====================
-  // 业务口径与战略任务管理页一致：计划正式下发后才能调整预警等级；
+  // ==================== 子指标进度等级（与战略任务管理页共用后端能力） ====================
+  // 业务口径与战略任务管理页一致：计划正式下发后才能调整进度等级；
   // 写权限当前仅战略部负责人/分管校领导/系统管理员（后端校验），职能部门后续放开时只需调整 canEditChildManualAlert。
   const MANUAL_ALERT_WRITE_ROLES = [
     'ROLE_STRATEGY_DEPT_HEAD',
@@ -4177,7 +4177,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       })
       childManualAlertLevels.value = next
     } catch (error) {
-      logger.warn('[IndicatorDistributeView] 加载子指标预警等级失败（不影响其它功能）:', error)
+      logger.warn('[IndicatorDistributeView] 加载子指标进度等级失败（不影响其它功能）:', error)
     } finally {
       isLoadingChildManualAlerts.value = false
     }
@@ -4211,8 +4211,8 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
     try {
       await ElMessageBox.confirm(
-        `确认将「${child.name || '该子指标'}」的预警等级调整为「${label}」？确认后会通知对应下级部门。`,
-        '调整预警等级',
+        `确认将「${child.name || '该子指标'}」的进度等级调整为「${label}」？确认后会通知对应下级部门。`,
+        '调整进度等级',
         {
           confirmButtonText: '确认调整',
           cancelButtonText: '取消',
@@ -4226,11 +4226,11 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         ...childManualAlertLevels.value,
         [String(child.id)]: selectedSeverity
       }
-      ElMessage.success(selectedSeverity ? '预警等级已调整，并已通知对应下级部门' : '预警已取消')
+      ElMessage.success(selectedSeverity ? '进度等级已调整，并已通知对应下级部门' : '预警已取消')
     } catch (error) {
       if (error !== 'cancel' && error !== 'close') {
         ElMessage.error(
-          error instanceof Error && error.message ? error.message : '预警等级调整失败'
+          error instanceof Error && error.message ? error.message : '进度等级调整失败'
         )
       }
     } finally {
@@ -4329,7 +4329,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     collegeOverallStatus,
     collegeTableData,
     collegeTotalWeight,
-    // ===== 子指标预警等级（与战略任务管理页同一后端能力；写权限后续按角色放开）=====
+    // ===== 子指标进度等级（与战略任务管理页同一后端能力；写权限后续按角色放开）=====
     canEditChildManualAlert,
     childManualAlertEditable,
     childManualAlertLevels,

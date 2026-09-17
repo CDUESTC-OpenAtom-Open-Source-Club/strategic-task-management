@@ -7,16 +7,16 @@ export type DashboardIndicatorStatus = 'normal' | 'ahead' | 'warning' | 'delayed
  *
  * 口径依据《SISM-业务口径决议录-2026-09-16》：
  * - 里程碑机制已移除，不再由里程碑到期日/目标进度推导状态（原实现依赖 indicator.milestones）。
- * - 预警/鉴定改为「纯人工判定」，沿用现有预警等级三档（正常/警告/严重）。
+ * - 预警/鉴定改为「纯人工判定」，沿用现有进度等级三档（正常/警告/严重）。
  * - 未下发（DRAFT）或未进入审批的指标不计入完成，维持原状。
  *
  * 判定顺序（先真实数据、后状态回退）：
- * 1. 指标自身人工预警等级（manualAlertLevel / alertLevel）
+ * 1. 指标自身人工进度等级（manualAlertLevel / alertLevel）
  * 2. 指标生命周期状态：未下发（DRAFT/REJECTED）→ 不算完成
  * 3. 进度：达到 100 → ahead（超前/达成）；有进度但未完成 → normal（正常推进）
  */
 const ALERT_LEVEL_TO_STATUS: Record<string, DashboardIndicatorStatus> = {
-  // 三档预警等级（正常/警告/严重）——对齐后端 warn_level 与前端预警判定
+  // 三档进度等级（正常/警告/严重）——对齐后端 warn_level 与前端预警判定
   OK: 'normal',
   NONE: 'normal',
   INFO: 'normal',
@@ -27,9 +27,7 @@ const ALERT_LEVEL_TO_STATUS: Record<string, DashboardIndicatorStatus> = {
   CRITICAL: 'delayed'
 }
 
-const resolveManualAlertStatus = (
-  indicator: Indicator
-): DashboardIndicatorStatus | null => {
+const resolveManualAlertStatus = (indicator: Indicator): DashboardIndicatorStatus | null => {
   const record = indicator as unknown as Record<string, unknown>
   const rawLevel =
     record.manualAlertLevel ?? record.alertLevel ?? record.warningLevel ?? record.alertSeverity
@@ -53,7 +51,7 @@ export const getIndicatorStatusAtMonth = (
   _month: number,
   _year: number
 ): DashboardIndicatorStatus => {
-  // 1. 人工预警等级优先（真实数据源）
+  // 1. 人工进度等级优先（真实数据源）
   const alertStatus = resolveManualAlertStatus(indicator)
   if (alertStatus && alertStatus !== 'normal') {
     return alertStatus

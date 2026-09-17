@@ -336,8 +336,8 @@ const handleManualAlertChange = async (
   const label = getManualAlertLabel(severity)
   try {
     await ElMessageBox.confirm(
-      `确认将「${row.name || '该指标'}」的预警等级调整为「${label}」？确认后会通知对应下级部门。`,
-      '调整预警等级',
+      `确认将「${row.name || '该指标'}」的进度等级调整为「${label}」？确认后会通知对应下级部门。`,
+      '调整进度等级',
       {
         confirmButtonText: '确认调整',
         cancelButtonText: '取消',
@@ -347,10 +347,10 @@ const handleManualAlertChange = async (
 
     savingManualAlertIndicatorId.value = row.id
     await strategicStore.updateManualAlertLevel(String(row.id), severity)
-    ElMessage.success(severity ? '预警等级已调整，并已通知下级部门' : '预警已取消')
+    ElMessage.success(severity ? '进度等级已调整，并已通知下级部门' : '预警已取消')
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
-      ElMessage.error(error instanceof Error && error.message ? error.message : '预警等级调整失败')
+      ElMessage.error(error instanceof Error && error.message ? error.message : '进度等级调整失败')
     }
   } finally {
     savingManualAlertIndicatorId.value = null
@@ -392,7 +392,7 @@ const strategicExportColumns: ExcelExportColumn<StrategicExportRow>[] = [
     getValue: row => formatProgress(row.progress, getDisplayedReportedProgress(row))
   },
   {
-    header: '预警等级判定',
+    header: '进度等级判定',
     width: 18,
     align: 'center',
     getValue: row => getManualAlertLabel(row.manualAlertSeverity)
@@ -1088,7 +1088,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column label="预警等级判定" width="150" align="center">
+              <el-table-column label="进度等级判定" width="150" align="center">
                 <template #default="{ row }">
                   <div class="manual-alert-cell">
                     <el-tooltip
@@ -1625,7 +1625,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             </template>
             <span v-else style="color: #909399">暂无填报</span>
           </el-descriptions-item>
-          <el-descriptions-item label="预警等级判定">
+          <el-descriptions-item label="进度等级判定">
             <el-tag :type="getManualAlertTagType(currentDetail.manualAlertSeverity)" size="small">
               {{ getManualAlertLabel(currentDetail.manualAlertSeverity) }}
             </el-tag>
@@ -1868,7 +1868,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
 <style scoped src="./StrategicTaskView.css"></style>
 
 <style scoped>
-/* 计划未正式下发时锁定预警等级判定 */
+/* 计划未正式下发时锁定进度等级判定 */
 .manual-alert-select-wrapper--locked {
   cursor: not-allowed;
 }
