@@ -9,7 +9,6 @@ import {
   Close
 } from '@element-plus/icons-vue'
 import BreadcrumbNav from '@/shared/ui/layout/BreadcrumbNav.vue'
-import ScoreCompositionChart from '@/shared/ui/charts/ScoreCompositionChart.vue'
 import AlertDistributionChart from '@/shared/ui/charts/AlertDistributionChart.vue'
 import DepartmentProgressChart from './DepartmentProgressChart.vue'
 import TaskSankeyChart from '@/shared/ui/charts/TaskSankeyChart.vue'
@@ -256,8 +255,10 @@ const {
             <span class="summary-time">| UPDATE: {{ new Date().toLocaleDateString() }}</span>
           </div>
           <p class="summary-text">
-            全校战略执行总分 <span class="highlight-primary">{{ dashboardData.totalScore }}</span
-            >。
+            进度等级分布：超前完成
+            <span class="highlight-primary">{{ dashboardData.levelDistribution?.ahead ?? 0 }}</span>
+            项、正常 {{ dashboardData.levelDistribution?.normal ?? 0 }} 项、延期
+            {{ dashboardData.levelDistribution?.delayed ?? 0 }} 项。
             <template v-if="dashboardData.alertIndicators.severe > 0">
               {{ selectedMonth }}月存在
               <span class="highlight-danger"
@@ -1081,17 +1082,37 @@ const {
             <template #header>
               <div class="card-header">
                 <div style="display: flex; align-items: center; gap: 4px">
-                  <span class="card-title">得分构成</span>
-                  <el-tooltip :content="helpTexts.scoreComposition" placement="top" effect="light">
+                  <span class="card-title">进度等级分布</span>
+                  <el-tooltip
+                    content="按人工鉴定进度等级统计：超前完成 / 正常 / 延期（A2 定案，取消分数）"
+                    placement="top"
+                    effect="light"
+                  >
                     <el-icon class="help-icon"><QuestionFilled /></el-icon>
                   </el-tooltip>
                 </div>
               </div>
             </template>
-            <ScoreCompositionChart
-              :basic-score="dashboardData.basicScore"
-              :development-score="dashboardData.developmentScore"
-            />
+            <div class="level-distribution">
+              <div class="level-distribution__item level-distribution__item--ahead">
+                <span class="level-distribution__num">{{
+                  dashboardData.levelDistribution?.ahead ?? 0
+                }}</span>
+                <span class="level-distribution__label">超前完成</span>
+              </div>
+              <div class="level-distribution__item level-distribution__item--normal">
+                <span class="level-distribution__num">{{
+                  dashboardData.levelDistribution?.normal ?? 0
+                }}</span>
+                <span class="level-distribution__label">正常</span>
+              </div>
+              <div class="level-distribution__item level-distribution__item--delayed">
+                <span class="level-distribution__num">{{
+                  dashboardData.levelDistribution?.delayed ?? 0
+                }}</span>
+                <span class="level-distribution__label">延期</span>
+              </div>
+            </div>
           </el-card>
         </el-col>
 
@@ -1398,4 +1419,34 @@ const {
   </ElDialog>
 </template>
 
-<style scoped src="./DashboardView.css"></style>
+<style scoped src="./DashboardView.css">
+.level-distribution {
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  padding: 12px 0;
+}
+.level-distribution__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.level-distribution__num {
+  font-size: 28px;
+  font-weight: 600;
+}
+.level-distribution__item--ahead .level-distribution__num {
+  color: #67c23a;
+}
+.level-distribution__item--normal .level-distribution__num {
+  color: #409eff;
+}
+.level-distribution__item--delayed .level-distribution__num {
+  color: #e6a23c;
+}
+.level-distribution__label {
+  font-size: 13px;
+  color: #606266;
+}
+</style>

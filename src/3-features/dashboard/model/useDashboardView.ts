@@ -91,7 +91,10 @@ export function useDashboardView(props: DashboardViewProps) {
   type IndicatorStatus = 'normal' | 'ahead' | 'warning' | 'delayed'
 
   // 月份筛选和下钻状态（用于堆叠柱状图）
-  const selectedMonth = ref(new Date().getMonth() + 1) // 默认当前月
+  // P4 口径：看板默认展示「上个月」；1 月时上个月为去年 12 月（仅月份数值，年份由 timeContext 承载）
+  const previousMonthNumber = new Date().getMonth() === 0 ? 12 : new Date().getMonth()
+
+  const selectedMonth = ref(previousMonthNumber) // 默认上月
   const isDrillDown = ref(false) // 是否处于下钻状态
   const drilledDept = ref('') // 下钻选中的部门
 
@@ -100,14 +103,14 @@ export function useDashboardView(props: DashboardViewProps) {
   const showMonthIndicatorCard = ref(false) // 控制月份指标卡片显示
 
   // ============ 学院看板状态（职能部门视角）============
-  const collegeSelectedMonth = ref(new Date().getMonth() + 1) // 学院看板选中月份
+  const collegeSelectedMonth = ref(previousMonthNumber) // 学院看板选中月份（默认上月）
   const isCollegeDrillDown = ref(false) // 学院看板下钻状态
   const drilledCollege = ref('') // 下钻选中的学院
   const selectedMonthInCollegeDrillDown = ref<number | null>(null) // 学院下钻后选中的月份
   const showCollegeMonthIndicatorCard = ref(false) // 学院月份指标卡片显示
 
   // ============ 分院排名看板状态 ============
-  const collegeRankingMonth = ref(new Date().getMonth() + 1) // 分院排名选中月份
+  const collegeRankingMonth = ref(previousMonthNumber) // 分院排名选中月份（默认上月）
   const selectedOwnerDeptFilter = ref<string>('all') // 职能部门筛选（战略发展部用）
 
   // 状态颜色配置
@@ -1242,16 +1245,43 @@ export function useDashboardView(props: DashboardViewProps) {
     dashboard: (typeof filteredDeptIndicators.value)[number]
   } | null>(null)
 
-  const handleIndicatorRowClick = (indicator: { id?: string | number; name?: string }) => {
+  const handleIndicatorRowClick = (indicator: {
+    id?: string | number
+    name?: string
+    responsibleDept?: string
+  }) => {
     const pool = [
       ...filteredDeptIndicators.value,
       ...filteredMonthIndicators.value,
       ...filteredCollegeMonthIndicators.value
     ]
-    const match = pool.find(item => String(item.id) === String(indicator.id))
-    if (match) {
-      selectedIndicatorDetail.value = { dashboard: match }
+    const match = pool.find(item => String(item.id) === String(indicator.id)) as
+      | (typeof filteredDeptIndicators.value)[number]
+      | undefined
+    if (!match) {
+      return
     }
+
+    // P4 点行下钻：行所属部门与当前下钻部门不同且属于可下钻层级时，驱动层级切换
+    const rowDept = String(
+      (match as { responsibleDept?: string }).responsibleDept ??
+        (match as { department?: string }).department ??
+        ''
+    )
+    const currentDrilled = String(drilledDept.value || '')
+    if (rowDept && rowDept !== currentDrilled && rowDept !== props.departmentName) {
+      const isCollege =
+        String((match as { targetOrgType?: string }).targetOrgType ?? '').toLowerCase() ===
+          'academic' || rowDept.includes('学院')
+      try {
+        dashboardStore.drillDownToDepartment(rowDept, isCollege ? 'college' : 'functional')
+        return
+      } catch {
+        // 下钻失败则退回详情抽屉
+      }
+    }
+
+    selectedIndicatorDetail.value = { dashboard: match }
   }
 
   const handleCloseIndicatorDetail = () => {

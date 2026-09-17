@@ -78,6 +78,12 @@ export interface DashboardData {
   totalScore: number
   basicScore: number
   developmentScore: number
+  /** 进度等级分布（P4 A2 定案：取消分数，改等级分布） */
+  levelDistribution?: {
+    ahead: number
+    normal: number
+    delayed: number
+  }
   completionRate: number
   warningCount: number
   totalIndicators: number
