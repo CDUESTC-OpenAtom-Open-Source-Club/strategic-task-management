@@ -1085,6 +1085,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                                 >{{ row.name }}</span
                               >
                             </el-tooltip>
+                            <div class="indicator-cell-footer">
+                              <MutationBadgePopover v-if="row.id" :indicator-id="row.id" />
+                            </div>
                           </template>
                           <span v-else class="indicator-name-text placeholder-text"
                             >双击编辑指标</span
@@ -1092,9 +1095,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         </template>
                       </div>
                     </template>
-                    <div class="indicator-cell-footer">
-                      <MutationBadgePopover v-if="row.id" :indicator-id="row.id" />
-                    </div>
                   </el-table-column>
                   <el-table-column prop="weight" label="权重" width="100" align="center">
                     <template #default="{ row }">

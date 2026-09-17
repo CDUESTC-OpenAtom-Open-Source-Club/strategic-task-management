@@ -1125,12 +1125,16 @@ const {
               </div>
             </template>
             <el-empty
-              v-if="mutationSummary.length === 0"
+              v-if="(mutationSummary || []).length === 0"
               description="当前无异动中的指标"
               :image-size="60"
             />
             <ul v-else class="mutation-summary">
-              <li v-for="item in mutationSummary" :key="item.id" class="mutation-summary__item">
+              <li
+                v-for="item in mutationSummary || []"
+                :key="item.id"
+                class="mutation-summary__item"
+              >
                 <span class="mutation-summary__name">{{ item.indicator_desc }}</span>
                 <span class="mutation-summary__time">
                   {{ item.mutation_started_at?.slice(0, 10) }} 起
