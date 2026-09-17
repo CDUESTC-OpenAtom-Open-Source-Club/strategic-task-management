@@ -3258,6 +3258,41 @@ export function useApprovalProgressDrawer(
    */
   const planAppraisalLevel = ref('')
 
+  // P3 余项：待审批列表组织/月份筛选器
+  const planApprovalFilterOrg = ref('')
+  const planApprovalFilterMonth = ref('')
+  const planApprovalOrgOptions = computed(() => {
+    const names = new Set(
+      currentPlanApprovalItems.value.map(item => String(item.targetOrgName || '')).filter(Boolean)
+    )
+    return Array.from(names)
+  })
+  const planApprovalMonthOptions = computed(() => {
+    const months = new Set(
+      currentPlanApprovalItems.value
+        .map(item => String(item.submittedAt || '').slice(0, 7))
+        .filter(Boolean)
+    )
+    return Array.from(months).sort()
+  })
+  const filteredPlanApprovalItems = computed(() =>
+    currentPlanApprovalItems.value.filter(item => {
+      if (
+        planApprovalFilterOrg.value &&
+        String(item.targetOrgName || '') !== planApprovalFilterOrg.value
+      ) {
+        return false
+      }
+      if (
+        planApprovalFilterMonth.value &&
+        String(item.submittedAt || '').slice(0, 7) !== planApprovalFilterMonth.value
+      ) {
+        return false
+      }
+      return true
+    })
+  )
+
   async function handleApprovePlanBatch() {
     if (!hasPlanApprovalPermission.value && !hasAnyPlanApprovalRole.value) {
       ElMessage.warning('当前角色或组织范围不匹配该审批节点，无法执行审批通过')
@@ -4123,6 +4158,11 @@ export function useApprovalProgressDrawer(
     hasPlanApprovalPermission,
     hasAnyPlanApprovalRole,
     planAppraisalLevel,
+    planApprovalFilterOrg,
+    planApprovalFilterMonth,
+    planApprovalOrgOptions,
+    planApprovalMonthOptions,
+    filteredPlanApprovalItems,
     formatAppraisalLevel,
     formatStayDuration,
     hasPlanWorkflowData,
