@@ -8,6 +8,7 @@ import {
   Top,
   Close
 } from '@element-plus/icons-vue'
+import { useApprovalCenter } from '@/features/approval/lib/useApprovalCenter'
 import BreadcrumbNav from '@/shared/ui/layout/BreadcrumbNav.vue'
 import AlertDistributionChart from '@/shared/ui/charts/AlertDistributionChart.vue'
 import DepartmentProgressChart from './DepartmentProgressChart.vue'
@@ -132,6 +133,12 @@ const {
   strategicStore,
   timeContext
 } = useDashboardView(props)
+
+// P7 待办/已办入口：首页直接展示待办并直达审批中心
+const approvalCenterCard = useApprovalCenter()
+function openApprovalCenterFromDashboard() {
+  approvalCenterCard.openApprovalCenter(null)
+}
 </script>
 
 <template>
@@ -142,6 +149,21 @@ const {
         <el-button type="primary" :icon="Download" @click="handleExport">导出报表</el-button>
       </div>
     </div>
+
+    <!-- P7 待办/已办入口卡：待办直达审批中心 -->
+    <el-alert
+      v-if="(messageStore?.todoCount || 0) > 0"
+      type="warning"
+      :closable="false"
+      class="dashboard-todo-card"
+      @click="openApprovalCenterFromDashboard"
+    >
+      <template #title>
+        <span class="dashboard-todo-card__text">
+          您有 <strong>{{ messageStore?.todoCount || 0 }}</strong> 条待办尚未处理，点击进入审批中心
+        </span>
+      </template>
+    </el-alert>
 
     <!-- 降级模式提示 - Requirements 1.4, 10.5 -->
     <el-alert
