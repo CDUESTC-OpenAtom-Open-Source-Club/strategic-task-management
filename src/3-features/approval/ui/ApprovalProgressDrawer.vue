@@ -347,6 +347,16 @@ const displayedCurrentPlanApprovalName = computed(() => {
                     <span class="label">当前步骤：</span>
                     <span class="value">{{ currentPlanApprovalSummary.currentStepName }}</span>
                   </div>
+                  <div
+                    v-if="formatStayDuration(currentPlanApprovalSummary?.createdAt)"
+                    class="info-row"
+                  >
+                    <el-icon><Timer /></el-icon>
+                    <span class="label">停留时长：</span>
+                    <span class="value">{{
+                      formatStayDuration(currentPlanApprovalSummary?.createdAt)
+                    }}</span>
+                  </div>
                   <div v-if="currentPlanOperationLabel" class="info-row">
                     <el-icon><Right /></el-icon>
                     <span class="label">当前操作：</span>

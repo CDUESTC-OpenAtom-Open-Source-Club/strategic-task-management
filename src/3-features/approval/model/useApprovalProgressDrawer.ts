@@ -30,6 +30,15 @@ const APPRAISAL_LEVEL_LABELS: Record<string, string> = {
   DELAYED: '延期'
 }
 
+export function formatStayDuration(createdAt?: string | null): string {
+  if (!createdAt) return ''
+  const start = new Date(createdAt).getTime()
+  if (!Number.isFinite(start)) return ''
+  const hours = Math.floor((Date.now() - start) / 3600000)
+  if (hours < 24) return `已停留 ${hours} 小时`
+  return `已停留 ${Math.floor(hours / 24)} 天`
+}
+
 export function formatAppraisalLevel(value?: string | null): string {
   if (!value) return ''
   return APPRAISAL_LEVEL_LABELS[value] || value
@@ -4115,6 +4124,7 @@ export function useApprovalProgressDrawer(
     hasAnyPlanApprovalRole,
     planAppraisalLevel,
     formatAppraisalLevel,
+    formatStayDuration,
     hasPlanWorkflowData,
     hasWorkflowTabContent,
     historicalPlanApprovalItems,
