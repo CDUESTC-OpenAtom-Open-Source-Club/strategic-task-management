@@ -16,6 +16,8 @@ export type DashboardIndicatorStatus = 'normal' | 'ahead' | 'warning' | 'delayed
  * 3. 进度：达到 100 → ahead（超前/达成）；有进度但未完成 → normal（正常推进）
  */
 const ALERT_LEVEL_TO_STATUS: Record<string, DashboardIndicatorStatus> = {
+  AHEAD: 'ahead',
+  NORMAL: 'normal',
   // 三档进度等级（正常/警告/严重）——对齐后端 warn_level 与前端预警判定
   OK: 'normal',
   NONE: 'normal',

@@ -132,7 +132,13 @@ function normalizeManualAlertSeverity(value: unknown): ManualAlertSeverity {
   const normalized = String(value || '')
     .trim()
     .toUpperCase()
-  if (normalized === 'INFO' || normalized === 'WARNING' || normalized === 'CRITICAL') {
+  if (
+    normalized === 'AHEAD' ||
+    normalized === 'NORMAL' ||
+    normalized === 'INFO' ||
+    normalized === 'WARNING' ||
+    normalized === 'CRITICAL'
+  ) {
     return normalized
   }
   return null
