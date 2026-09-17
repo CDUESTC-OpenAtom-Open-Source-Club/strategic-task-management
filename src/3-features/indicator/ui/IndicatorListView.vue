@@ -287,6 +287,7 @@ const indicatorListExporting = ref(false)
 
 const indicatorListExportColumns: ExcelExportColumn<StrategicIndicator>[] = [
   { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
+  { header: '内部ID', width: 12, align: 'center', getValue: row => row.id ?? '-' },
   { header: '来源部门', width: 18, getValue: row => row.ownerDept || '-' },
   { header: '责任部门', width: 18, getValue: row => row.responsibleDept || '-' },
   { header: '战略任务', width: 28, getValue: row => row.taskContent || '-' },

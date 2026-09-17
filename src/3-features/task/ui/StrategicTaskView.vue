@@ -437,6 +437,12 @@ const strategicExportDepartmentsIndeterminate = computed(
 )
 
 const strategicExportColumns: ExcelExportColumn<StrategicExportRow>[] = [
+  {
+    header: '内部ID',
+    width: 12,
+    align: 'center',
+    getValue: row => (row as { id?: number | string }).id ?? '-'
+  },
   { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
   { header: '部门', width: 18, getValue: row => row.exportDepartment },
   { header: '战略任务', width: 28, getValue: row => row.taskContent || '-' },

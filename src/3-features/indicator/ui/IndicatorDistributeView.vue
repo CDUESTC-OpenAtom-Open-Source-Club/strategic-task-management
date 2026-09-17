@@ -308,6 +308,12 @@ const distributionExportCollegesIndeterminate = computed(
 )
 
 const distributionExportColumns: ExcelExportColumn<DistributionExportRow>[] = [
+  {
+    header: '内部ID',
+    width: 12,
+    align: 'center',
+    getValue: row => (row as { id?: number | string }).id ?? '-'
+  },
   { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
   { header: '学院', width: 20, getValue: row => row.exportCollege },
   { header: '父级战略任务', width: 28, getValue: row => row.taskTitle || '-' },
@@ -538,7 +544,7 @@ const currentDistributionImportCycleId = computed(() => {
 })
 
 // 导入入口暂不在页面显示，保留原有实现，后续恢复时只需切回 true。
-const distributionImportEnabled = false
+const distributionImportEnabled = true
 const distributionImportDisabledReason = '导入功能暂不启用'
 
 const openDistributionImportDialog = () => {
