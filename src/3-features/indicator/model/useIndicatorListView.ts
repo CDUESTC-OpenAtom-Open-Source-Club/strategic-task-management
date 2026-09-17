@@ -3191,6 +3191,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   // 详情抽屉状态
   const detailDrawerVisible = ref(false)
   const currentDetail = ref<StrategicIndicator | null>(null)
+  // P3 上报记录分区：展开时懒加载历次填报（含被驳回）
+  const reportHistoryOpen = ref<string[]>([])
 
   // 查看详情
   const handleViewDetail = (row: StrategicIndicator) => {
@@ -4462,6 +4464,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     return isPlanDistributed.value
   }
 
+  const currentDetailId = computed(() => currentDetail.value?.id ?? null)
+
   return {
     DEFAULT_APPROVAL_STATUS,
     PLAN_APPROVAL_POLL_INTERVAL_MS,
@@ -4531,6 +4535,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     currentApprovalWorkflowStatus,
     currentDate,
     currentDetail,
+    reportHistoryOpen,
+    currentDetailId,
     currentDetailAttachmentItems,
     currentDraftOwnerKey,
     currentPagePendingPlanTask,

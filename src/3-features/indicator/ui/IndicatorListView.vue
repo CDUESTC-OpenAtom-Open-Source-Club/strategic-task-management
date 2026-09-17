@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import { ref } from 'vue'
 import {
   Plus,
@@ -123,6 +124,8 @@ const {
   currentViewingOrgId,
   delay,
   detailDrawerVisible,
+  reportHistoryOpen,
+  currentDetailId,
   editingField,
   editingIndicatorField,
   editingIndicatorId,
@@ -928,6 +931,15 @@ const handleExportIndicatorList = async () => {
           </div>
         </div>
       </div>
+
+      <el-collapse v-model="reportHistoryOpen" class="report-history-collapse">
+        <el-collapse-item title="上报记录（历次填报 / 含被驳回）" name="history">
+          <IndicatorFillHistory
+            v-if="reportHistoryOpen?.includes('history') && currentDetailId"
+            :indicator-id="currentDetailId"
+          />
+        </el-collapse-item>
+      </el-collapse>
     </el-drawer>
 
     <!-- 进度填报弹窗 -->

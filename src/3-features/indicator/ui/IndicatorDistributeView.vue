@@ -26,6 +26,7 @@ import {
 } from '@/shared/lib/export/excel'
 import { DistributionApprovalProgressDrawer } from '@/features/approval'
 import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
+import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import {
   useIndicatorDistributeView,
   type IndicatorDistributeViewProps
@@ -133,6 +134,8 @@ const {
   deletingChildId,
   departmentAliasNameMap,
   detailDrawerVisible,
+  reportHistoryOpen,
+  currentDetailId,
   distributionApprovalButtonText,
   distributionApprovalButtonType,
   distributionRecordCount,
@@ -1377,6 +1380,15 @@ const handleDistributionImportCommitted = async () => {
           </el-descriptions-item>
         </el-descriptions>
       </div>
+
+      <el-collapse v-model="reportHistoryOpen" class="report-history-collapse">
+        <el-collapse-item title="上报记录（历次填报 / 含被驳回）" name="history">
+          <IndicatorFillHistory
+            v-if="reportHistoryOpen?.includes('history') && currentDetailId"
+            :indicator-id="currentDetailId"
+          />
+        </el-collapse-item>
+      </el-collapse>
     </el-drawer>
 
     <el-dialog

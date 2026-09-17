@@ -365,6 +365,8 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   // 指标详情侧边栏
   const detailDrawerVisible = ref(false)
   const currentDetailIndicator = ref<StrategicIndicator | null>(null)
+  // P3 上报记录分区
+  const reportHistoryOpen = ref<string[]>([])
   const addRowFormRef = ref<HTMLElement | null>(null)
   const lastEditTime = ref(new Date().toLocaleString())
 
@@ -4278,6 +4280,8 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     return ''
   }
 
+  const currentDetailId = computed(() => currentDetailIndicator.value?.id ?? null)
+
   return {
     _addNewChildRow,
     _canAddIndicator,
@@ -4369,6 +4373,8 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     currentDepartmentPlanIndicators,
     currentDept,
     currentDetailIndicator,
+    reportHistoryOpen,
+    currentDetailId,
     currentDispatchWorkflowCode,
     currentPlanTaskTypeMap,
     currentSelectedCollegePlan,

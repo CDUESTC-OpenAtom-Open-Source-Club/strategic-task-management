@@ -3638,6 +3638,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 详情抽屉状态
   const detailDrawerVisible = ref(false)
   const currentDetail = ref<StrategicIndicator | null>(null)
+  // P3 上报记录分区
+  const reportHistoryOpen = ref<string[]>([])
 
   // 专门用于审批抽屉的指标列表（显示当前选中部门的所有指标，一个部门的所有指标状态应该统一）
   const approvalIndicators = computed(() => {
@@ -4792,6 +4794,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     return reportedProgress !== Number(indicator.progress || 0)
   }
 
+  const currentDetailId = computed(() => currentDetail.value?.id ?? null)
+
   return {
     PLAN_APPROVAL_HISTORY_WORKFLOW_CODES,
     PLAN_APPROVAL_SUBMIT_WORKFLOW_CODE,
@@ -4860,6 +4864,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     currentApprovalWorkflowStatus,
     currentDepartmentOrgId,
     currentDetail,
+    reportHistoryOpen,
+    currentDetailId,
     currentDistributeGroup,
     currentDistributeItem,
     currentIndicator,
