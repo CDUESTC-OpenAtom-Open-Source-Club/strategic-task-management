@@ -50,11 +50,11 @@ export function useDashboardView(props: DashboardViewProps) {
     basicScore: '基础性指标是必须完成的核心指标，根据各指标完成进度加权计算得分，满分100分。',
     developmentScore: '发展性指标是鼓励性指标，完成后可获得额外加分，满分20分。',
     warningCount:
-      '预警任务按所选月份的里程碑状态计算：延期视为严重预警，未逾期但未达标视为中度预警。',
+      '预警任务按所选月份状态统计：预警表示该指标被判定为存在偏差，严重表示偏差较大需上级介入。',
     scoreComposition: '展示基础性指标和发展性指标的得分占比，帮助了解整体得分构成。',
     alertDistribution:
-      '按所选月份统计指标状态：严重预警表示该月底前应完成的里程碑未达标，中度预警表示当月目标未达标但尚未逾期。',
-    completionRate: '完成率 = 所选月份状态为正常或超前完成的指标数 / 总指标数 × 100%。',
+      '按所选月份统计指标状态：严重表示预警等级为严重或已驳回，中度表示预警等级为警告或尚未下发。',
+    completionRate: '完成率 = 所选月份状态为正常或超前的指标数 / 总指标数 × 100%。未下发或预警指标不计入完成。',
     departmentProgress:
       '展示各部门的指标完成进度，进度条颜色表示状态：绿色（≥80%）、黄色（50%-80%）、红色（<50%）。',
     benchmark: '展示各部门执行进度与基准线对比，红色表示低于基准线，蓝色表示达标。',
@@ -118,9 +118,10 @@ export function useDashboardView(props: DashboardViewProps) {
   }
 
   // 计算指标状态的函数
-  const getIndicatorStatus = (_indicator: Indicator): IndicatorStatus => {
-    // 里程碑机制已移除：状态不再由里程碑推导，统一回落为正常。
-    return 'normal'
+  // 口径依据《SISM-业务口径决议录-2026-09-16》：里程碑移除后改由
+  // 「人工预警等级 + 生命周期状态 + 进度」推导，详见 dashboard/lib/summaryMetrics。
+  const getIndicatorStatus = (indicator: Indicator): IndicatorStatus => {
+    return getIndicatorStatusAtMonth(indicator, selectedMonth.value, timeContext.currentYear)
   }
 
   // 获取状态显示文本
