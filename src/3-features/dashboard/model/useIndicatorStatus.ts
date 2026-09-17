@@ -14,15 +14,17 @@ import type {
   IndicatorStatus,
   STATUS_COLORS as _STATUS_COLORS
 } from '@/shared/lib/hooks/dashboard/useDashboardState'
+import { getIndicatorStatusAtMonth } from '@/features/dashboard/lib/summaryMetrics'
 
 /**
  * 计算指标状态
+ *
+ * 口径依据《SISM-业务口径决议录-2026-09-16》：里程碑机制已移除，
+ * 状态改由「人工预警等级 + 生命周期状态 + 进度」推导，详见 summaryMetrics。
  */
 export function getIndicatorStatus(indicator: StrategicIndicator): IndicatorStatus {
-  // 里程碑机制已移除：状态不再由里程碑推导，统一回落为正常。
-  // 延后判断改由上报链路的上级鉴定等级承载（见上报审批链路策划稿）。
-  void indicator
-  return 'normal'
+  const now = new Date()
+  return getIndicatorStatusAtMonth(indicator, now.getMonth() + 1, now.getFullYear())
 }
 
 /**

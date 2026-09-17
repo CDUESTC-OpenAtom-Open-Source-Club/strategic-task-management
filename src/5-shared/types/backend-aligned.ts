@@ -254,13 +254,14 @@ export interface StatusAuditEntry {
 
 /**
  * Progress Report entity (progress_report table)
+ *
+ * 注：achieved_milestone 列已随 V87 迁移删除，此处同步移除以免与后端 schema 不符。
  */
 export interface ProgressReport {
   reportId: number
   indicatorId: number
   adhocTaskId: number | null
   percentComplete: number
-  achievedMilestone: boolean
   narrative: string | null
   reporterId: number
   status: ReportStatus
@@ -287,11 +288,12 @@ export interface ApprovalRecord {
 
 /**
  * Alert Event entity (alert_event table)
+ *
+ * 注：milestone_id 列已随 V87 迁移删除（alert_event 表实际无此列），此处同步移除。
  */
 export interface AlertEvent {
   alertId: number
   indicatorId: number | null
-  milestoneId: number | null
   severity: AlertSeverity
   alertMessage: string
   status: AlertStatus
