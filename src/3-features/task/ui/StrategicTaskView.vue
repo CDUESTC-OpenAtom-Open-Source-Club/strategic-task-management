@@ -298,14 +298,14 @@ const activeTaskTabName = ref<'functional' | 'college'>('functional')
 
 // 二级学院页签（P2）：筛出下发到学院的任务与指标，复用 TaskIndicatorTree 树状下钻
 const collegeIndicators = computed(() =>
-  indicators.value.filter(item => {
+  (indicators.value || []).filter(item => {
     const orgName = String((item as { department?: string }).department ?? '')
     return orgName.includes('学院')
   })
 )
 const collegeTasks = computed(() => {
   const collegeTaskIds = new Set(collegeIndicators.value.map(item => String(item.taskId ?? '')))
-  return taskList.value.filter(task => collegeTaskIds.has(String(task.id ?? '')))
+  return (taskList.value || []).filter(task => collegeTaskIds.has(String(task.id ?? '')))
 })
 
 type StrategicExportRow = StrategicIndicator & {
@@ -1136,9 +1136,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                           size="small"
                           @click="viewIndicatorDetail(row as StrategicIndicator)"
                         >
-                          {{
-                            row.attachments?.length || row.pendingAttachmentDetails?.length || 0
-                          }}
+                          {{ row.attachments?.length || row.pendingAttachmentDetails?.length || 0 }}
                           个附件
                         </el-button>
                       </span>
