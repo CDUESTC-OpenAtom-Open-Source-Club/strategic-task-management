@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import TaskIndicatorTree from './TaskIndicatorTree.vue'
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
+import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
 import {
   Plus,
   View,
@@ -316,6 +317,50 @@ type StrategicExportRow = StrategicIndicator & {
 }
 
 const strategicExporting = ref(false)
+
+/**
+ * P5 发起异动：原地修改 + 写快照 + 启动 PLAN_MUTATION_STRATEGY 三级审批；
+ * 审批期间该组织全面锁死填报/提交。
+ */
+const mutationApiLoading = ref(false)
+async function initiateMutationForSelection() {
+  const row = selectedIndicators.value[0]
+  if (!row?.id) {
+    ElMessage.warning('请先选中一条指标')
+    return
+  }
+  try {
+    const { value } = await ElMessageBox.prompt(
+      '是否确认改动？确认后将启动异动审批（战略部负责人 → 分管校领导），' +
+        '审批期间该部门填报与提交将全面锁死。',
+      '发起指标异动',
+      {
+        confirmButtonText: '确认改动',
+        cancelButtonText: '取消',
+        inputType: 'textarea',
+        inputPlaceholder: '请输入新的指标内容（原地修改，历史版本可在指标框右下角查看）',
+        inputValue: row.name || '',
+        inputValidator: val => (val && val.trim() ? true : '指标内容不能为空')
+      }
+    )
+    mutationApiLoading.value = true
+    const { mutationApi } = await import('@/features/indicator/api/mutationApi')
+    const response = await mutationApi.initiate(row.id as number, {
+      indicator_desc: String(value || '').trim()
+    })
+    if (response.success) {
+      ElMessage.success('异动已提交审批；审批期间该部门填报已锁死')
+    } else {
+      ElMessage.error(response.message || '发起异动失败')
+    }
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(error instanceof Error ? error.message : '发起异动失败')
+    }
+  } finally {
+    mutationApiLoading.value = false
+  }
+}
 const strategicBatchExportDialogVisible = ref(false)
 const selectedStrategicExportDepartments = ref<string[]>([])
 const strategicImportDialogVisible = ref(false)
@@ -805,6 +850,17 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <el-button size="small" :icon="Upload" @click="openStrategicImportDialog">
             导入
           </el-button>
+          <!-- P5 发起异动（仅战略部，选中单个指标） -->
+          <el-tooltip content="对选中的指标发起异动审批（战略发展部专属），审批期间该部门填报锁死">
+            <el-button
+              v-if="isStrategicDept && selectedIndicators.length === 1 && hasDistributedIndicators"
+              type="warning"
+              plain
+              @click="initiateMutationForSelection"
+            >
+              发起异动
+            </el-button>
+          </el-tooltip>
           <!-- 视图切换按钮 -->
           <el-button-group style="margin-left: 16px">
             <el-button
@@ -1036,6 +1092,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         </template>
                       </div>
                     </template>
+                    <div class="indicator-cell-footer">
+                      <MutationBadgePopover v-if="row.id" :indicator-id="row.id" />
+                    </div>
                   </el-table-column>
                   <el-table-column prop="weight" label="权重" width="100" align="center">
                     <template #default="{ row }">

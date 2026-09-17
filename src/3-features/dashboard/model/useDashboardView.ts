@@ -94,6 +94,25 @@ export function useDashboardView(props: DashboardViewProps) {
   // P4 口径：看板默认展示「上个月」；1 月时上个月为去年 12 月（仅月份数值，年份由 timeContext 承载）
   const previousMonthNumber = new Date().getMonth() === 0 ? 12 : new Date().getMonth()
 
+  // P5 看板异动汇总：异动审批中的指标清单
+  const mutationSummary = ref<
+    Array<{
+      id: number
+      indicator_desc: string
+      weight_percent: number
+      mutation_started_at: string
+    }>
+  >([])
+  const loadMutationSummary = async () => {
+    try {
+      const { mutationApi } = await import('@/features/indicator/api/mutationApi')
+      const response = await mutationApi.inMutation()
+      mutationSummary.value = (response.data ?? []) as typeof mutationSummary.value
+    } catch {
+      mutationSummary.value = []
+    }
+  }
+
   const selectedMonth = ref(previousMonthNumber) // 默认上月
   const isDrillDown = ref(false) // 是否处于下钻状态
   const drilledDept = ref('') // 下钻选中的部门
@@ -2513,6 +2532,8 @@ export function useDashboardView(props: DashboardViewProps) {
     selectedDeptIndicators,
     selectedDeptStats,
     selectedMonth,
+    mutationSummary,
+    loadMutationSummary,
     selectedMonthInCollegeDrillDown,
     selectedMonthInDrillDown,
     selectedOwnerDeptFilter,

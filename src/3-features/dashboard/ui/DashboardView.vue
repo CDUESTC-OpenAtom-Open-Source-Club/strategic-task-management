@@ -1116,6 +1116,30 @@ const {
           </el-card>
         </el-col>
 
+        <!-- 异动汇总（P5） -->
+        <el-col :xs="24" :md="8">
+          <el-card shadow="hover" class="chart-card card-animate">
+            <template #header>
+              <div class="card-header">
+                <span class="card-title">指标异动汇总</span>
+              </div>
+            </template>
+            <el-empty
+              v-if="mutationSummary.length === 0"
+              description="当前无异动中的指标"
+              :image-size="60"
+            />
+            <ul v-else class="mutation-summary">
+              <li v-for="item in mutationSummary" :key="item.id" class="mutation-summary__item">
+                <span class="mutation-summary__name">{{ item.indicator_desc }}</span>
+                <span class="mutation-summary__time">
+                  {{ item.mutation_started_at?.slice(0, 10) }} 起
+                </span>
+              </li>
+            </ul>
+          </el-card>
+        </el-col>
+
         <!-- 预警分布 -->
         <el-col :xs="24" :md="8">
           <el-card shadow="hover" class="chart-card card-animate">
@@ -1448,5 +1472,25 @@ const {
 .level-distribution__label {
   font-size: 13px;
   color: #606266;
+}
+
+.mutation-summary {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 180px;
+  overflow: auto;
+}
+.mutation-summary__item {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px dashed #ebeef5;
+  font-size: 13px;
+}
+.mutation-summary__time {
+  color: #909399;
+  white-space: nowrap;
 }
 </style>
