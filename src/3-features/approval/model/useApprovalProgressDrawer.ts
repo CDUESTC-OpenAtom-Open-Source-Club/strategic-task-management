@@ -23,6 +23,17 @@ import type {
   WorkflowNodeAttachment
 } from '@/shared/types'
 import { approvalApi } from '@/features/task/api/strategicApi'
+
+const APPRAISAL_LEVEL_LABELS: Record<string, string> = {
+  AHEAD: '超前完成',
+  NORMAL: '正常',
+  DELAYED: '延期'
+}
+
+export function formatAppraisalLevel(value?: string | null): string {
+  if (!value) return ''
+  return APPRAISAL_LEVEL_LABELS[value] || value
+}
 import { getIndicatorById as getIndicatorDetailById } from '@/features/indicator/api/query'
 import { indicatorFillApi } from '@/features/plan/api/planApi'
 import { getUserById, getUsersByOrgId, tryGetUserById } from '@/features/user/api/query'
@@ -2396,6 +2407,8 @@ export function useApprovalProgressDrawer(
           canCurrentUserHandlePlanApproval.value,
         isSavingSubmittedProgress: savingPlanReportProgressKey.value === editKey,
         submittedComment: normalizeDisplayName(detail?.comment) || '未填写说明',
+        submittedSelfRating:
+          normalizeDisplayName((detail as { selfRating?: string } | null)?.selfRating) || '',
         targetValue: hasExplicitMetric
           ? formatIndicatorMetricValue(targetValueRaw)
           : inferredTargetValue,
@@ -3230,6 +3243,12 @@ export function useApprovalProgressDrawer(
     }
   }
 
+  /**
+   * 本次审批通过时选定的鉴定进度等级（P1）：
+   * AHEAD=超前 / NORMAL=正常 / DELAYED=延期；空=不评定（仅放行，不改判）。
+   */
+  const planAppraisalLevel = ref('')
+
   async function handleApprovePlanBatch() {
     if (!hasPlanApprovalPermission.value && !hasAnyPlanApprovalRole.value) {
       ElMessage.warning('当前角色或组织范围不匹配该审批节点，无法执行审批通过')
@@ -3247,8 +3266,11 @@ export function useApprovalProgressDrawer(
       }
 
       try {
+        const appraisalSuffix = planAppraisalLevel.value
+          ? `\n鉴定进度等级：${APPRAISAL_LEVEL_LABELS[planAppraisalLevel.value] || planAppraisalLevel.value}`
+          : '\n（未选择鉴定进度等级，将只通过不改判）'
         const { value } = await ElMessageBox.prompt(
-          `确认通过“${props.plan.name || props.planName || '当前计划'}”的审批？`,
+          `确认通过“${props.plan.name || props.planName || '当前计划'}”的审批？${appraisalSuffix}`,
           '审批通过',
           {
             confirmButtonText: '确认通过',
@@ -3268,7 +3290,8 @@ export function useApprovalProgressDrawer(
           const response = await approvalApi.approvePlan(
             currentPlanTaskId.value,
             userId,
-            value || '审批通过'
+            value || '审批通过',
+            planAppraisalLevel.value || undefined
           )
           if (!response.success) {
             ElMessage.error(response.message || '审批失败')
@@ -3370,7 +3393,7 @@ export function useApprovalProgressDrawer(
 
       try {
         const { value } = await ElMessageBox.prompt(
-          `确认驳回“${props.plan.name || props.planName || '当前计划'}”的审批？`,
+          `确认驳回“${props.plan.name || props.planName || '当前计划'}”的审批？驳回只会退回上一审批节点，不会跳级；如需修改填报内容请打回给填报人。`,
           '审批驳回',
           {
             confirmButtonText: '确认驳回',
@@ -4090,6 +4113,8 @@ export function useApprovalProgressDrawer(
     hasDisplayableApprovalContent,
     hasPlanApprovalPermission,
     hasAnyPlanApprovalRole,
+    planAppraisalLevel,
+    formatAppraisalLevel,
     hasPlanWorkflowData,
     hasWorkflowTabContent,
     historicalPlanApprovalItems,

@@ -650,12 +650,13 @@ export default strategicApi
 async function approvePlan(
   instanceId: number,
   approverId: number,
-  comment?: string
+  comment?: string,
+  appraisalLevel?: string
 ): Promise<ApiResponse<string>> {
-  logger.info('[API] Approving plan', { instanceId })
+  logger.info('[API] Approving plan', { instanceId, appraisalLevel })
 
   try {
-    await workflowApproveTask(String(instanceId), { comment })
+    await workflowApproveTask(String(instanceId), { comment, appraisalLevel })
     logger.info('[API] Successfully approved plan', { instanceId })
     return { success: true, message: '审批通过', data: String(instanceId) }
   } catch (error) {

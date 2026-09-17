@@ -2585,6 +2585,11 @@ export function useApprovalProgressState(
     }
   }
 
+  /**
+   * 本次审批通过时选定的鉴定进度等级（P1）：AHEAD/NORMAL/DELAYED；空=不评定。
+   */
+  const planAppraisalLevel = ref<string>('')
+
   async function handleApprovePlanBatch() {
     if (!hasPlanApprovalPermission.value && !hasAnyPlanApprovalRole.value) {
       ElMessage.warning('当前角色或组织范围不匹配该审批节点，无法执行审批通过')
@@ -2623,7 +2628,8 @@ export function useApprovalProgressState(
           const response = await approvalApi.approvePlan(
             currentPlanTaskId.value,
             userId,
-            value || '审批通过'
+            value || '审批通过',
+            planAppraisalLevel.value || undefined
           )
           if (!response.success) {
             ElMessage.error(response.message || '审批失败')
@@ -2687,7 +2693,8 @@ export function useApprovalProgressState(
           const response = await approvalApi.approvePlan(
             instance.instanceId,
             userId,
-            value || '审批通过'
+            value || '审批通过',
+            planAppraisalLevel.value || undefined
           )
           if (!response.success) {
             ElMessage.error(response.message || '审批失败')
@@ -2741,7 +2748,7 @@ export function useApprovalProgressState(
 
       try {
         const { value } = await ElMessageBox.prompt(
-          `确认驳回“${props.plan.name || props.planName || '当前计划'}”的审批？`,
+          `确认驳回“${props.plan.name || props.planName || '当前计划'}”的审批？驳回只会退回上一审批节点，不会跳级。`,
           '审批驳回',
           {
             confirmButtonText: '确认驳回',
@@ -3063,6 +3070,7 @@ export function useApprovalProgressState(
     hasDisplayableApprovalContent,
     hasPlanApprovalPermission,
     hasAnyPlanApprovalRole,
+    planAppraisalLevel,
     hasRelatedPlanReportActiveWorkflow,
     hasPlanWorkflowData,
     hasWorkflowTabContent,

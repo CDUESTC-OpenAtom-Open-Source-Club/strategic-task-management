@@ -89,6 +89,8 @@ const {
   handleAddNode,
   handleApplyTemplate,
   handleApprovePlanBatch,
+  planAppraisalLevel,
+  formatAppraisalLevel,
   handleClose,
   handleWorkflowNodeAttachmentOpen,
   handleRejectPlanBatch,
@@ -358,6 +360,22 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 </div>
                 <div class="card-actions">
                   <ElButton @click="openPlanApprovalDetails">查看详情</ElButton>
+                  <ElSelect
+                    v-if="
+                      hasPlanWorkflowData &&
+                      isPlanPendingApproval &&
+                      canCurrentUserHandlePlanApproval
+                    "
+                    v-model="planAppraisalLevel"
+                    size="small"
+                    clearable
+                    placeholder="鉴定等级"
+                    style="width: 118px; margin-right: 8px"
+                  >
+                    <ElOption label="超前完成" value="AHEAD" />
+                    <ElOption label="正常" value="NORMAL" />
+                    <ElOption label="延期" value="DELAYED" />
+                  </ElSelect>
                   <ElButton
                     v-if="
                       hasPlanWorkflowData &&
@@ -716,6 +734,15 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 <div class="snapshot-section-title">{{ displayedBusinessCommentLabel }}</div>
                 <div class="snapshot-section-content">
                   {{ indicator.submittedComment || displayedBusinessEmptyCommentText }}
+                </div>
+              </div>
+
+              <div v-if="indicator.submittedSelfRating" class="snapshot-section">
+                <div class="snapshot-section-title">自评进度等级</div>
+                <div class="snapshot-section-content">
+                  <ElTag size="small" type="info">{{
+                    formatAppraisalLevel(indicator.submittedSelfRating)
+                  }}</ElTag>
                 </div>
               </div>
 

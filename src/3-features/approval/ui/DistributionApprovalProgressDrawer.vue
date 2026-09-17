@@ -83,6 +83,7 @@ const {
   handleAddNode,
   handleApplyTemplate,
   handleApprovePlanBatch,
+  planAppraisalLevel,
   handleClose,
   handlePlanReportAttachmentOpen,
   handleRejectPlanBatch,
@@ -337,6 +338,22 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 </div>
                 <div class="card-actions">
                   <el-button @click="openPlanApprovalDetails">查看详情</el-button>
+                  <el-select
+                    v-if="
+                      hasPlanWorkflowData &&
+                      isPlanPendingApproval &&
+                      canCurrentUserHandlePlanApproval
+                    "
+                    v-model="planAppraisalLevel"
+                    size="small"
+                    clearable
+                    placeholder="鉴定等级"
+                    style="width: 118px; margin-right: 8px"
+                  >
+                    <el-option label="超前完成" value="AHEAD" />
+                    <el-option label="正常" value="NORMAL" />
+                    <el-option label="延期" value="DELAYED" />
+                  </el-select>
                   <el-button
                     v-if="
                       hasPlanWorkflowData &&
