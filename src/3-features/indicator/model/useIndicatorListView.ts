@@ -543,6 +543,10 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   const PLAN_APPROVAL_WORKFLOW_CODE_FUNCDEPT = 'PLAN_APPROVAL_FUNCDEPT'
   const PLAN_APPROVAL_WORKFLOW_CODE_COLLEGE = 'PLAN_APPROVAL_COLLEGE'
   const PLAN_DISPATCH_WORKFLOW_CODE_FUNCDEPT = 'PLAN_DISPATCH_FUNCDEPT'
+  // 战略发展部发起的计划下发审批。职能部门/学院页面同样可能遇到该流程的实例
+  // （如战略部对全包计划走下发审批），不纳入白名单会导致工作流详情被拒收、
+  // hasPlanWorkflowData=false、审批按钮消失（缺陷 3 断点 C）。
+  const PLAN_DISPATCH_WORKFLOW_CODE_STRATEGY = 'PLAN_DISPATCH_STRATEGY'
   const PLAN_APPROVAL_POLL_INTERVAL_MS = 15000
   let planApprovalPollTimer: ReturnType<typeof setInterval> | null = null
 
@@ -552,9 +556,16 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   }
 
   function resolvePlanApprovalWorkflowCode(): string | string[] {
-    return isSecondaryCollege.value
-      ? [PLAN_APPROVAL_WORKFLOW_CODE_COLLEGE, PLAN_DISPATCH_WORKFLOW_CODE_FUNCDEPT]
-      : PLAN_APPROVAL_WORKFLOW_CODE_FUNCDEPT
+    // 实体归属由 isRetainableWorkflowDetail 的 entityType/entityId 匹配兜底，
+    // 这里只需覆盖全部 PLAN 级流程码，避免合法实例被白名单误杀。
+    if (isSecondaryCollege.value) {
+      return [
+        PLAN_APPROVAL_WORKFLOW_CODE_COLLEGE,
+        PLAN_DISPATCH_WORKFLOW_CODE_FUNCDEPT,
+        PLAN_DISPATCH_WORKFLOW_CODE_STRATEGY
+      ]
+    }
+    return [PLAN_APPROVAL_WORKFLOW_CODE_FUNCDEPT, PLAN_DISPATCH_WORKFLOW_CODE_STRATEGY]
   }
 
   async function refreshCurrentPlanDetails(planId: number): Promise<void> {

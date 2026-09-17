@@ -1192,6 +1192,19 @@ export function useApprovalProgressDrawer(
     })
   })
 
+  /**
+   * 无工作流详情时的降级判权：解析不出当前步骤（expectedApprover* 为空）时，
+   * 只校验当前用户是否持有任一计划审批角色。真正的节点归属仍由后端
+   * decision 接口兜底（非当前节点审批会被拒绝）。
+   * 修复点：原先「一键通过/一键驳回」依赖 hasPlanApprovalPermission，
+   * 而后者依赖工作流详情，导致 !hasPlanWorkflowData 分支恒不可见（死分支）。
+   */
+  const hasAnyPlanApprovalRole = computed(() => {
+    return currentUserRoleCodes.value.some(roleCode =>
+      ['ROLE_APPROVER', 'ROLE_STRATEGY_DEPT_HEAD', 'ROLE_VICE_PRESIDENT'].includes(roleCode)
+    )
+  })
+
   function resolveExpectedApproverRoleCodes(): string[] {
     const stepName = String(activePlanWorkflow.value?.currentStepName || '').trim()
     if (!stepName) {
@@ -1261,11 +1274,7 @@ export function useApprovalProgressDrawer(
   })
 
   const canCurrentUserHandlePlanApproval = computed(() => {
-    if (
-      !hasPlanWorkflowData.value ||
-      !isPlanPendingApproval.value ||
-      !hasPlanApprovalPermission.value
-    ) {
+    if (!hasPlanWorkflowData.value || !isPlanPendingApproval.value) {
       return false
     }
 
@@ -1273,6 +1282,9 @@ export function useApprovalProgressDrawer(
       return false
     }
 
+    // 不再以 hasPlanApprovalPermission 作为前置门——它按步骤名做角色/组织预检，
+    // 会把「被指派审批人 = 本人」这条最强证据挡在门外。
+    // 最终判定交给下方调用（explicitApproverId 优先匹配）。
     return canCurrentUserHandleWorkflowApproval({
       currentUserId: currentUserId.value,
       currentUserOrgId: currentUserOrgId.value,
@@ -3219,7 +3231,7 @@ export function useApprovalProgressDrawer(
   }
 
   async function handleApprovePlanBatch() {
-    if (!hasPlanApprovalPermission.value) {
+    if (!hasPlanApprovalPermission.value && !hasAnyPlanApprovalRole.value) {
       ElMessage.warning('当前角色或组织范围不匹配该审批节点，无法执行审批通过')
       return
     }
@@ -3341,7 +3353,7 @@ export function useApprovalProgressDrawer(
   }
 
   async function handleRejectPlanBatch() {
-    if (!hasPlanApprovalPermission.value) {
+    if (!hasPlanApprovalPermission.value && !hasAnyPlanApprovalRole.value) {
       ElMessage.warning('当前角色或组织范围不匹配该审批节点，无法执行审批驳回')
       return
     }
@@ -4077,6 +4089,7 @@ export function useApprovalProgressDrawer(
     hasApprovalData,
     hasDisplayableApprovalContent,
     hasPlanApprovalPermission,
+    hasAnyPlanApprovalRole,
     hasPlanWorkflowData,
     hasWorkflowTabContent,
     historicalPlanApprovalItems,

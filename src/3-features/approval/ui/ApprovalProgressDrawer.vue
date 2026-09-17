@@ -97,6 +97,7 @@ const {
   hasApprovalData,
   hasDisplayableApprovalContent,
   hasPlanApprovalPermission,
+  hasAnyPlanApprovalRole,
   hasPlanWorkflowData,
   hasWorkflowTabContent,
   historicalPlanApprovalItems,
@@ -381,14 +382,14 @@ const displayedCurrentPlanApprovalName = computed(() => {
                   </ElButton>
                   <template v-if="!hasPlanWorkflowData">
                     <ElButton
-                      v-if="hasPlanApprovalPermission"
+                      v-if="hasAnyPlanApprovalRole"
                       type="success"
                       @click="handleApprovePlanBatch"
                     >
                       一键通过
                     </ElButton>
                     <ElButton
-                      v-if="hasPlanApprovalPermission"
+                      v-if="hasAnyPlanApprovalRole"
                       type="danger"
                       @click="handleRejectPlanBatch"
                     >
