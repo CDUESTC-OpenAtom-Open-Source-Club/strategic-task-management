@@ -3264,9 +3264,17 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   const reportUploadFiles = ref<ReportUploadFile[]>([])
 
   // 填报表单数据
+  const reportMonthOptions = Array.from({ length: 12 }, (_, index) => {
+    const month = index + 1
+    const value = `${new Date().getFullYear()}${String(month).padStart(2, '0')}`
+    return { value, label: `${new Date().getFullYear()} 年 ${month} 月` }
+  })
+
   const reportForm = ref({
     newProgress: 0,
     remark: '',
+    selfRating: '',
+    reportMonth: '',
     attachments: [] as string[]
   })
 
@@ -3361,6 +3369,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     reportForm.value = {
       newProgress: Math.max(actualProgress, Number(preferredProgress) || 0),
       remark: row.pendingRemark ?? persistedDraft?.remark ?? '',
+      selfRating: '',
+      reportMonth:
+        String(new Date().getFullYear()) + String(new Date().getMonth() + 1).padStart(2, '0'),
       attachments: attachmentItems.map(item => item.url)
     }
     reportUploadFiles.value = attachmentItems.map((item, index) => ({
@@ -3380,6 +3391,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     reportForm.value = {
       newProgress: 0,
       remark: '',
+      selfRating: '',
+      reportMonth: '',
       attachments: []
     }
     reportUploadFiles.value = []
@@ -3858,9 +3871,14 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         indicator_id: indicator.id,
         progress: reportForm.value.newProgress,
         content: reportForm.value.remark,
+        selfRating: reportForm.value.selfRating || undefined,
+        reportMonth: reportForm.value.reportMonth || undefined,
         attachments: [],
         // Attachments are uploaded first and linked by attachment_ids in batch_items.
-        batch_items: batchItems
+        batch_items: batchItems.map(item => ({
+          ...item,
+          selfRating: reportForm.value.selfRating || undefined
+        }))
       })
 
       persistIndicatorDraft(indicator.id, {
@@ -4649,6 +4667,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     reportAttachmentObjectUrls,
     reportDialogVisible,
     reportForm,
+    reportMonthOptions,
     reportUploadFiles,
     resetFilters,
     resolveDialogAttachments,

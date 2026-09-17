@@ -2253,6 +2253,7 @@ export const indicatorFillApi = {
         indicatorName: String(item.indicator_name || ''),
         progress: Number(item.progress),
         content: String(item.content || ''),
+        selfRating: (item as { selfRating?: string }).selfRating,
         attachmentIds: Array.isArray((item as { attachment_ids?: unknown[] }).attachment_ids)
           ? ((item as { attachment_ids?: unknown[] }).attachment_ids ?? [])
               .map(value => Number(value))
@@ -2273,7 +2274,7 @@ export const indicatorFillApi = {
       const createResponse = await apiClient.post<ApiResponse<PlanReportSimpleResponse>>(
         '/reports',
         {
-          reportMonth: context.reportMonth,
+          reportMonth: form.reportMonth || context.reportMonth,
           reportOrgId: context.reportOrgId,
           reportOrgType: context.reportOrgType,
           planId: context.planId,
@@ -2306,6 +2307,7 @@ export const indicatorFillApi = {
           progress: item.progress,
           issues: item.content,
           nextPlan: item.content,
+          selfRating: item.selfRating,
           attachmentIds: item.attachmentIds
         }))
       }

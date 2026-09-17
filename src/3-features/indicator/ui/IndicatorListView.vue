@@ -961,6 +961,32 @@ const handleExportIndicatorList = async () => {
 
         <!-- 填报表单 -->
         <el-form label-width="100px" class="report-form">
+          <el-form-item label="归属月份" required>
+            <el-select
+              v-model="reportForm.reportMonth"
+              placeholder="选择归属月份"
+              style="width: 200px"
+            >
+              <el-option
+                v-for="m in reportMonthOptions"
+                :key="m.value"
+                :label="m.label"
+                :value="m.value"
+              />
+            </el-select>
+            <span class="form-hint">只能填报最早的未填报月份</span>
+          </el-form-item>
+          <el-form-item label="自评进度等级" required>
+            <el-select
+              v-model="reportForm.selfRating"
+              placeholder="请自评本月进度"
+              style="width: 200px"
+            >
+              <el-option label="超前完成" value="AHEAD" />
+              <el-option label="正常" value="NORMAL" />
+              <el-option label="延期" value="DELAYED" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="填报进度" required>
             <el-input-number
               v-model="reportForm.newProgress"
