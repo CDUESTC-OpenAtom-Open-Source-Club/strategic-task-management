@@ -12,9 +12,10 @@ describe('three-tier progress level normalization (A1 回归)', () => {
     { raw: 'NORMAL', expected: 'NORMAL' },
     { raw: 'DELAYED', expected: 'DELAYED' },
     { raw: 'delayed', expected: 'DELAYED' },
-    { raw: 'INFO', expected: 'INFO' },
-    { raw: 'WARNING', expected: 'WARNING' },
-    { raw: 'CRITICAL', expected: 'CRITICAL' },
+    // 旧预警档位归并显示为「延期」（用户定案 2026-09-18）
+    { raw: 'INFO', expected: 'DELAYED' },
+    { raw: 'WARNING', expected: 'DELAYED' },
+    { raw: 'CRITICAL', expected: 'DELAYED' },
     { raw: 'bogus', expected: null },
     { raw: '', expected: null }
   ]

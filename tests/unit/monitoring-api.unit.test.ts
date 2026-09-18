@@ -62,19 +62,22 @@ describe('monitoring api compatibility', () => {
         2040: 'ahead',
         2041: 'NORMAL',
         2042: 'INFO',
-        2043: 'not-a-level'
+        2043: 'WARNING',
+        2044: 'not-a-level'
       }
     })
     const { alertApi } = await import('@/shared/api/monitoringApi')
 
-    const levels = await alertApi.getManualAlertLevels([2039, 2040, 2041, 2042, 2043])
+    const levels = await alertApi.getManualAlertLevels([2039, 2040, 2041, 2042, 2043, 2044])
 
     expect(levels).toEqual({
       2039: 'DELAYED',
       2040: 'AHEAD',
       2041: 'NORMAL',
-      2042: 'INFO',
-      2043: null
+      // 旧预警档位归并显示为「延期」（用户定案 2026-09-18）
+      2042: 'DELAYED',
+      2043: 'DELAYED',
+      2044: null
     })
   })
 })
