@@ -1,126 +1,180 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { mutationApi, type MutationHistoryItem } from '@/features/indicator/api/mutationApi'
 
-const props = defineProps<{
-  indicatorId: number | string
-}>()
+const props = withDefaults(
+  defineProps<{
+    indicatorId?: number | string | null
+    taskId?: number | string | null
+  }>(),
+  { indicatorId: null, taskId: null }
+)
 
-const count = ref<number | null>(null)
-const history = ref<MutationHistoryItem[]>([])
-const expanded = ref(false)
-const loading = ref(false)
-
-// 挂载即拉取次数（会议要求：右下角标注「已更改 N 次」需直接可见）
-onMounted(load)
-
-async function load() {
-  loading.value = true
-  try {
-    const response = await mutationApi.history(props.indicatorId)
-    history.value = response.data ?? []
-    count.value = history.value.length
-  } finally {
-    loading.value = false
-  }
+const FIELD_LABELS: Record<string, string> = {
+  indicator_desc: '指标内容',
+  weight_percent: '权重',
+  name: '战略任务',
+  desc: '任务描述',
+  remark: '备注'
 }
+
+const count = ref(0)
+const history = ref<MutationHistoryItem[]>([])
+const loaded = ref(false)
+
+const entityLabel = computed(() => (props.taskId ? '战略任务' : '核心指标'))
+const hasEntity = computed(() => Boolean(props.taskId ?? props.indicatorId))
 
 function fieldName(key: string): string {
-  const names: Record<string, string> = {
-    indicator_desc: '指标内容',
-    weight_percent: '权重',
-    remark: '备注'
-  }
-  return names[key] || key
+  return FIELD_LABELS[key] || key
 }
 
-async function toggle(): Promise<void> {
-  expanded.value = !expanded.value
-  if (expanded.value && history.value.length === 0) {
-    await load()
+function formatValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') {
+    return '空'
+  }
+  return String(value)
+}
+
+function formatTime(value: string | null | undefined): string {
+  if (!value) {
+    return ''
+  }
+  return String(value).replace('T', ' ').slice(0, 16)
+}
+
+async function load(): Promise<void> {
+  if (loaded.value) {
+    return
+  }
+  const id = props.taskId ?? props.indicatorId
+  if (!id) {
+    loaded.value = true
+    return
+  }
+  try {
+    const response = props.taskId
+      ? await mutationApi.taskHistory(id)
+      : await mutationApi.history(id)
+    history.value = response.data ?? []
+  } catch {
+    history.value = []
+  } finally {
+    count.value = history.value.length
+    loaded.value = true
   }
 }
+
+onMounted(load)
 </script>
 
 <template>
-  <div class="mutation-badge">
-    <button
-      type="button"
-      class="mutation-badge__trigger"
-      :title="'该指标已被异动修改过，点击查看历史版本'"
-      @click.stop="toggle"
-    >
-      已更改 {{ count ?? history.length }} 次
-    </button>
-    <div v-if="expanded" class="mutation-badge__popover">
-      <div class="mutation-badge__popover-title">异动历史版本</div>
-      <div v-if="loading" class="mutation-badge__empty">加载中...</div>
-      <div v-else-if="history.length === 0" class="mutation-badge__empty">暂无异动记录</div>
-      <div v-for="item in history" :key="item.log_id" class="mutation-badge__item">
-        <div class="mutation-badge__item-time">{{ item.created_at }}</div>
+  <!-- 无变更不渲染标注；有变更时鼠标悬停即展开历史（点击不再作为唯一入口） -->
+  <el-popover
+    v-if="hasEntity"
+    placement="top"
+    trigger="hover"
+    :width="320"
+    :show-after="120"
+    :hide-after="60"
+    popper-class="mutation-history-popper"
+  >
+    <template #reference>
+      <button
+        type="button"
+        class="mutation-badge__trigger"
+        :aria-label="`${entityLabel}已更改 ${count} 次`"
+        :title="`已更改 ${count} 次`"
+        @click.stop
+      >
+        {{ count }}
+      </button>
+    </template>
+    <div class="mutation-history">
+      <div class="mutation-history__title">{{ entityLabel }}异动历史</div>
+      <div v-if="count === 0" class="mutation-history__empty">暂无异动记录</div>
+      <div v-for="item in history" :key="item.log_id" class="mutation-history__item">
+        <div class="mutation-history__time">{{ formatTime(item.created_at) }}</div>
         <div
           v-for="(change, key) in item.changed_fields || {}"
           :key="key"
-          class="mutation-badge__item-field"
+          class="mutation-history__field"
         >
-          {{ fieldName(String(key)) }}：{{ String(change?.before ?? '空') }} →
-          {{ String(change?.after ?? '空') }}
+          <span class="mutation-history__field-name">{{ fieldName(String(key)) }}</span>
+          <span class="mutation-history__field-value">{{ formatValue(change?.before) }}</span>
+          <span class="mutation-history__arrow">→</span>
+          <span class="mutation-history__field-value">{{ formatValue(change?.after) }}</span>
         </div>
       </div>
     </div>
-  </div>
+  </el-popover>
 </template>
 
 <style scoped>
-.mutation-badge {
-  position: relative;
-  text-align: right;
-}
 .mutation-badge__trigger {
-  border: none;
-  background: transparent;
-  color: #909399;
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid #cbd5e1;
+  border-radius: 50%;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 600;
   cursor: pointer;
   padding: 0;
+  line-height: 1;
+  transition: all 0.15s ease;
 }
 .mutation-badge__trigger:hover {
+  border-color: #409eff;
+  background: #ecf5ff;
   color: #409eff;
-  text-decoration: underline;
 }
-.mutation-badge__popover {
-  position: absolute;
-  right: 0;
-  bottom: 100%;
-  z-index: 20;
-  min-width: 240px;
-  max-height: 220px;
+</style>
+
+<!-- 浮层被 teleport 到 body，需用非 scoped 样式配合 popper-class -->
+<style>
+.mutation-history-popper {
+  max-width: 360px;
+}
+.mutation-history-popper .mutation-history {
+  max-height: 260px;
   overflow: auto;
-  background: #fff;
-  border: 1px solid #e4e7ed;
-  border-radius: 4px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
-  padding: 8px;
-  text-align: left;
+  font-size: 12px;
+  line-height: 1.6;
 }
-.mutation-badge__popover-title {
+.mutation-history-popper .mutation-history__title {
   font-weight: 600;
   margin-bottom: 6px;
+  color: #303133;
 }
-.mutation-badge__empty {
+.mutation-history-popper .mutation-history__empty {
   color: #909399;
-  font-size: 12px;
 }
-.mutation-badge__item {
+.mutation-history-popper .mutation-history__item {
   border-top: 1px solid #f0f0f0;
   padding: 6px 0;
-  font-size: 12px;
 }
-.mutation-badge__item-time {
+.mutation-history-popper .mutation-history__item:first-of-type {
+  border-top: none;
+}
+.mutation-history-popper .mutation-history__time {
   color: #909399;
   margin-bottom: 2px;
 }
-.mutation-badge__item-field {
-  line-height: 1.5;
+.mutation-history-popper .mutation-history__field-name {
+  color: #909399;
+  margin-right: 4px;
+}
+.mutation-history-popper .mutation-history__field-value {
+  color: #303133;
+  word-break: break-word;
+}
+.mutation-history-popper .mutation-history__arrow {
+  margin: 0 4px;
+  color: #c0c4cc;
 }
 </style>

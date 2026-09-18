@@ -655,6 +655,29 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  /* 左右留白：表格与卡片边框之间留出呼吸空间 */
+  padding: 0 var(--spacing-lg);
+  box-sizing: border-box;
+}
+
+/* 任务管理页签：左侧与表格对齐，并留出顶部间距（原先贴到卡片左上角） */
+.task-tabs :deep(.el-tabs__header) {
+  margin-bottom: var(--spacing-md);
+  padding: var(--spacing-md) var(--spacing-lg) 0;
+  box-sizing: border-box;
+}
+
+/* 去掉贯穿整行的下划线：它只在页签区左侧有意义，
+   横贯卡片右侧时会形成一条多余的“底边” */
+.task-tabs :deep(.el-tabs__nav-wrap::after) {
+  display: none;
+}
+
+/* 「已更改 N 次」标注：单元格右下角对齐 */
+.indicator-cell-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--spacing-xs);
 }
 
 .table-container {
