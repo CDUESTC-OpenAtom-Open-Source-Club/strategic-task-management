@@ -443,10 +443,16 @@ export function useApprovalProgressDrawer(
 
     const detail = routeContextWorkflowDetail.value
     // 铃铛直达打开的审批中心没有实体上下文（AppLayout 把 entityType 退化为默认 'PLAN'、
-    // entityId 为空），此时用当前用户第一条待办（my-tasks）解析跳转工位，
-    // 否则职能部门会被指到 /distribution（学院下发控制台）而非月报审批所在的 /indicators。
+    // entityId 为空，props.plan 只是「当前浏览部门」的计划、与审批无关），此时用当前用户
+    // 第一条待办（my-tasks）解析跳转工位，否则职能部门会被指到 /distribution
+    // （学院下发控制台）而非月报审批所在的 /indicators。
     const hasExplicitEntity =
-      parsePositiveEntityId(props.workflowEntityId ?? props.plan?.id ?? null) != null
+      parsePositiveEntityId(props.workflowEntityId ?? null) != null ||
+      Boolean(
+        detail?.businessEntityType ||
+        (detail as { entityType?: unknown } | null)?.entityType ||
+        detail?.businessEntityId
+      )
     const fallbackTodo = hasExplicitEntity
       ? null
       : (scopedPlanApprovals.value.find(item => parsePositiveEntityId(item?.entityId) != null) ??
