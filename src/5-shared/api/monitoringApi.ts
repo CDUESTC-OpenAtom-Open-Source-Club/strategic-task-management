@@ -160,9 +160,18 @@ export const alertApi = {
     return Object.fromEntries(
       Object.entries(payload || {}).map(([indicatorId, severity]) => {
         const normalized = String(severity || '').toUpperCase()
+        // 三档进度等级（AHEAD/NORMAL/DELAYED）与旧档（INFO/WARNING/CRITICAL）均放行
+        const allowed: ManualAlertSeverity[] = [
+          'AHEAD',
+          'NORMAL',
+          'DELAYED',
+          'INFO',
+          'WARNING',
+          'CRITICAL'
+        ]
         return [
           indicatorId,
-          normalized === 'INFO' || normalized === 'WARNING' || normalized === 'CRITICAL'
+          allowed.includes(normalized as ManualAlertSeverity)
             ? (normalized as Exclude<ManualAlertSeverity, null>)
             : null
         ]

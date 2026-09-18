@@ -135,6 +135,7 @@ function normalizeManualAlertSeverity(value: unknown): ManualAlertSeverity {
   if (
     normalized === 'AHEAD' ||
     normalized === 'NORMAL' ||
+    normalized === 'DELAYED' ||
     normalized === 'INFO' ||
     normalized === 'WARNING' ||
     normalized === 'CRITICAL'
