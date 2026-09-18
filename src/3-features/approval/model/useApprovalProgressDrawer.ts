@@ -442,21 +442,15 @@ export function useApprovalProgressDrawer(
     }
 
     const detail = routeContextWorkflowDetail.value
-    // 铃铛直达打开的审批中心没有实体上下文（AppLayout 把 entityType 退化为默认 'PLAN'、
-    // entityId 为空，props.plan 只是「当前浏览部门」的计划、与审批无关），此时用当前用户
-    // 第一条待办（my-tasks）解析跳转工位，否则职能部门会被指到 /distribution
+    // 「跳转到对应页面」的语义是「到能处理审批的工位」：
+    // 有待办时（scopedPlanApprovals 第一条；页面内嵌抽屉经范围过滤后即本计划待办，
+    // 铃铛打开的全局中心则是 my-tasks 第一条）以待办解析工位——铃铛打开的审批中心
+    // 没有真实实体上下文（AppLayout 退化 entityType='PLAN'，props.plan 只是当前浏览
+    // 部门的计划、其工作流早已结束），不落待办锚点会把职能部门指到 /distribution
     // （学院下发控制台）而非月报审批所在的 /indicators。
-    const hasExplicitEntity =
-      parsePositiveEntityId(props.workflowEntityId ?? null) != null ||
-      Boolean(
-        detail?.businessEntityType ||
-        (detail as { entityType?: unknown } | null)?.entityType ||
-        detail?.businessEntityId
-      )
-    const fallbackTodo = hasExplicitEntity
-      ? null
-      : (scopedPlanApprovals.value.find(item => parsePositiveEntityId(item?.entityId) != null) ??
-        null)
+    // 无待办时退回实体/props 解析，保持旧行为。
+    const fallbackTodo =
+      scopedPlanApprovals.value.find(item => parsePositiveEntityId(item?.entityId) != null) ?? null
     const entityType =
       normalizeWorkflowEntityType(
         (fallbackTodo?.entityType as string | undefined) ??
