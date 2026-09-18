@@ -52,4 +52,29 @@ describe('monitoring api compatibility', () => {
     })
     expect(axiosGet).toHaveBeenCalledTimes(1)
   })
+
+  it('keeps three-tier progress levels when normalizing manual alert levels (A1 回归)', async () => {
+    // 回归背景：A1 缺陷中 getManualAlertLevels 只放行 INFO/WARNING/CRITICAL，
+    // 三档 AHEAD/NORMAL/DELAYED 被吞成 null，导致任务页进度等级回显为空。
+    apiClientMock.get = vi.fn().mockResolvedValue({
+      data: {
+        2039: 'DELAYED',
+        2040: 'ahead',
+        2041: 'NORMAL',
+        2042: 'INFO',
+        2043: 'not-a-level'
+      }
+    })
+    const { alertApi } = await import('@/shared/api/monitoringApi')
+
+    const levels = await alertApi.getManualAlertLevels([2039, 2040, 2041, 2042, 2043])
+
+    expect(levels).toEqual({
+      2039: 'DELAYED',
+      2040: 'AHEAD',
+      2041: 'NORMAL',
+      2042: 'INFO',
+      2043: null
+    })
+  })
 })
