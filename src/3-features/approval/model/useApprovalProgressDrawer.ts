@@ -32,9 +32,19 @@ const APPRAISAL_LEVEL_LABELS: Record<string, string> = {
 
 export function formatStayDuration(createdAt?: string | null): string {
   if (!createdAt) return ''
-  const start = new Date(createdAt).getTime()
+  // 后端返回的是北京时间裸串（无时区标记）。显式按 +08:00 解析，
+  // 避免非北京时区的浏览器按本地时区解析导致停留时长为负数。
+  const trimmed = createdAt.trim()
+  const normalized = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(trimmed)
+    ? `${trimmed.replace(' ', 'T')}+08:00`
+    : trimmed
+  const start = new Date(normalized).getTime()
   if (!Number.isFinite(start)) return ''
-  const hours = Math.floor((Date.now() - start) / 3600000)
+  const elapsed = Math.max(0, Date.now() - start)
+  const minutes = Math.floor(elapsed / 60000)
+  if (minutes < 1) return '刚刚发起'
+  if (minutes < 60) return `已停留 ${minutes} 分钟`
+  const hours = Math.floor(minutes / 60)
   if (hours < 24) return `已停留 ${hours} 小时`
   return `已停留 ${Math.floor(hours / 24)} 天`
 }
@@ -432,23 +442,37 @@ export function useApprovalProgressDrawer(
     }
 
     const detail = routeContextWorkflowDetail.value
+    // 铃铛直达打开的审批中心没有实体上下文（AppLayout 把 entityType 退化为默认 'PLAN'、
+    // entityId 为空），此时用当前用户第一条待办（my-tasks）解析跳转工位，
+    // 否则职能部门会被指到 /distribution（学院下发控制台）而非月报审批所在的 /indicators。
+    const hasExplicitEntity =
+      parsePositiveEntityId(props.workflowEntityId ?? props.plan?.id ?? null) != null
+    const fallbackTodo = hasExplicitEntity
+      ? null
+      : (scopedPlanApprovals.value.find(item => parsePositiveEntityId(item?.entityId) != null) ??
+        null)
     const entityType =
       normalizeWorkflowEntityType(
-        detail?.businessEntityType ??
+        (fallbackTodo?.entityType as string | undefined) ??
+          detail?.businessEntityType ??
           (detail as { entityType?: unknown } | null)?.entityType ??
           props.workflowEntityType
       ) || undefined
     const entityId =
       parsePositiveEntityId(
-        detail?.businessEntityId ??
+        fallbackTodo?.entityId ??
+          detail?.businessEntityId ??
           (detail as { entityId?: unknown } | null)?.entityId ??
           detail?.planId ??
           props.workflowEntityId ??
           props.plan?.id
       ) ?? undefined
     const approvalInstanceId =
-      parsePositiveEntityId(detail?.instanceId ?? props.initialPlanWorkflowDetail?.instanceId) ??
-      undefined
+      parsePositiveEntityId(
+        fallbackTodo?.instanceId ??
+          detail?.instanceId ??
+          props.initialPlanWorkflowDetail?.instanceId
+      ) ?? undefined
 
     const resolvedRoute = resolveApprovalRoute({
       actionUrl: routeTargetSeed.value || null,
