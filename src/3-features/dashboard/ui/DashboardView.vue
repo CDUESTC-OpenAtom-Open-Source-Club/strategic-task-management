@@ -1080,46 +1080,6 @@ function openApprovalCenterFromDashboard() {
 
       <!-- 图表区域 -->
       <el-row :gutter="16" class="chart-section">
-        <!-- 得分构成 -->
-        <el-col :xs="24" :md="8">
-          <el-card shadow="hover" class="chart-card card-animate">
-            <template #header>
-              <div class="card-header">
-                <div style="display: flex; align-items: center; gap: 4px">
-                  <span class="card-title">进度等级分布</span>
-                  <el-tooltip
-                    content="按人工鉴定进度等级统计：超前完成 / 正常 / 延期（A2 定案，取消分数）"
-                    placement="top"
-                    effect="light"
-                  >
-                    <el-icon class="help-icon"><QuestionFilled /></el-icon>
-                  </el-tooltip>
-                </div>
-              </div>
-            </template>
-            <div class="level-distribution">
-              <div class="level-distribution__item level-distribution__item--ahead">
-                <span class="level-distribution__num">{{
-                  dashboardData.levelDistribution?.ahead ?? 0
-                }}</span>
-                <span class="level-distribution__label">超前完成</span>
-              </div>
-              <div class="level-distribution__item level-distribution__item--normal">
-                <span class="level-distribution__num">{{
-                  dashboardData.levelDistribution?.normal ?? 0
-                }}</span>
-                <span class="level-distribution__label">正常</span>
-              </div>
-              <div class="level-distribution__item level-distribution__item--delayed">
-                <span class="level-distribution__num">{{
-                  dashboardData.levelDistribution?.delayed ?? 0
-                }}</span>
-                <span class="level-distribution__label">延期</span>
-              </div>
-            </div>
-          </el-card>
-        </el-col>
-
         <!-- 异动汇总（P5） -->
         <el-col :xs="24" :md="8">
           <el-card shadow="hover" class="chart-card card-animate">

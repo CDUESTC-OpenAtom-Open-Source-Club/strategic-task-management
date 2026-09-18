@@ -2406,6 +2406,33 @@ export function useDashboardView(props: DashboardViewProps) {
     benchmarkChartInstance?.dispose()
     collegeChartInstance?.dispose()
     collegeRankingChartInstance?.dispose()
+    stopDashboardAutoRefresh()
+  })
+
+  // D-新（2026-09-19 用户要求）：看板数据 5 分钟自动刷新（页面不可见时跳过，卸载时清理）
+  const DASHBOARD_AUTO_REFRESH_INTERVAL = 5 * 60 * 1000
+  let dashboardAutoRefreshTimer: number | null = null
+
+  const startDashboardAutoRefresh = () => {
+    stopDashboardAutoRefresh()
+    dashboardAutoRefreshTimer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') {
+        return
+      }
+      void reloadData()
+      void loadMutationSummary()
+    }, DASHBOARD_AUTO_REFRESH_INTERVAL)
+  }
+
+  const stopDashboardAutoRefresh = () => {
+    if (dashboardAutoRefreshTimer !== null) {
+      window.clearInterval(dashboardAutoRefreshTimer)
+      dashboardAutoRefreshTimer = null
+    }
+  }
+
+  onMounted(() => {
+    startDashboardAutoRefresh()
   })
 
   const handleGlobalDataRefreshRequest = (event: Event) => {
