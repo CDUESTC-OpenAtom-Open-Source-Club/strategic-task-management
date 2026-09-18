@@ -743,7 +743,7 @@ const handleDistributionImportCommitted = async () => {
                 <el-icon><Download /></el-icon>
                 导出
               </el-button>
-              <!-- 导入入口当前不用，保留代码；恢复时将 distributionImportEnabled 改为 true。 -->
+              <!-- 导入入口已恢复启用（distributionImportEnabled = true，2026-09-17 定案） -->
               <el-button
                 v-if="distributionImportEnabled"
                 :icon="Upload"
