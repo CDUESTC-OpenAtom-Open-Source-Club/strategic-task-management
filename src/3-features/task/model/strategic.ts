@@ -132,15 +132,12 @@ function normalizeManualAlertSeverity(value: unknown): ManualAlertSeverity {
   const normalized = String(value || '')
     .trim()
     .toUpperCase()
-  if (
-    normalized === 'AHEAD' ||
-    normalized === 'NORMAL' ||
-    normalized === 'DELAYED' ||
-    normalized === 'INFO' ||
-    normalized === 'WARNING' ||
-    normalized === 'CRITICAL'
-  ) {
+  if (normalized === 'AHEAD' || normalized === 'NORMAL' || normalized === 'DELAYED') {
     return normalized
+  }
+  // 旧预警档位归并（用户定案 2026-09-18）：INFO/WARNING/CRITICAL 一律显示为「延期」
+  if (normalized === 'INFO' || normalized === 'WARNING' || normalized === 'CRITICAL') {
+    return 'DELAYED'
   }
   return null
 }
