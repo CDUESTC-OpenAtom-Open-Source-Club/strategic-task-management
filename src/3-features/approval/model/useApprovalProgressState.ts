@@ -1066,6 +1066,7 @@ export function useApprovalProgressState(
         canEditSubmittedProgress: false,
         isSavingSubmittedProgress: savingPlanReportProgressKey.value === editKey,
         submittedComment: normalizeDisplayName(detail?.comment) || '--',
+        submittedSelfRating: normalizeDisplayName(detail?.selfRating) || '',
         targetValue: formatIndicatorMetricValue(matchedIndicator?.targetValue),
         actualValue: formatIndicatorMetricValue(matchedIndicator?.actualValue),
         unit: normalizeDisplayName(matchedIndicator?.unit) || '--',

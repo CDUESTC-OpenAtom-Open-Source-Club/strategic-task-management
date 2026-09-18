@@ -111,7 +111,7 @@ const {
   currentPlanReportSummary,
   currentPlanReportUiStatus,
   currentPlanStatus,
-  currentPlanStatusMeta,
+  currentMonthlyReportStatusMeta,
   currentPlanWorkflowDetail,
   currentReportIndicator,
   currentTaskIndex,
@@ -460,8 +460,12 @@ const handleExportIndicatorList = async () => {
         <div class="card-header">
           <span class="card-title">指标列表</span>
           <div class="header-actions">
-            <el-tag size="small" class="overall-status-tag" :type="currentPlanStatusMeta.type">
-              计划状态: {{ currentPlanStatusMeta.label }}
+            <el-tag
+              size="small"
+              class="overall-status-tag"
+              :type="currentMonthlyReportStatusMeta.type"
+            >
+              本月上报状态: {{ currentMonthlyReportStatusMeta.label }}
             </el-tag>
             <el-popover
               placement="top-start"

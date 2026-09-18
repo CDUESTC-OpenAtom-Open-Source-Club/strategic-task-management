@@ -59,6 +59,7 @@ import type {
 } from '@/features/workflow/api/types'
 import { useDataValidator } from '@/shared/lib/validation/dataValidator'
 import { getPlanStatusDisplay, normalizePlanStatus } from '@/features/task/lib/planStatus'
+import type { StatusTagType } from '@/shared/lib/utils/formatters'
 import { formatPendingApprovalLabel } from '@/shared/lib/utils/workflowStepLabel'
 import { logger } from '@/shared/lib/utils/logger'
 import { apiClient, apiService } from '@/shared/api'
@@ -2495,17 +2496,23 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }
   })
 
-  const currentPlanStatusMeta = computed(() => {
-    const workflowStatus = pagePlanWorkflowStatus.value
-    if (workflowStatus) {
-      return getPlanStatusDisplay(workflowStatus)
+  // D13-B（2026-09-19 定案）：章改「本月上报状态」，只描述本月上报单，四态：
+  // 未填报 / 审批中 / 已审批 / 已驳回；不再混入计划下发状态
+  const currentMonthlyReportStatusMeta = computed(() => {
+    if (!usePlanReportFlow.value || !hasCurrentUserPlanData.value) {
+      return { label: '未填报', type: 'info' as StatusTagType }
     }
-
-    if (usePlanReportFlow.value && hasCurrentUserPlanData.value) {
-      return getPlanStatusDisplay(currentPlanReportUiStatus.value || currentPlanStatus.value)
+    const uiStatus = currentPlanReportUiStatus.value
+    if (uiStatus === 'APPROVED') {
+      return { label: '已审批', type: 'success' as StatusTagType }
     }
-
-    return getPlanStatusDisplay(currentPlanStatus.value)
+    if (uiStatus === 'REJECTED') {
+      return { label: '已驳回', type: 'danger' as StatusTagType }
+    }
+    if (['SUBMITTED', 'IN_REVIEW', 'PENDING'].includes(uiStatus)) {
+      return { label: '审批中', type: 'warning' as StatusTagType }
+    }
+    return { label: '未填报', type: 'info' as StatusTagType }
   })
 
   const normalizeWorkflowStepName = (value?: string | null) => {
@@ -4693,7 +4700,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     currentPlanReportSummary,
     currentPlanReportUiStatus,
     currentPlanStatus,
-    currentPlanStatusMeta,
+    currentMonthlyReportStatusMeta,
     currentPlanWorkflowDetail,
     currentReportIndicator,
     currentTaskIndex,

@@ -121,6 +121,7 @@ export interface PlanReportIndicatorDetailItem {
   indicatorId: number
   progress?: number | null
   comment?: string | null
+  selfRating?: string | null
   attachments?: PlanReportAttachmentItem[] | null
 }
 
