@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { mutationApi, type MutationHistoryItem } from '@/features/indicator/api/mutationApi'
 
 const props = defineProps<{
@@ -10,6 +10,20 @@ const count = ref<number | null>(null)
 const history = ref<MutationHistoryItem[]>([])
 const expanded = ref(false)
 const loading = ref(false)
+
+// 挂载即拉取次数（会议要求：右下角标注「已更改 N 次」需直接可见）
+onMounted(load)
+
+async function load() {
+  loading.value = true
+  try {
+    const response = await mutationApi.history(props.indicatorId)
+    history.value = response.data ?? []
+    count.value = history.value.length
+  } finally {
+    loading.value = false
+  }
+}
 
 function fieldName(key: string): string {
   const names: Record<string, string> = {
@@ -23,14 +37,7 @@ function fieldName(key: string): string {
 async function toggle(): Promise<void> {
   expanded.value = !expanded.value
   if (expanded.value && history.value.length === 0) {
-    loading.value = true
-    try {
-      const response = await mutationApi.history(props.indicatorId)
-      history.value = response.data ?? []
-      count.value = history.value.length
-    } finally {
-      loading.value = false
-    }
+    await load()
   }
 }
 </script>
