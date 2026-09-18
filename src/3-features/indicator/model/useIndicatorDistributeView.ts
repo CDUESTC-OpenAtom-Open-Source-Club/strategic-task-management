@@ -25,6 +25,7 @@ import { useApprovalRouteAutopen } from '@/features/approval/lib'
 import { indicatorFillApi } from '@/features/plan/api/planApi'
 import { getUsersByOrgId } from '@/features/user/api/query'
 import { indicatorApi } from '@/features/indicator/api'
+import { formatPendingApprovalLabel } from '@/shared/lib/utils/workflowStepLabel'
 import { logger } from '@/shared/lib/utils/logger'
 import { alertApi, type ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import type { Plan } from '@/shared/types'
@@ -1233,7 +1234,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       ['SUBMITTED', 'IN_REVIEW', 'PENDING'].includes(workflowStatus)
     ) {
       return {
-        label: stepName ? `待${stepName}审批` : '审批中',
+        label: formatPendingApprovalLabel(stepName),
         tagType: 'warning' as const,
         description:
           candidateNames.length > 0

@@ -38,6 +38,12 @@ import {
 import { useOrgStore } from '@/features/organization/model/store'
 import { usePlanStore } from '@/features/plan/model/store'
 import { indicatorFillApi } from '@/features/plan/api/planApi'
+import {
+  findEarliestUnfilledReportMonth,
+  isLockingPlanReportStatus,
+  resolvePlanReportEntryLock,
+  type PlanReportEntryLockState
+} from '@/features/indicator/model/planReportEntryLock'
 import { getUsersByOrgId } from '@/features/user/api/query'
 import { ApprovalProgressDrawer } from '@/features/approval'
 import { approveTask, rejectTask } from '@/features/workflow/api'
@@ -53,6 +59,7 @@ import type {
 } from '@/features/workflow/api/types'
 import { useDataValidator } from '@/shared/lib/validation/dataValidator'
 import { getPlanStatusDisplay, normalizePlanStatus } from '@/features/task/lib/planStatus'
+import { formatPendingApprovalLabel } from '@/shared/lib/utils/workflowStepLabel'
 import { logger } from '@/shared/lib/utils/logger'
 import { apiClient, apiService } from '@/shared/api'
 import { buildQueryKey, invalidateQueries } from '@/shared/lib/utils/cache'
@@ -668,6 +675,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     if (!usePlanReportFlow.value) {
       currentPlanReportSummary.value = null
       latestPlanReportSummary.value = null
+      planReportEntryLockState.value = null
       return
     }
 
@@ -681,8 +689,12 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     ) {
       currentPlanReportSummary.value = null
       latestPlanReportSummary.value = null
+      planReportEntryLockState.value = null
       return
     }
+
+    // 填报入口锁定依赖「最早未填报月」的报告状态，随上报摘要一起刷新（不阻塞主流程）。
+    void refreshPlanReportEntryLockState(resolvedPlanId, reportOrgId)
 
     try {
       currentPlanReportSummary.value = await indicatorFillApi.getCurrentMonthPlanReport(
@@ -723,6 +735,67 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       latestPlanReportSummary.value = null
       clearCurrentPlanReportDerivedState()
       logger.warn('[IndicatorListView] 加载当前上报摘要失败:', {
+        planId: resolvedPlanId,
+        reportOrgId,
+        error
+      })
+    }
+  }
+
+  /**
+   * 刷新「最早未填报月 + 其报告状态」，供填报入口锁定判定使用。
+   * 数据不可得时将锁定状态置空（isCurrentPlanReportLocked 降级为当前月报告口径）。
+   */
+  async function refreshPlanReportEntryLockState(
+    planId?: number | null,
+    orgId?: number | null
+  ): Promise<void> {
+    const resolvedPlanId = Number(planId ?? getCurrentPlanId() ?? NaN)
+    const reportOrgId = Number(orgId ?? currentViewingOrgId.value ?? NaN)
+    if (
+      !usePlanReportFlow.value ||
+      !Number.isFinite(resolvedPlanId) ||
+      resolvedPlanId <= 0 ||
+      !Number.isFinite(reportOrgId) ||
+      reportOrgId <= 0
+    ) {
+      planReportEntryLockState.value = null
+      return
+    }
+
+    try {
+      const existingMonths = await indicatorFillApi.getExistingReportMonths(
+        resolvedPlanId,
+        reportOrgId
+      )
+      const earliestUnfilledMonth = findEarliestUnfilledReportMonth(
+        existingMonths,
+        new Date().getFullYear()
+      )
+      if (earliestUnfilledMonth === null) {
+        // 已上报月份集合不可得（加载失败）→ 交由旧口径降级判断
+        planReportEntryLockState.value = null
+        return
+      }
+
+      // 最早未填月正常情况下没有报告（可新填）；此处兜底校验其报告状态，
+      // 覆盖月份数据与报告数据短暂不一致（如刚创建/被撤回）的场景。
+      let targetMonthReportStatus = ''
+      if (earliestUnfilledMonth) {
+        const targetMonthReport = await indicatorFillApi.getCurrentMonthPlanReport(
+          resolvedPlanId,
+          reportOrgId,
+          earliestUnfilledMonth
+        )
+        targetMonthReportStatus = String(targetMonthReport?.status || '')
+          .trim()
+          .toUpperCase()
+      }
+
+      planReportEntryLockState.value = { earliestUnfilledMonth, targetMonthReportStatus }
+    } catch (error) {
+      planReportEntryLockState.value = null
+      logger.warn('[IndicatorListView] 刷新填报入口锁定状态失败:', {
         planId: resolvedPlanId,
         reportOrgId,
         error
@@ -1084,6 +1157,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }> | null
   } | null>(null)
   const latestPlanReportSummary = ref<{ id: number } | null>(null)
+  // 填报入口锁定状态：基于「最早未填报月」的报告状态（null = 月份数据不可得，降级为当前月口径）
+  const planReportEntryLockState = ref<PlanReportEntryLockState | null>(null)
   const pendingPlanReportUiState = ref<null | 'submitted' | 'withdrawn'>(readPlanReportUiState())
 
   const SUBMITTED_FALLBACK_STATUSES = ['DRAFT', 'WITHDRAWN', 'CANCELLED', 'REJECTED', 'RETURNED']
@@ -2605,7 +2680,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       ['SUBMITTED', 'IN_REVIEW', 'PENDING'].includes(workflowStatus)
     ) {
       return {
-        label: stepName ? `待${stepName}审批` : '审批中',
+        label: formatPendingApprovalLabel(stepName),
         type: 'warning' as const,
         description:
           candidateNames.length > 0
@@ -3290,7 +3365,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     return [formatReportMonthOption(value)]
   })
 
-  async function resolveEarliestUnfilledReportMonth(): Promise<string> {
+  async function resolveEarliestUnfilledReportMonth(
+    indicatorId?: number | string
+  ): Promise<string> {
     const planId = getCurrentPlanId()
     const reportOrgId = Number(currentViewingOrgId.value ?? NaN)
     if (
@@ -3302,19 +3379,22 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return ''
     }
 
+    // 缺陷修复：优先按「指标级粒度」取该指标已填报月份集合，与后端防跳月校验对齐
+    // （该指标在某月报告中已有明细记录才算已填）。否则同月第一个指标保存草稿后，
+    // 第二个指标会被弹窗锁到下一个月，保存时触发后端 409。
+    // 无指标上下文时降级为计划级（该月存在任意报告即算已填）。
+    const numericIndicatorId = Number(indicatorId)
+    const existingMonths =
+      Number.isFinite(numericIndicatorId) && numericIndicatorId > 0
+        ? await indicatorFillApi.getExistingReportMonthsForIndicator(
+            planId,
+            reportOrgId,
+            numericIndicatorId
+          )
+        : await indicatorFillApi.getExistingReportMonths(planId, reportOrgId)
+
     // null = 已上报月份集合不可得（加载失败），交由调用方降级为当前月
-    const existingMonths = await indicatorFillApi.getExistingReportMonths(planId, reportOrgId)
-    if (!existingMonths) {
-      return ''
-    }
-    const year = String(new Date().getFullYear())
-    for (let month = 1; month <= 12; month++) {
-      const value = `${year}${String(month).padStart(2, '0')}`
-      if (!existingMonths.includes(value)) {
-        return value
-      }
-    }
-    return ''
+    return findEarliestUnfilledReportMonth(existingMonths, new Date().getFullYear()) ?? ''
   }
 
   const reportForm = ref({
@@ -3413,8 +3493,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       persistedDraft?.progress ??
       latestIndicator.progress ??
       0
-    // 归属月份锁定：最早未填报月（数据不可得时降级为当前月）
-    lockedReportMonth.value = await resolveEarliestUnfilledReportMonth()
+    // 归属月份锁定：该指标的最早未填报月（指标级粒度，与后端防跳月校验对齐；数据不可得时降级为当前月）
+    lockedReportMonth.value = await resolveEarliestUnfilledReportMonth(row.id)
     reportForm.value = {
       newProgress: Math.max(actualProgress, Number(preferredProgress) || 0),
       remark: row.pendingRemark ?? persistedDraft?.remark ?? '',
@@ -3970,6 +4050,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           ? '进度已保存，可在批量操作中提交'
           : '进度已保存（未关联附件），可在批量操作中提交'
       )
+      // 保存草稿后「最早未填报月」可能前移，刷新填报入口锁定状态
+      void refreshPlanReportEntryLockState()
       closeReportDialog()
     } catch (error) {
       logger.error('[IndicatorListView] 保存进度填报失败:', error)
@@ -4081,6 +4163,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
     currentPlanReportSummary.value = nextSummary
     latestPlanReportSummary.value = nextSummary?.id ? { id: Number(nextSummary.id) } : null
+    // 提交/撤回后立即刷新入口锁定状态（最早未填月的报告状态已变化）
+    void refreshPlanReportEntryLockState()
   }
 
   function applyLocalCurrentPlanDetailsPatch(
@@ -4270,7 +4354,18 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     if (!usePlanReportFlow.value) {
       return false
     }
-    return isCurrentPlanReportInApproval.value || currentPlanReportUiStatus.value === 'APPROVED'
+
+    // 月度上报链修复：锁定语义 = 「最早未填报月」的报告正在审批中或已批准。
+    // 最早未填月是下个月（该月无报告）时不锁，否则 2026-09 批准后连 2026-10 的
+    // 填报入口都没有了（填报弹窗本身已支持锁定到最早未填月）。
+    const lockState = planReportEntryLockState.value
+    if (lockState) {
+      return resolvePlanReportEntryLock({ usePlanReportFlow: true, lockState })
+    }
+
+    // 「已上报月份」数据不可得（加载失败/上下文缺失）→ 降级沿用旧口径：
+    // 当前月报告审批中或已批准即锁。
+    return isLockingPlanReportStatus(currentPlanReportUiStatus.value)
   })
 
   /**

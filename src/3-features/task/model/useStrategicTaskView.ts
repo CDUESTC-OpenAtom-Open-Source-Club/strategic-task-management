@@ -29,6 +29,7 @@ import { usePermission } from '@/5-shared/lib/permissions'
 import AppAvatar from '@/shared/ui/avatar/AppAvatar.vue'
 import { logger } from '@/shared/lib/utils/logger'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
+import { formatPendingApprovalLabel } from '@/shared/lib/utils/workflowStepLabel'
 import { buildQueryKey, fetchWithCache, invalidateQueries } from '@/shared/lib/utils/cache'
 import strategicApi, { approvalApi as taskApprovalApi } from '@/features/task/api/strategicApi'
 import {
@@ -1110,7 +1111,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       workflowStatus === 'PENDING' ||
       workflowStatus === 'IN_REVIEW'
     ) {
-      const label = stepName ? `待${stepName}审批` : '审批中'
+      const label = formatPendingApprovalLabel(stepName)
 
       return {
         label,

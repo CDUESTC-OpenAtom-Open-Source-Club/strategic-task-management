@@ -2491,6 +2491,41 @@ export const indicatorFillApi = {
     }
   },
 
+  /**
+   * 获取指定计划下某组织、某个指标已存在填报记录的报告月份集合（YYYYMM）。
+   *
+   * 指标级粒度：只有该指标的明细（indicatorDetails）出现在某月报告中，该月才算「已填报」。
+   * 与后端 ReportApplicationService 防跳月校验（按指标 + 月判断最早未填月）对齐，
+   * 避免同月第二个指标被弹窗锁到下一个月而触发 409。
+   * 加载失败时返回 null（与「确实没有上报记录」的空集合区分开），由调用方降级处理。
+   */
+  async getExistingReportMonthsForIndicator(
+    planId: number | string,
+    reportOrgId: number,
+    indicatorId: number | string
+  ): Promise<string[] | null> {
+    try {
+      const reports = await loadPlanReportsByPlanId(Number(planId))
+      const numericIndicatorId = Number(indicatorId)
+      const months = new Set<string>()
+      reports.forEach(report => {
+        if (Number(report.reportOrgId) !== Number(reportOrgId) || !report.reportMonth) {
+          return
+        }
+        const hasIndicatorRecord = (report.indicatorDetails || []).some(
+          detail => Number(detail.indicatorId) === numericIndicatorId
+        )
+        if (hasIndicatorRecord) {
+          months.add(String(report.reportMonth))
+        }
+      })
+      return Array.from(months)
+    } catch (error) {
+      logger.warn('[indicatorFillApi] 加载指标已上报月份集合失败:', error)
+      return null
+    }
+  },
+
   async submitCurrentMonthPlanReport(
     planId: number | string,
     reportOrgId: number,
