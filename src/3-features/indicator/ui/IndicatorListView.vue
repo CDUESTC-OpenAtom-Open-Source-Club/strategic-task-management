@@ -343,10 +343,11 @@ const manualAlertOptions: Array<{
   value: ManualAlertSeverity
   type: 'success' | 'info' | 'warning' | 'danger'
 }> = [
-  { label: '无预警', value: null, type: 'success' },
-  { label: '一般滞后', value: 'INFO', type: 'info' },
-  { label: '严重滞后', value: 'WARNING', type: 'warning' },
-  { label: '重大滞后', value: 'CRITICAL', type: 'danger' }
+  // 进度等级三档（与战略任务管理页 manualAlertOptions 一致）：存储码沿用 alert severity
+  { label: '未评定', value: null, type: 'info' },
+  { label: '超前完成', value: 'AHEAD', type: 'success' },
+  { label: '正常', value: 'NORMAL', type: 'success' },
+  { label: '延期', value: 'WARNING', type: 'warning' }
 ]
 
 const getManualAlertOption = (severity?: ManualAlertSeverity) =>
@@ -683,24 +684,6 @@ const handleExportIndicatorList = async () => {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column prop="progress" label="进度" width="150" align="center">
-                <template #default="{ row }">
-                  <div class="progress-cell">
-                    <span class="progress-number" :class="getProgressStatusClass(row)">
-                      {{ getDisplayProgress(row) }}%
-                    </span>
-                    <el-tooltip
-                      v-if="shouldShowReportedProgress(row)"
-                      content="填报进度"
-                      placement="top"
-                    >
-                      <span class="reported-progress"
-                        >({{ getDisplayedReportedProgress(row) }}%)</span
-                      >
-                    </el-tooltip>
-                  </div>
-                </template>
-              </el-table-column>
               <el-table-column label="进度等级判定" width="150" align="center">
                 <template #default="{ row }">
                   <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
@@ -987,7 +970,7 @@ const handleExportIndicatorList = async () => {
                 :value="m.value"
               />
             </el-select>
-            <span class="form-hint">只能填报最早的未填报月份</span>
+            <span class="form-hint">按规则只能填报最早未填报月份</span>
           </el-form-item>
           <el-form-item label="自评进度等级" required>
             <el-select

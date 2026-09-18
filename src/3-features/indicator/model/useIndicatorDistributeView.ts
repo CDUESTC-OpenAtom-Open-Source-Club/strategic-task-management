@@ -4195,21 +4195,16 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
   const handleChildManualAlertChange = async (
     child: StrategicIndicator,
-    selectedSeverity: ManualAlertSeverity
+    selectedSeverity: Exclude<ManualAlertSeverity, null> | ''
   ) => {
+    // '' 表示未评定，存储时落库为 null（与战略任务管理页同一套口径）
+    const severity: ManualAlertSeverity = selectedSeverity === '' ? null : selectedSeverity
     const previousSeverity = childManualAlertLevels.value[String(child.id)] ?? null
-    if (previousSeverity === selectedSeverity) {
+    if (previousSeverity === severity) {
       return
     }
 
-    const label =
-      selectedSeverity === null
-        ? '无预警'
-        : selectedSeverity === 'INFO'
-          ? '一般滞后'
-          : selectedSeverity === 'WARNING'
-            ? '严重滞后'
-            : '重大滞后'
+    const label = getChildManualAlertLabel(severity)
 
     try {
       await ElMessageBox.confirm(
@@ -4218,17 +4213,17 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         {
           confirmButtonText: '确认调整',
           cancelButtonText: '取消',
-          type: selectedSeverity ? 'warning' : 'info'
+          type: severity ? 'warning' : 'info'
         }
       )
 
       savingChildManualAlertId.value = String(child.id)
-      await alertApi.setManualAlertLevel(String(child.id), selectedSeverity)
+      await alertApi.setManualAlertLevel(String(child.id), severity)
       childManualAlertLevels.value = {
         ...childManualAlertLevels.value,
-        [String(child.id)]: selectedSeverity
+        [String(child.id)]: severity
       }
-      ElMessage.success(selectedSeverity ? '进度等级已调整，并已通知对应下级部门' : '预警已取消')
+      ElMessage.success(severity ? '进度等级已调整，并已通知对应下级部门' : '进度等级已恢复未评定')
     } catch (error) {
       if (error !== 'cancel' && error !== 'close') {
         ElMessage.error(
@@ -4241,31 +4236,28 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   }
 
   const getChildManualAlertLabel = (severity: ManualAlertSeverity): string => {
-    if (severity === 'INFO') {
-      return '一般滞后'
+    if (severity === 'AHEAD') {
+      return '超前完成'
+    }
+    if (severity === 'NORMAL') {
+      return '正常'
     }
     if (severity === 'WARNING') {
-      return '严重滞后'
+      return '延期'
     }
-    if (severity === 'CRITICAL') {
-      return '重大滞后'
-    }
-    return '无预警'
+    return '未评定'
   }
 
   const getChildManualAlertTagType = (
     severity: ManualAlertSeverity
   ): 'success' | 'info' | 'warning' | 'danger' => {
-    if (severity === 'INFO') {
-      return 'info'
+    if (severity === 'AHEAD' || severity === 'NORMAL') {
+      return 'success'
     }
     if (severity === 'WARNING') {
       return 'warning'
     }
-    if (severity === 'CRITICAL') {
-      return 'danger'
-    }
-    return 'success'
+    return 'info'
   }
 
   // 获取行的 class 名称（用于标识新增子指标行）

@@ -41,6 +41,14 @@ export function isDistributionFlow(flowCode?: string): boolean {
     .startsWith('PLAN_DISPATCH_')
 }
 
+export function isMutationFlow(flowCode?: string): boolean {
+  return (
+    String(flowCode || '')
+      .trim()
+      .toUpperCase() === 'PLAN_MUTATION_STRATEGY'
+  )
+}
+
 export function resolveApprovalRouteTitle(
   card: Pick<WorkflowHistoryCardResponse, 'flowCode' | 'sourceOrgName' | 'targetOrgName'>
 ): string {
@@ -53,6 +61,10 @@ export function resolveApprovalRouteTitle(
 
   if (isDistributionFlow(card.flowCode)) {
     return `下发审批 · ${sourceOrgName} -> ${targetOrgName}`
+  }
+
+  if (isMutationFlow(card.flowCode)) {
+    return `异动审批 · ${sourceOrgName} -> ${targetOrgName}`
   }
 
   return normalizeDisplayName(card.flowCode) || '审批流程'

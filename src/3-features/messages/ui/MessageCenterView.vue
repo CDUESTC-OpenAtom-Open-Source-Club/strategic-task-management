@@ -376,11 +376,12 @@ async function handleMessageRead(messageId: string) {
 
 function buildApprovalCenterContext(message: Message) {
   const routeTarget = resolveMessageRouteTarget(message)
-  // P7：TASK 类型（工作流待办）同样允许直达审批中心
+  // P7：TASK 类型（工作流待办）同样允许直达审批中心；INDICATOR 为指标异动审批
   const workflowEntityType =
     message.entityType === 'PLAN_REPORT' ||
     message.entityType === 'PLAN' ||
-    message.entityType === 'TASK'
+    message.entityType === 'TASK' ||
+    message.entityType === 'INDICATOR'
       ? message.entityType
       : undefined
   const workflowEntityId =
@@ -646,7 +647,8 @@ function canOpenApprovalCenter(message?: Message | null): boolean {
   return Boolean(
     (context.workflowEntityType === 'PLAN' ||
       context.workflowEntityType === 'PLAN_REPORT' ||
-      context.workflowEntityType === 'TASK') &&
+      context.workflowEntityType === 'TASK' ||
+      context.workflowEntityType === 'INDICATOR') &&
     context.workflowEntityId !== undefined
   )
 }

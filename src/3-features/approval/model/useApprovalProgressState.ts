@@ -603,7 +603,9 @@ export function useApprovalProgressState(
     routeTarget: string
   }
 
-  function normalizeWorkflowEntityType(value: unknown): 'PLAN' | 'PLAN_REPORT' | undefined {
+  function normalizeWorkflowEntityType(
+    value: unknown
+  ): 'PLAN' | 'PLAN_REPORT' | 'INDICATOR' | undefined {
     const normalized = String(value || '')
       .trim()
       .toUpperCase()
@@ -612,6 +614,10 @@ export function useApprovalProgressState(
     }
     if (normalized === 'PLAN') {
       return 'PLAN'
+    }
+    // 异动审批（PLAN_MUTATION_STRATEGY）挂在指标实体上
+    if (normalized === 'INDICATOR') {
+      return 'INDICATOR'
     }
     return undefined
   }
@@ -684,9 +690,18 @@ export function useApprovalProgressState(
     const targets: WorkflowHistoryTarget[] = []
     const seen = new Set<string>()
 
-    const appendTarget = (entityType: 'PLAN' | 'PLAN_REPORT' | undefined, entityId: unknown) => {
+    const appendTarget = (
+      entityType: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR' | undefined,
+      entityId: unknown
+    ) => {
       const normalizedType =
-        entityType === 'PLAN_REPORT' ? 'PLAN_REPORT' : entityType === 'PLAN' ? 'PLAN' : null
+        entityType === 'PLAN_REPORT'
+          ? 'PLAN_REPORT'
+          : entityType === 'PLAN'
+            ? 'PLAN'
+            : entityType === 'INDICATOR'
+              ? 'INDICATOR'
+              : null
       const normalizedId = Number(entityId ?? NaN)
       if (!normalizedType || !Number.isFinite(normalizedId) || normalizedId <= 0) {
         return
@@ -736,12 +751,37 @@ export function useApprovalProgressState(
     )
   }
   const activePlanWorkflow = computed(() => {
-    if (!props.plan) {
-      return null
-    }
-
     const detail = planWorkflowDetail.value
     const useDetail = detail && matchesExpectedWorkflowCode(detail.flowCode)
+
+    // INDICATOR（异动审批）实例没有 plan 上下文，从工作流详情合成最小视图
+    if (!props.plan) {
+      if (!useDetail) {
+        return null
+      }
+
+      return {
+        id: toPositiveNumber(props.secondaryWorkflowEntityId) ?? undefined,
+        name:
+          normalizeDisplayName(detail.planName) ||
+          props.planName ||
+          props.departmentName ||
+          '当前计划',
+        workflowInstanceId: Number(detail.instanceId || 0) || undefined,
+        workflowStatus: detail.status,
+        status: detail.status,
+        startedAt: detail.startTime,
+        currentTaskId: detail.currentTaskId,
+        currentStepName: detail.currentStepName,
+        currentApproverId: detail.currentApproverId,
+        currentApproverName: detail.currentApproverName,
+        canWithdraw: detail.canWithdraw,
+        workflowHistory: Array.isArray(detail.history) ? detail.history : [],
+        sourceOrgName: detail.sourceOrgName,
+        targetOrgName: detail.targetOrgName
+      } as Plan
+    }
+
     return {
       ...props.plan,
       workflowInstanceId:
@@ -1021,12 +1061,9 @@ export function useApprovalProgressState(
               ? progressValue
               : 0,
         progressEditKey: editKey,
-        canEditSubmittedProgress:
-          Boolean(editKey) &&
-          !props.readonly &&
-          props.approvalType === 'submission' &&
-          hasRelatedPlanReportActiveWorkflow.value &&
-          canCurrentUserHandlePlanApproval.value,
+        // 会议定案：审批人不可修改下级填报内容（只能通过/打回），内联编辑入口恒关闭，
+        // 仅保留只读展示；savePlanReportIndicatorProgress 方法保留但无 UI 入口。
+        canEditSubmittedProgress: false,
         isSavingSubmittedProgress: savingPlanReportProgressKey.value === editKey,
         submittedComment: normalizeDisplayName(detail?.comment) || '--',
         targetValue: formatIndicatorMetricValue(matchedIndicator?.targetValue),
@@ -2430,7 +2467,8 @@ export function useApprovalProgressState(
   }
 
   async function loadPlanWorkflowDetail() {
-    if (!props.showPlanApprovals || !props.plan) {
+    // INDICATOR（异动审批）实例没有 plan 上下文，凭 workflowEntityId 也可按业务实体加载
+    if (!props.showPlanApprovals || (!props.plan && !toPositiveNumber(props.workflowEntityId))) {
       planWorkflowDetail.value = null
       return
     }
@@ -2455,7 +2493,7 @@ export function useApprovalProgressState(
       }
 
       const businessEntityType = props.workflowEntityType || 'PLAN'
-      const businessEntityId = Number(props.workflowEntityId ?? props.plan.id ?? 0)
+      const businessEntityId = Number(props.workflowEntityId ?? props.plan?.id ?? 0)
       if (Number.isFinite(businessEntityId) && businessEntityId > 0) {
         const response = await getWorkflowInstanceDetailByBusiness(
           businessEntityType,
@@ -2472,7 +2510,7 @@ export function useApprovalProgressState(
         }
       }
 
-      const workflowInstanceId = Number(props.plan.workflowInstanceId ?? 0)
+      const workflowInstanceId = Number(props.plan?.workflowInstanceId ?? 0)
       if (Number.isFinite(workflowInstanceId) && workflowInstanceId > 0) {
         const response = await getWorkflowInstanceDetail(String(workflowInstanceId))
         if (
@@ -2608,7 +2646,7 @@ export function useApprovalProgressState(
 
       try {
         const { value } = await ElMessageBox.prompt(
-          `确认通过“${props.plan.name || props.planName || '当前计划'}”的审批？`,
+          `确认通过“${props.plan?.name || props.planName || '当前计划'}”的审批？`,
           '审批通过',
           {
             confirmButtonText: '确认通过',
@@ -2748,7 +2786,7 @@ export function useApprovalProgressState(
 
       try {
         const { value } = await ElMessageBox.prompt(
-          `确认驳回“${props.plan.name || props.planName || '当前计划'}”的审批？驳回只会退回上一审批节点，不会跳级。`,
+          `确认驳回“${props.plan?.name || props.planName || '当前计划'}”的审批？驳回只会退回上一审批节点，不会跳级。`,
           '审批驳回',
           {
             confirmButtonText: '确认驳回',

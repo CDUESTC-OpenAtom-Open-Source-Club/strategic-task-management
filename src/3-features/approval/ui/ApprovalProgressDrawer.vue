@@ -173,7 +173,6 @@ const {
   resolveWorkflowTaskDisplayOperatorName,
   resolveWorkflowTaskOperatorName,
   router,
-  savePlanReportIndicatorProgress,
   scopedDepartmentPlan,
   scopedPendingPlanCount,
   scopedPlanApprovals,
@@ -181,7 +180,6 @@ const {
   selectedHistoryInstanceDetail,
   selectedHistoryInstanceDetailLoading,
   selectedHistoryInstanceId,
-  setPlanReportProgressDraft,
   shouldDisplayWorkflowHistoryItem,
   showArchivedPlanWorkflowEmptyState,
   showCardHistoryEmptyState,
@@ -737,35 +735,8 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 </div>
                 <div class="snapshot-field">
                   <span class="snapshot-field-label">{{ displayedBusinessProgressLabel }}</span>
-                  <div v-if="indicator.canEditSubmittedProgress" class="snapshot-progress-editor">
-                    <ElInputNumber
-                      :model-value="indicator.submittedProgressDraft"
-                      :min="0"
-                      :max="100"
-                      :step="5"
-                      size="small"
-                      controls-position="right"
-                      class="snapshot-progress-input"
-                      @update:model-value="
-                        value =>
-                          setPlanReportProgressDraft(
-                            indicator.reportId,
-                            indicator.indicatorId,
-                            value ?? undefined
-                          )
-                      "
-                    />
-                    <span class="snapshot-progress-unit">%</span>
-                    <ElButton
-                      size="small"
-                      type="primary"
-                      :loading="indicator.isSavingSubmittedProgress"
-                      @click="savePlanReportIndicatorProgress(indicator)"
-                    >
-                      保存
-                    </ElButton>
-                  </div>
-                  <span v-else class="snapshot-field-value snapshot-field-value--strong">{{
+                  <!-- 会议定案：审批人不可修改下级填报内容，仅保留只读展示 -->
+                  <span class="snapshot-field-value snapshot-field-value--strong">{{
                     indicator.submittedProgress
                   }}</span>
                 </div>

@@ -272,10 +272,11 @@ const manualAlertOptions: Array<{
   value: ManualAlertSelectValue
   type: 'success' | 'info' | 'warning' | 'danger'
 }> = [
-  { label: '无预警', value: '', type: 'success' },
-  { label: '一般滞后', value: 'INFO', type: 'info' },
-  { label: '严重滞后', value: 'WARNING', type: 'warning' },
-  { label: '重大滞后', value: 'CRITICAL', type: 'danger' }
+  // 进度等级三档（2026-09-17 定案）：存储码沿用 alert severity，新增 AHEAD/NORMAL
+  { label: '未评定', value: '', type: 'info' },
+  { label: '超前完成', value: 'AHEAD', type: 'success' },
+  { label: '正常', value: 'NORMAL', type: 'success' },
+  { label: '延期', value: 'WARNING', type: 'warning' }
 ]
 
 interface DistributionExportRow {
@@ -1056,64 +1057,6 @@ const handleDistributionImportCommitted = async () => {
                           </el-tag>
                         </template>
                       </div>
-                    </template>
-                  </template>
-                </el-table-column>
-
-                <!-- 进度列 -->
-                <el-table-column label="进度" width="100" align="center">
-                  <template #default="{ row }">
-                    <template v-if="row.type === 'indicator-only'">
-                      <span class="progress-text">-</span>
-                    </template>
-                    <template v-else-if="row.type === 'child'">
-                      <div
-                        class="progress-cell"
-                        @dblclick="handleChildDblClick(row.child, 'progress')"
-                      >
-                        <el-input-number
-                          v-if="
-                            editingChildId === row.child.id.toString() &&
-                            editingChildField === 'progress'
-                          "
-                          v-model="editingChildValue"
-                          :min="0"
-                          :max="100"
-                          :precision="0"
-                          size="small"
-                          class="editing-field"
-                          @blur="saveChildEdit(row.child, 'progress')"
-                          @keyup.enter="saveChildEdit(row.child, 'progress')"
-                          @keyup.esc="cancelChildEdit"
-                        />
-                        <span
-                          v-else-if="isSavingChildCell(row.child, 'progress')"
-                          class="cell-saving-text"
-                        >
-                          保存中...
-                        </span>
-                        <span
-                          v-else
-                          class="progress-text"
-                          :class="{
-                            editable: canManageChildDraft(row.child)
-                          }"
-                        >
-                          {{ row.child?.progress || 0 }}%
-                        </span>
-                        <el-tooltip
-                          v-if="shouldShowReportedProgress(row.child)"
-                          content="填报进度"
-                          placement="top"
-                        >
-                          <span class="reported-progress"
-                            >({{ getDisplayedReportedProgress(row.child) }}%)</span
-                          >
-                        </el-tooltip>
-                      </div>
-                    </template>
-                    <template v-else-if="row.type === 'new-child'">
-                      <span class="progress-text">-</span>
                     </template>
                   </template>
                 </el-table-column>

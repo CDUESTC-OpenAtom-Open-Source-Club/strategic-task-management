@@ -2467,6 +2467,30 @@ export const indicatorFillApi = {
     return resolveCurrentMonthPlanReportSummaries(reports, reportOrgId, reportMonth)
   },
 
+  /**
+   * 获取指定计划下某组织已存在上报的报告月份集合（YYYYMM）。
+   * 用于「归属月份只能选最早未填报月」的前端锁定（B6 会议定案）。
+   * 加载失败时返回 null（与「确实没有上报记录」的空集合区分开），由调用方降级处理。
+   */
+  async getExistingReportMonths(
+    planId: number | string,
+    reportOrgId: number
+  ): Promise<string[] | null> {
+    try {
+      const reports = await loadPlanReportsByPlanId(Number(planId))
+      const months = new Set<string>()
+      reports.forEach(report => {
+        if (Number(report.reportOrgId) === Number(reportOrgId) && report.reportMonth) {
+          months.add(String(report.reportMonth))
+        }
+      })
+      return Array.from(months)
+    } catch (error) {
+      logger.warn('[indicatorFillApi] 加载计划已上报月份集合失败:', error)
+      return null
+    }
+  },
+
   async submitCurrentMonthPlanReport(
     planId: number | string,
     reportOrgId: number,

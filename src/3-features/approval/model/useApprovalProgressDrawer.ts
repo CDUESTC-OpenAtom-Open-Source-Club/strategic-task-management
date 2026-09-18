@@ -93,9 +93,9 @@ interface Props {
   approvalType?: 'distribution' | 'submission'
   historyViewMode?: 'auto' | 'card-only'
   workflowCode?: string | string[]
-  workflowEntityType?: 'PLAN' | 'PLAN_REPORT'
+  workflowEntityType?: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR'
   workflowEntityId?: number | string
-  secondaryWorkflowEntityType?: 'PLAN' | 'PLAN_REPORT'
+  secondaryWorkflowEntityType?: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR'
   secondaryWorkflowEntityId?: number | string
   routeTarget?: string
   showRouteButton?: boolean
@@ -365,7 +365,7 @@ export function useApprovalProgressDrawer(
     return expectedWorkflowCodes.value.includes(normalizeWorkflowCode(workflowCode))
   }
 
-  function normalizeWorkflowEntityType(value: unknown): 'PLAN' | 'PLAN_REPORT' | '' {
+  function normalizeWorkflowEntityType(value: unknown): 'PLAN' | 'PLAN_REPORT' | 'INDICATOR' | '' {
     const normalized = String(value || '')
       .trim()
       .toUpperCase()
@@ -374,6 +374,10 @@ export function useApprovalProgressDrawer(
     }
     if (normalized === 'PLAN') {
       return 'PLAN'
+    }
+    // 异动审批（PLAN_MUTATION_STRATEGY）挂在指标实体上
+    if (normalized === 'INDICATOR') {
+      return 'INDICATOR'
     }
     return ''
   }
@@ -958,9 +962,18 @@ export function useApprovalProgressDrawer(
     const targets: WorkflowHistoryTarget[] = []
     const seen = new Set<string>()
 
-    const appendTarget = (entityType: 'PLAN' | 'PLAN_REPORT' | undefined, entityId: unknown) => {
+    const appendTarget = (
+      entityType: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR' | undefined,
+      entityId: unknown
+    ) => {
       const normalizedType =
-        entityType === 'PLAN_REPORT' ? 'PLAN_REPORT' : entityType === 'PLAN' ? 'PLAN' : null
+        entityType === 'PLAN_REPORT'
+          ? 'PLAN_REPORT'
+          : entityType === 'PLAN'
+            ? 'PLAN'
+            : entityType === 'INDICATOR'
+              ? 'INDICATOR'
+              : null
       const normalizedId = Number(entityId ?? NaN)
       if (!normalizedType || !Number.isFinite(normalizedId) || normalizedId <= 0) {
         return
@@ -2408,12 +2421,9 @@ export function useApprovalProgressDrawer(
               ? progressValue
               : 0,
         progressEditKey: editKey,
-        canEditSubmittedProgress:
-          Boolean(editKey) &&
-          !props.readonly &&
-          props.approvalType === 'submission' &&
-          isPlanPendingApproval.value &&
-          canCurrentUserHandlePlanApproval.value,
+        // 会议定案：审批人不可修改下级填报内容（只能通过/打回），内联编辑入口恒关闭，
+        // 仅保留只读展示；savePlanReportIndicatorProgress 方法保留但无 UI 入口。
+        canEditSubmittedProgress: false,
         isSavingSubmittedProgress: savingPlanReportProgressKey.value === editKey,
         submittedComment: normalizeDisplayName(detail?.comment) || '未填写说明',
         submittedSelfRating:
@@ -2667,6 +2677,14 @@ export function useApprovalProgressDrawer(
       .startsWith('PLAN_DISPATCH_')
   }
 
+  function isMutationFlow(flowCode?: string): boolean {
+    return (
+      String(flowCode || '')
+        .trim()
+        .toUpperCase() === 'PLAN_MUTATION_STRATEGY'
+    )
+  }
+
   function resolveApprovalRouteTitle(
     card: Pick<WorkflowHistoryCardResponse, 'flowCode' | 'sourceOrgName' | 'targetOrgName'>
   ): string {
@@ -2679,6 +2697,10 @@ export function useApprovalProgressDrawer(
 
     if (isDistributionFlow(card.flowCode)) {
       return `下发审批 · ${sourceOrgName} -> ${targetOrgName}`
+    }
+
+    if (isMutationFlow(card.flowCode)) {
+      return `异动审批 · ${sourceOrgName} -> ${targetOrgName}`
     }
 
     return normalizeDisplayName(card.flowCode) || '审批流程'
@@ -3314,7 +3336,7 @@ export function useApprovalProgressDrawer(
           ? `\n鉴定进度等级：${APPRAISAL_LEVEL_LABELS[planAppraisalLevel.value] || planAppraisalLevel.value}`
           : '\n（未选择鉴定进度等级，将只通过不改判）'
         const { value } = await ElMessageBox.prompt(
-          `确认通过“${props.plan.name || props.planName || '当前计划'}”的审批？${appraisalSuffix}`,
+          `确认通过“${props.plan?.name || props.planName || '当前计划'}”的审批？${appraisalSuffix}`,
           '审批通过',
           {
             confirmButtonText: '确认通过',
@@ -3437,7 +3459,7 @@ export function useApprovalProgressDrawer(
 
       try {
         const { value } = await ElMessageBox.prompt(
-          `确认驳回“${props.plan.name || props.planName || '当前计划'}”的审批？驳回只会退回上一审批节点，不会跳级；如需修改填报内容请打回给填报人。`,
+          `确认驳回“${props.plan?.name || props.planName || '当前计划'}”的审批？驳回只会退回上一审批节点，不会跳级；如需修改填报内容请打回给填报人。`,
           '审批驳回',
           {
             confirmButtonText: '确认驳回',

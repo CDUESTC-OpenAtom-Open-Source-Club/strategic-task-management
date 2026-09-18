@@ -34,7 +34,7 @@ export function getStatusText(status: IndicatorStatus): string {
   const statusMap: Record<IndicatorStatus, string> = {
     normal: '正常',
     ahead: '超前完成',
-    warning: '预警',
+    warning: '延期',
     delayed: '延期'
   }
   return statusMap[status]

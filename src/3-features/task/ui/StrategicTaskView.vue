@@ -411,7 +411,7 @@ const handleManualAlertChange = async (
 
     savingManualAlertIndicatorId.value = row.id
     await strategicStore.updateManualAlertLevel(String(row.id), severity)
-    ElMessage.success(severity ? '进度等级已调整，并已通知下级部门' : '预警已取消')
+    ElMessage.success(severity ? '进度等级已调整，并已通知下级部门' : '进度等级已恢复未评定')
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
       ElMessage.error(error instanceof Error && error.message ? error.message : '进度等级调整失败')

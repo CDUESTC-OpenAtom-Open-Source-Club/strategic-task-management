@@ -547,6 +547,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   // （如战略部对全包计划走下发审批），不纳入白名单会导致工作流详情被拒收、
   // hasPlanWorkflowData=false、审批按钮消失（缺陷 3 断点 C）。
   const PLAN_DISPATCH_WORKFLOW_CODE_STRATEGY = 'PLAN_DISPATCH_STRATEGY'
+  // 指标异动审批流（填报人修改→战略部负责人→分管校领导），实体类型 INDICATOR
+  const PLAN_MUTATION_WORKFLOW_CODE = 'PLAN_MUTATION_STRATEGY'
   const PLAN_APPROVAL_POLL_INTERVAL_MS = 15000
   let planApprovalPollTimer: ReturnType<typeof setInterval> | null = null
 
@@ -557,15 +559,20 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
   function resolvePlanApprovalWorkflowCode(): string | string[] {
     // 实体归属由 isRetainableWorkflowDetail 的 entityType/entityId 匹配兜底，
-    // 这里只需覆盖全部 PLAN 级流程码，避免合法实例被白名单误杀。
+    // 这里只需覆盖全部 PLAN 级流程码 + 指标异动流程码，避免合法实例被白名单误杀。
     if (isSecondaryCollege.value) {
       return [
         PLAN_APPROVAL_WORKFLOW_CODE_COLLEGE,
         PLAN_DISPATCH_WORKFLOW_CODE_FUNCDEPT,
-        PLAN_DISPATCH_WORKFLOW_CODE_STRATEGY
+        PLAN_DISPATCH_WORKFLOW_CODE_STRATEGY,
+        PLAN_MUTATION_WORKFLOW_CODE
       ]
     }
-    return [PLAN_APPROVAL_WORKFLOW_CODE_FUNCDEPT, PLAN_DISPATCH_WORKFLOW_CODE_STRATEGY]
+    return [
+      PLAN_APPROVAL_WORKFLOW_CODE_FUNCDEPT,
+      PLAN_DISPATCH_WORKFLOW_CODE_STRATEGY,
+      PLAN_MUTATION_WORKFLOW_CODE
+    ]
   }
 
   async function refreshCurrentPlanDetails(planId: number): Promise<void> {
@@ -1957,7 +1964,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   })
 
   const { routeApprovalEntityType, routeApprovalEntityId } = useApprovalRouteAutopen({
-    supportedEntityTypes: ['PLAN', 'PLAN_REPORT'] as const,
+    supportedEntityTypes: ['PLAN', 'PLAN_REPORT', 'INDICATOR'] as const,
     onAutoOpen: async () => {
       await nextTick()
       const planId = Number(getCurrentPlanId() ?? NaN)
@@ -1972,7 +1979,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }
   })
 
-  const primaryApprovalWorkflowEntityType = computed<'PLAN' | 'PLAN_REPORT'>(() => {
+  const primaryApprovalWorkflowEntityType = computed<'PLAN' | 'PLAN_REPORT' | 'INDICATOR'>(() => {
     if (routeApprovalEntityType.value) {
       return routeApprovalEntityType.value
     }
@@ -3265,12 +3272,50 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   const isUploadingReportFiles = ref(false)
   const reportUploadFiles = ref<ReportUploadFile[]>([])
 
-  // 填报表单数据
-  const reportMonthOptions = Array.from({ length: 12 }, (_, index) => {
-    const month = index + 1
-    const value = `${new Date().getFullYear()}${String(month).padStart(2, '0')}`
-    return { value, label: `${new Date().getFullYear()} 年 ${month} 月` }
+  // B6 会议定案：归属月份锁定为「最早未填报月」，下拉仅渲染这一个选项。
+  // 计算方式：当前计划(planId) + 当前组织(reportOrgId) 已上报月份集合中，
+  // 当年 1~12 月里第一个不存在的月份。数据不可得时降级为当前月（仅一项可选）。
+  const lockedReportMonth = ref('')
+
+  function formatReportMonthOption(value: string): { value: string; label: string } {
+    const year = value.slice(0, 4)
+    const month = Number(value.slice(4, 6))
+    return { value, label: `${year} 年 ${month} 月` }
+  }
+
+  const reportMonthOptions = computed(() => {
+    const year = String(new Date().getFullYear())
+    const fallbackValue = `${year}${String(new Date().getMonth() + 1).padStart(2, '0')}`
+    const value = lockedReportMonth.value || fallbackValue
+    return [formatReportMonthOption(value)]
   })
+
+  async function resolveEarliestUnfilledReportMonth(): Promise<string> {
+    const planId = getCurrentPlanId()
+    const reportOrgId = Number(currentViewingOrgId.value ?? NaN)
+    if (
+      !Number.isFinite(planId) ||
+      planId <= 0 ||
+      !Number.isFinite(reportOrgId) ||
+      reportOrgId <= 0
+    ) {
+      return ''
+    }
+
+    // null = 已上报月份集合不可得（加载失败），交由调用方降级为当前月
+    const existingMonths = await indicatorFillApi.getExistingReportMonths(planId, reportOrgId)
+    if (!existingMonths) {
+      return ''
+    }
+    const year = String(new Date().getFullYear())
+    for (let month = 1; month <= 12; month++) {
+      const value = `${year}${String(month).padStart(2, '0')}`
+      if (!existingMonths.includes(value)) {
+        return value
+      }
+    }
+    return ''
+  }
 
   const reportForm = ref({
     newProgress: 0,
@@ -3368,11 +3413,14 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       persistedDraft?.progress ??
       latestIndicator.progress ??
       0
+    // 归属月份锁定：最早未填报月（数据不可得时降级为当前月）
+    lockedReportMonth.value = await resolveEarliestUnfilledReportMonth()
     reportForm.value = {
       newProgress: Math.max(actualProgress, Number(preferredProgress) || 0),
       remark: row.pendingRemark ?? persistedDraft?.remark ?? '',
       selfRating: '',
       reportMonth:
+        lockedReportMonth.value ||
         String(new Date().getFullYear()) + String(new Date().getMonth() + 1).padStart(2, '0'),
       attachments: attachmentItems.map(item => item.url)
     }
@@ -3390,6 +3438,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   const closeReportDialog = () => {
     reportDialogVisible.value = false
     currentReportIndicator.value = null
+    lockedReportMonth.value = ''
     reportForm.value = {
       newProgress: 0,
       remark: '',

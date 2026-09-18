@@ -284,13 +284,13 @@ function openApprovalCenterFromDashboard() {
             <template v-if="dashboardData.alertIndicators.severe > 0">
               {{ selectedMonth }}月存在
               <span class="highlight-danger"
-                >{{ dashboardData.alertIndicators.severe }} 项严重预警</span
+                >{{ dashboardData.alertIndicators.severe }} 项延期</span
               >
               任务需重点关注。
             </template>
             <template v-else>
               {{ selectedMonth }}月整体执行状态良好，<span class="highlight-success"
-                >无严重预警</span
+                >无延期指标</span
               >。
             </template>
             完成率达 <span class="highlight-success">{{ dashboardData.completionRate }}%</span>，
@@ -487,18 +487,12 @@ function openApprovalCenterFromDashboard() {
                     <span class="status-dot"></span>正常 {{ selectedDeptStats.normal }}
                   </span>
                   <span
-                    class="status-summary-item warning"
-                    :class="{ active: selectedStatusFilter === 'warning' }"
-                    @click="handleStatusFilterClick('warning')"
-                  >
-                    <span class="status-dot"></span>预警 {{ selectedDeptStats.warning }}
-                  </span>
-                  <span
                     class="status-summary-item delayed"
                     :class="{ active: selectedStatusFilter === 'delayed' }"
                     @click="handleStatusFilterClick('delayed')"
                   >
-                    <span class="status-dot"></span>延期 {{ selectedDeptStats.delayed }}
+                    <span class="status-dot"></span>延期
+                    {{ selectedDeptStats.warning + selectedDeptStats.delayed }}
                   </span>
                 </div>
                 <div v-if="selectedDeptIndicators.length === 0" class="empty-indicator-list">
@@ -662,18 +656,12 @@ function openApprovalCenterFromDashboard() {
                     <span class="status-dot"></span>正常 {{ monthIndicatorStats.normal }}
                   </span>
                   <span
-                    class="status-summary-item warning"
-                    :class="{ active: selectedStatusFilter === 'warning' }"
-                    @click="handleStatusFilterClick('warning')"
-                  >
-                    <span class="status-dot"></span>预警 {{ monthIndicatorStats.warning }}
-                  </span>
-                  <span
                     class="status-summary-item delayed"
                     :class="{ active: selectedStatusFilter === 'delayed' }"
                     @click="handleStatusFilterClick('delayed')"
                   >
-                    <span class="status-dot"></span>延期 {{ monthIndicatorStats.delayed }}
+                    <span class="status-dot"></span>延期
+                    {{ monthIndicatorStats.warning + monthIndicatorStats.delayed }}
                   </span>
                 </div>
                 <div v-if="monthIndicators.length === 0" class="empty-indicator-list">
@@ -912,18 +900,12 @@ function openApprovalCenterFromDashboard() {
                     <span class="status-dot"></span>正常 {{ collegeMonthIndicatorStats.normal }}
                   </span>
                   <span
-                    class="status-summary-item warning"
-                    :class="{ active: selectedStatusFilter === 'warning' }"
-                    @click="handleStatusFilterClick('warning')"
-                  >
-                    <span class="status-dot"></span>预警 {{ collegeMonthIndicatorStats.warning }}
-                  </span>
-                  <span
                     class="status-summary-item delayed"
                     :class="{ active: selectedStatusFilter === 'delayed' }"
                     @click="handleStatusFilterClick('delayed')"
                   >
-                    <span class="status-dot"></span>延期 {{ collegeMonthIndicatorStats.delayed }}
+                    <span class="status-dot"></span>延期
+                    {{ collegeMonthIndicatorStats.warning + collegeMonthIndicatorStats.delayed }}
                   </span>
                 </div>
                 <div v-if="collegeMonthIndicators.length === 0" class="empty-indicator-list">
@@ -1166,13 +1148,13 @@ function openApprovalCenterFromDashboard() {
           </el-card>
         </el-col>
 
-        <!-- 预警分布 -->
+        <!-- 进度等级分布 -->
         <el-col :xs="24" :md="8">
           <el-card shadow="hover" class="chart-card card-animate">
             <template #header>
               <div class="card-header">
                 <div style="display: flex; align-items: center; gap: 4px">
-                  <span class="card-title">预警分布</span>
+                  <span class="card-title">进度等级分布</span>
                   <el-tooltip :content="helpTexts.alertDistribution" placement="top" effect="light">
                     <el-icon class="help-icon"><QuestionFilled /></el-icon>
                   </el-tooltip>
@@ -1180,9 +1162,12 @@ function openApprovalCenterFromDashboard() {
               </div>
             </template>
             <AlertDistributionChart
-              :severe="dashboardData.alertIndicators.severe"
-              :moderate="dashboardData.alertIndicators.moderate"
-              :normal="dashboardData.alertIndicators.normal"
+              :ahead="dashboardData.levelDistribution?.ahead ?? 0"
+              :normal="dashboardData.levelDistribution?.normal ?? 0"
+              :delayed="
+                (dashboardData.alertIndicators.severe || 0) +
+                (dashboardData.alertIndicators.moderate || 0)
+              "
               @click="handleAlertClick"
             />
           </el-card>

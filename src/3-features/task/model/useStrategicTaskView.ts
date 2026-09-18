@@ -1351,7 +1351,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     'PLAN_DISPATCH_STRATEGY',
     'PLAN_DISPATCH_FUNCDEPT',
     'PLAN_APPROVAL_FUNCDEPT',
-    'PLAN_APPROVAL_COLLEGE'
+    'PLAN_APPROVAL_COLLEGE',
+    'PLAN_MUTATION_STRATEGY'
   ] as const
 
   const approvalSetupDialogVisible = ref(false)
