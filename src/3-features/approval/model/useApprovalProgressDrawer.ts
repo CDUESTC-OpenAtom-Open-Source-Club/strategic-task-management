@@ -58,6 +58,7 @@ import {
   getWorkflowInstanceDetailByBusiness,
   getWorkflowInstanceHistoryByBusiness
 } from '@/features/workflow/api/queries'
+import { decideTask, rejectTask } from '@/features/workflow/api'
 import { canCurrentUserHandleWorkflowApproval } from '@/features/approval/lib'
 import { apiClient } from '@/shared/api'
 import type {
@@ -579,20 +580,13 @@ export function useApprovalProgressDrawer(
       return createdByName
     }
 
-    const currentUserDisplayName = normalizeDisplayName(authStore.userName)
-    const currentDepartmentName = normalizeDisplayName(authStore.effectiveDepartment)
+    // 缺陷修复：不能用当前登录人冒充提交人。此前当「当前登录人部门 == 计划来源部门」时
+    // 会把当前登录人当作提交人显示（审核人打开审批中心看到「提交人：自己」）。
+    // 现在只回退到真实的来源部门/展示名，实在没有数据时显示「待确认」。
     const sourceDepartmentName =
       normalizeDisplayName(props.plan?.createdByOrgName) ||
-      normalizeDisplayName(props.plan?.orgName)
-    if (
-      currentUserDisplayName &&
-      currentDepartmentName &&
-      sourceDepartmentName &&
-      currentDepartmentName === sourceDepartmentName
-    ) {
-      return currentUserDisplayName
-    }
-
+      normalizeDisplayName(props.plan?.orgName) ||
+      normalizeDisplayName(planWorkflowDetail.value?.sourceOrgName)
     return sourceDepartmentName || normalizeDisplayName(props.departmentName) || '待确认'
   }
 
@@ -866,12 +860,40 @@ export function useApprovalProgressDrawer(
     return entityIds
   })
 
+  function isExternalWorkflowTodo(instance: Record<string, any>): boolean {
+    const entityType = normalizeWorkflowEntityType(
+      instance.entityType ?? (instance as { businessEntityType?: unknown }).businessEntityType
+    )
+    return entityType === 'PLAN_REPORT' || entityType === 'INDICATOR'
+  }
+
+  // 缺陷修复：PLAN_REPORT（月报审批）/ INDICATOR 待办来自 /workflows/my-tasks，
+  // 本就是分配给当前登录人的任务，不受「当前计划」实体范围过滤——
+  // 此前被计划范围过滤掉，导致部门审核人/院长在审批中心看不到月报待办（无 UI 入口）。
+  const externalWorkflowTodoItems = computed<Record<string, any>[]>(() =>
+    pendingPlanApprovals.value.filter(instance => isExternalWorkflowTodo(instance))
+  )
+
   const scopedPlanApprovals = computed(() => {
+    const dedupeByTaskKey = (items: Record<string, any>[]) => {
+      const seenKeys = new Set<string>()
+      return items.filter(item => {
+        const key = String(item.taskId || item.instanceId || '')
+        if (!key || seenKeys.has(key)) {
+          return false
+        }
+        seenKeys.add(key)
+        return true
+      })
+    }
+
+    const externalItems = externalWorkflowTodoItems.value
+
     if (scopedPlanEntityIds.value.size === 0) {
       if (props.departmentName || props.planName) {
-        return []
+        return externalItems
       }
-      return pendingPlanApprovals.value
+      return dedupeByTaskKey(pendingPlanApprovals.value)
     }
 
     const withEntityId = pendingPlanApprovals.value.filter(instance => {
@@ -880,10 +902,10 @@ export function useApprovalProgressDrawer(
     })
 
     if (withEntityId.length === 0) {
-      return []
+      return externalItems
     }
 
-    return withEntityId.filter(instance => {
+    const planScopedItems = withEntityId.filter(instance => {
       if (!scopedPlanEntityIds.value.has(Number(instance.entityId))) {
         return false
       }
@@ -891,7 +913,14 @@ export function useApprovalProgressDrawer(
       const flowCode = (instance as { flowCode?: string }).flowCode
       return matchesExpectedWorkflowCode(flowCode)
     })
+
+    return dedupeByTaskKey([...planScopedItems, ...externalItems])
   })
+
+  // 聚合卡片 / 一键审批只针对计划（PLAN）实例，保持既有语义
+  const planScopedPlanApprovals = computed(() =>
+    scopedPlanApprovals.value.filter(instance => !isExternalWorkflowTodo(instance))
+  )
 
   function resolvePendingApprovalRouteDisplay(instance: Record<string, any>): string {
     const sourceOrgName = normalizeDisplayName(instance.sourceOrgName)
@@ -1094,27 +1123,55 @@ export function useApprovalProgressDrawer(
     )
   })
 
+  /**
+   * 从工作流实例数据解析真实提交人：
+   * 优先取实例发起人（starter），其次取首个「提交」步骤（如「填报人提交」）的操作人。
+   */
+  function resolveWorkflowSubmitterOperatorName(
+    detail?: WorkflowInstanceDetailResponse | null
+  ): string {
+    if (!detail) {
+      return ''
+    }
+
+    const history = Array.isArray(detail.history) ? detail.history : []
+    const submitEntry =
+      history.find(item => {
+        const stepText = `${item.stepName || ''}${item.taskName || ''}${item.action || ''}`
+        return stepText.includes('提交') || stepText.toUpperCase().includes('SUBMIT')
+      }) ||
+      [...history].sort(
+        (a, b) => new Date(a.operateTime || 0).getTime() - new Date(b.operateTime || 0).getTime()
+      )[0]
+    const fromHistory = normalizeDisplayName(submitEntry?.operatorName)
+    if (fromHistory) {
+      return fromHistory
+    }
+
+    const tasks = Array.isArray(detail.tasks) ? detail.tasks : []
+    const submitTask = tasks.find(task =>
+      `${task.currentStepName || ''}${task.taskName || ''}`.includes('提交')
+    )
+    return normalizeDisplayName(submitTask?.assigneeName)
+  }
+
   function resolvePlanSubmitterDisplayName(detail?: WorkflowInstanceDetailResponse | null): string {
     const PLACEHOLDER_PATTERNS = /^(待确认|未知|当前提交人|\d+|用户#\d+|user#\d+)$/i
     const starterId = parsePositiveUserId(detail?.starterId)
-    const currentDepartmentName = normalizeDisplayName(authStore.effectiveDepartment)
     const sourceDepartmentName =
       normalizeDisplayName(detail?.sourceOrgName) ||
       normalizeDisplayName(props.plan?.createdByOrgName) ||
       normalizeDisplayName(props.plan?.orgName)
-    const currentUserSubmitterFallback =
-      currentDepartmentName &&
-      sourceDepartmentName &&
-      currentDepartmentName === sourceDepartmentName
-        ? normalizeDisplayName(authStore.userName)
-        : ''
     const candidates = [
       starterId ? submitterNameCache.value[String(starterId)] : '',
       detail?.starterName,
+      // 缺陷修复：审批中心「提交人」显示成了当前登录人——
+      // 去掉「当前登录人部门匹配即视为提交人」的候选，改用工作流实例的真实提交人
+      // （发起人 / 首个提交步骤操作人）。
+      resolveWorkflowSubmitterOperatorName(detail),
       activePlanWorkflow.value?.submittedByName,
       props.plan?.submittedByName,
       props.plan?.createdByName,
-      currentUserSubmitterFallback,
       sourceDepartmentName
     ]
     const matched = candidates
@@ -2637,7 +2694,7 @@ export function useApprovalProgressDrawer(
       ]
     }
 
-    return scopedPlanApprovals.value.map((instance, index) => ({
+    return planScopedPlanApprovals.value.map((instance, index) => ({
       instanceId: Number(instance.instanceId) || index,
       instanceNo:
         String(
@@ -2789,11 +2846,11 @@ export function useApprovalProgressDrawer(
       }
     }
 
-    if (scopedPlanApprovals.value.length === 0) {
+    if (planScopedPlanApprovals.value.length === 0) {
       return null
     }
 
-    const sortedCreatedAt = scopedPlanApprovals.value
+    const sortedCreatedAt = planScopedPlanApprovals.value
       .map(item => item.createdAt)
       .filter(Boolean)
       .sort()
@@ -2803,17 +2860,17 @@ export function useApprovalProgressDrawer(
       key: props.planName || props.departmentName || 'current-plan',
       planName: props.planName || `${props.departmentName || '当前部门'}计划`,
       currentStepName:
-        scopedPlanApprovals.value
+        planScopedPlanApprovals.value
           .map(item => item.currentStepName)
           .find(step => typeof step === 'string' && step.trim()) ||
         latestPlanTaskDisplayLabel.value ||
         '审批中',
       submitterName:
-        scopedPlanApprovals.value
+        planScopedPlanApprovals.value
           .map(item => item.submitterName)
           .find(name => typeof name === 'string' && name.trim()) || '未知',
       createdAt: latestCreatedAt,
-      count: scopedPlanApprovals.value.length
+      count: planScopedPlanApprovals.value.length
     }
   })
 
@@ -3079,11 +3136,8 @@ export function useApprovalProgressDrawer(
   }
 
   async function loadPendingPlanApprovals() {
-    if (hasPlanWorkflowData.value) {
-      pendingPlanApprovals.value = []
-      return
-    }
-
+    // 缺陷修复：即使当前计划已有工作流上下文，也需要加载 /workflows/my-tasks 待办——
+    // PLAN_REPORT（月报审批）/ INDICATOR 待办独立于当前计划，不能因此被跳过。
     if (!props.showPlanApprovals) {
       pendingPlanApprovals.value = []
       return
@@ -3140,6 +3194,8 @@ export function useApprovalProgressDrawer(
           matchesExpectedWorkflowCode(response.data.flowCode)
         ) {
           planWorkflowDetail.value = response.data
+          // 预取实例发起人（真实提交人）的显示名，供提交人展示使用
+          void ensureSubmitterNameLoaded(response.data.starterId, response.data.starterName)
           if (
             props.modelValue &&
             props.showPlanApprovals &&
@@ -3164,6 +3220,8 @@ export function useApprovalProgressDrawer(
           matchesExpectedWorkflowCode(response.data.flowCode)
         ) {
           planWorkflowDetail.value = response.data
+          // 预取实例发起人（真实提交人）的显示名，供提交人展示使用
+          void ensureSubmitterNameLoaded(response.data.starterId, response.data.starterName)
           if (
             props.modelValue &&
             props.showPlanApprovals &&
@@ -3183,6 +3241,7 @@ export function useApprovalProgressDrawer(
 
     if (retainedDetail) {
       planWorkflowDetail.value = retainedDetail
+      void ensureSubmitterNameLoaded(retainedDetail.starterId, retainedDetail.starterName)
       return
     }
 
@@ -3384,14 +3443,14 @@ export function useApprovalProgressDrawer(
       }
     }
 
-    if (scopedPlanApprovals.value.length === 0) {
+    if (planScopedPlanApprovals.value.length === 0) {
       ElMessage.warning('当前计划暂无待审批实例')
       return
     }
 
     try {
       const { value } = await ElMessageBox.prompt(
-        `确认一键审批通过“${currentPlanApprovalSummary.value?.planName || '当前计划'}”下的 ${scopedPlanApprovals.value.length} 条审批实例？`,
+        `确认一键审批通过“${currentPlanApprovalSummary.value?.planName || '当前计划'}”下的 ${planScopedPlanApprovals.value.length} 条审批实例？`,
         '审批通过',
         {
           confirmButtonText: '确认通过',
@@ -3409,7 +3468,7 @@ export function useApprovalProgressDrawer(
 
       try {
         const userId = authStore.user?.userId || authStore.user?.id || 1
-        for (const instance of scopedPlanApprovals.value) {
+        for (const instance of planScopedPlanApprovals.value) {
           const response = await approvalApi.approvePlan(
             instance.instanceId,
             userId,
@@ -3431,7 +3490,7 @@ export function useApprovalProgressDrawer(
           currentApproverName: null
         })
         await refreshPlanApprovalAfterMutation()
-        ElMessage.success(`已一键通过 ${scopedPlanApprovals.value.length} 条审批实例`)
+        ElMessage.success(`已一键通过 ${planScopedPlanApprovals.value.length} 条审批实例`)
         handleClose()
       } finally {
         loadingInstance.close()
@@ -3501,21 +3560,21 @@ export function useApprovalProgressDrawer(
       }
     }
 
-    if (scopedPlanApprovals.value.length === 0) {
+    if (planScopedPlanApprovals.value.length === 0) {
       ElMessage.warning('当前计划暂无待审批实例')
       return
     }
 
     try {
       const { value } = await ElMessageBox.prompt(
-        `确认一键驳回“${currentPlanApprovalSummary.value?.planName || '当前计划'}”下的 ${scopedPlanApprovals.value.length} 条审批实例？`,
+        `确认一键驳回“${currentPlanApprovalSummary.value?.planName || '当前计划'}”下的 ${planScopedPlanApprovals.value.length} 条审批实例？`,
         '审批拒绝',
         {
           confirmButtonText: '确认拒绝',
           cancelButtonText: '取消',
           inputPlaceholder: '请输入拒绝原因（必填）',
           inputType: 'textarea',
-          inputValidator: val => (val && val.trim() ? true : '请输入拒绝原因')
+          inputValidator: val => (val && val.trim() ? true : '请输入驳回原因')
         }
       )
 
@@ -3527,7 +3586,7 @@ export function useApprovalProgressDrawer(
 
       try {
         const userId = authStore.user?.userId || authStore.user?.id || 1
-        for (const instance of scopedPlanApprovals.value) {
+        for (const instance of planScopedPlanApprovals.value) {
           const response = await approvalApi.rejectPlan(instance.instanceId, userId, value)
           if (!response.success) {
             ElMessage.error(response.message || '拒绝失败')
@@ -3543,8 +3602,109 @@ export function useApprovalProgressDrawer(
           currentStepName: '已驳回'
         })
         await refreshPlanApprovalAfterMutation()
-        ElMessage.success(`已一键驳回 ${scopedPlanApprovals.value.length} 条审批实例`)
+        ElMessage.success(`已一键驳回 ${planScopedPlanApprovals.value.length} 条审批实例`)
         handleClose()
+      } finally {
+        loadingInstance.close()
+      }
+    } catch {
+      // 用户取消
+    }
+  }
+
+  // ============ my-tasks 待办（PLAN_REPORT / INDICATOR）单卡审批 ============
+
+  function resolveExternalTodoSubmitterName(item: Record<string, any>): string {
+    return (
+      resolvePendingApprovalDepartmentName(item) ||
+      normalizeDisplayName(item.submitterName) ||
+      normalizeDisplayName(item.applicantName) ||
+      '未知'
+    )
+  }
+
+  async function handleApproveExternalWorkflowTodo(item: Record<string, any>) {
+    const taskId = parsePositiveEntityId(item.taskId)
+    if (!taskId) {
+      ElMessage.warning('待办任务缺少 taskId，无法审批')
+      return
+    }
+
+    const title = resolvePendingApprovalTitle(item, 0)
+    try {
+      const appraisalSuffix = planAppraisalLevel.value
+        ? `\n鉴定进度等级：${APPRAISAL_LEVEL_LABELS[planAppraisalLevel.value] || planAppraisalLevel.value}`
+        : '\n（未选择鉴定进度等级，将只通过不改判）'
+      const { value } = await ElMessageBox.prompt(
+        `确认通过“${title}”的审批？${appraisalSuffix}`,
+        '审批通过',
+        {
+          confirmButtonText: '确认通过',
+          cancelButtonText: '取消',
+          inputPlaceholder: '请输入审批意见（可选）',
+          inputType: 'textarea'
+        }
+      )
+      const loadingInstance = ElLoading.service({
+        lock: true,
+        text: '正在审批并同步数据，请稍候...',
+        background: 'rgba(0, 0, 0, 0.7)'
+      })
+
+      try {
+        const response = await decideTask(String(taskId), {
+          approved: true,
+          comment: value || '审批通过',
+          appraisalLevel: planAppraisalLevel.value || undefined
+        })
+        if (!response.success) {
+          ElMessage.error(response.message || '审批失败')
+          return
+        }
+        ElMessage.success('审批通过')
+        await refreshPlanApprovalAfterMutation()
+      } finally {
+        loadingInstance.close()
+      }
+    } catch {
+      // 用户取消
+    }
+  }
+
+  async function handleRejectExternalWorkflowTodo(item: Record<string, any>) {
+    const taskId = parsePositiveEntityId(item.taskId)
+    if (!taskId) {
+      ElMessage.warning('待办任务缺少 taskId，无法驳回')
+      return
+    }
+
+    const title = resolvePendingApprovalTitle(item, 0)
+    try {
+      const { value } = await ElMessageBox.prompt(
+        `确认驳回“${title}”的审批？驳回只会退回上一审批节点，不会跳级；如需修改填报内容请打回给填报人。`,
+        '审批驳回',
+        {
+          confirmButtonText: '确认驳回',
+          cancelButtonText: '取消',
+          inputPlaceholder: '请输入驳回原因（必填）',
+          inputType: 'textarea',
+          inputValidator: val => (val && val.trim() ? true : '请输入驳回原因')
+        }
+      )
+      const loadingInstance = ElLoading.service({
+        lock: true,
+        text: '正在驳回并同步数据，请稍候...',
+        background: 'rgba(0, 0, 0, 0.7)'
+      })
+
+      try {
+        const response = await rejectTask(String(taskId), { reason: value })
+        if (!response.success) {
+          ElMessage.error(response.message || '驳回失败')
+          return
+        }
+        ElMessage.success('审批已驳回')
+        await refreshPlanApprovalAfterMutation()
       } finally {
         loadingInstance.close()
       }
@@ -4169,9 +4329,11 @@ export function useApprovalProgressDrawer(
     getStrategicStatus,
     handleAddNode,
     handleApplyTemplate,
+    handleApproveExternalWorkflowTodo,
     handleApprovePlanBatch,
     handleClose,
     handleWorkflowNodeAttachmentOpen,
+    handleRejectExternalWorkflowTodo,
     handleRejectPlanBatch,
     handleSaveTemplate,
     handleUpdateApprover,
@@ -4185,6 +4347,8 @@ export function useApprovalProgressDrawer(
     planApprovalOrgOptions,
     planApprovalMonthOptions,
     filteredPlanApprovalItems,
+    externalWorkflowTodoItems,
+    resolveExternalTodoSubmitterName,
     formatAppraisalLevel,
     formatStayDuration,
     hasPlanWorkflowData,
