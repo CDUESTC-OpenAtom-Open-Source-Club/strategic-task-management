@@ -1095,6 +1095,17 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                                 >{{ row.name }}</span
                               >
                             </el-tooltip>
+                            <!-- D2 孤立指标标记：父指标已被删除时提示，信息不丢 -->
+                            <el-tag
+                              v-if="
+                                row.parentIndicatorId &&
+                                !indicatorByIdMap.get(String(row.parentIndicatorId))
+                              "
+                              size="small"
+                              type="warning"
+                              class="orphan-parent-tag"
+                              >父级已删除</el-tag
+                            >
                             <div class="indicator-cell-footer">
                               <MutationBadgePopover v-if="row.id" :indicator-id="row.id" />
                             </div>
