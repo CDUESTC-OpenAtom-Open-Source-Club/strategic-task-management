@@ -132,7 +132,13 @@ function normalizeManualAlertSeverity(value: unknown): ManualAlertSeverity {
   const normalized = String(value || '')
     .trim()
     .toUpperCase()
-  if (normalized === 'INFO' || normalized === 'WARNING' || normalized === 'CRITICAL') {
+  if (
+    normalized === 'AHEAD' ||
+    normalized === 'NORMAL' ||
+    normalized === 'INFO' ||
+    normalized === 'WARNING' ||
+    normalized === 'CRITICAL'
+  ) {
     return normalized
   }
   return null
@@ -613,7 +619,7 @@ async function hydrateManualAlertLevels(list: StrategicIndicator[]): Promise<Str
       }
     })
   } catch (alertError) {
-    logger.warn('[Strategic Store] 手动预警等级加载失败，跳过预警等级回显', alertError)
+    logger.warn('[Strategic Store] 手动进度等级加载失败，跳过进度等级回显', alertError)
     return list
   }
 }
@@ -893,7 +899,7 @@ export const useStrategicStore = defineStore('strategic', () => {
   async function updateManualAlertLevel(id: string, severity: ManualAlertSeverity) {
     try {
       if (!/^\d+$/.test(id)) {
-        throw new Error(`指标 ${id} 尚未持久化，无法设置预警等级`)
+        throw new Error(`指标 ${id} 尚未持久化，无法设置进度等级`)
       }
 
       await alertApi.setManualAlertLevel(id, severity)

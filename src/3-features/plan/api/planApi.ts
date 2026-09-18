@@ -2253,6 +2253,7 @@ export const indicatorFillApi = {
         indicatorName: String(item.indicator_name || ''),
         progress: Number(item.progress),
         content: String(item.content || ''),
+        selfRating: (item as { selfRating?: string }).selfRating,
         attachmentIds: Array.isArray((item as { attachment_ids?: unknown[] }).attachment_ids)
           ? ((item as { attachment_ids?: unknown[] }).attachment_ids ?? [])
               .map(value => Number(value))
@@ -2273,7 +2274,7 @@ export const indicatorFillApi = {
       const createResponse = await apiClient.post<ApiResponse<PlanReportSimpleResponse>>(
         '/reports',
         {
-          reportMonth: context.reportMonth,
+          reportMonth: form.reportMonth || context.reportMonth,
           reportOrgId: context.reportOrgId,
           reportOrgType: context.reportOrgType,
           planId: context.planId,
@@ -2306,6 +2307,7 @@ export const indicatorFillApi = {
           progress: item.progress,
           issues: item.content,
           nextPlan: item.content,
+          selfRating: item.selfRating,
           attachmentIds: item.attachmentIds
         }))
       }
@@ -2463,6 +2465,30 @@ export const indicatorFillApi = {
   }> {
     const reports = await loadPlanReportsByPlanId(Number(planId))
     return resolveCurrentMonthPlanReportSummaries(reports, reportOrgId, reportMonth)
+  },
+
+  /**
+   * 获取指定计划下某组织已存在上报的报告月份集合（YYYYMM）。
+   * 用于「归属月份只能选最早未填报月」的前端锁定（B6 会议定案）。
+   * 加载失败时返回 null（与「确实没有上报记录」的空集合区分开），由调用方降级处理。
+   */
+  async getExistingReportMonths(
+    planId: number | string,
+    reportOrgId: number
+  ): Promise<string[] | null> {
+    try {
+      const reports = await loadPlanReportsByPlanId(Number(planId))
+      const months = new Set<string>()
+      reports.forEach(report => {
+        if (Number(report.reportOrgId) === Number(reportOrgId) && report.reportMonth) {
+          months.add(String(report.reportMonth))
+        }
+      })
+      return Array.from(months)
+    } catch (error) {
+      logger.warn('[indicatorFillApi] 加载计划已上报月份集合失败:', error)
+      return null
+    }
   },
 
   async submitCurrentMonthPlanReport(

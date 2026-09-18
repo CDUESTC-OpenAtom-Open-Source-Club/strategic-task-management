@@ -78,6 +78,12 @@ export interface DashboardData {
   totalScore: number
   basicScore: number
   developmentScore: number
+  /** 进度等级分布（P4 A2 定案：取消分数，改等级分布） */
+  levelDistribution?: {
+    ahead: number
+    normal: number
+    delayed: number
+  }
   completionRate: number
   warningCount: number
   totalIndicators: number
@@ -668,11 +674,16 @@ export interface IndicatorFillForm {
   progress: number
   content: string
   attachments?: File[]
+  /** 自评进度等级（P1）：AHEAD=超前 / NORMAL=正常 / DELAYED=延期 */
+  selfRating?: string
+  /** 手工指定归属月份（P1）：YYYYMM；仅可选最早未填报月，后端强校验 */
+  reportMonth?: string
   batch_items?: Array<{
     indicator_id: string | number
     indicator_name?: string
     progress: number
     content: string
+    selfRating?: string
     attachment_ids?: number[]
   }>
 }

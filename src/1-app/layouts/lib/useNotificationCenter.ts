@@ -2,6 +2,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { Bell } from '@element-plus/icons-vue'
 import type { Message } from '@/shared/types'
+import { useApprovalCenter } from '@/features/approval/lib/useApprovalCenter'
 import { useMessageStore } from '@/features/messages/model/message'
 import { formatDateTime } from '@/shared/lib/utils'
 
@@ -36,7 +37,16 @@ export function useNotificationCenter() {
     }
   }
 
+  // P7：铃铛点击直达审批中心（有可打开的审批上下文时）；
+  // 否则退回消息中心。审批中心为 AppLayout 全局抽屉，红点/未读数不变。
+  const { toggleApprovalCenter, approvalCenterVisible } = useApprovalCenter()
+
   const handleNotificationClick = () => {
+    if (!approvalCenterVisible.value) {
+      toggleApprovalCenter(null)
+      return
+    }
+    toggleApprovalCenter(null)
     router.push('/messages')
   }
 

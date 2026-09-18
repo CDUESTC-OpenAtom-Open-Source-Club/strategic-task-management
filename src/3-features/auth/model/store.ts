@@ -86,6 +86,17 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  /**
+   * 缓存用户是否携带后端角色编码（ROLE_*）。
+   * 审批按钮可见性依赖 roles 做角色匹配；旧缓存可能只有 role 没有 roles，
+   * 缺失时必须在会话恢复后主动 fetchUser() 自愈，否则审批人永远看不到通过/驳回按钮。
+   */
+  const hasRoleCodes = (candidate: User): boolean => {
+    return (
+      Array.isArray(candidate.roles) && candidate.roles.some(code => String(code).trim() !== '')
+    )
+  }
+
   // ============ Getters ============
   const isAuthenticated = computed(() => !!token.value && !!user.value)
 
@@ -441,8 +452,8 @@ export const useAuthStore = defineStore('auth', () => {
           token.value = memoryToken
           localStorage.setItem('user', JSON.stringify(parsedUser))
           logger.debug('[Auth] 从内存恢复会?', parsedUser.name, parsedUser.role)
-          if (!String(parsedUser.orgType ?? '').trim()) {
-            logger.debug('[Auth] 本地缓存缺少 orgType，主动刷新当前用户')
+          if (!String(parsedUser.orgType ?? '').trim() || !hasRoleCodes(parsedUser)) {
+            logger.debug('[Auth] 本地缓存缺少 orgType 或 roles，主动刷新当前用户')
             await fetchUser()
           }
           authInitialized.value = true
@@ -475,8 +486,8 @@ export const useAuthStore = defineStore('auth', () => {
             token.value = newToken
             persistUser(parsedUser)
             logger.debug('[Auth] 会话恢复成功:', parsedUser.name)
-            if (!String(parsedUser.orgType ?? '').trim()) {
-              logger.debug('[Auth] 恢复会话后缺少 orgType，主动刷新当前用户')
+            if (!String(parsedUser.orgType ?? '').trim() || !hasRoleCodes(parsedUser)) {
+              logger.debug('[Auth] 恢复会话后缺少 orgType 或 roles，主动刷新当前用户')
               await fetchUser()
             }
           } else {

@@ -55,6 +55,11 @@ const {
   currentNodeId,
   currentPendingPlanTask,
   currentPlanApprovalItems,
+  planApprovalFilterOrg,
+  planApprovalFilterMonth,
+  planApprovalOrgOptions,
+  planApprovalMonthOptions,
+  filteredPlanApprovalItems,
   currentPlanApprovalSummary,
   currentPlanEntityIds,
   currentPlanInstanceId,
@@ -89,6 +94,8 @@ const {
   handleAddNode,
   handleApplyTemplate,
   handleApprovePlanBatch,
+  planAppraisalLevel,
+  formatAppraisalLevel,
   handleClose,
   handleWorkflowNodeAttachmentOpen,
   handleRejectPlanBatch,
@@ -97,6 +104,7 @@ const {
   hasApprovalData,
   hasDisplayableApprovalContent,
   hasPlanApprovalPermission,
+  hasAnyPlanApprovalRole,
   hasPlanWorkflowData,
   hasWorkflowTabContent,
   historicalPlanApprovalItems,
@@ -165,7 +173,6 @@ const {
   resolveWorkflowTaskDisplayOperatorName,
   resolveWorkflowTaskOperatorName,
   router,
-  savePlanReportIndicatorProgress,
   scopedDepartmentPlan,
   scopedPendingPlanCount,
   scopedPlanApprovals,
@@ -173,7 +180,6 @@ const {
   selectedHistoryInstanceDetail,
   selectedHistoryInstanceDetailLoading,
   selectedHistoryInstanceId,
-  setPlanReportProgressDraft,
   shouldDisplayWorkflowHistoryItem,
   showArchivedPlanWorkflowEmptyState,
   showCardHistoryEmptyState,
@@ -294,6 +300,39 @@ const displayedCurrentPlanApprovalName = computed(() => {
       <ElTabs v-model="activeTab" class="approval-tabs">
         <ElTabPane v-if="showPlanApprovals" name="pending-plans" label="计划审批">
           <div v-loading="planApprovalsLoading" class="plan-approval-pane">
+            <div
+              v-if="!selectedHistoryInstanceId && currentPlanApprovalItems.length > 0"
+              style="display: flex; gap: 8px; margin-bottom: 8px"
+            >
+              <el-select
+                v-model="planApprovalFilterOrg"
+                clearable
+                placeholder="按组织筛选"
+                size="small"
+                style="width: 160px"
+              >
+                <el-option
+                  v-for="name in planApprovalOrgOptions"
+                  :key="name"
+                  :label="name"
+                  :value="name"
+                />
+              </el-select>
+              <el-select
+                v-model="planApprovalFilterMonth"
+                clearable
+                placeholder="按月份筛选"
+                size="small"
+                style="width: 130px"
+              >
+                <el-option
+                  v-for="mth in planApprovalMonthOptions"
+                  :key="mth"
+                  :label="mth"
+                  :value="mth"
+                />
+              </el-select>
+            </div>
             <ElEmpty
               v-if="!planApprovalsLoading && !showPlanPendingCard"
               description="暂无审批中的计划"
@@ -344,6 +383,16 @@ const displayedCurrentPlanApprovalName = computed(() => {
                     <span class="label">当前步骤：</span>
                     <span class="value">{{ currentPlanApprovalSummary.currentStepName }}</span>
                   </div>
+                  <div
+                    v-if="formatStayDuration(currentPlanApprovalSummary?.createdAt)"
+                    class="info-row"
+                  >
+                    <el-icon><Timer /></el-icon>
+                    <span class="label">停留时长：</span>
+                    <span class="value">{{
+                      formatStayDuration(currentPlanApprovalSummary?.createdAt)
+                    }}</span>
+                  </div>
                   <div v-if="currentPlanOperationLabel" class="info-row">
                     <el-icon><Right /></el-icon>
                     <span class="label">当前操作：</span>
@@ -357,6 +406,22 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 </div>
                 <div class="card-actions">
                   <ElButton @click="openPlanApprovalDetails">查看详情</ElButton>
+                  <ElSelect
+                    v-if="
+                      hasPlanWorkflowData &&
+                      isPlanPendingApproval &&
+                      canCurrentUserHandlePlanApproval
+                    "
+                    v-model="planAppraisalLevel"
+                    size="small"
+                    clearable
+                    placeholder="鉴定等级"
+                    style="width: 118px; margin-right: 8px"
+                  >
+                    <ElOption label="超前完成" value="AHEAD" />
+                    <ElOption label="正常" value="NORMAL" />
+                    <ElOption label="延期" value="DELAYED" />
+                  </ElSelect>
                   <ElButton
                     v-if="
                       hasPlanWorkflowData &&
@@ -381,14 +446,14 @@ const displayedCurrentPlanApprovalName = computed(() => {
                   </ElButton>
                   <template v-if="!hasPlanWorkflowData">
                     <ElButton
-                      v-if="hasPlanApprovalPermission"
+                      v-if="hasAnyPlanApprovalRole"
                       type="success"
                       @click="handleApprovePlanBatch"
                     >
                       一键通过
                     </ElButton>
                     <ElButton
-                      v-if="hasPlanApprovalPermission"
+                      v-if="hasAnyPlanApprovalRole"
                       type="danger"
                       @click="handleRejectPlanBatch"
                     >
@@ -570,7 +635,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
 
         <div
           v-if="
-            (selectedHistoryInstanceId ? historicalPlanApprovalItems : currentPlanApprovalItems)
+            (selectedHistoryInstanceId ? historicalPlanApprovalItems : filteredPlanApprovalItems)
               .length > 0
           "
           class="plan-detail-list"
@@ -580,7 +645,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
               ? historicalPlanApprovalItems.filter(
                   historyItem => String(historyItem.instanceId) === selectedHistoryInstanceId
                 )
-              : currentPlanApprovalItems"
+              : filteredPlanApprovalItems"
             :key="item.instanceId"
             class="plan-detail-item"
           >
@@ -670,35 +735,8 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 </div>
                 <div class="snapshot-field">
                   <span class="snapshot-field-label">{{ displayedBusinessProgressLabel }}</span>
-                  <div v-if="indicator.canEditSubmittedProgress" class="snapshot-progress-editor">
-                    <ElInputNumber
-                      :model-value="indicator.submittedProgressDraft"
-                      :min="0"
-                      :max="100"
-                      :step="5"
-                      size="small"
-                      controls-position="right"
-                      class="snapshot-progress-input"
-                      @update:model-value="
-                        value =>
-                          setPlanReportProgressDraft(
-                            indicator.reportId,
-                            indicator.indicatorId,
-                            value ?? undefined
-                          )
-                      "
-                    />
-                    <span class="snapshot-progress-unit">%</span>
-                    <ElButton
-                      size="small"
-                      type="primary"
-                      :loading="indicator.isSavingSubmittedProgress"
-                      @click="savePlanReportIndicatorProgress(indicator)"
-                    >
-                      保存
-                    </ElButton>
-                  </div>
-                  <span v-else class="snapshot-field-value snapshot-field-value--strong">{{
+                  <!-- 会议定案：审批人不可修改下级填报内容，仅保留只读展示 -->
+                  <span class="snapshot-field-value snapshot-field-value--strong">{{
                     indicator.submittedProgress
                   }}</span>
                 </div>
@@ -715,6 +753,15 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 <div class="snapshot-section-title">{{ displayedBusinessCommentLabel }}</div>
                 <div class="snapshot-section-content">
                   {{ indicator.submittedComment || displayedBusinessEmptyCommentText }}
+                </div>
+              </div>
+
+              <div v-if="indicator.submittedSelfRating" class="snapshot-section">
+                <div class="snapshot-section-title">自评进度等级</div>
+                <div class="snapshot-section-content">
+                  <ElTag size="small" type="info">{{
+                    formatAppraisalLevel(indicator.submittedSelfRating)
+                  }}</ElTag>
                 </div>
               </div>
 

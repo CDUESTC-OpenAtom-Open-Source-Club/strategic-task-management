@@ -83,6 +83,7 @@ const {
   handleAddNode,
   handleApplyTemplate,
   handleApprovePlanBatch,
+  planAppraisalLevel,
   handleClose,
   handlePlanReportAttachmentOpen,
   handleRejectPlanBatch,
@@ -91,6 +92,7 @@ const {
   hasApprovalData,
   hasDisplayableApprovalContent,
   hasPlanApprovalPermission,
+  hasAnyPlanApprovalRole,
   hasPlanWorkflowData,
   hasWorkflowTabContent,
   historicalPlanApprovalItems,
@@ -151,7 +153,6 @@ const {
   resolveTaskStatusLabel,
   resolveTaskStatusTag,
   resolveWorkflowTaskOperatorName,
-  savePlanReportIndicatorProgress,
   scopedDepartmentPlan,
   scopedPendingPlanCount,
   scopedPlanApprovals,
@@ -159,7 +160,6 @@ const {
   selectedHistoryInstanceDetail,
   selectedHistoryInstanceDetailLoading,
   selectedHistoryInstanceId,
-  setPlanReportProgressDraft,
   shouldDisplayWorkflowHistoryItem,
   showArchivedPlanWorkflowEmptyState,
   showCardHistoryEmptyState,
@@ -336,6 +336,22 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 </div>
                 <div class="card-actions">
                   <el-button @click="openPlanApprovalDetails">查看详情</el-button>
+                  <el-select
+                    v-if="
+                      hasPlanWorkflowData &&
+                      isPlanPendingApproval &&
+                      canCurrentUserHandlePlanApproval
+                    "
+                    v-model="planAppraisalLevel"
+                    size="small"
+                    clearable
+                    placeholder="鉴定等级"
+                    style="width: 118px; margin-right: 8px"
+                  >
+                    <el-option label="超前完成" value="AHEAD" />
+                    <el-option label="正常" value="NORMAL" />
+                    <el-option label="延期" value="DELAYED" />
+                  </el-select>
                   <el-button
                     v-if="
                       hasPlanWorkflowData &&
@@ -360,14 +376,14 @@ const displayedCurrentPlanApprovalName = computed(() => {
                   </el-button>
                   <template v-if="!hasPlanWorkflowData">
                     <el-button
-                      v-if="hasPlanApprovalPermission"
+                      v-if="hasAnyPlanApprovalRole"
                       type="success"
                       @click="handleApprovePlanBatch"
                     >
                       一键通过
                     </el-button>
                     <el-button
-                      v-if="hasPlanApprovalPermission"
+                      v-if="hasAnyPlanApprovalRole"
                       type="danger"
                       @click="handleRejectPlanBatch"
                     >
@@ -638,35 +654,8 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 </div>
                 <div class="snapshot-field">
                   <span class="snapshot-field-label">{{ displayedBusinessProgressLabel }}</span>
-                  <div v-if="indicator.canEditSubmittedProgress" class="snapshot-progress-editor">
-                    <el-input-number
-                      :model-value="indicator.submittedProgressDraft"
-                      :min="0"
-                      :max="100"
-                      :step="5"
-                      size="small"
-                      controls-position="right"
-                      class="snapshot-progress-input"
-                      @update:model-value="
-                        value =>
-                          setPlanReportProgressDraft(
-                            indicator.reportId,
-                            indicator.indicatorId,
-                            value ?? undefined
-                          )
-                      "
-                    />
-                    <span class="snapshot-progress-unit">%</span>
-                    <el-button
-                      size="small"
-                      type="primary"
-                      :loading="indicator.isSavingSubmittedProgress"
-                      @click="savePlanReportIndicatorProgress(indicator)"
-                    >
-                      保存
-                    </el-button>
-                  </div>
-                  <span v-else class="snapshot-field-value snapshot-field-value--strong">{{
+                  <!-- 会议定案：审批人不可修改下级填报内容，仅保留只读展示 -->
+                  <span class="snapshot-field-value snapshot-field-value--strong">{{
                     indicator.submittedProgress
                   }}</span>
                 </div>

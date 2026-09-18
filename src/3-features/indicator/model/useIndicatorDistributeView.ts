@@ -365,6 +365,8 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   // 指标详情侧边栏
   const detailDrawerVisible = ref(false)
   const currentDetailIndicator = ref<StrategicIndicator | null>(null)
+  // P3 上报记录分区
+  const reportHistoryOpen = ref<string[]>([])
   const addRowFormRef = ref<HTMLElement | null>(null)
   const lastEditTime = ref(new Date().toLocaleString())
 
@@ -4119,8 +4121,8 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     return data
   })
 
-  // ==================== 子指标预警等级（与战略任务管理页共用后端能力） ====================
-  // 业务口径与战略任务管理页一致：计划正式下发后才能调整预警等级；
+  // ==================== 子指标进度等级（与战略任务管理页共用后端能力） ====================
+  // 业务口径与战略任务管理页一致：计划正式下发后才能调整进度等级；
   // 写权限当前仅战略部负责人/分管校领导/系统管理员（后端校验），职能部门后续放开时只需调整 canEditChildManualAlert。
   const MANUAL_ALERT_WRITE_ROLES = [
     'ROLE_STRATEGY_DEPT_HEAD',
@@ -4177,7 +4179,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       })
       childManualAlertLevels.value = next
     } catch (error) {
-      logger.warn('[IndicatorDistributeView] 加载子指标预警等级失败（不影响其它功能）:', error)
+      logger.warn('[IndicatorDistributeView] 加载子指标进度等级失败（不影响其它功能）:', error)
     } finally {
       isLoadingChildManualAlerts.value = false
     }
@@ -4193,44 +4195,39 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
   const handleChildManualAlertChange = async (
     child: StrategicIndicator,
-    selectedSeverity: ManualAlertSeverity
+    selectedSeverity: Exclude<ManualAlertSeverity, null> | ''
   ) => {
+    // '' 表示未评定，存储时落库为 null（与战略任务管理页同一套口径）
+    const severity: ManualAlertSeverity = selectedSeverity === '' ? null : selectedSeverity
     const previousSeverity = childManualAlertLevels.value[String(child.id)] ?? null
-    if (previousSeverity === selectedSeverity) {
+    if (previousSeverity === severity) {
       return
     }
 
-    const label =
-      selectedSeverity === null
-        ? '无预警'
-        : selectedSeverity === 'INFO'
-          ? '一般滞后'
-          : selectedSeverity === 'WARNING'
-            ? '严重滞后'
-            : '重大滞后'
+    const label = getChildManualAlertLabel(severity)
 
     try {
       await ElMessageBox.confirm(
-        `确认将「${child.name || '该子指标'}」的预警等级调整为「${label}」？确认后会通知对应下级部门。`,
-        '调整预警等级',
+        `确认将「${child.name || '该子指标'}」的进度等级调整为「${label}」？确认后会通知对应下级部门。`,
+        '调整进度等级',
         {
           confirmButtonText: '确认调整',
           cancelButtonText: '取消',
-          type: selectedSeverity ? 'warning' : 'info'
+          type: severity ? 'warning' : 'info'
         }
       )
 
       savingChildManualAlertId.value = String(child.id)
-      await alertApi.setManualAlertLevel(String(child.id), selectedSeverity)
+      await alertApi.setManualAlertLevel(String(child.id), severity)
       childManualAlertLevels.value = {
         ...childManualAlertLevels.value,
-        [String(child.id)]: selectedSeverity
+        [String(child.id)]: severity
       }
-      ElMessage.success(selectedSeverity ? '预警等级已调整，并已通知对应下级部门' : '预警已取消')
+      ElMessage.success(severity ? '进度等级已调整，并已通知对应下级部门' : '进度等级已恢复未评定')
     } catch (error) {
       if (error !== 'cancel' && error !== 'close') {
         ElMessage.error(
-          error instanceof Error && error.message ? error.message : '预警等级调整失败'
+          error instanceof Error && error.message ? error.message : '进度等级调整失败'
         )
       }
     } finally {
@@ -4239,31 +4236,28 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   }
 
   const getChildManualAlertLabel = (severity: ManualAlertSeverity): string => {
-    if (severity === 'INFO') {
-      return '一般滞后'
+    if (severity === 'AHEAD') {
+      return '超前完成'
+    }
+    if (severity === 'NORMAL') {
+      return '正常'
     }
     if (severity === 'WARNING') {
-      return '严重滞后'
+      return '延期'
     }
-    if (severity === 'CRITICAL') {
-      return '重大滞后'
-    }
-    return '无预警'
+    return '未评定'
   }
 
   const getChildManualAlertTagType = (
     severity: ManualAlertSeverity
   ): 'success' | 'info' | 'warning' | 'danger' => {
-    if (severity === 'INFO') {
-      return 'info'
+    if (severity === 'AHEAD' || severity === 'NORMAL') {
+      return 'success'
     }
     if (severity === 'WARNING') {
       return 'warning'
     }
-    if (severity === 'CRITICAL') {
-      return 'danger'
-    }
-    return 'success'
+    return 'info'
   }
 
   // 获取行的 class 名称（用于标识新增子指标行）
@@ -4277,6 +4271,8 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     }
     return ''
   }
+
+  const currentDetailId = computed(() => currentDetailIndicator.value?.id ?? null)
 
   return {
     _addNewChildRow,
@@ -4329,7 +4325,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     collegeOverallStatus,
     collegeTableData,
     collegeTotalWeight,
-    // ===== 子指标预警等级（与战略任务管理页同一后端能力；写权限后续按角色放开）=====
+    // ===== 子指标进度等级（与战略任务管理页同一后端能力；写权限后续按角色放开）=====
     canEditChildManualAlert,
     childManualAlertEditable,
     childManualAlertLevels,
@@ -4369,6 +4365,8 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     currentDepartmentPlanIndicators,
     currentDept,
     currentDetailIndicator,
+    reportHistoryOpen,
+    currentDetailId,
     currentDispatchWorkflowCode,
     currentPlanTaskTypeMap,
     currentSelectedCollegePlan,

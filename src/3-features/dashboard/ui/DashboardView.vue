@@ -8,8 +8,8 @@ import {
   Top,
   Close
 } from '@element-plus/icons-vue'
+import { useApprovalCenter } from '@/features/approval/lib/useApprovalCenter'
 import BreadcrumbNav from '@/shared/ui/layout/BreadcrumbNav.vue'
-import ScoreCompositionChart from '@/shared/ui/charts/ScoreCompositionChart.vue'
 import AlertDistributionChart from '@/shared/ui/charts/AlertDistributionChart.vue'
 import DepartmentProgressChart from './DepartmentProgressChart.vue'
 import TaskSankeyChart from '@/shared/ui/charts/TaskSankeyChart.vue'
@@ -133,6 +133,12 @@ const {
   strategicStore,
   timeContext
 } = useDashboardView(props)
+
+// P7 待办/已办入口：首页直接展示待办并直达审批中心
+const approvalCenterCard = useApprovalCenter()
+function openApprovalCenterFromDashboard() {
+  approvalCenterCard.openApprovalCenter(null)
+}
 </script>
 
 <template>
@@ -143,6 +149,21 @@ const {
         <el-button type="primary" :icon="Download" @click="handleExport">导出报表</el-button>
       </div>
     </div>
+
+    <!-- P7 待办/已办入口卡：待办直达审批中心 -->
+    <el-alert
+      v-if="(messageStore?.todoCount || 0) > 0"
+      type="warning"
+      :closable="false"
+      class="dashboard-todo-card"
+      @click="openApprovalCenterFromDashboard"
+    >
+      <template #title>
+        <span class="dashboard-todo-card__text">
+          您有 <strong>{{ messageStore?.todoCount || 0 }}</strong> 条待办尚未处理，点击进入审批中心
+        </span>
+      </template>
+    </el-alert>
 
     <!-- 降级模式提示 - Requirements 1.4, 10.5 -->
     <el-alert
@@ -256,18 +277,20 @@ const {
             <span class="summary-time">| UPDATE: {{ new Date().toLocaleDateString() }}</span>
           </div>
           <p class="summary-text">
-            全校战略执行总分 <span class="highlight-primary">{{ dashboardData.totalScore }}</span
-            >。
+            进度等级分布：超前完成
+            <span class="highlight-primary">{{ dashboardData.levelDistribution?.ahead ?? 0 }}</span>
+            项、正常 {{ dashboardData.levelDistribution?.normal ?? 0 }} 项、延期
+            {{ dashboardData.levelDistribution?.delayed ?? 0 }} 项。
             <template v-if="dashboardData.alertIndicators.severe > 0">
               {{ selectedMonth }}月存在
               <span class="highlight-danger"
-                >{{ dashboardData.alertIndicators.severe }} 项严重预警</span
+                >{{ dashboardData.alertIndicators.severe }} 项延期</span
               >
               任务需重点关注。
             </template>
             <template v-else>
               {{ selectedMonth }}月整体执行状态良好，<span class="highlight-success"
-                >无严重预警</span
+                >无延期指标</span
               >。
             </template>
             完成率达 <span class="highlight-success">{{ dashboardData.completionRate }}%</span>，
@@ -464,18 +487,12 @@ const {
                     <span class="status-dot"></span>正常 {{ selectedDeptStats.normal }}
                   </span>
                   <span
-                    class="status-summary-item warning"
-                    :class="{ active: selectedStatusFilter === 'warning' }"
-                    @click="handleStatusFilterClick('warning')"
-                  >
-                    <span class="status-dot"></span>预警 {{ selectedDeptStats.warning }}
-                  </span>
-                  <span
                     class="status-summary-item delayed"
                     :class="{ active: selectedStatusFilter === 'delayed' }"
                     @click="handleStatusFilterClick('delayed')"
                   >
-                    <span class="status-dot"></span>延期 {{ selectedDeptStats.delayed }}
+                    <span class="status-dot"></span>延期
+                    {{ selectedDeptStats.warning + selectedDeptStats.delayed }}
                   </span>
                 </div>
                 <div v-if="selectedDeptIndicators.length === 0" class="empty-indicator-list">
@@ -639,18 +656,12 @@ const {
                     <span class="status-dot"></span>正常 {{ monthIndicatorStats.normal }}
                   </span>
                   <span
-                    class="status-summary-item warning"
-                    :class="{ active: selectedStatusFilter === 'warning' }"
-                    @click="handleStatusFilterClick('warning')"
-                  >
-                    <span class="status-dot"></span>预警 {{ monthIndicatorStats.warning }}
-                  </span>
-                  <span
                     class="status-summary-item delayed"
                     :class="{ active: selectedStatusFilter === 'delayed' }"
                     @click="handleStatusFilterClick('delayed')"
                   >
-                    <span class="status-dot"></span>延期 {{ monthIndicatorStats.delayed }}
+                    <span class="status-dot"></span>延期
+                    {{ monthIndicatorStats.warning + monthIndicatorStats.delayed }}
                   </span>
                 </div>
                 <div v-if="monthIndicators.length === 0" class="empty-indicator-list">
@@ -889,18 +900,12 @@ const {
                     <span class="status-dot"></span>正常 {{ collegeMonthIndicatorStats.normal }}
                   </span>
                   <span
-                    class="status-summary-item warning"
-                    :class="{ active: selectedStatusFilter === 'warning' }"
-                    @click="handleStatusFilterClick('warning')"
-                  >
-                    <span class="status-dot"></span>预警 {{ collegeMonthIndicatorStats.warning }}
-                  </span>
-                  <span
                     class="status-summary-item delayed"
                     :class="{ active: selectedStatusFilter === 'delayed' }"
                     @click="handleStatusFilterClick('delayed')"
                   >
-                    <span class="status-dot"></span>延期 {{ collegeMonthIndicatorStats.delayed }}
+                    <span class="status-dot"></span>延期
+                    {{ collegeMonthIndicatorStats.warning + collegeMonthIndicatorStats.delayed }}
                   </span>
                 </div>
                 <div v-if="collegeMonthIndicators.length === 0" class="empty-indicator-list">
@@ -1081,27 +1086,75 @@ const {
             <template #header>
               <div class="card-header">
                 <div style="display: flex; align-items: center; gap: 4px">
-                  <span class="card-title">得分构成</span>
-                  <el-tooltip :content="helpTexts.scoreComposition" placement="top" effect="light">
+                  <span class="card-title">进度等级分布</span>
+                  <el-tooltip
+                    content="按人工鉴定进度等级统计：超前完成 / 正常 / 延期（A2 定案，取消分数）"
+                    placement="top"
+                    effect="light"
+                  >
                     <el-icon class="help-icon"><QuestionFilled /></el-icon>
                   </el-tooltip>
                 </div>
               </div>
             </template>
-            <ScoreCompositionChart
-              :basic-score="dashboardData.basicScore"
-              :development-score="dashboardData.developmentScore"
-            />
+            <div class="level-distribution">
+              <div class="level-distribution__item level-distribution__item--ahead">
+                <span class="level-distribution__num">{{
+                  dashboardData.levelDistribution?.ahead ?? 0
+                }}</span>
+                <span class="level-distribution__label">超前完成</span>
+              </div>
+              <div class="level-distribution__item level-distribution__item--normal">
+                <span class="level-distribution__num">{{
+                  dashboardData.levelDistribution?.normal ?? 0
+                }}</span>
+                <span class="level-distribution__label">正常</span>
+              </div>
+              <div class="level-distribution__item level-distribution__item--delayed">
+                <span class="level-distribution__num">{{
+                  dashboardData.levelDistribution?.delayed ?? 0
+                }}</span>
+                <span class="level-distribution__label">延期</span>
+              </div>
+            </div>
           </el-card>
         </el-col>
 
-        <!-- 预警分布 -->
+        <!-- 异动汇总（P5） -->
+        <el-col :xs="24" :md="8">
+          <el-card shadow="hover" class="chart-card card-animate">
+            <template #header>
+              <div class="card-header">
+                <span class="card-title">指标异动汇总</span>
+              </div>
+            </template>
+            <el-empty
+              v-if="(mutationSummary || []).length === 0"
+              description="当前无异动中的指标"
+              :image-size="60"
+            />
+            <ul v-else class="mutation-summary">
+              <li
+                v-for="item in mutationSummary || []"
+                :key="item.id"
+                class="mutation-summary__item"
+              >
+                <span class="mutation-summary__name">{{ item.indicator_desc }}</span>
+                <span class="mutation-summary__time">
+                  {{ item.mutation_started_at?.slice(0, 10) }} 起
+                </span>
+              </li>
+            </ul>
+          </el-card>
+        </el-col>
+
+        <!-- 进度等级分布 -->
         <el-col :xs="24" :md="8">
           <el-card shadow="hover" class="chart-card card-animate">
             <template #header>
               <div class="card-header">
                 <div style="display: flex; align-items: center; gap: 4px">
-                  <span class="card-title">预警分布</span>
+                  <span class="card-title">进度等级分布</span>
                   <el-tooltip :content="helpTexts.alertDistribution" placement="top" effect="light">
                     <el-icon class="help-icon"><QuestionFilled /></el-icon>
                   </el-tooltip>
@@ -1109,9 +1162,12 @@ const {
               </div>
             </template>
             <AlertDistributionChart
-              :severe="dashboardData.alertIndicators.severe"
-              :moderate="dashboardData.alertIndicators.moderate"
-              :normal="dashboardData.alertIndicators.normal"
+              :ahead="dashboardData.levelDistribution?.ahead ?? 0"
+              :normal="dashboardData.levelDistribution?.normal ?? 0"
+              :delayed="
+                (dashboardData.alertIndicators.severe || 0) +
+                (dashboardData.alertIndicators.moderate || 0)
+              "
               @click="handleAlertClick"
             />
           </el-card>
@@ -1398,4 +1454,54 @@ const {
   </ElDialog>
 </template>
 
-<style scoped src="./DashboardView.css"></style>
+<style scoped src="./DashboardView.css">
+.level-distribution {
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  padding: 12px 0;
+}
+.level-distribution__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.level-distribution__num {
+  font-size: 28px;
+  font-weight: 600;
+}
+.level-distribution__item--ahead .level-distribution__num {
+  color: #67c23a;
+}
+.level-distribution__item--normal .level-distribution__num {
+  color: #409eff;
+}
+.level-distribution__item--delayed .level-distribution__num {
+  color: #e6a23c;
+}
+.level-distribution__label {
+  font-size: 13px;
+  color: #606266;
+}
+
+.mutation-summary {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 180px;
+  overflow: auto;
+}
+.mutation-summary__item {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px dashed #ebeef5;
+  font-size: 13px;
+}
+.mutation-summary__time {
+  color: #909399;
+  white-space: nowrap;
+}
+</style>

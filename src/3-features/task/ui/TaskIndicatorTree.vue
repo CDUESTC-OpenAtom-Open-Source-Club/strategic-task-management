@@ -3,7 +3,7 @@ import { ref, computed, watch } from 'vue'
 import { Folder, Document, Warning, Connection } from '@element-plus/icons-vue'
 // eslint-disable-next-line no-restricted-syntax -- Backend-aligned types use strategic_task terminology
 import type { StrategicTask, StrategicIndicator } from '@/shared/types'
-import { useStrategicStore } from '@/stores/strategic'
+import { useStrategicStore } from '@/features/task/model/strategic'
 
 // 节点统计接口
 interface NodeStats {
@@ -320,7 +320,7 @@ const defaultExpandedKeys = computed(() => treeData.value.map(t => t.id))
                   <span class="stats-value">{{ data.stats.normal }}项</span>
                 </div>
                 <div class="stats-row warning">
-                  <span class="stats-label">预警:</span>
+                  <span class="stats-label">延期:</span>
                   <span class="stats-value">{{ data.stats.warning }}项</span>
                 </div>
                 <div class="stats-row ahead">

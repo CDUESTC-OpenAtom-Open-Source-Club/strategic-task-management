@@ -7,16 +7,19 @@ export type DashboardIndicatorStatus = 'normal' | 'ahead' | 'warning' | 'delayed
  *
  * 口径依据《SISM-业务口径决议录-2026-09-16》：
  * - 里程碑机制已移除，不再由里程碑到期日/目标进度推导状态（原实现依赖 indicator.milestones）。
- * - 预警/鉴定改为「纯人工判定」，沿用现有预警等级三档（正常/警告/严重）。
+ * - 预警/鉴定改为「纯人工判定」，沿用现有进度等级三档（正常/警告/严重）。
  * - 未下发（DRAFT）或未进入审批的指标不计入完成，维持原状。
  *
  * 判定顺序（先真实数据、后状态回退）：
- * 1. 指标自身人工预警等级（manualAlertLevel / alertLevel）
+ * 1. 指标自身人工进度等级（manualAlertLevel / alertLevel）
  * 2. 指标生命周期状态：未下发（DRAFT/REJECTED）→ 不算完成
  * 3. 进度：达到 100 → ahead（超前/达成）；有进度但未完成 → normal（正常推进）
  */
 const ALERT_LEVEL_TO_STATUS: Record<string, DashboardIndicatorStatus> = {
-  // 三档预警等级（正常/警告/严重）——对齐后端 warn_level 与前端预警判定
+  AHEAD: 'ahead',
+  NORMAL: 'normal',
+  DELAYED: 'delayed',
+  // 三档进度等级（正常/警告/严重）——对齐后端 warn_level 与前端预警判定
   OK: 'normal',
   NONE: 'normal',
   INFO: 'normal',
@@ -27,9 +30,7 @@ const ALERT_LEVEL_TO_STATUS: Record<string, DashboardIndicatorStatus> = {
   CRITICAL: 'delayed'
 }
 
-const resolveManualAlertStatus = (
-  indicator: Indicator
-): DashboardIndicatorStatus | null => {
+const resolveManualAlertStatus = (indicator: Indicator): DashboardIndicatorStatus | null => {
   const record = indicator as unknown as Record<string, unknown>
   const rawLevel =
     record.manualAlertLevel ?? record.alertLevel ?? record.warningLevel ?? record.alertSeverity
@@ -53,21 +54,16 @@ export const getIndicatorStatusAtMonth = (
   _month: number,
   _year: number
 ): DashboardIndicatorStatus => {
-  // 1. 人工预警等级优先（真实数据源）
+  // 1. 人工进度等级优先（真实数据源；P4 口径：只认人工判定，不再按进度推算）
   const alertStatus = resolveManualAlertStatus(indicator)
-  if (alertStatus && alertStatus !== 'normal') {
+  if (alertStatus) {
     return alertStatus
   }
 
-  // 2. 未下发/已驳回：不算完成，但也不虚报为正常
+  // 2. 未下发/已驳回/已下发但未评定：不虚报为正常，统一按预警侧呈现
+  //    （会议口径：只有被战略发展部确认的才算完成；第三级「按进度判完成」已删除）
   if (isNotDistributed(indicator)) {
     return 'warning'
-  }
-
-  // 3. 已下发：按进度判断推进状态
-  const progress = Number(indicator.progress ?? 0)
-  if (progress >= 100) {
-    return 'ahead'
   }
 
   return 'normal'
@@ -81,22 +77,6 @@ export const buildDashboardSummary = (
   const totalIndicators = indicators.length
   const basicIndicators = indicators.filter(i => i.type2 === '基础性')
   const developmentIndicators = indicators.filter(i => i.type2 === '发展性')
-
-  const basicScore =
-    basicIndicators.length > 0
-      ? Math.round(
-          basicIndicators.reduce((sum, i) => sum + Number(i.progress ?? 0), 0) /
-            basicIndicators.length
-        )
-      : 0
-  const developmentScore =
-    developmentIndicators.length > 0
-      ? Math.round(
-          (developmentIndicators.reduce((sum, i) => sum + Number(i.progress ?? 0), 0) /
-            developmentIndicators.length) *
-            0.2
-        )
-      : 0
 
   const statusCounts = indicators.reduce(
     (counts, indicator) => {
@@ -116,10 +96,18 @@ export const buildDashboardSummary = (
   const completedIndicators = statusCounts.ahead + statusCounts.normal
   const warningCount = statusCounts.warning + statusCounts.delayed
 
+  // A2 定案：取消「总评分/基础性得分/发展性得分」，改为进度等级分布
+  const levelDistribution = {
+    ahead: statusCounts.ahead,
+    normal: statusCounts.normal,
+    delayed: statusCounts.delayed
+  }
+
   return {
-    totalScore: basicScore + developmentScore,
-    basicScore,
-    developmentScore,
+    totalScore: 0,
+    basicScore: 0,
+    developmentScore: 0,
+    levelDistribution,
     completionRate:
       totalIndicators > 0 ? Math.round((completedIndicators / totalIndicators) * 100) : 0,
     warningCount,

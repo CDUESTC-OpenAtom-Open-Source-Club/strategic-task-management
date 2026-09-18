@@ -40,7 +40,7 @@ export function requiresApprovalCenterFallback(payload: ApprovalRoutePayload): b
     .trim()
     .toUpperCase()
 
-  return entityType === 'PLAN' || entityType === 'PLAN_REPORT'
+  return entityType === 'PLAN' || entityType === 'PLAN_REPORT' || entityType === 'INDICATOR'
 }
 
 function normalizeApprovalQueryValue(value?: number | string | null): string | null {

@@ -38,10 +38,10 @@ describe('canEditManualAlertLevel', () => {
 
 describe('MANUAL_ALERT_LOCKED_HINT', () => {
   it('explains why the control is locked', () => {
-    expect(MANUAL_ALERT_LOCKED_HINT).toBe('计划正式下发后才能调整预警等级')
+    expect(MANUAL_ALERT_LOCKED_HINT).toBe('计划正式下发后才能调整进度等级')
   })
 
   it('explains why the control is locked in read-only years', () => {
-    expect(MANUAL_ALERT_READONLY_HINT).toBe('历史年份只读，不能调整预警等级')
+    expect(MANUAL_ALERT_READONLY_HINT).toBe('历史年份只读，不能调整进度等级')
   })
 })

@@ -49,12 +49,11 @@ export function useDashboardView(props: DashboardViewProps) {
       '总得分 = 基础性指标得分 + 发展性指标得分，满分120分。基础性指标满分100分，发展性指标满分20分。',
     basicScore: '基础性指标是必须完成的核心指标，根据各指标完成进度加权计算得分，满分100分。',
     developmentScore: '发展性指标是鼓励性指标，完成后可获得额外加分，满分20分。',
-    warningCount:
-      '预警任务按所选月份状态统计：预警表示该指标被判定为存在偏差，严重表示偏差较大需上级介入。',
+    warningCount: '延期任务按所选月份状态统计：延期表示该指标进度等级被判定为滞后，需上级关注。',
     scoreComposition: '展示基础性指标和发展性指标的得分占比，帮助了解整体得分构成。',
-    alertDistribution:
-      '按所选月份统计指标状态：严重表示预警等级为严重或已驳回，中度表示预警等级为警告或尚未下发。',
-    completionRate: '完成率 = 所选月份状态为正常或超前的指标数 / 总指标数 × 100%。未下发或预警指标不计入完成。',
+    alertDistribution: '按所选月份统计指标进度等级分布：超前完成、正常、延期。',
+    completionRate:
+      '完成率 = 所选月份状态为正常或超前的指标数 / 总指标数 × 100%。未下发或延期指标不计入完成。',
     departmentProgress:
       '展示各部门的指标完成进度，进度条颜色表示状态：绿色（≥80%）、黄色（50%-80%）、红色（<50%）。',
     benchmark: '展示各部门执行进度与基准线对比，红色表示低于基准线，蓝色表示达标。',
@@ -90,7 +89,29 @@ export function useDashboardView(props: DashboardViewProps) {
   type IndicatorStatus = 'normal' | 'ahead' | 'warning' | 'delayed'
 
   // 月份筛选和下钻状态（用于堆叠柱状图）
-  const selectedMonth = ref(new Date().getMonth() + 1) // 默认当前月
+  // P4 口径：看板默认展示「上个月」；1 月时上个月为去年 12 月（仅月份数值，年份由 timeContext 承载）
+  const previousMonthNumber = new Date().getMonth() === 0 ? 12 : new Date().getMonth()
+
+  // P5 看板异动汇总：异动审批中的指标清单
+  const mutationSummary = ref<
+    Array<{
+      id: number
+      indicator_desc: string
+      weight_percent: number
+      mutation_started_at: string
+    }>
+  >([])
+  const loadMutationSummary = async () => {
+    try {
+      const { mutationApi } = await import('@/features/indicator/api/mutationApi')
+      const response = await mutationApi.inMutation()
+      mutationSummary.value = (response.data ?? []) as typeof mutationSummary.value
+    } catch {
+      mutationSummary.value = []
+    }
+  }
+
+  const selectedMonth = ref(previousMonthNumber) // 默认上月
   const isDrillDown = ref(false) // 是否处于下钻状态
   const drilledDept = ref('') // 下钻选中的部门
 
@@ -99,14 +120,14 @@ export function useDashboardView(props: DashboardViewProps) {
   const showMonthIndicatorCard = ref(false) // 控制月份指标卡片显示
 
   // ============ 学院看板状态（职能部门视角）============
-  const collegeSelectedMonth = ref(new Date().getMonth() + 1) // 学院看板选中月份
+  const collegeSelectedMonth = ref(previousMonthNumber) // 学院看板选中月份（默认上月）
   const isCollegeDrillDown = ref(false) // 学院看板下钻状态
   const drilledCollege = ref('') // 下钻选中的学院
   const selectedMonthInCollegeDrillDown = ref<number | null>(null) // 学院下钻后选中的月份
   const showCollegeMonthIndicatorCard = ref(false) // 学院月份指标卡片显示
 
   // ============ 分院排名看板状态 ============
-  const collegeRankingMonth = ref(new Date().getMonth() + 1) // 分院排名选中月份
+  const collegeRankingMonth = ref(previousMonthNumber) // 分院排名选中月份（默认上月）
   const selectedOwnerDeptFilter = ref<string>('all') // 职能部门筛选（战略发展部用）
 
   // 状态颜色配置
@@ -119,17 +140,17 @@ export function useDashboardView(props: DashboardViewProps) {
 
   // 计算指标状态的函数
   // 口径依据《SISM-业务口径决议录-2026-09-16》：里程碑移除后改由
-  // 「人工预警等级 + 生命周期状态 + 进度」推导，详见 dashboard/lib/summaryMetrics。
+  // 「人工进度等级 + 生命周期状态 + 进度」推导，详见 dashboard/lib/summaryMetrics。
   const getIndicatorStatus = (indicator: Indicator): IndicatorStatus => {
     return getIndicatorStatusAtMonth(indicator, selectedMonth.value, timeContext.currentYear)
   }
 
-  // 获取状态显示文本
+  // 获取状态显示文本（三档口径：原「预警」状态并入「延期」展示）
   const getStatusText = (status: IndicatorStatus): string => {
     const statusMap: Record<IndicatorStatus, string> = {
       normal: '正常',
       ahead: '超前完成',
-      warning: '预警',
+      warning: '延期',
       delayed: '延期'
     }
     return statusMap[status]
@@ -247,12 +268,16 @@ export function useDashboardView(props: DashboardViewProps) {
       }))
   })
 
-  // 筛选后的指标列表（根据状态筛选）
+  // 筛选后的指标列表（根据状态筛选；三档口径：选「延期」时包含原预警状态）
   const filteredDeptIndicators = computed(() => {
     if (!selectedStatusFilter.value) {
       return selectedDeptIndicators.value
     }
-    return selectedDeptIndicators.value.filter(i => i.status === selectedStatusFilter.value)
+    return selectedDeptIndicators.value.filter(i =>
+      selectedStatusFilter.value === 'delayed'
+        ? i.status === 'delayed' || i.status === 'warning'
+        : i.status === selectedStatusFilter.value
+    )
   })
 
   // 点击状态筛选
@@ -395,12 +420,16 @@ export function useDashboardView(props: DashboardViewProps) {
       }))
   })
 
-  // 月份指标筛选后的列表
+  // 月份指标筛选后的列表（三档口径：选「延期」时包含原预警状态）
   const filteredMonthIndicators = computed(() => {
     if (!selectedStatusFilter.value) {
       return monthIndicators.value
     }
-    return monthIndicators.value.filter(i => i.status === selectedStatusFilter.value)
+    return monthIndicators.value.filter(i =>
+      selectedStatusFilter.value === 'delayed'
+        ? i.status === 'delayed' || i.status === 'warning'
+        : i.status === selectedStatusFilter.value
+    )
   })
 
   // 月份指标状态统计
@@ -632,7 +661,12 @@ export function useDashboardView(props: DashboardViewProps) {
     if (!selectedStatusFilter.value) {
       return collegeMonthIndicators.value
     }
-    return collegeMonthIndicators.value.filter(i => i.status === selectedStatusFilter.value)
+    // 三档口径：选「延期」时包含原预警状态
+    return collegeMonthIndicators.value.filter(i =>
+      selectedStatusFilter.value === 'delayed'
+        ? i.status === 'delayed' || i.status === 'warning'
+        : i.status === selectedStatusFilter.value
+    )
   })
 
   // 学院月份指标状态统计
@@ -1108,7 +1142,7 @@ export function useDashboardView(props: DashboardViewProps) {
           指标总数: item.totalIndicators,
           已完成: item.completedIndicators,
           进行中: item.totalIndicators - item.completedIndicators,
-          预警数: item.alertCount,
+          延期数: item.alertCount,
           状态: item.status === 'success' ? '优秀' : item.status === 'warning' ? '良好' : '需改进'
         }))
 
@@ -1241,16 +1275,43 @@ export function useDashboardView(props: DashboardViewProps) {
     dashboard: (typeof filteredDeptIndicators.value)[number]
   } | null>(null)
 
-  const handleIndicatorRowClick = (indicator: { id?: string | number; name?: string }) => {
+  const handleIndicatorRowClick = (indicator: {
+    id?: string | number
+    name?: string
+    responsibleDept?: string
+  }) => {
     const pool = [
       ...filteredDeptIndicators.value,
       ...filteredMonthIndicators.value,
       ...filteredCollegeMonthIndicators.value
     ]
-    const match = pool.find(item => String(item.id) === String(indicator.id))
-    if (match) {
-      selectedIndicatorDetail.value = { dashboard: match }
+    const match = pool.find(item => String(item.id) === String(indicator.id)) as
+      | (typeof filteredDeptIndicators.value)[number]
+      | undefined
+    if (!match) {
+      return
     }
+
+    // P4 点行下钻：行所属部门与当前下钻部门不同且属于可下钻层级时，驱动层级切换
+    const rowDept = String(
+      (match as { responsibleDept?: string }).responsibleDept ??
+        (match as { department?: string }).department ??
+        ''
+    )
+    const currentDrilled = String(drilledDept.value || '')
+    if (rowDept && rowDept !== currentDrilled && rowDept !== props.departmentName) {
+      const isCollege =
+        String((match as { targetOrgType?: string }).targetOrgType ?? '').toLowerCase() ===
+          'academic' || rowDept.includes('学院')
+      try {
+        dashboardStore.drillDownToDepartment(rowDept, isCollege ? 'college' : 'functional')
+        return
+      } catch {
+        // 下钻失败则退回详情抽屉
+      }
+    }
+
+    selectedIndicatorDetail.value = { dashboard: match }
   }
 
   const handleCloseIndicatorDetail = () => {
@@ -1305,7 +1366,7 @@ export function useDashboardView(props: DashboardViewProps) {
         gradient: 'success'
       },
       {
-        label: '严重预警任务',
+        label: '延期任务',
         helpText: helpTexts.warningCount,
         value: data.alertIndicators.severe,
         unit: '项',
@@ -1634,16 +1695,14 @@ export function useDashboardView(props: DashboardViewProps) {
             tooltip += `${params[0].name}<br/>`
             tooltip += `<span style="color: ${statusColors.ahead}">●</span> 超前: ${dataItem?.ahead || 0}<br/>`
             tooltip += `<span style="color: ${statusColors.normal}">●</span> 正常: ${dataItem?.normal || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.warning}">●</span> 预警: ${dataItem?.warning || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.delayed}">●</span> 延期: ${dataItem?.delayed || 0}<br/>`
+            tooltip += `<span style="color: ${statusColors.delayed}">●</span> 延期: ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}<br/>`
             tooltip += `总计: ${dataItem?.total || 0}`
           } else {
             // 部门视图显示统计
             tooltip += `${selectedMonth.value}月完成情况<br/>`
             tooltip += `<span style="color: ${statusColors.ahead}">■</span> 超前: ${dataItem?.ahead || 0}<br/>`
             tooltip += `<span style="color: ${statusColors.normal}">■</span> 正常: ${dataItem?.normal || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.warning}">■</span> 预警: ${dataItem?.warning || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.delayed}">■</span> 延期: ${dataItem?.delayed || 0}<br/>`
+            tooltip += `<span style="color: ${statusColors.delayed}">■</span> 延期: ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}<br/>`
             tooltip += `总计: ${dataItem?.total || 0}<br/>`
             tooltip += `<span style="color: #409eff; font-size: 11px;">点击查看月度趋势</span>`
           }
@@ -1651,7 +1710,7 @@ export function useDashboardView(props: DashboardViewProps) {
         }
       },
       legend: {
-        data: ['超前完成', '正常', '预警', '延期'],
+        data: ['超前完成', '正常', '延期'],
         bottom: 0,
         left: 'center',
         itemWidth: 12,
@@ -1718,16 +1777,7 @@ export function useDashboardView(props: DashboardViewProps) {
           data: data.map(d => d.normal || 0)
         },
         {
-          name: '预警',
-          type: 'bar',
-          stack: 'total',
-          barWidth: isDrillDown.value ? 40 : 30,
-          itemStyle: {
-            color: statusColors.warning
-          },
-          data: data.map(d => d.warning || 0)
-        },
-        {
+          // 三档口径：原「预警」桶并入「延期」展示
           name: '延期',
           type: 'bar',
           stack: 'total',
@@ -1736,7 +1786,7 @@ export function useDashboardView(props: DashboardViewProps) {
             color: statusColors.delayed,
             borderRadius: isDrillDown.value ? [0, 0, 0, 0] : [0, 4, 4, 0]
           },
-          data: data.map(d => d.delayed || 0)
+          data: data.map(d => (d.warning || 0) + (d.delayed || 0))
         }
       ]
     })
@@ -1969,15 +2019,13 @@ export function useDashboardView(props: DashboardViewProps) {
             tooltip += `${params[0].name}<br/>`
             tooltip += `<span style="color: ${statusColors.ahead}">●</span> 超前: ${dataItem?.ahead || 0}<br/>`
             tooltip += `<span style="color: ${statusColors.normal}">●</span> 正常: ${dataItem?.normal || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.warning}">●</span> 预警: ${dataItem?.warning || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.delayed}">●</span> 延期: ${dataItem?.delayed || 0}<br/>`
+            tooltip += `<span style="color: ${statusColors.delayed}">●</span> 延期: ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}<br/>`
             tooltip += `总计: ${dataItem?.total || 0}`
           } else {
             tooltip += `${collegeSelectedMonth.value}月完成情况<br/>`
             tooltip += `<span style="color: ${statusColors.ahead}">■</span> 超前: ${dataItem?.ahead || 0}<br/>`
             tooltip += `<span style="color: ${statusColors.normal}">■</span> 正常: ${dataItem?.normal || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.warning}">■</span> 预警: ${dataItem?.warning || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.delayed}">■</span> 延期: ${dataItem?.delayed || 0}<br/>`
+            tooltip += `<span style="color: ${statusColors.delayed}">■</span> 延期: ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}<br/>`
             tooltip += `总计: ${dataItem?.total || 0}<br/>`
             tooltip += `<span style="color: #409eff; font-size: 11px;">点击查看月度趋势</span>`
           }
@@ -1985,7 +2033,7 @@ export function useDashboardView(props: DashboardViewProps) {
         }
       },
       legend: {
-        data: ['超前完成', '正常', '预警', '延期'],
+        data: ['超前完成', '正常', '延期'],
         bottom: 0,
         left: 'center',
         itemWidth: 12,
@@ -2052,16 +2100,7 @@ export function useDashboardView(props: DashboardViewProps) {
           data: data.map(d => d.normal || 0)
         },
         {
-          name: '预警',
-          type: 'bar',
-          stack: 'total',
-          barWidth: isCollegeDrillDown.value ? 40 : 30,
-          itemStyle: {
-            color: statusColors.warning
-          },
-          data: data.map(d => d.warning || 0)
-        },
-        {
+          // 三档口径：原「预警」桶并入「延期」展示
           name: '延期',
           type: 'bar',
           stack: 'total',
@@ -2070,7 +2109,7 @@ export function useDashboardView(props: DashboardViewProps) {
             color: statusColors.delayed,
             borderRadius: isCollegeDrillDown.value ? [0, 0, 0, 0] : [0, 4, 4, 0]
           },
-          data: data.map(d => d.delayed || 0)
+          data: data.map(d => (d.warning || 0) + (d.delayed || 0))
         }
       ]
     })
@@ -2184,8 +2223,7 @@ export function useDashboardView(props: DashboardViewProps) {
                 <div style="margin-top: 6px; padding-top: 6px; border-top: 1px dashed #e4e7ed;">
                   <span style="color: #67c23a; margin-right: 8px;">超前 ${dataItem?.ahead || 0}</span>
                   <span style="color: #409eff; margin-right: 8px;">正常 ${dataItem?.normal || 0}</span>
-                  <span style="color: #e6a23c; margin-right: 8px;">预警 ${dataItem?.warning || 0}</span>
-                  <span style="color: #f56c6c;">延期 ${dataItem?.delayed || 0}</span>
+                  <span style="color: #f56c6c;">延期 ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}</span>
                 </div>`
         }
       },
@@ -2482,6 +2520,8 @@ export function useDashboardView(props: DashboardViewProps) {
     selectedDeptIndicators,
     selectedDeptStats,
     selectedMonth,
+    mutationSummary,
+    loadMutationSummary,
     selectedMonthInCollegeDrillDown,
     selectedMonthInDrillDown,
     selectedOwnerDeptFilter,

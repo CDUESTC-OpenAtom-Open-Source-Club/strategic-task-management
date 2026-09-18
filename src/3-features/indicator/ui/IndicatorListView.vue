@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import { ref } from 'vue'
 import {
   Plus,
@@ -123,6 +124,8 @@ const {
   currentViewingOrgId,
   delay,
   detailDrawerVisible,
+  reportHistoryOpen,
+  currentDetailId,
   editingField,
   editingIndicatorField,
   editingIndicatorId,
@@ -284,6 +287,7 @@ const indicatorListExporting = ref(false)
 
 const indicatorListExportColumns: ExcelExportColumn<StrategicIndicator>[] = [
   { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
+  { header: '内部ID', width: 12, align: 'center', getValue: row => row.id ?? '-' },
   { header: '来源部门', width: 18, getValue: row => row.ownerDept || '-' },
   { header: '责任部门', width: 18, getValue: row => row.responsibleDept || '-' },
   { header: '战略任务', width: 28, getValue: row => row.taskContent || '-' },
@@ -298,7 +302,7 @@ const indicatorListExportColumns: ExcelExportColumn<StrategicIndicator>[] = [
     getValue: row => formatProgress(getDisplayProgress(row), getDisplayedReportedProgress(row))
   },
   {
-    header: '预警等级判定',
+    header: '进度等级判定',
     width: 18,
     align: 'center',
     getValue: row => getManualAlertLabel(row.manualAlertSeverity)
@@ -339,10 +343,11 @@ const manualAlertOptions: Array<{
   value: ManualAlertSeverity
   type: 'success' | 'info' | 'warning' | 'danger'
 }> = [
-  { label: '无预警', value: null, type: 'success' },
-  { label: '一般滞后', value: 'INFO', type: 'info' },
-  { label: '严重滞后', value: 'WARNING', type: 'warning' },
-  { label: '重大滞后', value: 'CRITICAL', type: 'danger' }
+  // 进度等级三档（与战略任务管理页 manualAlertOptions 一致）：存储码沿用 alert severity
+  { label: '未评定', value: null, type: 'info' },
+  { label: '超前完成', value: 'AHEAD', type: 'success' },
+  { label: '正常', value: 'NORMAL', type: 'success' },
+  { label: '延期', value: 'DELAYED', type: 'warning' }
 ]
 
 const getManualAlertOption = (severity?: ManualAlertSeverity) =>
@@ -679,25 +684,7 @@ const handleExportIndicatorList = async () => {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column prop="progress" label="进度" width="150" align="center">
-                <template #default="{ row }">
-                  <div class="progress-cell">
-                    <span class="progress-number" :class="getProgressStatusClass(row)">
-                      {{ getDisplayProgress(row) }}%
-                    </span>
-                    <el-tooltip
-                      v-if="shouldShowReportedProgress(row)"
-                      content="填报进度"
-                      placement="top"
-                    >
-                      <span class="reported-progress"
-                        >({{ getDisplayedReportedProgress(row) }}%)</span
-                      >
-                    </el-tooltip>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column label="预警等级判定" width="150" align="center">
+              <el-table-column label="进度等级判定" width="150" align="center">
                 <template #default="{ row }">
                   <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
                     {{ getManualAlertLabel(row.manualAlertSeverity) }}
@@ -892,7 +879,7 @@ const handleExportIndicatorList = async () => {
             </template>
             <span v-else style="color: #909399">暂无填报</span>
           </el-descriptions-item>
-          <el-descriptions-item label="预警等级判定">
+          <el-descriptions-item label="进度等级判定">
             <el-tag :type="getManualAlertTagType(currentDetail.manualAlertSeverity)" size="small">
               {{ getManualAlertLabel(currentDetail.manualAlertSeverity) }}
             </el-tag>
@@ -928,6 +915,15 @@ const handleExportIndicatorList = async () => {
           </div>
         </div>
       </div>
+
+      <el-collapse v-model="reportHistoryOpen" class="report-history-collapse">
+        <el-collapse-item title="上报记录（历次填报 / 含被驳回）" name="history">
+          <IndicatorFillHistory
+            v-if="reportHistoryOpen?.includes('history') && currentDetailId"
+            :indicator-id="currentDetailId"
+          />
+        </el-collapse-item>
+      </el-collapse>
     </el-drawer>
 
     <!-- 进度填报弹窗 -->
@@ -961,6 +957,32 @@ const handleExportIndicatorList = async () => {
 
         <!-- 填报表单 -->
         <el-form label-width="100px" class="report-form">
+          <el-form-item label="归属月份" required>
+            <el-select
+              v-model="reportForm.reportMonth"
+              placeholder="选择归属月份"
+              style="width: 200px"
+            >
+              <el-option
+                v-for="m in reportMonthOptions"
+                :key="m.value"
+                :label="m.label"
+                :value="m.value"
+              />
+            </el-select>
+            <span class="form-hint">按规则只能填报最早未填报月份</span>
+          </el-form-item>
+          <el-form-item label="自评进度等级" required>
+            <el-select
+              v-model="reportForm.selfRating"
+              placeholder="请自评本月进度"
+              style="width: 200px"
+            >
+              <el-option label="超前完成" value="AHEAD" />
+              <el-option label="正常" value="NORMAL" />
+              <el-option label="延期" value="DELAYED" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="填报进度" required>
             <el-input-number
               v-model="reportForm.newProgress"

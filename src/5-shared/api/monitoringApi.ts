@@ -58,7 +58,14 @@ export interface AlertStats {
   }
 }
 
-export type ManualAlertSeverity = 'INFO' | 'WARNING' | 'CRITICAL' | null
+export type ManualAlertSeverity =
+  | 'AHEAD'
+  | 'NORMAL'
+  | 'DELAYED'
+  | 'INFO'
+  | 'WARNING'
+  | 'CRITICAL'
+  | null
 
 type ApiEnvelope<T> = {
   code?: number

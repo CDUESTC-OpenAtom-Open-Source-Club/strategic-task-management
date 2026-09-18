@@ -26,6 +26,7 @@ import {
 } from '@/shared/lib/export/excel'
 import { DistributionApprovalProgressDrawer } from '@/features/approval'
 import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
+import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import {
   useIndicatorDistributeView,
   type IndicatorDistributeViewProps
@@ -133,6 +134,8 @@ const {
   deletingChildId,
   departmentAliasNameMap,
   detailDrawerVisible,
+  reportHistoryOpen,
+  currentDetailId,
   distributionApprovalButtonText,
   distributionApprovalButtonType,
   distributionRecordCount,
@@ -261,7 +264,7 @@ type DistributionExportChild = Partial<StrategicIndicator> & {
   pendingAttachmentDetails?: unknown[]
 }
 
-// 预警等级判定（与战略任务管理页同一套选项；当前编辑权限仅战略部负责人/分管校领导/系统管理员）
+// 进度等级判定（与战略任务管理页同一套选项；当前编辑权限仅战略部负责人/分管校领导/系统管理员）
 type ManualAlertSelectValue = Exclude<ManualAlertSeverity, null> | ''
 
 const manualAlertOptions: Array<{
@@ -269,10 +272,11 @@ const manualAlertOptions: Array<{
   value: ManualAlertSelectValue
   type: 'success' | 'info' | 'warning' | 'danger'
 }> = [
-  { label: '无预警', value: '', type: 'success' },
-  { label: '一般滞后', value: 'INFO', type: 'info' },
-  { label: '严重滞后', value: 'WARNING', type: 'warning' },
-  { label: '重大滞后', value: 'CRITICAL', type: 'danger' }
+  // 进度等级三档（2026-09-17 定案）：存储码沿用 alert severity，新增 AHEAD/NORMAL
+  { label: '未评定', value: '', type: 'info' },
+  { label: '超前完成', value: 'AHEAD', type: 'success' },
+  { label: '正常', value: 'NORMAL', type: 'success' },
+  { label: '延期', value: 'DELAYED', type: 'warning' }
 ]
 
 interface DistributionExportRow {
@@ -305,6 +309,12 @@ const distributionExportCollegesIndeterminate = computed(
 )
 
 const distributionExportColumns: ExcelExportColumn<DistributionExportRow>[] = [
+  {
+    header: '内部ID',
+    width: 12,
+    align: 'center',
+    getValue: row => (row as { id?: number | string }).id ?? '-'
+  },
   { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
   { header: '学院', width: 20, getValue: row => row.exportCollege },
   { header: '父级战略任务', width: 28, getValue: row => row.taskTitle || '-' },
@@ -328,7 +338,7 @@ const distributionExportColumns: ExcelExportColumn<DistributionExportRow>[] = [
       )
   },
   {
-    header: '预警等级判定',
+    header: '进度等级判定',
     width: 18,
     align: 'center',
     getValue: row => getChildManualAlertLabel(getChildManualAlertSeverity(row.child))
@@ -535,7 +545,7 @@ const currentDistributionImportCycleId = computed(() => {
 })
 
 // 导入入口暂不在页面显示，保留原有实现，后续恢复时只需切回 true。
-const distributionImportEnabled = false
+const distributionImportEnabled = true
 const distributionImportDisabledReason = '导入功能暂不启用'
 
 const openDistributionImportDialog = () => {
@@ -989,8 +999,8 @@ const handleDistributionImportCommitted = async () => {
 
                 <!-- 学院模式下不显示学院列 -->
 
-                <!-- 预警等级判定列（按业务要求替代原里程碑列；控件与战略任务管理页一致） -->
-                <el-table-column label="预警等级判定" width="140" align="center">
+                <!-- 进度等级判定列（按业务要求替代原里程碑列；控件与战略任务管理页一致） -->
+                <el-table-column label="进度等级判定" width="140" align="center">
                   <template #default="{ row }">
                     <template v-if="row.type !== 'child'">
                       <span class="manual-alert-placeholder">-</span>
@@ -1000,7 +1010,7 @@ const handleDistributionImportCommitted = async () => {
                         <template v-if="canEditChildManualAlert">
                           <el-tooltip
                             :disabled="childManualAlertEditable"
-                            content="计划正式下发后才能调整预警等级"
+                            content="计划正式下发后才能调整进度等级"
                             placement="top"
                           >
                             <div
@@ -1047,64 +1057,6 @@ const handleDistributionImportCommitted = async () => {
                           </el-tag>
                         </template>
                       </div>
-                    </template>
-                  </template>
-                </el-table-column>
-
-                <!-- 进度列 -->
-                <el-table-column label="进度" width="100" align="center">
-                  <template #default="{ row }">
-                    <template v-if="row.type === 'indicator-only'">
-                      <span class="progress-text">-</span>
-                    </template>
-                    <template v-else-if="row.type === 'child'">
-                      <div
-                        class="progress-cell"
-                        @dblclick="handleChildDblClick(row.child, 'progress')"
-                      >
-                        <el-input-number
-                          v-if="
-                            editingChildId === row.child.id.toString() &&
-                            editingChildField === 'progress'
-                          "
-                          v-model="editingChildValue"
-                          :min="0"
-                          :max="100"
-                          :precision="0"
-                          size="small"
-                          class="editing-field"
-                          @blur="saveChildEdit(row.child, 'progress')"
-                          @keyup.enter="saveChildEdit(row.child, 'progress')"
-                          @keyup.esc="cancelChildEdit"
-                        />
-                        <span
-                          v-else-if="isSavingChildCell(row.child, 'progress')"
-                          class="cell-saving-text"
-                        >
-                          保存中...
-                        </span>
-                        <span
-                          v-else
-                          class="progress-text"
-                          :class="{
-                            editable: canManageChildDraft(row.child)
-                          }"
-                        >
-                          {{ row.child?.progress || 0 }}%
-                        </span>
-                        <el-tooltip
-                          v-if="shouldShowReportedProgress(row.child)"
-                          content="填报进度"
-                          placement="top"
-                        >
-                          <span class="reported-progress"
-                            >({{ getDisplayedReportedProgress(row.child) }}%)</span
-                          >
-                        </el-tooltip>
-                      </div>
-                    </template>
-                    <template v-else-if="row.type === 'new-child'">
-                      <span class="progress-text">-</span>
                     </template>
                   </template>
                 </el-table-column>
@@ -1377,6 +1329,15 @@ const handleDistributionImportCommitted = async () => {
           </el-descriptions-item>
         </el-descriptions>
       </div>
+
+      <el-collapse v-model="reportHistoryOpen" class="report-history-collapse">
+        <el-collapse-item title="上报记录（历次填报 / 含被驳回）" name="history">
+          <IndicatorFillHistory
+            v-if="reportHistoryOpen?.includes('history') && currentDetailId"
+            :indicator-id="currentDetailId"
+          />
+        </el-collapse-item>
+      </el-collapse>
     </el-drawer>
 
     <el-dialog
@@ -1622,7 +1583,7 @@ const handleDistributionImportCommitted = async () => {
 <style scoped src="./IndicatorDistributeView.css"></style>
 <style src="./IndicatorDistributeView.global.css"></style>
 <style scoped>
-/* 预警等级判定列（与战略任务管理页一致） */
+/* 进度等级判定列（与战略任务管理页一致） */
 .manual-alert-cell {
   display: inline-flex;
   align-items: center;

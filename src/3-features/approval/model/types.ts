@@ -103,7 +103,7 @@ export interface PlanApprovalDetailItem {
 }
 
 export interface WorkflowHistoryTarget {
-  entityType: 'PLAN' | 'PLAN_REPORT'
+  entityType: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR'
   entityId: number
 }
 
@@ -150,9 +150,9 @@ export interface DistributionApprovalProgressDrawerProps {
   approvalType?: 'distribution' | 'submission'
   historyViewMode?: 'auto' | 'card-only'
   workflowCode?: string | string[]
-  workflowEntityType?: 'PLAN' | 'PLAN_REPORT'
+  workflowEntityType?: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR'
   workflowEntityId?: number | string
-  secondaryWorkflowEntityType?: 'PLAN' | 'PLAN_REPORT'
+  secondaryWorkflowEntityType?: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR'
   secondaryWorkflowEntityId?: number | string
 }
 

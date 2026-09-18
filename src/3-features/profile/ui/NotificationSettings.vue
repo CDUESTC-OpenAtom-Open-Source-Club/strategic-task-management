@@ -14,9 +14,9 @@
       <div class="settings-section">
         <h3 class="section-title">系统通知类型</h3>
 
-        <el-form-item label="预警通知">
+        <el-form-item label="进度等级通知">
           <el-switch v-model="form.alertNotifications" active-text="开启" inactive-text="关闭" />
-          <div class="setting-description">当指标出现预警时发送通知</div>
+          <div class="setting-description">当指标进度等级变化（如判定为延期）时发送通知</div>
         </el-form-item>
 
         <el-form-item label="审批通知">
@@ -35,7 +35,7 @@
       <div class="settings-section">
         <h3 class="section-title">通知频率</h3>
 
-        <el-form-item label="预警通知频率" class="compact-form-item">
+        <el-form-item label="进度等级通知频率" class="compact-form-item">
           <el-radio-group v-model="form.alertFrequency" class="frequency-group">
             <el-radio value="immediate">立即</el-radio>
             <el-radio value="hourly">每小时</el-radio>
