@@ -1725,7 +1725,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     const departmentName = effectiveViewingDept.value || authStore.userDepartment || '当前部门'
 
     if (hasCurrentUserPlanData.value && !canViewReceivedPlanContent.value) {
-      return `当前部门（${departmentName}）已存在 ${timeContext.currentYear} 年度计划，但当前计划数据暂不可见，请刷新后重试。`
+      // D12（2026-09-18 定案）：未下发时刷新无法解决，按真实原因提示
+      return `当前部门（${departmentName}）的 ${timeContext.currentYear} 年度计划已创建，但战略发展部尚未下发，请等待下发后再填报。`
     }
 
     if (isSecondaryCollege.value) {
