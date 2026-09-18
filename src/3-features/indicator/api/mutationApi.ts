@@ -37,6 +37,11 @@ export const mutationApi = {
     return apiClient.get(`/indicators/${indicatorId}/mutation-history`)
   },
 
+  /** 战略任务异动历史（任务改名同样计入「已更改 N 次」） */
+  async taskHistory(taskId: number | string): Promise<ApiResponse<MutationHistoryItem[]>> {
+    return apiClient.get(`/tasks/${taskId}/mutation-history`)
+  },
+
   /** 异动中指标清单（看板异动汇总数据源） */
   async inMutation(): Promise<ApiResponse<MutationInProgressItem[]>> {
     return apiClient.get('/indicators/mutations/in-progress')

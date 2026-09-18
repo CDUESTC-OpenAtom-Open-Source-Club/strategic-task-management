@@ -20,6 +20,7 @@ const compatibilityWhitelist = [
   { method: 'post', path: '/api/v1/indicators/{id}/reminders' },
   { method: 'post', path: '/api/v1/indicators/{id}/mutation' },
   { method: 'get', path: '/api/v1/indicators/{id}/mutation-history' },
+  { method: 'get', path: '/api/v1/tasks/{id}/mutation-history' },
   { method: 'get', path: '/api/v1/indicators/mutations/in-progress' },
   { method: 'post', path: '/api/v1/indicators/reminders/statuses' },
   { method: 'put', path: '/api/v1/auth/users/me/contact' },

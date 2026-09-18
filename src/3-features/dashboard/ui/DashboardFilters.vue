@@ -104,6 +104,16 @@ const handleReset = () => {
   emit('apply')
 }
 
+// alertLevel 筛选通道沿用旧键值（图表扇区点击写入），标签按三档口径显示中文
+const progressLevelLabel = (level?: string) => {
+  const labels: Record<string, string> = {
+    severe: '延期',
+    moderate: '滞后',
+    normal: '正常'
+  }
+  return level ? (labels[level] ?? level) : ''
+}
+
 const handleCloseTag = (key: keyof typeof localFilters.value) => {
   localFilters.value[key] = undefined
   handleApply()
@@ -206,7 +216,7 @@ const hasFilters = computed(() => {
         size="small"
         @close="handleCloseTag('alertLevel')"
       >
-        预警: {{ localFilters.alertLevel }}
+        进度等级: {{ progressLevelLabel(localFilters.alertLevel) }}
       </el-tag>
     </div>
   </div>
