@@ -347,7 +347,7 @@ const manualAlertOptions: Array<{
   { label: '未评定', value: null, type: 'info' },
   { label: '超前完成', value: 'AHEAD', type: 'success' },
   { label: '正常', value: 'NORMAL', type: 'success' },
-  { label: '延期', value: 'WARNING', type: 'warning' }
+  { label: '延期', value: 'DELAYED', type: 'warning' }
 ]
 
 const getManualAlertOption = (severity?: ManualAlertSeverity) =>

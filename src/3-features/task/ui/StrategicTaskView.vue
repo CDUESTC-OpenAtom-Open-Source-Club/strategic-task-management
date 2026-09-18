@@ -376,7 +376,7 @@ const manualAlertOptions: Array<{
   { label: '未评定', value: '', type: 'info' },
   { label: '超前完成', value: 'AHEAD', type: 'success' },
   { label: '正常', value: 'NORMAL', type: 'success' },
-  { label: '延期', value: 'WARNING', type: 'warning' }
+  { label: '延期', value: 'DELAYED', type: 'warning' }
 ]
 
 const getManualAlertOption = (severity?: ManualAlertSeverity) =>
@@ -1034,6 +1034,10 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                               >{{ row.taskContent || '未关联任务' }}</span
                             >
                           </el-tooltip>
+                          <!-- 战略任务改名同样计入「已更改 N 次」（悬停查看历史） -->
+                          <div v-if="!isReadOnly" class="indicator-cell-footer">
+                            <MutationBadgePopover :task-id="getIndicatorTaskId(row) || null" />
+                          </div>
                         </div>
 
                         <!-- 右下角新增指标三角形按钮 -->

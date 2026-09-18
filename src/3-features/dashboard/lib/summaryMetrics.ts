@@ -18,6 +18,7 @@ export type DashboardIndicatorStatus = 'normal' | 'ahead' | 'warning' | 'delayed
 const ALERT_LEVEL_TO_STATUS: Record<string, DashboardIndicatorStatus> = {
   AHEAD: 'ahead',
   NORMAL: 'normal',
+  DELAYED: 'delayed',
   // 三档进度等级（正常/警告/严重）——对齐后端 warn_level 与前端预警判定
   OK: 'normal',
   NONE: 'normal',

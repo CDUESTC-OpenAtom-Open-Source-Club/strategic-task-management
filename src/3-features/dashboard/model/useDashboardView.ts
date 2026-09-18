@@ -1142,7 +1142,7 @@ export function useDashboardView(props: DashboardViewProps) {
           指标总数: item.totalIndicators,
           已完成: item.completedIndicators,
           进行中: item.totalIndicators - item.completedIndicators,
-          预警数: item.alertCount,
+          延期数: item.alertCount,
           状态: item.status === 'success' ? '优秀' : item.status === 'warning' ? '良好' : '需改进'
         }))
 
