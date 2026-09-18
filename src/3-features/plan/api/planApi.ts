@@ -871,7 +871,10 @@ function isLockedPlanReportStatus(status?: string | null): boolean {
   return ['SUBMITTED', 'IN_REVIEW', 'APPROVED'].includes(getNormalizedReportStatus(status))
 }
 
-async function resolveIndicatorFillSaveContext(indicatorId: number | string): Promise<{
+async function resolveIndicatorFillSaveContext(
+  indicatorId: number | string,
+  targetMonth?: string
+): Promise<{
   context: IndicatorReportContext
   currentMonthReports: PlanReportSimpleResponse[]
   latestCurrentMonthReport?: PlanReportSimpleResponse
@@ -879,11 +882,13 @@ async function resolveIndicatorFillSaveContext(indicatorId: number | string): Pr
 }> {
   const context = await resolveIndicatorReportContext(indicatorId)
   const reports = await loadPlanReportsByPlanId(context.planId)
+  // 「审批中不可重复保存」检查按目标填报月判断（显式传月优先，当前月仅兜底），
+  // 否则当前月报告进入审批后会连带锁死下一个月的填报（月度上报链断裂）。
+  const effectiveMonth = String(targetMonth || '').trim() || context.reportMonth
   const currentMonthReports = reports
     .filter(
       report =>
-        Number(report.reportOrgId) === context.reportOrgId &&
-        report.reportMonth === context.reportMonth
+        Number(report.reportOrgId) === context.reportOrgId && report.reportMonth === effectiveMonth
     )
     .sort(
       (a, b) =>
@@ -2069,12 +2074,12 @@ export const indicatorFillApi = {
   // 使用模拟数据标志（后端就绪后设为 false）
   useMockData: USE_MOCK,
 
-  async ensureEditable(indicatorId: number | string): Promise<void> {
+  async ensureEditable(indicatorId: number | string, reportMonth?: string): Promise<void> {
     if (this.useMockData) {
       return
     }
 
-    await resolveIndicatorFillSaveContext(indicatorId)
+    await resolveIndicatorFillSaveContext(indicatorId, reportMonth)
   },
 
   /**
@@ -2227,8 +2232,15 @@ export const indicatorFillApi = {
     }
 
     const { context, editableExistingReport } = await resolveIndicatorFillSaveContext(
-      form.indicator_id
+      form.indicator_id,
+      form.reportMonth
     )
+
+    // 本次填报目标月（单一数据源）：弹窗按「指标级最早未填报月」算出的显式月份优先；
+    // context.reportMonth（当前月）只作为未显式传月的旧调用方兜底，绝不覆盖显式值。
+    // 建草稿（POST /reports）必须使用该目标月，否则会先按旧口径建出错误月份的空草稿，
+    // 再被后端按指标级守卫拒绝（409 + 脏草稿）。
+    const targetReportMonth = String(form.reportMonth || '').trim() || context.reportMonth
 
     const operatorUserId =
       Number(
@@ -2274,7 +2286,7 @@ export const indicatorFillApi = {
       const createResponse = await apiClient.post<ApiResponse<PlanReportSimpleResponse>>(
         '/reports',
         {
-          reportMonth: form.reportMonth || context.reportMonth,
+          reportMonth: targetReportMonth,
           reportOrgId: context.reportOrgId,
           reportOrgType: context.reportOrgType,
           planId: context.planId,

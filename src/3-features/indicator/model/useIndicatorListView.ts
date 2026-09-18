@@ -3945,7 +3945,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     try {
       isSavingReport.value = true
       const { indicatorFillApi } = await import('@/features/plan/api/planApi')
-      await indicatorFillApi.ensureEditable(indicator.id)
+      // 弹窗归属月即目标填报月：与建草稿/保存使用同一个月（单一数据源）
+      await indicatorFillApi.ensureEditable(indicator.id, reportForm.value.reportMonth || undefined)
       let attachmentIds: number[] = []
       let attachmentUrls: string[] = []
       let attachmentDetails: Attachment[] = []
