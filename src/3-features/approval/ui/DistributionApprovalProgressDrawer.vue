@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { Document, User, Timer, Right } from '@element-plus/icons-vue'
 import ApprovalHistory from './ApprovalHistory.vue'
 import CustomApprovalFlow from './CustomApprovalFlow.vue'
+import { formatAppraisalLevel } from '@/features/approval/model/useApprovalProgressDrawer'
 import {
   useDistributionApprovalProgressDrawer,
   type DistributionApprovalProgressDrawerEmit,
@@ -672,6 +673,16 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 <div class="snapshot-section-title">{{ displayedBusinessCommentLabel }}</div>
                 <div class="snapshot-section-content">
                   {{ indicator.submittedComment || displayedBusinessEmptyCommentText }}
+                </div>
+              </div>
+
+              <!-- D3：自评进度等级徽标（对齐主审批抽屉） -->
+              <div v-if="indicator.submittedSelfRating" class="snapshot-section">
+                <div class="snapshot-section-title">自评进度等级</div>
+                <div class="snapshot-section-content">
+                  <ElTag size="small" type="info">{{
+                    formatAppraisalLevel(indicator.submittedSelfRating)
+                  }}</ElTag>
                 </div>
               </div>
 

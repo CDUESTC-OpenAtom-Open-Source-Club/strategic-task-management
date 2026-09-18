@@ -17,6 +17,7 @@ function createViewModel(overrides: Record<string, unknown> = {}) {
     overallStatus: { type: 'info', label: '草稿' },
     approvalFlowStatusMeta: { tagType: 'info', label: '未发起', description: '' },
     currentApprovalStatusMeta: { tagType: 'info', label: '未发起', description: '' },
+    currentMonthlyReportStatusMeta: { type: 'info', label: '未填报' },
     currentApprovalCandidateNames: [] as string[],
     currentApprovalFlowName: '',
     currentApprovalStepName: '',
