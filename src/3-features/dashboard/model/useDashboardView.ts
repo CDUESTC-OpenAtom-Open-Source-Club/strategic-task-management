@@ -2406,6 +2406,35 @@ export function useDashboardView(props: DashboardViewProps) {
     benchmarkChartInstance?.dispose()
     collegeChartInstance?.dispose()
     collegeRankingChartInstance?.dispose()
+    stopDashboardAutoRefresh()
+  })
+
+  // 5 分钟定时兜底（2026-09-19 用户拍板恢复）：PR #65 改为 WS 事件驱动后，
+  // 若 WS 断开/漏推，数据将停留在旧状态——本定时器作为断连场景的兜底刷新，
+  // 页面不可见时跳过，卸载时清理。
+  const DASHBOARD_AUTO_REFRESH_INTERVAL = 5 * 60 * 1000
+  let dashboardAutoRefreshTimer: number | null = null
+
+  const startDashboardAutoRefresh = () => {
+    stopDashboardAutoRefresh()
+    dashboardAutoRefreshTimer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') {
+        return
+      }
+      void reloadData()
+      void loadMutationSummary()
+    }, DASHBOARD_AUTO_REFRESH_INTERVAL)
+  }
+
+  const stopDashboardAutoRefresh = () => {
+    if (dashboardAutoRefreshTimer !== null) {
+      window.clearInterval(dashboardAutoRefreshTimer)
+      dashboardAutoRefreshTimer = null
+    }
+  }
+
+  onMounted(() => {
+    startDashboardAutoRefresh()
   })
 
   const handleGlobalDataRefreshRequest = (event: Event) => {
