@@ -167,6 +167,8 @@ const {
   getIndicatorCategoryLabel,
   getIndicatorMappedTaskType,
   getIndicatorTaskId,
+  getIndicatorWorkflowStatusLabel,
+  getIndicatorWorkflowTagType,
   getPersistedWithdrawableRows,
   getProgressColor,
   getProgressStatus,

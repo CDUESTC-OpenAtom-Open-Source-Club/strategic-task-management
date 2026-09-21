@@ -4921,6 +4921,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     getIndicatorCategoryLabel,
     getIndicatorMappedTaskType,
     getIndicatorTaskId,
+    getIndicatorWorkflowStatusLabel,
+    getIndicatorWorkflowTagType,
     getPersistedWithdrawableRows,
     getProgressColor,
     getProgressStatus,
