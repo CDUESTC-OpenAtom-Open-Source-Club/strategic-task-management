@@ -12,14 +12,9 @@ import {
 } from '@/shared/lib/dataFreshness'
 import { useWebSocketNotifications } from '@/shared/api/websocket'
 
-// WS 连接时轮询 2 分钟兜底，WS 断开时加速到 30 秒
-const POLLING_INTERVAL_WS_CONNECTED = 2 * 60 * 1000
-const POLLING_INTERVAL_WS_DISCONNECTED = 30 * 1000
 const ATTENTION_REFRESH_COOLDOWN_MS = 45 * 1000
-let globalDataRefreshTimer: ReturnType<typeof setInterval> | null = null
 let approvalNotificationRefreshListener: EventListener | null = null
 let lastAttentionRefreshAt = 0
-let currentPollingInterval = POLLING_INTERVAL_WS_DISCONNECTED
 let messageRefreshInFlight: Promise<unknown> | null = null
 let approvalRefreshInFlight: Promise<unknown> | null = null
 
@@ -28,7 +23,7 @@ export function useAppLayout() {
   const orgStore = useOrgStore()
   const messageStore = useMessageStore()
   const approvalStore = useApprovalStore()
-  const { isConnected } = useWebSocketNotifications()
+  useWebSocketNotifications() // 激活 WS 客户端,数据驱动模式不再依赖连接状态
 
   const isLoggedIn = computed(() => authStore.isAuthenticated)
   const currentUser = computed(() => authStore.user)
@@ -103,53 +98,6 @@ export function useAppLayout() {
     }
   }
 
-  /** 根据 WS 连接状态动态调整轮询间隔 */
-  const applyPollingInterval = () => {
-    const wsConnected = isConnected.value
-    const targetInterval = wsConnected
-      ? POLLING_INTERVAL_WS_CONNECTED
-      : POLLING_INTERVAL_WS_DISCONNECTED
-
-    if (targetInterval === currentPollingInterval && globalDataRefreshTimer) {
-      return // 无需变化
-    }
-
-    currentPollingInterval = targetInterval
-
-    // 重启定时器以应用新间隔
-    if (globalDataRefreshTimer) {
-      clearInterval(globalDataRefreshTimer)
-      globalDataRefreshTimer = null
-    }
-
-    globalDataRefreshTimer = setInterval(() => {
-      if (!authStore.isAuthenticated || document.hidden) {
-        return
-      }
-      requestGlobalDataRefresh({ source: 'heartbeat', silent: true })
-    }, currentPollingInterval)
-  }
-
-  const startGlobalDataRefreshTimer = () => {
-    if (globalDataRefreshTimer || typeof window === 'undefined') {
-      return
-    }
-
-    globalDataRefreshTimer = setInterval(() => {
-      if (!authStore.isAuthenticated || document.hidden) {
-        return
-      }
-      requestGlobalDataRefresh({ source: 'heartbeat', silent: true })
-    }, currentPollingInterval)
-  }
-
-  const stopGlobalDataRefreshTimer = () => {
-    if (globalDataRefreshTimer) {
-      clearInterval(globalDataRefreshTimer)
-      globalDataRefreshTimer = null
-    }
-  }
-
   onMounted(async () => {
     if (typeof window !== 'undefined') {
       window.addEventListener(
@@ -172,8 +120,6 @@ export function useAppLayout() {
     if (authStore.isAuthenticated) {
       await orgStore.loadDepartments()
     }
-
-    startGlobalDataRefreshTimer()
   })
 
   onUnmounted(() => {
@@ -193,24 +139,6 @@ export function useAppLayout() {
         approvalNotificationRefreshListener = null
       }
     }
-    stopGlobalDataRefreshTimer()
-  })
-
-  // 监听 WS 连接状态变化，动态调整轮询间隔。
-  // 加 10s 防抖：WS 状态抖动（连接→断开→连接）时避免定时器被反复重建，
-  // 否则每次重建都会立即重置轮询周期，造成高频静默刷新。
-  let applyPollingIntervalDebounce: ReturnType<typeof setTimeout> | null = null
-  watch(isConnected, () => {
-    if (!globalDataRefreshTimer) {
-      return
-    }
-    if (applyPollingIntervalDebounce) {
-      clearTimeout(applyPollingIntervalDebounce)
-    }
-    applyPollingIntervalDebounce = setTimeout(() => {
-      applyPollingIntervalDebounce = null
-      applyPollingInterval()
-    }, 10 * 1000)
   })
 
   watch(
@@ -219,15 +147,8 @@ export function useAppLayout() {
       if (isAuth && !orgStore.loaded) {
         await orgStore.loadDepartments()
         void refreshNotificationState()
-        startGlobalDataRefreshTimer()
-      } else if (isAuth && orgStore.loaded && messageStore.messages.length === 0) {
-        void refreshNotificationState()
-        startGlobalDataRefreshTimer()
       } else if (isAuth) {
         void refreshNotificationState()
-        startGlobalDataRefreshTimer()
-      } else {
-        stopGlobalDataRefreshTimer()
       }
     },
     { immediate: true }

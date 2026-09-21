@@ -13,6 +13,7 @@
 import { apiClient } from '@/shared/api/client'
 import { alertApi } from '@/shared/api/monitoringApi'
 import { buildQueryKey, fetchWithCache } from '@/shared/lib/utils/cache'
+import { CACHE_TTL } from '@/shared/lib/utils/cache-config'
 import { logger } from '@/shared/lib/utils/logger'
 import type { DashboardData, DepartmentProgress, AlertSummary } from '@/shared/types'
 
@@ -78,9 +79,9 @@ export const dashboardApi = {
       return await fetchWithCache({
         key: buildQueryKey('dashboard', 'overview'),
         policy: {
-          ttlMs: 45 * 1000,
+          ttlMs: CACHE_TTL.DASHBOARD,
           scope: 'memory',
-          staleWhileRevalidate: true,
+          staleWhileRevalidate: false,
           dedupeWindowMs: 1000,
           tags: ['dashboard.overview']
         },
@@ -154,9 +155,9 @@ export const dashboardApi = {
       return await fetchWithCache({
         key: buildQueryKey('dashboard', 'overview', params),
         policy: {
-          ttlMs: 45 * 1000,
+          ttlMs: CACHE_TTL.DASHBOARD,
           scope: 'memory',
-          staleWhileRevalidate: true,
+          staleWhileRevalidate: false,
           dedupeWindowMs: 1000,
           tags: ['dashboard.overview']
         },
