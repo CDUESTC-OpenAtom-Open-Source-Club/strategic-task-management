@@ -49,7 +49,8 @@ function padMonthsBeforeFirstReport(
     reportOrgId?: number | string | null
     reportMonth?: string | null
     createdAt?: string | null
-  }>
+  }>,
+  reportOrgId: number
 ): Set<string> {
   const orgReports = reports.filter(
     report =>
@@ -2535,7 +2536,7 @@ export const indicatorFillApi = {
           months.add(String(report.reportMonth))
         }
       })
-      return Array.from(padMonthsBeforeFirstReport(months, reports, Number(reportOrgId)))
+      return Array.from(padMonthsBeforeFirstReport(months, reports, reportOrgId))
     } catch (error) {
       logger.warn('[indicatorFillApi] 加载计划已上报月份集合失败:', error)
       return null
@@ -2570,7 +2571,7 @@ export const indicatorFillApi = {
           months.add(String(report.reportMonth))
         }
       })
-      return Array.from(padMonthsBeforeFirstReport(months, reports, Number(reportOrgId)))
+      return Array.from(padMonthsBeforeFirstReport(months, reports, reportOrgId))
     } catch (error) {
       logger.warn('[indicatorFillApi] 加载指标已上报月份集合失败:', error)
       return null
