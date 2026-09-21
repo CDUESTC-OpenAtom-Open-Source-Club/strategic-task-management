@@ -38,6 +38,44 @@ import {
 } from '@/features/workflow/api'
 import { useAuthStore } from '@/features/auth/model/store'
 
+/**
+ * H4（2026-09-19 定案）：「最早未填月」从计划下发月起算，不再从当年 1 月起算。
+ * 下发月取该计划+组织「首份报告的创建月份」（首份报告必然产生于下发之后）。
+ * 实现方式：把起扫点之前的月份全部垫入已填集合，下游扫描逻辑不变。
+ */
+function padMonthsBeforeFirstReport(
+  months: Set<string>,
+  reports: Array<{
+    reportOrgId?: number | string | null
+    reportMonth?: string | null
+    createdAt?: string | null
+  }>
+): Set<string> {
+  const orgReports = reports.filter(
+    report =>
+      Number(report.reportOrgId) === Number(reportOrgId) &&
+      report.isDeleted !== true &&
+      Boolean(report.createdAt)
+  )
+  if (orgReports.length === 0) {
+    return months
+  }
+  const firstMonth = orgReports
+    .map(report => String(report.createdAt).slice(0, 7).replace('-', ''))
+    .sort()[0]
+  if (!firstMonth || !/^\d{6}$/.test(firstMonth)) {
+    return months
+  }
+  const padded = new Set(months)
+  for (let m = 1; m <= 12; m++) {
+    const value = `${String(firstMonth).slice(0, 4)}${String(m).padStart(2, '0')}`
+    if (value < firstMonth) {
+      padded.add(value)
+    }
+  }
+  return padded
+}
+
 export interface SubmitPlanApprovalPayload {
   workflowCode: string
   comment?: string
@@ -2484,6 +2522,7 @@ export const indicatorFillApi = {
    * 用于「归属月份只能选最早未填报月」的前端锁定（B6 会议定案）。
    * 加载失败时返回 null（与「确实没有上报记录」的空集合区分开），由调用方降级处理。
    */
+
   async getExistingReportMonths(
     planId: number | string,
     reportOrgId: number
@@ -2496,7 +2535,7 @@ export const indicatorFillApi = {
           months.add(String(report.reportMonth))
         }
       })
-      return Array.from(months)
+      return Array.from(padMonthsBeforeFirstReport(months, reports, Number(reportOrgId)))
     } catch (error) {
       logger.warn('[indicatorFillApi] 加载计划已上报月份集合失败:', error)
       return null
@@ -2531,7 +2570,7 @@ export const indicatorFillApi = {
           months.add(String(report.reportMonth))
         }
       })
-      return Array.from(months)
+      return Array.from(padMonthsBeforeFirstReport(months, reports, Number(reportOrgId)))
     } catch (error) {
       logger.warn('[indicatorFillApi] 加载指标已上报月份集合失败:', error)
       return null
