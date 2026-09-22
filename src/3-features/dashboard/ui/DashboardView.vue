@@ -1043,13 +1043,13 @@ function openApprovalCenterFromDashboard() {
               </div>
             </template>
             <el-empty
-              v-if="(mutationSummary || []).length === 0"
+              v-if="dashboardStore.mutationSummary.length === 0"
               description="当前无异动中的指标"
               :image-size="60"
             />
             <ul v-else class="mutation-summary">
               <li
-                v-for="item in mutationSummary || []"
+                v-for="item in dashboardStore.mutationSummary"
                 :key="item.id"
                 class="mutation-summary__item"
               >

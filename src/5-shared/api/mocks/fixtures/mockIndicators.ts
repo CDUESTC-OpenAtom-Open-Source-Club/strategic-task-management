@@ -80,9 +80,12 @@ export function getMockIndicatorById(
 // ============ 模拟仪表盘数据 ============
 
 export const mockDashboardData: DashboardData = {
-  totalScore: 87.5,
-  basicScore: 92.3,
-  developmentScore: 15.8,
+  // P4 A2：取消分数字段,改为等级分布
+  levelDistribution: {
+    ahead: allMockIndicators.filter(i => i.progress >= 100).length,
+    normal: allMockIndicators.filter(i => i.progress >= 50 && i.progress < 100).length,
+    delayed: allMockIndicators.filter(i => i.progress < 50).length
+  },
   completionRate: 75.2,
   warningCount: 3,
   totalIndicators: allMockIndicators.length,

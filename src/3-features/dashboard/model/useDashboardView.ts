@@ -45,13 +45,9 @@ export function useDashboardView(props: DashboardViewProps) {
   }
 
   // 帮助提示内容
+  // P4 A2：删除分数体系文案(totalScore/basicScore/developmentScore/scoreComposition)
   const helpTexts = {
-    totalScore:
-      '总得分 = 基础性指标得分 + 发展性指标得分，满分120分。基础性指标满分100分，发展性指标满分20分。',
-    basicScore: '基础性指标是必须完成的核心指标，根据各指标完成进度加权计算得分，满分100分。',
-    developmentScore: '发展性指标是鼓励性指标，完成后可获得额外加分，满分20分。',
     warningCount: '延期任务按所选月份状态统计：延期表示该指标进度等级被判定为滞后，需上级关注。',
-    scoreComposition: '展示基础性指标和发展性指标的得分占比，帮助了解整体得分构成。',
     alertDistribution: '按所选月份统计指标进度等级分布：超前完成、正常、延期。',
     completionRate:
       '完成率 = 所选月份状态为正常或超前的指标数 / 总指标数 × 100%。未下发或延期指标不计入完成。',
@@ -94,23 +90,9 @@ export function useDashboardView(props: DashboardViewProps) {
   const previousMonthNumber = new Date().getMonth() === 0 ? 12 : new Date().getMonth()
 
   // P5 看板异动汇总：异动审批中的指标清单
-  const mutationSummary = ref<
-    Array<{
-      id: number
-      indicator_desc: string
-      weight_percent: number
-      mutation_started_at: string
-    }>
-  >([])
-  const loadMutationSummary = async () => {
-    try {
-      const { mutationApi } = await import('@/features/indicator/api/mutationApi')
-      const response = await mutationApi.inMutation()
-      mutationSummary.value = (response.data ?? []) as typeof mutationSummary.value
-    } catch {
-      mutationSummary.value = []
-    }
-  }
+  // P4-C1：迁移至 dashboard store,此处仅做引用转发
+  const mutationSummary = computed(() => dashboardStore.mutationSummary)
+  const loadMutationSummary = () => dashboardStore.fetchMutationSummary()
 
   const selectedMonth = ref(previousMonthNumber) // 默认上月
   const isDrillDown = ref(false) // 是否处于下钻状态
@@ -1345,25 +1327,23 @@ export function useDashboardView(props: DashboardViewProps) {
   }
 
   // KPI 卡片数据（带趋势）
+  // P4 A2：删除「战略执行总分/发展性指标得分」分数卡,改为「超前完成/正常推进」等级计数
   const _kpiCards = computed(() => {
     const data = dashboardData.value
-    const _indicators = dashboardStore.visibleIndicators
-
-    // 计算上期数据（模拟趋势）
-    const lastMonthScore = Math.max(0, data.totalScore - Math.floor(Math.random() * 10) + 5)
-    const scoreTrend = data.totalScore - lastMonthScore
+    const distribution = data.levelDistribution ?? { ahead: 0, normal: 0, delayed: 0 }
+    const totalCount = distribution.ahead + distribution.normal + distribution.delayed
 
     return [
       {
-        label: '战略执行总分',
-        helpText: helpTexts.totalScore,
-        value: data.totalScore,
-        unit: '分',
-        trend: Math.abs(scoreTrend),
-        isUp: scoreTrend >= 0,
-        predict: Math.min(120, data.totalScore + 8),
-        desc: '年度目标: 120分',
-        percent: Math.round((data.totalScore / 120) * 100),
+        label: '超前完成',
+        helpText: helpTexts.alertDistribution,
+        value: distribution.ahead,
+        unit: '项',
+        trend: 2,
+        isUp: true,
+        predict: distribution.ahead + 1,
+        desc: '已提前达成',
+        percent: totalCount > 0 ? Math.round((distribution.ahead / totalCount) * 100) : 0,
         icon: 'Aim',
         gradient: 'primary'
       },
@@ -1383,29 +1363,29 @@ export function useDashboardView(props: DashboardViewProps) {
       {
         label: '延期任务',
         helpText: helpTexts.warningCount,
-        value: data.alertIndicators.severe,
+        value: distribution.delayed,
         unit: '项',
         trend: 2,
         isUp: false,
-        predict: Math.max(0, data.alertIndicators.severe - 3),
+        predict: Math.max(0, distribution.delayed - 3),
         desc: '需重点关注推进',
         percent: Math.max(
           0,
-          100 - (data.alertIndicators.severe / Math.max(1, data.totalIndicators)) * 100
+          100 - (distribution.delayed / Math.max(1, data.totalIndicators)) * 100
         ),
         icon: 'Warning',
         gradient: 'danger'
       },
       {
-        label: '发展性指标得分',
-        helpText: helpTexts.developmentScore,
-        value: data.developmentScore,
-        unit: '分',
-        trend: 1.5,
+        label: '正常推进',
+        helpText: helpTexts.alertDistribution,
+        value: distribution.normal,
+        unit: '项',
+        trend: 1,
         isUp: true,
-        predict: Math.min(20, data.developmentScore + 3),
-        desc: '满分20分',
-        percent: (data.developmentScore / 20) * 100,
+        predict: distribution.normal + 2,
+        desc: '进度符合预期',
+        percent: totalCount > 0 ? Math.round((distribution.normal / totalCount) * 100) : 0,
         icon: 'TrendCharts',
         gradient: 'purple'
       }
@@ -2570,8 +2550,6 @@ export function useDashboardView(props: DashboardViewProps) {
     selectedDeptIndicators,
     selectedDeptStats,
     selectedMonth,
-    mutationSummary,
-    loadMutationSummary,
     selectedMonthInCollegeDrillDown,
     selectedMonthInDrillDown,
     selectedOwnerDeptFilter,

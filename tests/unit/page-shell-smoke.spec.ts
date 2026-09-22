@@ -46,16 +46,18 @@ function createViewModel(overrides: Record<string, unknown> = {}) {
     currentSelectedCollegePlan: ref(null),
     currentSelectedCollegePlanDetails: ref(null),
     dashboardData: {
-      totalScore: 0,
-      basicScore: 0,
-      developmentScore: 0,
+      levelDistribution: { ahead: 0, normal: 0, delayed: 0 },
       completionRate: 0,
       warningCount: 0,
       totalIndicators: 0,
       completedIndicators: 0,
       alertIndicators: { severe: 0, moderate: 0, normal: 0 }
     },
-    dashboardStore: { departmentSummary: [] as unknown[], breadcrumbs: [] as unknown[] },
+    dashboardStore: {
+      departmentSummary: [] as unknown[],
+      breadcrumbs: [] as unknown[],
+      mutationSummary: [] as unknown[]
+    },
     currentRole: 'strategic_dept',
     delayedTasks: [] as unknown[],
     _kpiCards: [] as unknown[],

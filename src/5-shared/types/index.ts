@@ -74,12 +74,10 @@ export interface Permission {
 // ============================================================================
 
 // 仪表盘数据类型 (Enhanced)
+// P4 A2 定案：取消「总评分/基础性得分/发展性得分」，改为等级分布
 export interface DashboardData {
-  totalScore: number
-  basicScore: number
-  developmentScore: number
-  /** 进度等级分布（P4 A2 定案：取消分数，改等级分布） */
-  levelDistribution?: {
+  /** 进度等级分布（必填,A2 口径下唯一进度口径） */
+  levelDistribution: {
     ahead: number
     normal: number
     delayed: number

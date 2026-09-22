@@ -104,9 +104,6 @@ export const buildDashboardSummary = (
   }
 
   return {
-    totalScore: 0,
-    basicScore: 0,
-    developmentScore: 0,
     levelDistribution,
     completionRate:
       totalIndicators > 0 ? Math.round((completedIndicators / totalIndicators) * 100) : 0,

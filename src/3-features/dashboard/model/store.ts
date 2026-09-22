@@ -35,9 +35,7 @@ function isPersistedIndicatorId(value: unknown): boolean {
 export const useDashboardStore = defineStore('dashboard', () => {
   // State
   const dashboardData = ref<DashboardData>({
-    totalScore: 0,
-    basicScore: 0,
-    developmentScore: 0,
+    levelDistribution: { ahead: 0, normal: 0, delayed: 0 },
     completionRate: 0,
     warningCount: 0,
     totalIndicators: 0,
@@ -58,6 +56,17 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const unclosedAlerts = ref<AlertEvent[]>([])
   const alertsLoading = ref(false)
 
+  // 异动汇总状态(P5：异动审批中的指标清单)
+  // P4-C1: 从 useDashboardView 局部 ref 提升至 store,与 mutationApi.inMutation() 对齐
+  const mutationSummary = ref<
+    Array<{
+      id: number
+      indicator_desc: string
+      weight_percent: number
+      mutation_started_at: string
+    }>
+  >([])
+
   // 下钻和筛选状态
   const currentLevel = ref<DrillDownLevel>('organization')
   const breadcrumbs = ref<BreadcrumbItem[]>([{ level: 'organization', label: '组织总览' }])
@@ -72,7 +81,6 @@ export const useDashboardStore = defineStore('dashboard', () => {
 
   // Getters
   const completionRate = computed(() => dashboardData.value?.completionRate || 0)
-  const totalScore = computed(() => dashboardData.value?.totalScore || 0)
   const warningCount = computed(() => dashboardData.value?.warningCount || 0)
   const alertStats = computed(
     () => dashboardData.value?.alertIndicators || { severe: 0, moderate: 0, normal: 0 }
@@ -705,6 +713,19 @@ export const useDashboardStore = defineStore('dashboard', () => {
     }
   }
 
+  // 获取异动汇总(P5 异动审批中的指标清单)
+  // P4-C1: 替代 useDashboardView 局部 mutationSummary ref
+  const fetchMutationSummary = async () => {
+    try {
+      const { mutationApi } = await import('@/features/indicator/api/mutationApi')
+      const items = await mutationApi.inMutation()
+      mutationSummary.value = (items ?? []) as typeof mutationSummary.value
+    } catch (err) {
+      logger.error('[Dashboard Store] Failed to fetch mutation summary:', err)
+      mutationSummary.value = []
+    }
+  }
+
   // 下钻操作
   const drillDown = (level: DrillDownLevel, value: string, label: string) => {
     currentLevel.value = level
@@ -870,6 +891,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     alertStatsData,
     unclosedAlerts,
     alertsLoading,
+    mutationSummary,
     currentLevel,
     breadcrumbs,
     filters,
@@ -882,7 +904,6 @@ export const useDashboardStore = defineStore('dashboard', () => {
 
     // Getters
     completionRate,
-    totalScore,
     warningCount,
     alertStats,
     totalAlerts,
@@ -905,6 +926,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     fetchRecentActivities,
     fetchAlertStats,
     fetchUnclosedAlerts,
+    fetchMutationSummary,
     refreshDashboard,
     exportReport,
     drillDown,

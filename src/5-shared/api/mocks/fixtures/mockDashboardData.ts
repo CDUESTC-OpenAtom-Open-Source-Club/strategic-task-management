@@ -176,9 +176,12 @@ export function generateMockDashboardData(): DashboardData {
   }
 
   return {
-    totalScore: Math.round(dashboardStats.overview.averageProgress * 10) / 10,
-    basicScore: Math.round(dashboardStats.overview.averageProgress * 0.6 * 10) / 10,
-    developmentScore: Math.round(dashboardStats.overview.averageProgress * 0.4 * 10) / 10,
+    // P4 A2：取消分数字段,改为等级分布
+    levelDistribution: {
+      ahead: dashboardStats.overview.completedIndicators,
+      normal: dashboardStats.overview.inProgressIndicators,
+      delayed: dashboardStats.overview.pendingIndicators
+    },
     completionRate:
       Math.round(
         (dashboardStats.overview.completedIndicators / dashboardStats.overview.totalIndicators) *
