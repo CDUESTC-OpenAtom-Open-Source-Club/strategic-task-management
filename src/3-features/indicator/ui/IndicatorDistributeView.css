@@ -1319,3 +1319,9 @@
     transform: scale(1.03);
   }
 }
+
+/* D10：行内异动/改名历史徽标（下发页） */
+.indicator-row-badge {
+  margin-left: 8px;
+  flex-shrink: 0;
+}

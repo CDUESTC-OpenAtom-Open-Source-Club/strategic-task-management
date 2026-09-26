@@ -849,3 +849,9 @@
   min-width: 60px;
   opacity: 0.9;
 }
+
+/* D10：行内异动/改名历史徽标（指标列表页） */
+.indicator-row-badge {
+  margin-left: 8px;
+  flex-shrink: 0;
+}
