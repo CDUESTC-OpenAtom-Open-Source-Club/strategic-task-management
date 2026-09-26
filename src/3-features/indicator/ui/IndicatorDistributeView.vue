@@ -26,6 +26,7 @@ import {
 } from '@/shared/lib/export/excel'
 import { DistributionApprovalProgressDrawer } from '@/features/approval'
 import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
+import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import {
   useIndicatorDistributeView,
@@ -1550,6 +1551,12 @@ const handleDistributionImportCommitted = async () => {
                     {{ getIndicatorTypeLabel(row.indicator) }}
                   </el-tag>
                   <span class="indicator-name">{{ row.indicator.name }}</span>
+                  <!-- D10：异动/改名历史徽标（悬停看历史，无变更自动隐藏） -->
+                  <MutationBadgePopover
+                    v-if="row.indicator?.id"
+                    class="indicator-row-badge"
+                    :indicator-id="row.indicator.id"
+                  />
                 </div>
               </div>
             </template>

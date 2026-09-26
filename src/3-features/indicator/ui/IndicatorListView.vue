@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
+import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
 import { ref } from 'vue'
 import {
   Plus,
@@ -652,6 +653,13 @@ const handleExportIndicatorList = async () => {
                         >{{ row.name }}</span
                       >
                     </el-tooltip>
+
+                    <!-- D10：异动/改名历史徽标（悬停看历史，无变更自动隐藏） -->
+                    <MutationBadgePopover
+                      v-if="row.id"
+                      class="indicator-row-badge"
+                      :indicator-id="row.id"
+                    />
                   </div>
                 </template>
               </el-table-column>
