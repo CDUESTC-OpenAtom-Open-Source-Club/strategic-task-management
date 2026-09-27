@@ -59,10 +59,6 @@ const {
   currentNodeId,
   currentPendingPlanTask,
   currentPlanApprovalItems,
-  planApprovalFilterOrg,
-  planApprovalFilterMonth,
-  planApprovalOrgOptions,
-  planApprovalMonthOptions,
   filteredPlanApprovalItems,
   currentPlanApprovalSummary,
   currentPlanEntityIds,
@@ -322,39 +318,6 @@ const displayedCurrentPlanApprovalName = computed(() => {
       <ElTabs v-model="activeTab" class="approval-tabs">
         <ElTabPane v-if="showPlanApprovals" name="pending-plans" label="计划审批">
           <div v-loading="planApprovalsLoading" class="plan-approval-pane">
-            <div
-              v-if="!selectedHistoryInstanceId && currentPlanApprovalItems.length > 0"
-              style="display: flex; gap: 8px; margin-bottom: 8px"
-            >
-              <el-select
-                v-model="planApprovalFilterOrg"
-                clearable
-                placeholder="按组织筛选"
-                size="small"
-                style="width: 160px"
-              >
-                <el-option
-                  v-for="name in planApprovalOrgOptions"
-                  :key="name"
-                  :label="name"
-                  :value="name"
-                />
-              </el-select>
-              <el-select
-                v-model="planApprovalFilterMonth"
-                clearable
-                placeholder="按月份筛选"
-                size="small"
-                style="width: 130px"
-              >
-                <el-option
-                  v-for="mth in planApprovalMonthOptions"
-                  :key="mth"
-                  :label="mth"
-                  :value="mth"
-                />
-              </el-select>
-            </div>
             <ElEmpty
               v-if="
                 !planApprovalsLoading &&

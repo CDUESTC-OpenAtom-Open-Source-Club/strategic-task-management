@@ -3363,40 +3363,9 @@ export function useApprovalProgressDrawer(
    */
   const planAppraisalLevel = ref('')
 
-  // P3 余项：待审批列表组织/月份筛选器
-  const planApprovalFilterOrg = ref('')
-  const planApprovalFilterMonth = ref('')
-  const planApprovalOrgOptions = computed(() => {
-    const names = new Set(
-      currentPlanApprovalItems.value.map(item => String(item.targetOrgName || '')).filter(Boolean)
-    )
-    return Array.from(names)
-  })
-  const planApprovalMonthOptions = computed(() => {
-    const months = new Set(
-      currentPlanApprovalItems.value
-        .map(item => String(item.submittedAt || '').slice(0, 7))
-        .filter(Boolean)
-    )
-    return Array.from(months).sort()
-  })
-  const filteredPlanApprovalItems = computed(() =>
-    currentPlanApprovalItems.value.filter(item => {
-      if (
-        planApprovalFilterOrg.value &&
-        String(item.targetOrgName || '') !== planApprovalFilterOrg.value
-      ) {
-        return false
-      }
-      if (
-        planApprovalFilterMonth.value &&
-        String(item.submittedAt || '').slice(0, 7) !== planApprovalFilterMonth.value
-      ) {
-        return false
-      }
-      return true
-    })
-  )
+  // 2026-09-27 用户拍板：审批中心只做审批，组织/月份筛选器整体移除；
+  // 列表直接展示当前组织的全部待审批项。
+  const filteredPlanApprovalItems = computed(() => currentPlanApprovalItems.value)
 
   async function handleApprovePlanBatch() {
     if (!hasPlanApprovalPermission.value && !hasAnyPlanApprovalRole.value) {
@@ -4366,10 +4335,6 @@ export function useApprovalProgressDrawer(
     hasPlanApprovalPermission,
     hasAnyPlanApprovalRole,
     planAppraisalLevel,
-    planApprovalFilterOrg,
-    planApprovalFilterMonth,
-    planApprovalOrgOptions,
-    planApprovalMonthOptions,
     filteredPlanApprovalItems,
     externalWorkflowTodoItems,
     resolveExternalTodoSubmitterName,
