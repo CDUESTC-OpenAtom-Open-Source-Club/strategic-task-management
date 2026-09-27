@@ -3498,6 +3498,11 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         return
       }
 
+      if (!Number.isFinite(planId) || planId <= 0) {
+        ElMessage.error('无法识别当前学院计划，不能发起下发审批')
+        return
+      }
+
       try {
         isBatchDistributing.value = true
         await planStore.submitPlanForApproval(planId, {
@@ -3523,7 +3528,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
     try {
       await ElMessageBox.confirm(
-        `确认发起下发审批，将【${college}】的 ${draftIndicators.length} 个子指标下发？`,
+        `确认发起下发审批，将【${college}】的 ${draftIndicators.length} 个子指标提交三级审批？审批通过后正式下发。`,
         '发起下发审批确认',
         {
           confirmButtonText: '确认发起',
@@ -3535,13 +3540,6 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       return
     }
 
-    const ownerOrgId = getOrgIdByDeptName(currentDept.value)
-    const targetOrgId = getOrgIdByDeptName(college)
-
-    if (!ownerOrgId || !targetOrgId) {
-      ElMessage.error(`无法解析组织ID，owner=${currentDept.value}, target=${college}`)
-      return
-    }
     if (!Number.isFinite(planId) || planId <= 0) {
       ElMessage.error('无法识别当前学院计划，不能发起下发审批')
       return
@@ -3553,71 +3551,12 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       isBatchDistributing.value = true
       loadingInstance = ElLoading.service({
         lock: true,
-        text: '正在下发指标并刷新状态，请稍候...',
+        text: '正在发起下发审批，请稍候...',
         background: 'rgba(0, 0, 0, 0.45)'
       })
 
-      const response = await indicatorApi.batchDistributePageIndicators({
-        indicators: draftIndicators.map((indicator, index) => {
-          const indicatorId = indicator.id.toString()
-          const isRealBackendId = /^\d+$/.test(indicatorId)
-          const indicatorTaskId = Number(getIndicatorTaskId(indicator as StrategicIndicator))
-
-          if (!isRealBackendId && (!Number.isFinite(indicatorTaskId) || indicatorTaskId <= 0)) {
-            throw new Error(`指标缺少有效 taskId，无法挂载到同一计划: ${indicator.name}`)
-          }
-
-          return {
-            clientRequestId: indicatorId,
-            indicatorId: isRealBackendId ? Number(indicatorId) : undefined,
-            indicatorDesc: isRealBackendId ? undefined : indicator.name,
-            type: getIndicatorTypeLabel(indicator),
-            indicatorType: getIndicatorTypeLabel(indicator),
-            type1: getIndicatorTypeLabel(indicator),
-            taskId: isRealBackendId ? undefined : indicatorTaskId,
-            parentIndicatorId:
-              !isRealBackendId && indicator.parentIndicatorId
-                ? Number(indicator.parentIndicatorId)
-                : undefined,
-            ownerOrgId: isRealBackendId ? undefined : ownerOrgId,
-            targetOrgId,
-            weightPercent: isRealBackendId ? undefined : Number(indicator.weight || 0),
-            sortOrder: index + 1,
-            remark: isRealBackendId ? undefined : indicator.remark || '',
-            progress: isRealBackendId ? undefined : Number(indicator.progress || 0),
-            customDesc: indicator.name
-          }
-        })
-      })
-
-      if (!response.success || !response.data) {
-        throw new Error(response.message || '下发失败')
-      }
-
-      response.data.items.forEach(item => {
-        const clientRequestId = String(item.clientRequestId || '')
-        const backendId = String(item.indicatorId || '')
-        if (!clientRequestId || !backendId) {
-          return
-        }
-
-        if (clientRequestId !== backendId) {
-          strategicStore.replaceIndicatorId(clientRequestId, backendId)
-        }
-
-        strategicStore.addStatusAuditEntry(backendId, {
-          operator: authStore.user?.userId || 'admin',
-          operatorName: authStore.user?.name || '管理员',
-          operatorDept: currentDept.value,
-          action: 'distribute',
-          comment: '下发'
-        })
-        strategicStore.patchIndicator(backendId, {
-          status: 'distributed',
-          canWithdraw: false
-        })
-      })
-
+      // 下发只允许经 submit-dispatch 走三级审批；指标状态由后端在终审通过后统一置为 DISTRIBUTED。
+      // 不得在此处调用直发接口（batch-distribute 会绕过审批直接改状态）。
       await planStore.submitPlanForApproval(planId, {
         workflowCode: currentDispatchWorkflowCode.value
       })
@@ -3629,10 +3568,10 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       })
       applyLocalCollegePlanReportSummaryPatch('submitted')
       await refreshDistributionData()
-      ElMessage.success(`已成功下发并发起审批 ${response.data.totalCount} 个指标`)
+      ElMessage.success('已发起下发审批，审批通过后指标将正式下发')
     } catch (error) {
-      logger.error('[IndicatorDistributeView] batch distribute failed:', error)
-      ElMessage.error(error instanceof Error ? error.message : '下发失败，请重试')
+      logger.error('[IndicatorDistributeView] submit distribution approval failed:', error)
+      ElMessage.error(error instanceof Error ? error.message : '发起下发审批失败，请重试')
     } finally {
       loadingInstance?.close()
       isBatchDistributing.value = false
