@@ -3370,7 +3370,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   function formatReportMonthOption(value: string): { value: string; label: string } {
     const year = value.slice(0, 4)
     const month = Number(value.slice(4, 6))
-    return { value, label: `${year} 年 ${month} 月` }
+    // 2026-09-27 用户反馈：填报月份按《xx月填报》形式展示，完成后自动顺延到下一月
+    return { value, label: `《${year} 年 ${month} 月填报》` }
   }
 
   const reportMonthOptions = computed(() => {
@@ -3953,7 +3954,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
     // 验证：必须填写说明
     if (!reportForm.value.remark.trim()) {
-      ElMessage.warning('请填写进度备注')
+      ElMessage.warning('请填写进度说明')
       return
     }
 
