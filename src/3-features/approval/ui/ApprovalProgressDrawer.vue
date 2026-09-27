@@ -8,6 +8,10 @@ import {
   type ApprovalProgressDrawerEmit,
   type ApprovalProgressDrawerProps
 } from '@/3-features/approval/model/useApprovalProgressDrawer'
+import {
+  resolvePlanApprovalTypeLabel,
+  showAppraisalLevelForFlow
+} from '@/features/approval/lib/approval-utils'
 
 const props = withDefaults(defineProps<ApprovalProgressDrawerProps>(), {
   modelValue: false,
@@ -209,6 +213,17 @@ const normalizeApprovalDepartmentName = (value: unknown): string => {
     .trim()
 }
 
+// 鉴定等级仅上报链路显示（2026-09-27 用户拍板）：下发/异动流程不出现该选择器
+const showPlanAppraisalLevelSelect = computed(() =>
+  showAppraisalLevelForFlow(
+    activePlanWorkflow.value?.flowCode || currentDetailWorkflow.value?.flowCode
+  )
+)
+
+function isReportApprovalInstance(instance: Record<string, any>): boolean {
+  return showAppraisalLevelForFlow(instance?.flowCode)
+}
+
 const displayedCurrentPlanApprovalName = computed(() => {
   const rawName = normalizeDisplayName(currentPlanApprovalSummary.value?.planName)
   if (rawName && !isPlaceholderPlanApprovalName(rawName)) {
@@ -221,7 +236,9 @@ const displayedCurrentPlanApprovalName = computed(() => {
       normalizeApprovalDepartmentName(currentPlanApprovalSummary.value?.submitterName) ||
       '当前部门'
 
-    return `${departmentName}上报审批`
+    return `${departmentName}${resolvePlanApprovalTypeLabel(
+      activePlanWorkflow.value?.flowCode || currentDetailWorkflow.value?.flowCode
+    )}`
   }
 
   return rawName || '当前计划'
@@ -419,7 +436,8 @@ const displayedCurrentPlanApprovalName = computed(() => {
                     v-if="
                       hasPlanWorkflowData &&
                       isPlanPendingApproval &&
-                      canCurrentUserHandlePlanApproval
+                      canCurrentUserHandlePlanApproval &&
+                      showPlanAppraisalLevelSelect
                     "
                     v-model="planAppraisalLevel"
                     size="small"
@@ -512,6 +530,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 </div>
                 <div class="card-actions">
                   <ElSelect
+                    v-if="isReportApprovalInstance(item)"
                     v-model="planAppraisalLevel"
                     size="small"
                     clearable

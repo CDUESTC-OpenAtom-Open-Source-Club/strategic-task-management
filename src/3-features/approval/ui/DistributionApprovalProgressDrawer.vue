@@ -5,6 +5,10 @@ import ApprovalHistory from './ApprovalHistory.vue'
 import CustomApprovalFlow from './CustomApprovalFlow.vue'
 import { formatAppraisalLevel } from '@/features/approval/model/useApprovalProgressDrawer'
 import {
+  resolvePlanApprovalTypeLabel,
+  showAppraisalLevelForFlow
+} from '@/features/approval/lib/approval-utils'
+import {
   useDistributionApprovalProgressDrawer,
   type DistributionApprovalProgressDrawerEmit,
   type DistributionApprovalProgressDrawerProps
@@ -186,6 +190,13 @@ const normalizeApprovalDepartmentName = (value: unknown): string => {
     .trim()
 }
 
+// 鉴定等级仅上报链路显示（2026-09-27 用户拍板）：下发/异动流程不出现该选择器
+const showPlanAppraisalLevelSelect = computed(() =>
+  showAppraisalLevelForFlow(
+    activePlanWorkflow.value?.flowCode || currentDetailWorkflow.value?.flowCode
+  )
+)
+
 const displayedCurrentPlanApprovalName = computed(() => {
   const rawName = normalizeDisplayName(currentPlanApprovalSummary.value?.planName)
   if (rawName && !isPlaceholderPlanApprovalName(rawName)) {
@@ -198,7 +209,9 @@ const displayedCurrentPlanApprovalName = computed(() => {
       normalizeApprovalDepartmentName(currentPlanApprovalSummary.value?.submitterName) ||
       '当前部门'
 
-    return `${departmentName}上报审批`
+    return `${departmentName}${resolvePlanApprovalTypeLabel(
+      activePlanWorkflow.value?.flowCode || currentDetailWorkflow.value?.flowCode
+    )}`
   }
 
   return rawName || '当前计划'
@@ -341,7 +354,8 @@ const displayedCurrentPlanApprovalName = computed(() => {
                     v-if="
                       hasPlanWorkflowData &&
                       isPlanPendingApproval &&
-                      canCurrentUserHandlePlanApproval
+                      canCurrentUserHandlePlanApproval &&
+                      showPlanAppraisalLevelSelect
                     "
                     v-model="planAppraisalLevel"
                     size="small"
