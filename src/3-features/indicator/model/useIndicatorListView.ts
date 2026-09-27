@@ -66,6 +66,7 @@ import { apiClient, apiService } from '@/shared/api'
 import { buildQueryKey, invalidateQueries } from '@/shared/lib/utils/cache'
 import {
   GLOBAL_DATA_REFRESH_REQUEST_EVENT,
+  shouldRefreshForDomains,
   type GlobalDataRefreshDetail
 } from '@/5-shared/lib/dataFreshness'
 import {
@@ -318,6 +319,10 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }
 
     const detail = (event as CustomEvent<GlobalDataRefreshDetail>).detail
+    // 2026-09-27 细粒度异步刷新：仅指标/计划/审批域变更才刷本视图
+    if (!shouldRefreshForDomains(detail, ['indicator', 'plan', 'workflow'])) {
+      return
+    }
     globalDataRefreshPromise = (async () => {
       logger.info('[IndicatorListView] handling global data refresh request', detail)
       await refreshIndicatorListAfterMutation()

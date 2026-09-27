@@ -8,6 +8,7 @@ import { ref, computed } from 'vue'
 import { logger } from '@/shared/lib/utils/logger'
 import { tokenManager } from '@/shared/lib/utils/tokenManager'
 import { WS_BASE_URL } from '@/shared/config/api'
+import { requestGlobalDataRefresh } from '@/shared/lib/dataFreshness'
 
 // Notification types matching backend
 export enum NotificationType {
@@ -95,6 +96,36 @@ function getUserId(): string {
 }
 
 /**
+ * 2026-09-27 细粒度异步刷新（用户拍板）：把 WS 消息映射为受影响的数据域，
+ * 只让相关视图定向刷新，避免"一条通知全员全量刷"。
+ * 终态（审批通过/驳回）才带 dashboard 域——看板聚合数据此时才真的变化。
+ */
+function resolveRefreshDomains(message: NotificationMessage): string[] {
+  const domains = new Set<string>(['message'])
+  const entityType = String(message.entityType || '')
+    .trim()
+    .toUpperCase()
+  const type = String(message.type || '')
+    .trim()
+    .toUpperCase()
+
+  if (entityType === 'INDICATOR') {
+    domains.add('indicator')
+    domains.add('plan')
+  } else if (['PLAN', 'PLAN_REPORT', 'INDICATOR_DISTRIBUTION'].includes(entityType)) {
+    domains.add('plan')
+  } else {
+    domains.add('plan')
+  }
+
+  if (type === NotificationType.APPROVAL_APPROVED || type === NotificationType.APPROVAL_REJECTED) {
+    domains.add('dashboard')
+  }
+
+  return Array.from(domains)
+}
+
+/**
  * Handle incoming WebSocket message
  */
 function handleMessage(event: MessageEvent): void {
@@ -115,6 +146,13 @@ function handleMessage(event: MessageEvent): void {
 
     // Dispatch custom event for other components to listen
     window.dispatchEvent(new CustomEvent('approval-notification', { detail: message }))
+
+    // 2026-09-27 细粒度刷新：按数据域发起定向刷新请求（消息中心/审批待办由 AppLayout 消费 message 域）
+    requestGlobalDataRefresh({
+      source: 'approval-notification',
+      silent: false,
+      domains: resolveRefreshDomains(message)
+    })
   } catch (error) {
     logger.error('[WebSocket] Failed to parse message:', error)
   }

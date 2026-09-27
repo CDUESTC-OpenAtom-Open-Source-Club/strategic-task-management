@@ -60,6 +60,7 @@ import { getUsersByOrgId } from '@/features/user/api/query'
 import { sleep } from '@/5-shared/api/retry'
 import {
   GLOBAL_DATA_REFRESH_REQUEST_EVENT,
+  shouldRefreshForDomains,
   type GlobalDataRefreshDetail
 } from '@/5-shared/lib/dataFreshness'
 import {
@@ -3312,6 +3313,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
 
     const detail = (event as CustomEvent<GlobalDataRefreshDetail>).detail
+    // 2026-09-27 细粒度异步刷新：仅计划/审批/指标域变更才刷本视图
+    if (!shouldRefreshForDomains(detail, ['plan', 'workflow', 'indicator'])) {
+      return
+    }
     globalDataRefreshPromise = (async () => {
       logger.info('[StrategicTaskView] handling global data refresh request', detail)
       if (
