@@ -557,7 +557,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   const PLAN_DISPATCH_WORKFLOW_CODE_STRATEGY = 'PLAN_DISPATCH_STRATEGY'
   // 指标异动审批流（填报人修改→战略部负责人→分管校领导），实体类型 INDICATOR
   const PLAN_MUTATION_WORKFLOW_CODE = 'PLAN_MUTATION_STRATEGY'
-  const PLAN_APPROVAL_POLL_INTERVAL_MS = 15000
+  // 2026-09-27 用户拍板：15s 高频轮询给服务器造成压力（生产曾出现整波请求超时），
+  // 放宽到 60s；页面隐藏时本来就跳过（pollCurrentPlanApprovalState 有 document.hidden 守卫）
+  const PLAN_APPROVAL_POLL_INTERVAL_MS = 60000
   let planApprovalPollTimer: ReturnType<typeof setInterval> | null = null
 
   function getCurrentPlanId(): number | null {

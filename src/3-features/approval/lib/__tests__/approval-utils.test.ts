@@ -9,7 +9,9 @@ import {
   parsePositiveUserId,
   resolveApprovalRouteTitle,
   resolveHistoryStatusTag,
+  resolvePlanApprovalTypeLabel,
   shouldDisplayWorkflowHistoryItem,
+  showAppraisalLevelForFlow,
   toPositiveNumber
 } from '../approval-utils'
 
@@ -33,6 +35,26 @@ describe('approval-utils', () => {
     expect(isSubmissionFlow('PLAN_DISPATCH_FUNCTIONAL')).toBe(false)
     expect(isDistributionFlow('PLAN_DISPATCH_FUNCTIONAL')).toBe(true)
     expect(isDistributionFlow('OTHER_FLOW')).toBe(false)
+  })
+
+  it('labels approval type by real flow code (2026-09-27 口径)', () => {
+    expect(resolvePlanApprovalTypeLabel('PLAN_DISPATCH_STRATEGY')).toBe('下发审批')
+    expect(resolvePlanApprovalTypeLabel('PLAN_DISPATCH_FUNCDEPT')).toBe('下发审批')
+    expect(resolvePlanApprovalTypeLabel('PLAN_APPROVAL_FUNCDEPT')).toBe('上报审批')
+    expect(resolvePlanApprovalTypeLabel('PLAN_APPROVAL_COLLEGE')).toBe('上报审批')
+    expect(resolvePlanApprovalTypeLabel('PLAN_MUTATION_STRATEGY')).toBe('异动审批')
+    expect(resolvePlanApprovalTypeLabel('')).toBe('上报审批')
+    expect(resolvePlanApprovalTypeLabel(undefined)).toBe('上报审批')
+  })
+
+  it('shows appraisal level select only on submission flows', () => {
+    expect(showAppraisalLevelForFlow('PLAN_APPROVAL_FUNCDEPT')).toBe(true)
+    expect(showAppraisalLevelForFlow('plan_approval_college')).toBe(true)
+    expect(showAppraisalLevelForFlow('PLAN_DISPATCH_STRATEGY')).toBe(false)
+    expect(showAppraisalLevelForFlow('PLAN_MUTATION_STRATEGY')).toBe(false)
+    // flowCode 未知时保守显示，维持老数据行为
+    expect(showAppraisalLevelForFlow('')).toBe(true)
+    expect(showAppraisalLevelForFlow(undefined)).toBe(true)
   })
 
   it('builds route titles from workflow context', () => {

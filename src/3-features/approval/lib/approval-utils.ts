@@ -49,6 +49,27 @@ export function isMutationFlow(flowCode?: string): boolean {
   )
 }
 
+// 2026-09-27 用户拍板：审批卡片标题必须按真实流程类型区分——
+// 战略部/职能部门发起的下发是「下发审批」，只有上报链路才叫「上报审批」，
+// 指标异动是「异动审批」。flowCode 缺失时保守回退「上报审批」维持旧行为。
+export function resolvePlanApprovalTypeLabel(flowCode?: string): string {
+  const code = normalizeWorkflowCode(flowCode)
+  if (isDistributionFlow(code)) {
+    return '下发审批'
+  }
+  if (isMutationFlow(code)) {
+    return '异动审批'
+  }
+  return '上报审批'
+}
+
+// 鉴定等级只属于上报链路（V88 口径）：下发/异动流程不显示鉴定等级选择器。
+// flowCode 未知时保持显示，避免老数据丢功能。
+export function showAppraisalLevelForFlow(flowCode?: string): boolean {
+  const code = normalizeWorkflowCode(flowCode)
+  return !code || isSubmissionFlow(code)
+}
+
 export function resolveApprovalRouteTitle(
   card: Pick<WorkflowHistoryCardResponse, 'flowCode' | 'sourceOrgName' | 'targetOrgName'>
 ): string {
