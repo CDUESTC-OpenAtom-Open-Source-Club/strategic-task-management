@@ -2222,15 +2222,21 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         comment: approvalSubmitComment.value.trim() || undefined
       })
       applyLocalPlanWorkflowUiPatch('submitted')
-      notifyApprovalStateRefresh({ source: 'strategic-task-plan-submit-start' })
-      await waitForPlanWorkflowReady()
-      await refreshCurrentDepartmentView({ force: true })
-      await refreshApprovalCenterLiveView()
-      await preloadApprovalWorkflowDetail()
-      await loadPendingPlanApprovalCount()
-      notifyApprovalStateRefresh({ source: 'strategic-task-plan-submit' })
+      // 2026-09-27 用户反馈：提交成功立即关闭弹窗，重刷新链后台异步执行，
+      // 不让用户对着确认框等全量刷新跑完。
       handleCloseApprovalSetupDialog()
       ElMessage.success('已发起整体计划审批')
+      notifyApprovalStateRefresh({ source: 'strategic-task-plan-submit-start' })
+      void (async () => {
+        await waitForPlanWorkflowReady()
+        await refreshCurrentDepartmentView({ force: true })
+        await refreshApprovalCenterLiveView()
+        await preloadApprovalWorkflowDetail()
+        await loadPendingPlanApprovalCount()
+        notifyApprovalStateRefresh({ source: 'strategic-task-plan-submit' })
+      })().catch(error => {
+        logger.warn('[StrategicTaskView] post-submit background refresh failed', error)
+      })
     } catch (error) {
       logger.error('[StrategicTaskView] Failed to submit plan approval:', error)
     } finally {

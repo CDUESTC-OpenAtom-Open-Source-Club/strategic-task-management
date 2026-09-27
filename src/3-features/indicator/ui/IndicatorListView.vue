@@ -958,9 +958,9 @@ const handleExportIndicatorList = async () => {
             <span class="info-value highlight">{{ currentReportIndicator.progress || 0 }}%</span>
           </div>
           <div class="info-row">
-            <span class="info-label">月度参考：</span>
+            <span class="info-label">进度参考：</span>
             <span class="info-value monthly-target"
-              >本月建议进度 {{ getMonthlyExpectedProgress() }}%</span
+              >建议进度 {{ getMonthlyExpectedProgress() }}%</span
             >
           </div>
         </div>
@@ -972,8 +972,9 @@ const handleExportIndicatorList = async () => {
           <el-form-item label="归属月份" required>
             <el-select
               v-model="reportForm.reportMonth"
-              placeholder="选择归属月份"
+              placeholder="归属月份"
               style="width: 200px"
+              disabled
             >
               <el-option
                 v-for="m in reportMonthOptions"
@@ -982,12 +983,12 @@ const handleExportIndicatorList = async () => {
                 :value="m.value"
               />
             </el-select>
-            <span class="form-hint">按规则只能填报最早未填报月份</span>
+            <span class="form-hint">按规则自动锁定最早未填报月份</span>
           </el-form-item>
           <el-form-item label="自评进度等级" required>
             <el-select
               v-model="reportForm.selfRating"
-              placeholder="请自评本月进度"
+              placeholder="请自评进度"
               style="width: 200px"
             >
               <el-option label="超前完成" value="AHEAD" />
@@ -1003,14 +1004,14 @@ const handleExportIndicatorList = async () => {
               :step="5"
               style="width: 200px"
             />
-            <span class="form-hint">%（按本月实际完成情况填写）</span>
+            <span class="form-hint">%（按实际完成情况填写）</span>
           </el-form-item>
-          <el-form-item label="进度备注" required>
+          <el-form-item label="进度说明" required>
             <el-input
               v-model="reportForm.remark"
               type="textarea"
               :rows="4"
-              placeholder="请详细备注本次进度更新的工作内容和完成情况..."
+              placeholder="请详细说明本次进度更新的工作内容和完成情况..."
               maxlength="500"
               show-word-limit
             />
@@ -1020,6 +1021,7 @@ const handleExportIndicatorList = async () => {
               v-model:file-list="reportUploadFiles"
               action="#"
               :auto-upload="false"
+              multiple
               :limit="5"
               :disabled="isUploadingReportFiles || isSavingReport"
               accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"

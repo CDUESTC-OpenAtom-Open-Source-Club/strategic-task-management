@@ -37,16 +37,14 @@ export function useNotificationCenter() {
     }
   }
 
-  // P7：铃铛点击直达审批中心（有可打开的审批上下文时）；
-  // 否则退回消息中心。审批中心为 AppLayout 全局抽屉，红点/未读数不变。
+  // 2026-09-27 用户反馈：点击铃铛应直接进入消息中心，
+  // 之前首次点击会打开审批中心抽屉、需点两次才能到消息中心。
   const { toggleApprovalCenter, approvalCenterVisible } = useApprovalCenter()
 
   const handleNotificationClick = () => {
-    if (!approvalCenterVisible.value) {
+    if (approvalCenterVisible.value) {
       toggleApprovalCenter(null)
-      return
     }
-    toggleApprovalCenter(null)
     router.push('/messages')
   }
 
