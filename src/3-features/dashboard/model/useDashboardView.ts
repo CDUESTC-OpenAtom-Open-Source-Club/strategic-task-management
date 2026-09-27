@@ -16,6 +16,7 @@ import { buildDashboardSummary, getIndicatorStatusAtMonth } from '@/features/das
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
 import {
   GLOBAL_DATA_REFRESH_REQUEST_EVENT,
+  shouldRefreshForDomains,
   type GlobalDataRefreshDetail
 } from '@/5-shared/lib/dataFreshness'
 
@@ -2443,6 +2444,11 @@ export function useDashboardView(props: DashboardViewProps) {
     }
 
     const detail = (event as CustomEvent<GlobalDataRefreshDetail>).detail
+    // 2026-09-27 细粒度异步刷新：看板仅响应 dashboard 域（审批终态/指标变更），
+    // 流程中间环节的通知不再触发看板全量重载；窗口聚焦/可见性兜底不受影响
+    if (!shouldRefreshForDomains(detail, ['dashboard'])) {
+      return
+    }
     globalDataRefreshPromise = (async () => {
       logger.info('[DashboardView] handling global data refresh request', detail)
       await reloadData()

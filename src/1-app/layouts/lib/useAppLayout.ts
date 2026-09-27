@@ -111,9 +111,10 @@ export function useAppLayout() {
       )
       document.addEventListener('visibilitychange', handleVisibilityChange)
 
-      approvalNotificationRefreshListener = (() => {
-        requestGlobalDataRefresh({ source: 'approval-notification', silent: false })
-      }) as EventListener
+      // 2026-09-27 细粒度刷新：approval-notification 的全局刷新请求已由
+      // websocket.ts 统一携带数据域分发，此处不再重复转发（避免无域事件
+      // 抢占去重窗口、稀释域信息）。浏览器通知弹窗等副作用仍在 websocket.ts。
+      approvalNotificationRefreshListener = null
       window.addEventListener('approval-notification', approvalNotificationRefreshListener)
     }
 
