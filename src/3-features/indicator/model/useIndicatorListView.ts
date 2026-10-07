@@ -28,7 +28,7 @@ import { useStrategicStore } from '@/features/task/model/strategic'
 import { useAuthStore } from '@/features/auth/model/store'
 import { useTimeContextStore } from '@/shared/lib/timeContext'
 import { useApprovalStore } from '@/features/approval/model/store'
-import { useApprovalRouteAutopen } from '@/features/approval/lib'
+import { useApprovalRouteAutopen, notifyApprovalStateRefresh } from '@/features/approval/lib'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
 import {
   getProgressStatus,
@@ -66,6 +66,7 @@ import { apiClient, apiService } from '@/shared/api'
 import { buildQueryKey, invalidateQueries } from '@/shared/lib/utils/cache'
 import {
   GLOBAL_DATA_REFRESH_REQUEST_EVENT,
+  requestGlobalDataRefresh,
   shouldRefreshForDomains,
   type GlobalDataRefreshDetail
 } from '@/5-shared/lib/dataFreshness'
@@ -313,6 +314,10 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }
   })
 
+  // 2026-10-07 心跳/聚焦等轻源节流：与战略任务页同口径，45s 内不重复重刷列表
+  const LIGHT_REFRESH_SOURCES: string[] = ['heartbeat', 'window-focus', 'visibility-return']
+  let lastLightRefreshAt = 0
+
   const handleGlobalDataRefreshRequest = (event: Event) => {
     if (globalDataRefreshPromise) {
       return
@@ -321,6 +326,18 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     const detail = (event as CustomEvent<GlobalDataRefreshDetail>).detail
     // 2026-09-27 细粒度异步刷新：仅指标/计划/审批域变更才刷本视图
     if (!shouldRefreshForDomains(detail, ['indicator', 'plan', 'workflow'])) {
+      return
+    }
+    if (detail?.source && LIGHT_REFRESH_SOURCES.includes(detail.source)) {
+      const now = Date.now()
+      if (now - lastLightRefreshAt < 45 * 1000) {
+        return
+      }
+      lastLightRefreshAt = now
+    }
+    // 本视图自己发出的变更广播（indicator-list-mutation）：变更点已完成真实刷新，
+    // 这里跳过，避免同一份数据短时间内重复重刷
+    if (detail?.source === 'indicator-list-mutation') {
       return
     }
     globalDataRefreshPromise = (async () => {
@@ -3085,6 +3102,16 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   }
 
   // 保存指标编辑
+  // 2026-10-07 实际回源广播：本视图的指标变更（增删/撤回/编辑）完成后通知
+  // 任务页/下发页等并行视图定向刷新，其他视图不再依赖心跳或手动刷新。
+  const broadcastIndicatorListMutation = () => {
+    requestGlobalDataRefresh({
+      source: 'indicator-list-mutation',
+      silent: true,
+      domains: ['indicator', 'plan']
+    })
+  }
+
   const saveIndicatorEdit = (row: StrategicIndicator, field: string) => {
     if (editingIndicatorId.value === null) {
       return
@@ -3107,6 +3134,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }
 
     strategicStore.updateIndicator(row.id.toString(), updates)
+    broadcastIndicatorListMutation()
     cancelIndicatorEdit()
   }
 
@@ -3170,6 +3198,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       taskContent: newRow.value.taskContent
     })
     ElMessage.success('指标添加成功')
+    broadcastIndicatorListMutation()
     cancelAdd()
   }
 
@@ -3306,6 +3335,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }).then(() => {
       strategicStore.deleteIndicator(row.id.toString())
       ElMessage.success('指标已删除')
+      broadcastIndicatorListMutation()
     })
   }
 
@@ -3335,6 +3365,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         // 调用后端服务撤回指标生命周期状态
         await strategicStore.withdrawIndicator(row.id.toString())
         ElMessage.success('指标下发撤回成功')
+        broadcastIndicatorListMutation()
       } catch (err) {
         ElMessage.error('指标下发撤回失败，请稍后重试')
       }
@@ -4069,6 +4100,10 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       )
       // 保存草稿后「最早未填报月」可能前移，刷新填报入口锁定状态
       void refreshPlanReportEntryLockState()
+      // 2026-10-07 实际回源：行数据此前只做了本地补丁，这里从服务端重拉
+      // 指标与计划状态，保证页面展示与后端一致；并广播并行视图刷新
+      void refreshIndicatorListAfterMutation()
+      broadcastIndicatorListMutation()
       closeReportDialog()
     } catch (error) {
       logger.error('[IndicatorListView] 保存进度填报失败:', error)
@@ -4236,6 +4271,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     if (target === 'withdrawn') {
       currentPlanWorkflowDetail.value = null
     }
+
+    // 2026-10-07 广播提交/撤回：审批人的铃铛与待办、任务页/下发页实时同步
+    notifyApprovalStateRefresh({ source: 'indicator-list-report-settle' })
   }
   const handleApproveIndicatorWorkflow = async (row: StrategicIndicator) => {
     const snapshot = getIndicatorWorkflowSnapshot(row)
@@ -4259,6 +4297,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       })
       ElMessage.success('审批通过成功')
       await refreshIndicatorWorkflowContext(row.id)
+      // 2026-10-07 广播审批判定：铃铛/任务页/下发页/看板实时同步，不依赖心跳
+      notifyApprovalStateRefresh({ source: 'indicator-list-workflow-verdict' })
     } catch {
       // user cancelled
     }
@@ -4287,6 +4327,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       })
       ElMessage.success('审批驳回成功')
       await refreshIndicatorWorkflowContext(row.id)
+      // 2026-10-07 广播审批判定：铃铛/任务页/下发页/看板实时同步，不依赖心跳
+      notifyApprovalStateRefresh({ source: 'indicator-list-workflow-verdict' })
     } catch {
       // user cancelled
     }

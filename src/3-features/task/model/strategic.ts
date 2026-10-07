@@ -711,13 +711,19 @@ export const useStrategicStore = defineStore('strategic', () => {
 
   // ============ Actions ============
 
-  async function loadIndicatorsByYear(year: number, options: { force?: boolean } = {}) {
+  async function loadIndicatorsByYear(
+    year: number,
+    options: { force?: boolean; background?: boolean } = {}
+  ) {
     if (loadingYearPromise.value && loadingYear.value === year) {
       return loadingYearPromise.value
     }
 
-    loading.value = true
-    loadingState.value.indicators = true
+    // background=true：静默刷新，不翻转 loading 状态，避免看板等页面铺骨架屏（2026-10-07 异步局部刷新）
+    if (!options.background) {
+      loading.value = true
+      loadingState.value.indicators = true
+    }
     loadingState.value.error = null
     error.value = null
 
@@ -774,8 +780,10 @@ export const useStrategicStore = defineStore('strategic', () => {
         logger.error('[Strategic Store] Failed to load indicators:', err)
         throw err
       } finally {
-        loading.value = false
-        loadingState.value.indicators = false
+        if (!options.background) {
+          loading.value = false
+          loadingState.value.indicators = false
+        }
         loadingYearPromise.value = null
         loadingYear.value = null
       }

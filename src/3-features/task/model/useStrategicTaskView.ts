@@ -2216,6 +2216,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
 
     approvalSubmitting.value = true
+    planSubmitUiHoldUntil = Date.now() + PLAN_SUBMIT_UI_HOLD_MS
     try {
       await planStore.submitPlanForApproval(planId, {
         workflowCode: preview.workflowCode || PLAN_APPROVAL_SUBMIT_WORKFLOW_CODE,
@@ -2226,9 +2227,16 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       // 不让用户对着确认框等全量刷新跑完。
       handleCloseApprovalSetupDialog()
       ElMessage.success('已发起整体计划审批')
-      notifyApprovalStateRefresh({ source: 'strategic-task-plan-submit-start' })
+      // 只刷新消息铃铛（message 域）；不做全量广播——提交瞬间回源只会拉回
+      // 尚未回写的旧审批状态，把乐观补丁冲回「已退回」。
+      requestGlobalDataRefresh({
+        source: 'message-mutation',
+        silent: true,
+        domains: ['message']
+      })
       void (async () => {
         await waitForPlanWorkflowReady()
+        planSubmitUiHoldUntil = 0
         await refreshCurrentDepartmentView({ force: true })
         await refreshApprovalCenterLiveView()
         await preloadApprovalWorkflowDetail()
@@ -2238,6 +2246,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         logger.warn('[StrategicTaskView] post-submit background refresh failed', error)
       })
     } catch (error) {
+      planSubmitUiHoldUntil = 0
       logger.error('[StrategicTaskView] Failed to submit plan approval:', error)
     } finally {
       approvalSubmitting.value = false
@@ -2793,12 +2802,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     columnIndex: number
   }) => {
     // 战略任务列需要合并
-    // 列顺序: 0选择列, 1战略任务, 2核心指标, 3权重, 4进度等级, 5鉴定等级, 6上报资料, 7备注, 8操作
-    // P5 新增的选择列（发起异动）不参与合并；战略任务列由原来的第0列变为第1列
     if (columnIndex === 0) {
-      return { rowspan: 1, colspan: 1 }
-    }
-    if (columnIndex === 1) {
       return taskSpanMetaMap.value.get(rowIndex) ?? { rowspan: 1, colspan: 1 }
     }
     return { rowspan: 1, colspan: 1 }
@@ -3317,8 +3321,18 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
   })
 
+  // 2026-10-07 重新发起审批：提交成功后后端工作流回写是异步的，窗口期内全局刷新
+  // 拉回的可能是旧的「已退回」状态，会冲掉乐观补丁，导致必须手动刷新才更新。
+  // 提交后 20s 内挂起外部触发的视图刷新，由提交链路的等待+强刷负责收敛。
+  let planSubmitUiHoldUntil = 0
+  const PLAN_SUBMIT_UI_HOLD_MS = 20 * 1000
+
   const handleGlobalDataRefreshRequest = (event: Event) => {
     if (isBootstrappingPage.value || globalDataRefreshPromise) {
+      return
+    }
+
+    if (Date.now() < planSubmitUiHoldUntil) {
       return
     }
 
@@ -3765,7 +3779,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         const response = await getWorkflowInstanceDetailByBusiness('PLAN_REPORT', reportId)
         if (response.success && response.data) {
           preloadedPlanWorkflowDetail.value = response.data
-          return
+          // 2026-10-07：偏好的上报实例若已终态（撤回/退回），不能就此返回——
+          // 重新发起审批后新实例挂在 PLAN 业务上，必须回落继续查，
+          // 否则 waitForPlanWorkflowReady 每轮都拿旧实例、必然超时。
+          if (isActiveApprovalWorkflowDetail(response.data)) {
+            return
+          }
         }
       } catch (error) {
         logger.warn('[StrategicTaskView] 优先预加载 PlanReport 审批详情失败，回退 PLAN:', {

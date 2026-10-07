@@ -360,6 +360,12 @@ export const indicatorApi = {
         ...(typeof planId === 'number' ? { planId } : {}),
         reason: reason || ''
       })
+    }).then(result => {
+      // 2026-10-07：与单个撤回同口径，撤回后失效指标缓存并刷新消息中心，
+      // 保证审批人待办与各视图实时收敛
+      invalidateIndicatorListCaches()
+      void import('@/shared/lib/messageCenterRefresh').then(m => m.requestMessageCenterRefresh())
+      return result
     })
   },
 

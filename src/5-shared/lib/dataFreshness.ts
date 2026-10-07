@@ -12,6 +12,8 @@ export interface GlobalDataRefreshDetail {
     | 'visibility-return'
     | 'heartbeat'
     | 'message-mutation'
+    | 'indicator-list-mutation'
+    | 'indicator-distribution-mutation'
     | 'manual'
   silent?: boolean
   domains?: string[]

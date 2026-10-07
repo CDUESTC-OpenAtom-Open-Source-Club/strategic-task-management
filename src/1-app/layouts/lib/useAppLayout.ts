@@ -13,10 +13,14 @@ import {
 import { useWebSocketNotifications } from '@/shared/api/websocket'
 
 const ATTENTION_REFRESH_COOLDOWN_MS = 45 * 1000
+// 2026-10-07 心跳兜底：WS 断连/漏推时，每 30s 轻量同步一次消息与审批状态，
+// 保证"操作后几秒内状态异步收敛"；页面不可见时跳过，卸载时清理。
+const NOTIFICATION_HEARTBEAT_INTERVAL_MS = 30 * 1000
 let approvalNotificationRefreshListener: EventListener | null = null
 let lastAttentionRefreshAt = 0
 let messageRefreshInFlight: Promise<unknown> | null = null
 let approvalRefreshInFlight: Promise<unknown> | null = null
+let notificationHeartbeatTimer: ReturnType<typeof setInterval> | null = null
 
 export function useAppLayout() {
   const authStore = useAuthStore()
@@ -73,9 +77,16 @@ export function useAppLayout() {
     void refreshMessages()
   }
 
-  const handleApprovalStateRefresh = () => {
+  const handleApprovalStateRefresh = (event?: Event) => {
     void refreshNotificationState()
-    requestGlobalDataRefresh({ source: 'approval-state-refresh', silent: true })
+    const detail = (event as CustomEvent<{ domains?: string[] }> | undefined)?.detail
+    requestGlobalDataRefresh({
+      source: 'approval-state-refresh',
+      silent: true,
+      // 2026-10-07：桥接补齐数据域，保住"中间审批环节不打扰看板"的细粒度契约；
+      // 看板的终态刷新由 WS approval-notification 携带 dashboard 域负责。
+      domains: detail?.domains ?? ['message', 'workflow', 'plan', 'indicator']
+    })
   }
 
   const handleWindowFocus = () => {
@@ -98,6 +109,30 @@ export function useAppLayout() {
     }
   }
 
+  const stopNotificationHeartbeat = () => {
+    if (notificationHeartbeatTimer !== null) {
+      clearInterval(notificationHeartbeatTimer)
+      notificationHeartbeatTimer = null
+    }
+  }
+
+  const startNotificationHeartbeat = () => {
+    stopNotificationHeartbeat()
+    notificationHeartbeatTimer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+        return
+      }
+      if (!authStore.isAuthenticated) {
+        return
+      }
+      requestGlobalDataRefresh({
+        source: 'heartbeat',
+        silent: true,
+        domains: ['message', 'workflow']
+      })
+    }, NOTIFICATION_HEARTBEAT_INTERVAL_MS)
+  }
+
   onMounted(async () => {
     if (typeof window !== 'undefined') {
       window.addEventListener(
@@ -110,6 +145,7 @@ export function useAppLayout() {
         handleGlobalDataRefreshRequest as EventListener
       )
       document.addEventListener('visibilitychange', handleVisibilityChange)
+      startNotificationHeartbeat()
 
       // 2026-09-27 细粒度刷新：approval-notification 的全局刷新请求已由
       // websocket.ts 统一携带数据域分发，此处不再重复转发（避免无域事件
@@ -135,6 +171,7 @@ export function useAppLayout() {
         handleGlobalDataRefreshRequest as EventListener
       )
       document.removeEventListener('visibilitychange', handleVisibilityChange)
+      stopNotificationHeartbeat()
       if (approvalNotificationRefreshListener) {
         window.removeEventListener('approval-notification', approvalNotificationRefreshListener)
         approvalNotificationRefreshListener = null

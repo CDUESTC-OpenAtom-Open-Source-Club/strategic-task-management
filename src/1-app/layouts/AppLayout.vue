@@ -353,7 +353,7 @@ const handleDropdownCommand = async (command: string) => {
                 <!-- All users visible -->
                 <el-dropdown-item command="changePassword">
                   <el-icon><Lock /></el-icon>
-                  修改密码
+                  个人中心
                 </el-dropdown-item>
 
                 <el-dropdown-item command="logout" :divided="canAccessAdminConsole">
@@ -840,6 +840,11 @@ const handleDropdownCommand = async (command: string) => {
 
 .content-area {
   min-height: calc(100vh - 180px);
+}
+
+/* 仅战略任务管理页：取消强制最小高度，由页面自身按视口精确取高，避免整页滚动 */
+.content-area:has(.strategic-task-container) {
+  min-height: 0;
 }
 
 /* ========== Responsive ========== */

@@ -897,20 +897,34 @@ export function useDashboardView(props: DashboardViewProps) {
   )
 
   // 重新加载数据函数
-  const reloadData = async () => {
-    try {
+  // silent=true（2026-10-07 异步局部刷新）：事件驱动/定时兜底刷新走后台静默，
+  // 强制绕过缓存取新数据，但不翻转页面加载状态——看板不再整页铺骨架屏。
+  const reloadData = async (options: { silent?: boolean } = {}) => {
+    const silent = options.silent === true
+    if (!silent) {
       startLoading()
-      clearError()
+    }
+    clearError()
+    try {
       await Promise.all([
-        strategicStore.loadIndicatorsByYear(timeContext.currentYear),
+        silent
+          ? strategicStore.loadIndicatorsByYear(timeContext.currentYear, {
+              force: true,
+              background: true
+            })
+          : strategicStore.loadIndicatorsByYear(timeContext.currentYear),
         dashboardStore.fetchAlertStats(),
         dashboardStore.fetchUnclosedAlerts()
       ])
     } catch (err) {
-      setError(err instanceof Error ? err.message : '重新加载失败')
       logger.error('[Dashboard] Failed to reload data:', err)
+      if (!silent) {
+        setError(err instanceof Error ? err.message : '重新加载失败')
+      }
     } finally {
-      endLoading()
+      if (!silent) {
+        endLoading()
+      }
     }
   }
 
@@ -2422,7 +2436,7 @@ export function useDashboardView(props: DashboardViewProps) {
       if (document.visibilityState !== 'visible') {
         return
       }
-      void reloadData()
+      void reloadData({ silent: true })
       void loadMutationSummary()
     }, DASHBOARD_AUTO_REFRESH_INTERVAL)
   }
@@ -2451,7 +2465,8 @@ export function useDashboardView(props: DashboardViewProps) {
     }
     globalDataRefreshPromise = (async () => {
       logger.info('[DashboardView] handling global data refresh request', detail)
-      await reloadData()
+      // 事件驱动刷新一律后台静默：数据就地更新，不打断当前浏览（2026-10-07）
+      await reloadData({ silent: true })
     })().finally(() => {
       globalDataRefreshPromise = null
     })

@@ -3469,6 +3469,9 @@ export function useApprovalProgressDrawer(
           )
           if (!response.success) {
             ElMessage.error(response.message || '审批失败')
+            // 2026-10-07：批量中途失败也要回源收尾——前面的实例已提交成功，
+            // 跳过刷新会让抽屉停留旧状态
+            await refreshPlanApprovalAfterMutation()
             return
           }
         }
@@ -3583,6 +3586,8 @@ export function useApprovalProgressDrawer(
           const response = await approvalApi.rejectPlan(instance.instanceId, userId, value)
           if (!response.success) {
             ElMessage.error(response.message || '拒绝失败')
+            // 2026-10-07：批量中途失败也要回源收尾，避免抽屉停留旧状态
+            await refreshPlanApprovalAfterMutation()
             return
           }
         }

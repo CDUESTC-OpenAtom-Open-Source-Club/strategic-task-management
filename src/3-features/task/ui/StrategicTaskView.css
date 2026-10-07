@@ -17,12 +17,13 @@
   border: 1px solid rgba(147, 51, 234, 0.3) !important;
 }
 
-/* 页面主容器 */
+/* 页面主容器：高度取视口减去页头/页签导航/主区留白/页脚的合计开销，
+   让卡片正好铺满首屏，整页不出现滚动条 */
 .strategic-task-container {
   display: flex;
   gap: 0;
-  height: calc(100vh - 200px);
-  min-height: 500px;
+  height: calc(100vh - 264px);
+  min-height: 0;
   position: relative;
   overflow: hidden;
 }
@@ -652,12 +653,32 @@
 /* Excel表格容器 */
 .excel-table-wrapper {
   flex: 1;
+  min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   /* 左右留白：表格与卡片边框之间留出呼吸空间 */
   padding: 0 var(--spacing-lg);
   box-sizing: border-box;
+}
+
+/* 任务页签撑满剩余高度，让表格区贴住状态栏 */
+.task-tabs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.task-tabs :deep(.el-tabs__content) {
+  flex: 1;
+  min-height: 0;
+}
+
+.task-tabs :deep(.el-tab-pane) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 /* 任务管理页签：左侧与表格对齐，并留出顶部间距（原先贴到卡片左上角） */
@@ -682,25 +703,38 @@
 
 .table-container {
   flex: 1;
-  overflow: auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: auto;
 }
 
-/* 确保表格有最小宽度，防止列被压缩 */
 .excel-table-wrapper .unified-table {
-  min-width: 1200px;
+  width: 100%;
+  table-layout: fixed;
 }
 
-/* 确保表头不换行 */
 .excel-table-wrapper .unified-table :deep(.el-table__header) th .cell {
-  white-space: nowrap;
+  /* 默认列宽下表头单行；列宽不够时自动换行，禁止出现省略号 */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+  word-break: normal;
+  /* 收窄 Element Plus 默认 12px 内边距，保证六字表头默认单行完整显示 */
+  padding: 0 8px;
+}
+
+.excel-table-wrapper .unified-table :deep(.el-table__body) .cell {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* 说明列文字换行 */
 .remark-text-wrap {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  display: block;
+  overflow: visible;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   word-break: break-word;
 }
 
@@ -786,11 +820,11 @@
   background: var(--bg-light) !important;
   color: var(--text-main);
   font-weight: 600;
-  padding: var(--spacing-md) var(--spacing-lg);
+  padding: 6px 8px;
 }
 
 .unified-table :deep(.el-table__body td) {
-  padding: var(--spacing-md) var(--spacing-lg);
+  padding: 4px 8px;
   color: var(--text-regular);
 }
 
@@ -1087,6 +1121,18 @@
   background: var(--border-color);
   margin: var(--spacing-2xl) 0;
 }
+
+/* 上报记录：固定展开区块，无折叠交互 */
+.report-history-section {
+  margin-top: var(--spacing-lg);
+}
+
+.report-history-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-main);
+  margin-bottom: var(--spacing-sm);
+}
 .timeline-card {
   padding: var(--spacing-md);
   background: var(--bg-page);
@@ -1357,7 +1403,7 @@
 }
 
 .indicator-name-text {
-  line-height: 1.6;
+  line-height: 1.35;
   white-space: pre-wrap;
   word-break: break-word;
   display: block;
@@ -1389,7 +1435,7 @@
      任务单元格新增指标三角形按钮
      ======================================== */
 /* 让战略任务列的td支持绝对定位 */
-:deep(.unified-table .el-table__body td:nth-child(2)) {
+:deep(.unified-table .el-table__body td:first-child) {
   position: relative;
 }
 
