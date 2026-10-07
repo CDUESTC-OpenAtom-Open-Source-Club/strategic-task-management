@@ -2792,9 +2792,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     rowIndex: number
     columnIndex: number
   }) => {
-    // 战略任务列（第0列）需要合并
-    // 列顺序: 0战略任务, 1核心指标, 2说明, 3权重, 4里程碑, 5进度, 6状态, 7操作
+    // 战略任务列需要合并
+    // 列顺序: 0选择列, 1战略任务, 2核心指标, 3权重, 4进度等级, 5鉴定等级, 6上报资料, 7备注, 8操作
+    // P5 新增的选择列（发起异动）不参与合并；战略任务列由原来的第0列变为第1列
     if (columnIndex === 0) {
+      return { rowspan: 1, colspan: 1 }
+    }
+    if (columnIndex === 1) {
       return taskSpanMetaMap.value.get(rowIndex) ?? { rowspan: 1, colspan: 1 }
     }
     return { rowspan: 1, colspan: 1 }

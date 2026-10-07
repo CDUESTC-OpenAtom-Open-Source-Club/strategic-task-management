@@ -1000,6 +1000,8 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   class="unified-table"
                   @selection-change="handleSelectionChange"
                 >
+                  <!-- P5 选择列：发起异动依赖 selectedIndicators（战略部勾选单个指标） -->
+                  <el-table-column type="selection" width="42" />
                   <el-table-column prop="taskContent" label="战略任务" width="180">
                     <template #default="{ row }">
                       <div class="task-cell-wrapper">
