@@ -865,22 +865,38 @@ function clearReadMessages() {
 const DINGTALK_SOURCE_ID_RE = /^sism-approval-([A-Z_]+)-(\d+)-(\d+)(?:-(\d+))?$/
 
 /**
- * 钉钉待办跳转落地：按 sourceId 中的审批实例 ID 自动打开对应的待处理审批
- * 消息（审批中心盒子/详情弹窗），用户无需在列表中手动查找。
+ * 跳转落地：自动打开对应的待处理审批（审批中心盒子/详情弹窗）。
+ * 支持两种入口参数：
+ * - sourceId：钉钉待办（sism-approval-{type}-{entityId}-{instanceId}[-{stepId}]）
+ * - approvalInstanceId：铃铛悬浮单条消息跳转（2026-10-07）
+ * 用户无需在列表中手动查找。
  */
-async function autoOpenFromDingTalkSourceId() {
-  const raw = route.query.sourceId
-  if (typeof raw !== 'string' || !raw) {
+async function autoOpenApprovalFromRoute() {
+  const rawSourceId = route.query.sourceId
+  const rawApprovalInstanceId = route.query.approvalInstanceId
+  const hasSourceId = typeof rawSourceId === 'string' && rawSourceId.length > 0
+  const hasApprovalInstanceId =
+    typeof rawApprovalInstanceId === 'string' && /^\d+$/.test(rawApprovalInstanceId)
+  if (!hasSourceId && !hasApprovalInstanceId) {
     return
   }
-  const match = raw.match(DINGTALK_SOURCE_ID_RE)
   const nextQuery = { ...route.query }
   delete nextQuery.sourceId
+  delete nextQuery.approvalInstanceId
   await router.replace({ query: nextQuery })
-  if (!match) {
+
+  let instanceId: string | null = null
+  if (hasSourceId) {
+    const match = (rawSourceId as string).match(DINGTALK_SOURCE_ID_RE)
+    if (match) {
+      instanceId = match[3]
+    }
+  } else {
+    instanceId = rawApprovalInstanceId as string
+  }
+  if (!instanceId) {
     return
   }
-  const instanceId = match[3]
   const target = messageStore.todoMessages.find(
     message => String(message.approvalInstanceId ?? '') === instanceId
   )
@@ -891,7 +907,7 @@ async function autoOpenFromDingTalkSourceId() {
 
 onMounted(async () => {
   await refreshData()
-  await autoOpenFromDingTalkSourceId()
+  await autoOpenApprovalFromRoute()
 })
 </script>
 

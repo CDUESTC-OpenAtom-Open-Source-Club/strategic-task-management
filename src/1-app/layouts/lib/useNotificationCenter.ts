@@ -39,12 +39,24 @@ export function useNotificationCenter() {
 
   // 2026-09-27 用户反馈：点击铃铛应直接进入消息中心，
   // 之前首次点击会打开审批中心抽屉、需点两次才能到消息中心。
+  // 2026-10-07：点击悬浮的某条待审批消息时携带其审批实例 ID，
+  // 消息中心落地后自动打开对应审批，无需在列表中再找一遍。
   const { toggleApprovalCenter, approvalCenterVisible } = useApprovalCenter()
 
-  const handleNotificationClick = () => {
+  const handleNotificationClick = (message?: Message) => {
     if (approvalCenterVisible.value) {
       toggleApprovalCenter(null)
     }
+
+    const approvalInstanceId = message?.approvalInstanceId
+    if (approvalInstanceId !== undefined && approvalInstanceId !== null) {
+      router.push({
+        path: '/messages',
+        query: { approvalInstanceId: String(approvalInstanceId) }
+      })
+      return
+    }
+
     router.push('/messages')
   }
 

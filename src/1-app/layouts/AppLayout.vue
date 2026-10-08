@@ -306,7 +306,7 @@ const handleDropdownCommand = async (command: string) => {
                   :key="message.id"
                   type="button"
                   class="notification-preview__item"
-                  @click="handleNotificationClick"
+                  @click="handleNotificationClick(message)"
                 >
                   <span class="notification-preview__title">{{ message.title }}</span>
                   <span class="notification-preview__content">{{ message.content }}</span>
