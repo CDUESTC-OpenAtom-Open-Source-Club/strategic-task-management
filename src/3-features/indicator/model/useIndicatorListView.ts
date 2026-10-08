@@ -2766,7 +2766,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     )
   })
 
-  const showStrategicTaskColumn = computed(() => !usePlanReportFlow.value)
+  // 2026-10-07 裁决：/indicators 页面（职能部门）也要看到所属战略任务列，不再隐藏
+  const showStrategicTaskColumn = computed(() => true)
 
   // 计算单元格合并信息
   const getSpanMethod = ({
@@ -3405,11 +3406,31 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     return { value, label: `《${year} 年 ${month} 月填报》` }
   }
 
+  // 2026-10-07 裁决（月份选择器 B）：默认最早未填报月，可补签选择至当月；
+  // 未来月份与更早月份不可选（更早月份必然已填，后端另有防跳月强校验）
   const reportMonthOptions = computed(() => {
-    const year = String(new Date().getFullYear())
-    const fallbackValue = `${year}${String(new Date().getMonth() + 1).padStart(2, '0')}`
-    const value = lockedReportMonth.value || fallbackValue
-    return [formatReportMonthOption(value)]
+    const now = new Date()
+    const current = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
+    const start = lockedReportMonth.value || current
+    const options: { value: string; label: string }[] = []
+    let year = Number(start.slice(0, 4))
+    let month = Number(start.slice(4, 6))
+    const endYear = Number(current.slice(0, 4))
+    const endMonth = Number(current.slice(4, 6))
+    let guard = 0
+    while ((year < endYear || (year === endYear && month <= endMonth)) && guard < 24) {
+      options.push(formatReportMonthOption(`${year}${String(month).padStart(2, '0')}`))
+      month += 1
+      if (month > 12) {
+        month = 1
+        year += 1
+      }
+      guard += 1
+    }
+    if (options.length === 0) {
+      options.push(formatReportMonthOption(start))
+    }
+    return options
   })
 
   async function resolveEarliestUnfilledReportMonth(
@@ -3971,15 +3992,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
     const indicator = await refreshReportIndicatorSnapshot(currentReportIndicator.value)
 
-    // 验证：月度填报允许按实际情况修订为 0-100 之间的任意百分比。
-    if (reportForm.value.newProgress < 0) {
-      ElMessage.warning('进度不能小于 0%')
-      return
-    }
-
-    // 验证：进度不能超过100
-    if (reportForm.value.newProgress > 100) {
-      ElMessage.warning('进度不能超过 100%')
+    // 2026-10-07 裁决：进度改为等级制（自评进度等级），不再采集百分比数值
+    if (!reportForm.value.selfRating) {
+      ElMessage.warning('请选择自评进度等级')
       return
     }
 
@@ -4017,9 +4032,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         .map(item => {
           const itemId = String(item.id)
           const isCurrentIndicator = itemId === String(indicator.id)
-          const reportProgress = isCurrentIndicator
-            ? reportForm.value.newProgress
-            : item.pendingProgress
+          const reportProgress = isCurrentIndicator ? 0 : item.pendingProgress
           const reportRemark = isCurrentIndicator
             ? reportForm.value.remark
             : String(item.pendingRemark || '').trim()
@@ -4048,7 +4061,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
       const savedFill = await planStore.saveIndicatorFill({
         indicator_id: indicator.id,
-        progress: reportForm.value.newProgress,
+        // 2026-10-07 裁决：进度改等级制，不再采集百分比；后端字段保留置 0
+        progress: 0,
         content: reportForm.value.remark,
         selfRating: reportForm.value.selfRating || undefined,
         reportMonth: reportForm.value.reportMonth || undefined,
@@ -4061,7 +4075,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       })
 
       persistIndicatorDraft(indicator.id, {
-        progress: reportForm.value.newProgress,
+        progress: 0,
         remark: reportForm.value.remark,
         attachments: attachmentUrls,
         attachmentDetails

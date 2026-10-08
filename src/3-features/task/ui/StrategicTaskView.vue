@@ -1147,33 +1147,17 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     <template #default="{ row }">
                       <div class="manual-alert-cell">
                         <el-tooltip
-                          v-if="isStrategicDept"
-                          :disabled="
-                            canEditManualAlertLevel(currentPlanStatus, { readOnly: isReadOnly })
-                          "
-                          :content="
-                            isReadOnly ? MANUAL_ALERT_READONLY_HINT : MANUAL_ALERT_LOCKED_HINT
-                          "
+                          v-if="isStrategicDept || row.responsibleDept === selectedDepartment"
+                          :disabled="!isReadOnly"
+                          :content="MANUAL_ALERT_READONLY_HINT"
                           placement="top"
                         >
-                          <div
-                            class="manual-alert-select-wrapper"
-                            :class="{
-                              'manual-alert-select-wrapper--locked': !canEditManualAlertLevel(
-                                currentPlanStatus,
-                                { readOnly: isReadOnly }
-                              )
-                            }"
-                          >
+                          <div class="manual-alert-select-wrapper">
                             <el-select
                               :model-value="row.manualAlertSeverity ?? ''"
                               size="small"
                               class="manual-alert-select"
-                              :disabled="
-                                !canEditManualAlertLevel(currentPlanStatus, {
-                                  readOnly: isReadOnly
-                                }) || savingManualAlertIndicatorId === row.id
-                              "
+                              :disabled="isReadOnly || savingManualAlertIndicatorId === row.id"
                               :loading="savingManualAlertIndicatorId === row.id"
                               @change="
                                 value =>

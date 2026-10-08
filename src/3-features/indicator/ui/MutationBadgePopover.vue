@@ -69,9 +69,9 @@ onMounted(load)
 </script>
 
 <template>
-  <!-- 无变更不渲染标注；有变更时鼠标悬停即展开历史（点击不再作为唯一入口） -->
+  <!-- 2026-10-07 用户反馈：没有检测到异动则不展示角标；有异动时悬停展开历史 -->
   <el-popover
-    v-if="hasEntity"
+    v-if="hasEntity && count > 0"
     placement="top"
     trigger="hover"
     :width="320"
