@@ -243,8 +243,28 @@ export const usePlanStore = defineStore('plan', () => {
         const incomingStatus = String((response.data as Plan & { status?: unknown }).status || '')
           .trim()
           .toUpperCase()
+        const incomingWorkflowStatus = String(
+          (response.data as Plan & { workflowStatus?: unknown }).workflowStatus || ''
+        )
+          .trim()
+          .toUpperCase()
+        // 2026-10-10 跨窗口实时修复：乐观保护只针对「提交后工作流异步落库」的窗口期，
+        // 即详情回包没有带回明确工作流状态的情况。若回包已带权威终态（撤回/驳回/通过/下发），
+        // 说明其他窗口/用户完成了真实状态流转，必须采用，否则本窗口会永远卡在旧的「审批中」。
+        const AUTHORITATIVE_WORKFLOW_STATUSES = [
+          'WITHDRAWN',
+          'CANCELLED',
+          'REJECTED',
+          'RETURNED',
+          'APPROVED',
+          'COMPLETED',
+          'FINISHED',
+          'DISTRIBUTED'
+        ]
         const shouldPreserveOptimisticApprovalState =
-          existingStatus === 'PENDING' && (incomingStatus === '' || incomingStatus === 'DRAFT')
+          existingStatus === 'PENDING' &&
+          (incomingStatus === '' || incomingStatus === 'DRAFT') &&
+          !AUTHORITATIVE_WORKFLOW_STATUSES.includes(incomingWorkflowStatus)
 
         const mergedPlan = {
           ...(existingPlan || {}),

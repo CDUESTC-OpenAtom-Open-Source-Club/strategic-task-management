@@ -52,14 +52,18 @@ function isForbiddenError(error: unknown): boolean {
     return false
   }
 
-  const status = 'response' in error
-    ? Number((error as { response?: { status?: number } }).response?.status ?? NaN)
-    : Number((error as { status?: number }).status ?? NaN)
+  const status =
+    'response' in error
+      ? Number((error as { response?: { status?: number } }).response?.status ?? NaN)
+      : Number((error as { status?: number }).status ?? NaN)
 
   return status === 403
 }
 
-function buildForbiddenEmptyPageResult<T>(pageNum: number, pageSize: number): ApiResponse<PageResult<T>> {
+function buildForbiddenEmptyPageResult<T>(
+  pageNum: number,
+  pageSize: number
+): ApiResponse<PageResult<T>> {
   return {
     success: true,
     code: 200,
@@ -252,7 +256,8 @@ export async function getWorkflowInstanceDetail(
  */
 export async function getWorkflowInstanceDetailByBusiness(
   entityType: string,
-  entityId: number | string
+  entityId: number | string,
+  options: { force?: boolean } = {}
 ): Promise<ApiResponse<WorkflowInstanceDetailResponse>> {
   return fetchWithCache({
     key: buildQueryKey(
@@ -260,6 +265,7 @@ export async function getWorkflowInstanceDetailByBusiness(
       'detailByBusiness',
       withWorkflowContext({ entityType, entityId: String(entityId) })
     ),
+    force: options.force === true,
     policy: {
       ...WORKFLOW_DETAIL_POLICY,
       tags: ['workflow.detail', `workflow.business.${entityType}.${entityId}`]

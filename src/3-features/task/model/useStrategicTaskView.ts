@@ -1273,7 +1273,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
 
     const status = currentPlanStatus.value
-    if (status !== 'PENDING' && status !== 'DISTRIBUTED') {
+    // 2026-10-10 跨窗口实时修复：状态守卫读的是本地（可能过期的）计划状态。
+    // 他窗"重新发起审批"时本窗状态是 DRAFT/已退回，若守卫拦下 force 刷新，
+    // 详情永远拉不回来。force 是明确的"有变更要收敛"信号，必须放行。
+    if (!options.force && status !== 'PENDING' && status !== 'DISTRIBUTED') {
       return
     }
 
@@ -3026,6 +3029,29 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
   }
 
+  // 2026-10-10：新增行战略任务改用 el-autocomplete——
+  // 手输内容失焦即保留在 v-model（原 el-select allow-create 不按回车会回退丢字），
+  // 失焦时若与已有任务精确匹配则自动绑定任务类型与任务 ID。
+  const querySearchTask = (queryString: string, cb: (results: { value: string }[]) => void) => {
+    const q = queryString.trim().toLowerCase()
+    const results = existingTaskNames.value
+      .filter(name => !q || name.toLowerCase().includes(q))
+      .map(name => ({ value: name }))
+    cb(results)
+  }
+
+  const onTaskOptionSelect = (item: { value: string }) => {
+    newRow.value.taskContent = item.value
+    handleTaskSelect(item.value)
+  }
+
+  const onTaskInputBlur = (event: FocusEvent) => {
+    const text = String((event.target as HTMLInputElement)?.value || '').trim()
+    if (text && existingTaskNames.value.includes(text)) {
+      handleTaskSelect(text)
+    }
+  }
+
   // 新增行数据
   const newRow = ref({
     taskId: '',
@@ -3776,7 +3802,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     )
     if (shouldPreferCurrentReportWorkflow.value && Number.isFinite(reportId) && reportId > 0) {
       try {
-        const response = await getWorkflowInstanceDetailByBusiness('PLAN_REPORT', reportId)
+        // 2026-10-10 跨窗口实时修复：审批详情预加载必须拿最新实例状态，
+        // 绕过 30s WORKFLOW_DETAIL 内存缓存，否则撤回/重发的推送会被旧缓存吃掉。
+        const response = await getWorkflowInstanceDetailByBusiness('PLAN_REPORT', reportId, {
+          force: true
+        })
         if (response.success && response.data) {
           preloadedPlanWorkflowDetail.value = response.data
           // 2026-10-07：偏好的上报实例若已终态（撤回/退回），不能就此返回——
@@ -3798,7 +3828,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     if (planId === undefined || planId === null || planId === '') {
       if (Number.isFinite(reportId) && reportId > 0) {
         try {
-          const response = await getWorkflowInstanceDetailByBusiness('PLAN_REPORT', reportId)
+          const response = await getWorkflowInstanceDetailByBusiness('PLAN_REPORT', reportId, {
+            force: true
+          })
           if (response.success && response.data) {
             preloadedPlanWorkflowDetail.value = response.data
           }
@@ -3822,7 +3854,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     try {
       const businessEntityId = Number(latestPlan.id ?? 0)
       if (Number.isFinite(businessEntityId) && businessEntityId > 0) {
-        const response = await getWorkflowInstanceDetailByBusiness('PLAN', businessEntityId)
+        const response = await getWorkflowInstanceDetailByBusiness('PLAN', businessEntityId, {
+          force: true
+        })
         if (response.success && response.data) {
           preloadedPlanWorkflowDetail.value = response.data
         }
@@ -4943,6 +4977,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     ensurePersistedTaskIdForIndicator,
     ensurePlanCanDistribute,
     existingTaskNames,
+    querySearchTask,
+    onTaskOptionSelect,
+    onTaskInputBlur,
     findCurrentPlanByDepartment,
     findCurrentPlanByOrgId,
     findExistingTaskIdByName,

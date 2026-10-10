@@ -155,6 +155,9 @@ const {
   ensurePersistedTaskIdForIndicator,
   ensurePlanCanDistribute,
   existingTaskNames,
+  querySearchTask,
+  onTaskOptionSelect,
+  onTaskInputBlur,
   findCurrentPlanByDepartment,
   findCurrentPlanByOrgId,
   findExistingTaskIdByName,
@@ -1519,25 +1522,16 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     <el-col :span="12">
                       <el-form-item class="required-form-item">
                         <template #label><span class="required-asterisk">*</span>战略任务</template>
-                        <el-select
-                          ref="taskSelectRef"
+                        <el-autocomplete
                           v-model="newRow.taskContent"
-                          filterable
-                          allow-create
-                          default-first-option
-                          placeholder="选择或输入战略任务名称"
+                          :fetch-suggestions="querySearchTask"
+                          placeholder="选择或输入战略任务名称（输入后点击其他位置即保留）"
                           style="width: 100%"
                           :teleported="false"
-                          @change="handleTaskSelect"
-                          @visible-change="handleTaskVisibleChange"
-                        >
-                          <el-option
-                            v-for="task in existingTaskNames"
-                            :key="task"
-                            :label="task"
-                            :value="task"
-                          />
-                        </el-select>
+                          clearable
+                          @select="onTaskOptionSelect"
+                          @blur="onTaskInputBlur"
+                        />
                       </el-form-item>
                     </el-col>
                   </el-row>
