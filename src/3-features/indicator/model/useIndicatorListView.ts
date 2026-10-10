@@ -619,6 +619,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       }
     }
     await loadCurrentPlanReportSummary(planId)
+    // 2026-10-07：刷新等级/说明回显覆盖层（补签月草稿不在当月摘要里）
+    await refreshReportDetailOverlay()
     await loadCurrentPlanWorkflowDetail(planId)
   }
 
@@ -2197,6 +2199,53 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       }
   )
 
+  const reportDetailOverlay = ref<Record<string, any>>({})
+
+  // 2026-10-07 裁决：等级制列数据回显——用「未提交草稿明细（优先）+ 当月报告摘要」
+  // 覆盖自评进度等级/进度说明/附件，全部填报角色（职能部门+二级学院）生效。
+  const applyReportDetailOverlay = (list: StrategicIndicator[]): StrategicIndicator[] => {
+    if (
+      !Array.isArray(currentPlanReportSummary.value?.indicatorDetails) &&
+      Object.keys(reportDetailOverlay.value).length === 0
+    ) {
+      return list
+    }
+    const overlayMap: Record<string, any> = {}
+    if (Array.isArray(currentPlanReportSummary.value?.indicatorDetails)) {
+      ;(currentPlanReportSummary.value.indicatorDetails as any[]).forEach(detail => {
+        if (detail?.indicatorId !== undefined && detail.indicatorId !== null) {
+          overlayMap[String(detail.indicatorId)] = detail
+        }
+      })
+    }
+    Object.assign(overlayMap, reportDetailOverlay.value)
+    return list.map(indicator => {
+      const detail = overlayMap[String(indicator.id)]
+      if (!detail) {
+        return indicator
+      }
+      const detailProgress = Number(detail.progress)
+      const nextProgress = Number.isFinite(detailProgress)
+        ? detailProgress
+        : indicator.pendingProgress
+      const nextRemark =
+        String(detail.description || detail.comment || '').trim() || indicator.pendingRemark || null
+      const nextAttachments = Array.isArray(detail.attachments)
+        ? detail.attachments
+            .map(attachment => attachment?.fileName || attachment?.url || '')
+            .filter(Boolean)
+        : (indicator.pendingAttachments ?? [])
+      return {
+        ...indicator,
+        selfRating: detail.selfRating || indicator.selfRating,
+        pendingProgress: nextProgress,
+        pendingRemark: nextRemark,
+        pendingAttachments: nextAttachments,
+        pendingAttachmentDetails: Array.isArray(detail.attachments) ? detail.attachments : []
+      }
+    })
+  }
+
   // 从 Store 获取指标列表（带里程碑），按任务类型和战略任务分组排序，并应用筛选
   const indicators = computed(() => {
     // 初始化来源部门筛选
@@ -2220,6 +2269,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       if (isSecondaryCollege.value && filterOwnerDept.value) {
         list = list.filter(i => i.ownerDept === filterOwnerDept.value)
       }
+
+      // 2026-10-07：等级/说明/附件回显覆盖（草稿明细优先）
+      list = applyReportDetailOverlay(list)
 
       // 排序
       return list.sort((a, b) => {
@@ -2281,6 +2333,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           pendingRemark: nextRemark,
           pendingAttachments: nextAttachments,
           pendingAttachmentDetails: Array.isArray(detail.attachments) ? detail.attachments : [],
+          selfRating: detail.selfRating || indicator.selfRating,
           progressApprovalStatus:
             reportStatus === 'SUBMITTED' || reportStatus === 'IN_REVIEW'
               ? 'PENDING'
@@ -2288,6 +2341,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         }
       })
     }
+
+    // 2026-10-07 裁决：等级/说明/附件回显覆盖（草稿明细优先）
+    list = applyReportDetailOverlay(list)
 
     // 按当前年份过滤
     const currentYear = timeContext.currentYear
@@ -3447,6 +3503,13 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return ''
     }
 
+    // 2026-10-07 裁决修复：存在未提交 DRAFT 草稿报告时，必须锁定回草稿月份继续编辑——
+    // 后端在草稿未提交前禁止新建其他月份报告（409），顺延到下月会让用户撞资源冲突。
+    const openDraftMonth = await indicatorFillApi.getOpenDraftReportMonth(planId, reportOrgId)
+    if (openDraftMonth) {
+      return openDraftMonth
+    }
+
     // 缺陷修复：优先按「指标级粒度」取该指标已填报月份集合，与后端防跳月校验对齐
     // （该指标在某月报告中已有明细记录才算已填）。否则同月第一个指标保存草稿后，
     // 第二个指标会被弹窗锁到下一个月，保存时触发后端 409。
@@ -3472,6 +3535,28 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     reportMonth: '',
     attachments: [] as string[]
   })
+
+  const refreshReportDetailOverlay = async () => {
+    const planId = getCurrentPlanId()
+    const reportOrgId = Number(currentViewingOrgId.value ?? NaN)
+    if (
+      !Number.isFinite(planId) ||
+      planId <= 0 ||
+      !Number.isFinite(reportOrgId) ||
+      reportOrgId <= 0
+    ) {
+      reportDetailOverlay.value = {}
+      return
+    }
+    const draft = await indicatorFillApi.getOpenDraftReport(planId, reportOrgId)
+    const map: Record<string, any> = {}
+    ;(draft?.indicatorDetails ?? []).forEach(detail => {
+      if (detail?.indicatorId !== undefined && detail.indicatorId !== null) {
+        map[String(detail.indicatorId)] = detail
+      }
+    })
+    reportDetailOverlay.value = map
+  }
 
   function resolveDialogAttachments(
     row: StrategicIndicator,
@@ -3562,6 +3647,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       latestIndicator.progress ??
       0
     // 归属月份锁定：该指标的最早未填报月（指标级粒度，与后端防跳月校验对齐；数据不可得时降级为当前月）
+    // 2026-10-07：有未提交草稿时优先锁定草稿月，并刷新等级/说明回显覆盖层
+    await refreshReportDetailOverlay()
     lockedReportMonth.value = await resolveEarliestUnfilledReportMonth(row.id)
     reportForm.value = {
       newProgress: Math.max(actualProgress, Number(preferredProgress) || 0),
@@ -4117,6 +4204,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       // 2026-10-07 实际回源：行数据此前只做了本地补丁，这里从服务端重拉
       // 指标与计划状态，保证页面展示与后端一致；并广播并行视图刷新
       void refreshIndicatorListAfterMutation()
+      void refreshReportDetailOverlay()
       broadcastIndicatorListMutation()
       closeReportDialog()
     } catch (error) {
@@ -4528,11 +4616,18 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
             const reportOrgId = Number(currentViewingOrgId.value ?? NaN)
             if (!Number.isFinite(reportOrgId) || reportOrgId <= 0) {
               ElMessage.warning('无法识别当前组织，不能提交上报')
+              // 2026-10-07：提交失败回滚乐观状态，清除「已提交」UI 态残留
+              pendingPlanReportUiState.value = null
+              writePlanReportUiState(null)
               return
             }
+            // 2026-10-07 裁决（逐月补签）：按「最早未提交草稿月」提交，
+            // 不能默认当月——补签历史月份时按当月找草稿会 404。
+            const draftMonth = await indicatorFillApi.getOpenDraftReportMonth(planId, reportOrgId)
             updatedReportSummary = await indicatorFillApi.submitCurrentMonthPlanReport(
               planId,
-              reportOrgId
+              reportOrgId,
+              draftMonth ?? undefined
             )
           } else {
             await planStore.submitPlanForApproval(planId, {
@@ -4562,6 +4657,10 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           }
           ElMessage.success('已提交上报审批')
         } catch (error) {
+          // 2026-10-07：提交失败回滚乐观「已提交」状态并清除 UI 态残留，
+          // 避免刷新后仍显示「审批中」的假象
+          pendingPlanReportUiState.value = null
+          writePlanReportUiState(null)
           logger.error('[IndicatorListView] Failed to submit plan approval:', error)
           ElMessage.error(error instanceof Error ? error.message : '提交失败，请稍微重试')
         } finally {
