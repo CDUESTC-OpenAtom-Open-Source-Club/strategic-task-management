@@ -855,3 +855,13 @@
   margin-left: 8px;
   flex-shrink: 0;
 }
+
+/* 进度说明列：两行截断，悬停看全文（2026-10-07 等级制列配置） */
+.pending-remark-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+  color: var(--text-regular);
+}

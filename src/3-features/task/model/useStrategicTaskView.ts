@@ -1273,7 +1273,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
 
     const status = currentPlanStatus.value
-    if (status !== 'PENDING' && status !== 'DISTRIBUTED') {
+    // 2026-10-10 跨窗口实时修复：状态守卫读的是本地（可能过期的）计划状态。
+    // 他窗"重新发起审批"时本窗状态是 DRAFT/已退回，若守卫拦下 force 刷新，
+    // 详情永远拉不回来。force 是明确的"有变更要收敛"信号，必须放行。
+    if (!options.force && status !== 'PENDING' && status !== 'DISTRIBUTED') {
       return
     }
 
@@ -2216,22 +2219,37 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
 
     approvalSubmitting.value = true
+    planSubmitUiHoldUntil = Date.now() + PLAN_SUBMIT_UI_HOLD_MS
     try {
       await planStore.submitPlanForApproval(planId, {
         workflowCode: preview.workflowCode || PLAN_APPROVAL_SUBMIT_WORKFLOW_CODE,
         comment: approvalSubmitComment.value.trim() || undefined
       })
       applyLocalPlanWorkflowUiPatch('submitted')
-      notifyApprovalStateRefresh({ source: 'strategic-task-plan-submit-start' })
-      await waitForPlanWorkflowReady()
-      await refreshCurrentDepartmentView({ force: true })
-      await refreshApprovalCenterLiveView()
-      await preloadApprovalWorkflowDetail()
-      await loadPendingPlanApprovalCount()
-      notifyApprovalStateRefresh({ source: 'strategic-task-plan-submit' })
+      // 2026-09-27 用户反馈：提交成功立即关闭弹窗，重刷新链后台异步执行，
+      // 不让用户对着确认框等全量刷新跑完。
       handleCloseApprovalSetupDialog()
       ElMessage.success('已发起整体计划审批')
+      // 只刷新消息铃铛（message 域）；不做全量广播——提交瞬间回源只会拉回
+      // 尚未回写的旧审批状态，把乐观补丁冲回「已退回」。
+      requestGlobalDataRefresh({
+        source: 'message-mutation',
+        silent: true,
+        domains: ['message']
+      })
+      void (async () => {
+        await waitForPlanWorkflowReady()
+        planSubmitUiHoldUntil = 0
+        await refreshCurrentDepartmentView({ force: true })
+        await refreshApprovalCenterLiveView()
+        await preloadApprovalWorkflowDetail()
+        await loadPendingPlanApprovalCount()
+        notifyApprovalStateRefresh({ source: 'strategic-task-plan-submit' })
+      })().catch(error => {
+        logger.warn('[StrategicTaskView] post-submit background refresh failed', error)
+      })
     } catch (error) {
+      planSubmitUiHoldUntil = 0
       logger.error('[StrategicTaskView] Failed to submit plan approval:', error)
     } finally {
       approvalSubmitting.value = false
@@ -2786,8 +2804,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     rowIndex: number
     columnIndex: number
   }) => {
-    // 战略任务列（第0列）需要合并
-    // 列顺序: 0战略任务, 1核心指标, 2说明, 3权重, 4里程碑, 5进度, 6状态, 7操作
+    // 战略任务列需要合并
     if (columnIndex === 0) {
       return taskSpanMetaMap.value.get(rowIndex) ?? { rowspan: 1, colspan: 1 }
     }
@@ -3009,6 +3026,29 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         newRow.value.taskContent = inputValue.trim()
         newRow.value.taskId = ''
       }
+    }
+  }
+
+  // 2026-10-10：新增行战略任务改用 el-autocomplete——
+  // 手输内容失焦即保留在 v-model（原 el-select allow-create 不按回车会回退丢字），
+  // 失焦时若与已有任务精确匹配则自动绑定任务类型与任务 ID。
+  const querySearchTask = (queryString: string, cb: (results: { value: string }[]) => void) => {
+    const q = queryString.trim().toLowerCase()
+    const results = existingTaskNames.value
+      .filter(name => !q || name.toLowerCase().includes(q))
+      .map(name => ({ value: name }))
+    cb(results)
+  }
+
+  const onTaskOptionSelect = (item: { value: string }) => {
+    newRow.value.taskContent = item.value
+    handleTaskSelect(item.value)
+  }
+
+  const onTaskInputBlur = (event: FocusEvent) => {
+    const text = String((event.target as HTMLInputElement)?.value || '').trim()
+    if (text && existingTaskNames.value.includes(text)) {
+      handleTaskSelect(text)
     }
   }
 
@@ -3307,8 +3347,18 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
   })
 
+  // 2026-10-07 重新发起审批：提交成功后后端工作流回写是异步的，窗口期内全局刷新
+  // 拉回的可能是旧的「已退回」状态，会冲掉乐观补丁，导致必须手动刷新才更新。
+  // 提交后 20s 内挂起外部触发的视图刷新，由提交链路的等待+强刷负责收敛。
+  let planSubmitUiHoldUntil = 0
+  const PLAN_SUBMIT_UI_HOLD_MS = 20 * 1000
+
   const handleGlobalDataRefreshRequest = (event: Event) => {
     if (isBootstrappingPage.value || globalDataRefreshPromise) {
+      return
+    }
+
+    if (Date.now() < planSubmitUiHoldUntil) {
       return
     }
 
@@ -3752,10 +3802,19 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     )
     if (shouldPreferCurrentReportWorkflow.value && Number.isFinite(reportId) && reportId > 0) {
       try {
-        const response = await getWorkflowInstanceDetailByBusiness('PLAN_REPORT', reportId)
+        // 2026-10-10 跨窗口实时修复：审批详情预加载必须拿最新实例状态，
+        // 绕过 30s WORKFLOW_DETAIL 内存缓存，否则撤回/重发的推送会被旧缓存吃掉。
+        const response = await getWorkflowInstanceDetailByBusiness('PLAN_REPORT', reportId, {
+          force: true
+        })
         if (response.success && response.data) {
           preloadedPlanWorkflowDetail.value = response.data
-          return
+          // 2026-10-07：偏好的上报实例若已终态（撤回/退回），不能就此返回——
+          // 重新发起审批后新实例挂在 PLAN 业务上，必须回落继续查，
+          // 否则 waitForPlanWorkflowReady 每轮都拿旧实例、必然超时。
+          if (isActiveApprovalWorkflowDetail(response.data)) {
+            return
+          }
         }
       } catch (error) {
         logger.warn('[StrategicTaskView] 优先预加载 PlanReport 审批详情失败，回退 PLAN:', {
@@ -3769,7 +3828,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     if (planId === undefined || planId === null || planId === '') {
       if (Number.isFinite(reportId) && reportId > 0) {
         try {
-          const response = await getWorkflowInstanceDetailByBusiness('PLAN_REPORT', reportId)
+          const response = await getWorkflowInstanceDetailByBusiness('PLAN_REPORT', reportId, {
+            force: true
+          })
           if (response.success && response.data) {
             preloadedPlanWorkflowDetail.value = response.data
           }
@@ -3793,7 +3854,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     try {
       const businessEntityId = Number(latestPlan.id ?? 0)
       if (Number.isFinite(businessEntityId) && businessEntityId > 0) {
-        const response = await getWorkflowInstanceDetailByBusiness('PLAN', businessEntityId)
+        const response = await getWorkflowInstanceDetailByBusiness('PLAN', businessEntityId, {
+          force: true
+        })
         if (response.success && response.data) {
           preloadedPlanWorkflowDetail.value = response.data
         }
@@ -4914,6 +4977,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     ensurePersistedTaskIdForIndicator,
     ensurePlanCanDistribute,
     existingTaskNames,
+    querySearchTask,
+    onTaskOptionSelect,
+    onTaskInputBlur,
     findCurrentPlanByDepartment,
     findCurrentPlanByOrgId,
     findExistingTaskIdByName,

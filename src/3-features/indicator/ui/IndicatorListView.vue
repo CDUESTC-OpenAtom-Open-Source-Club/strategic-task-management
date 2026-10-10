@@ -663,6 +663,64 @@ const handleExportIndicatorList = async () => {
                   </div>
                 </template>
               </el-table-column>
+              <el-table-column prop="weight" label="权重" width="100" align="center">
+                <template #default="{ row }">
+                  <div class="weight-cell" @dblclick="handleIndicatorDblClick(row, 'weight')">
+                    <el-input
+                      v-if="editingIndicatorId === row.id && editingIndicatorField === 'weight'"
+                      v-model="editingIndicatorValue"
+                      v-focus
+                      size="small"
+                      style="width: 50px"
+                      @blur="saveIndicatorEdit(row, 'weight')"
+                    />
+                    <span v-else class="weight-text">{{ row.weight }}</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="自评进度等级" width="120" align="center">
+                <template #default="{ row }">
+                  <el-tag
+                    v-if="row.selfRating"
+                    :type="row.selfRating === 'DELAYED' ? 'warning' : 'success'"
+                    size="small"
+                  >
+                    {{
+                      { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' }[row.selfRating] ||
+                      row.selfRating
+                    }}
+                  </el-tag>
+                  <span v-else style="color: #909399">—</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="进度等级判定" width="150" align="center">
+                <template #default="{ row }">
+                  <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
+                    {{ getManualAlertLabel(row.manualAlertSeverity) }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="进度说明" min-width="160">
+                <template #default="{ row }">
+                  <span class="pending-remark-text" :title="row.pendingRemark || ''">{{
+                    row.pendingRemark || '—'
+                  }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="附件" width="90" align="center">
+                <template #default="{ row }">
+                  <span
+                    v-if="
+                      (row.attachments?.length || row.pendingAttachmentDetails?.length || 0) > 0
+                    "
+                  >
+                    <el-button link type="primary" size="small" @click="handleViewDetail(row)">
+                      {{ row.attachments?.length || row.pendingAttachmentDetails?.length || 0 }} 个
+                    </el-button>
+                  </span>
+                  <span v-else style="color: #909399">—</span>
+                </template>
+              </el-table-column>
               <el-table-column prop="remark" label="备注" width="130">
                 <template #default="{ row }">
                   <div
@@ -679,28 +737,6 @@ const handleExportIndicatorList = async () => {
                     />
                     <span v-else class="remark-text">{{ row.remark || '' }}</span>
                   </div>
-                </template>
-              </el-table-column>
-              <el-table-column prop="weight" label="权重" width="100" align="center">
-                <template #default="{ row }">
-                  <div class="weight-cell" @dblclick="handleIndicatorDblClick(row, 'weight')">
-                    <el-input
-                      v-if="editingIndicatorId === row.id && editingIndicatorField === 'weight'"
-                      v-model="editingIndicatorValue"
-                      v-focus
-                      size="small"
-                      style="width: 50px"
-                      @blur="saveIndicatorEdit(row, 'weight')"
-                    />
-                    <span v-else class="weight-text">{{ row.weight }}</span>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column label="进度等级判定" width="150" align="center">
-                <template #default="{ row }">
-                  <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
-                    {{ getManualAlertLabel(row.manualAlertSeverity) }}
-                  </el-tag>
                 </template>
               </el-table-column>
               <el-table-column
@@ -954,14 +990,12 @@ const handleExportIndicatorList = async () => {
             <span class="info-value">{{ currentReportIndicator.name }}</span>
           </div>
           <div class="info-row">
-            <span class="info-label">当前进度：</span>
-            <span class="info-value highlight">{{ currentReportIndicator.progress || 0 }}%</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">月度参考：</span>
-            <span class="info-value monthly-target"
-              >本月建议进度 {{ getMonthlyExpectedProgress() }}%</span
-            >
+            <span class="info-label">自评进度等级：</span>
+            <span class="info-value highlight">{{
+              { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' }[
+                currentReportIndicator.selfRating
+              ] || '未自评'
+            }}</span>
           </div>
         </div>
 
@@ -970,47 +1004,35 @@ const handleExportIndicatorList = async () => {
         <!-- 填报表单 -->
         <el-form label-width="100px" class="report-form">
           <el-form-item label="归属月份" required>
-            <el-select
-              v-model="reportForm.reportMonth"
-              placeholder="选择归属月份"
-              style="width: 200px"
-            >
+            <el-select v-model="reportForm.reportMonth" placeholder="归属月份" style="width: 240px">
               <el-option
                 v-for="m in reportMonthOptions"
                 :key="m.value"
                 :label="m.label"
                 :value="m.value"
+                :disabled="m.disabled"
               />
             </el-select>
-            <span class="form-hint">按规则只能填报最早未填报月份</span>
+            <span class="form-hint">仅可填报最早未填报月份；该月审批通过后自动顺延至下月</span>
           </el-form-item>
           <el-form-item label="自评进度等级" required>
             <el-select
               v-model="reportForm.selfRating"
-              placeholder="请自评本月进度"
+              placeholder="请自评进度"
               style="width: 200px"
             >
               <el-option label="超前完成" value="AHEAD" />
               <el-option label="正常" value="NORMAL" />
               <el-option label="延期" value="DELAYED" />
             </el-select>
+            <span class="form-hint">进度按等级定性评价，不再填写百分比</span>
           </el-form-item>
-          <el-form-item label="填报进度" required>
-            <el-input-number
-              v-model="reportForm.newProgress"
-              :min="0"
-              :max="100"
-              :step="5"
-              style="width: 200px"
-            />
-            <span class="form-hint">%（按本月实际完成情况填写）</span>
-          </el-form-item>
-          <el-form-item label="进度备注" required>
+          <el-form-item label="进度说明" required>
             <el-input
               v-model="reportForm.remark"
               type="textarea"
               :rows="4"
-              placeholder="请详细备注本次进度更新的工作内容和完成情况..."
+              placeholder="请详细说明本次进度更新的工作内容和完成情况..."
               maxlength="500"
               show-word-limit
             />
@@ -1020,6 +1042,7 @@ const handleExportIndicatorList = async () => {
               v-model:file-list="reportUploadFiles"
               action="#"
               :auto-upload="false"
+              multiple
               :limit="5"
               :disabled="isUploadingReportFiles || isSavingReport"
               accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"

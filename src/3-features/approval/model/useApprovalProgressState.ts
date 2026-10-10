@@ -308,7 +308,25 @@ export function useApprovalProgressState(
         normalizeDisplayName(props.plan?.orgName) ||
         '当前部门'
 
-      return `${departmentName}上报审批`
+      // 2026-10-07 标题按真实流程类型与方向取词（2026-09-27 拍板口径）：
+      // 下发=上级 -> 部门，上报=部门 -> 上级，异动=上级 -> 部门，起止部门必须写清；
+      // flowCode 未知时保守回退旧格式，不猜方向。
+      const flowCode = normalizeWorkflowCode(
+        planWorkflowDetail.value?.flowCode ||
+          (activePlanWorkflow.value as { flowCode?: unknown } | null)?.flowCode ||
+          (Array.isArray(props.workflowCode) ? props.workflowCode[0] : props.workflowCode)
+      )
+      if (!flowCode) {
+        return `${departmentName}上报审批`
+      }
+
+      return resolveApprovalRouteTitle({
+        flowCode,
+        sourceOrgName:
+          normalizeDisplayName(planWorkflowDetail.value?.sourceOrgName) ||
+          normalizeDisplayName(props.plan?.createdByOrgName),
+        targetOrgName: departmentName
+      })
     }
 
     return resolvePlanDisplayName(activePlanWorkflow.value?.name, fallback)

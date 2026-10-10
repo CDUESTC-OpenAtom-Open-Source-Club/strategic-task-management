@@ -1,12 +1,6 @@
 <template>
   <div class="profile-view">
     <el-card class="profile-card">
-      <template #header>
-        <div class="card-header">
-          <span class="title">个人资料</span>
-        </div>
-      </template>
-
       <el-tabs v-model="activeTab" class="profile-tabs">
         <el-tab-pane label="基本信息" name="basic">
           <BasicInfo />
@@ -77,17 +71,6 @@ watch(activeTab, tab => {
 
 .profile-card {
   border-radius: 8px;
-}
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.card-header .title {
-  font-size: 18px;
-  font-weight: 600;
 }
 
 .profile-tabs {

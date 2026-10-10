@@ -41,9 +41,11 @@ import { getWorkflowInstanceDetailByBusiness } from '@/features/workflow/api/que
 import { buildQueryKey, invalidateQueries } from '@/shared/lib/utils/cache'
 import {
   GLOBAL_DATA_REFRESH_REQUEST_EVENT,
+  requestGlobalDataRefresh,
   shouldRefreshForDomains,
   type GlobalDataRefreshDetail
 } from '@/5-shared/lib/dataFreshness'
+import { requestMessageCenterRefresh } from '@/shared/lib/messageCenterRefresh'
 
 export interface IndicatorDistributeViewProps {
   viewingRole?: string
@@ -1565,6 +1567,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       })
       applyLocalCollegePlanReportSummaryPatch('submitted')
       await refreshDistributionData()
+      broadcastDistributionMutation({ todosChanged: true })
       handleCloseApprovalSetupDialog()
       taskApprovalVisible.value = true
       ElMessage.success('已发起下发审批')
@@ -1573,6 +1576,21 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     } finally {
       approvalSubmitting.value = false
     }
+  }
+
+  // 2026-10-07 实际回源广播：下发视图的指标/计划变更完成后，通知任务页/看板等
+  // 并行视图定向刷新；本视图数据由 refreshDistributionData 真实刷新，广播会被
+  // 自身 handler 按 source 跳过，不会重复重刷。
+  const broadcastDistributionMutation = (options?: { todosChanged?: boolean }) => {
+    if (options?.todosChanged) {
+      // 下发提交/撤回会改变审批人待办，消息中心一并刷新
+      requestMessageCenterRefresh()
+    }
+    requestGlobalDataRefresh({
+      source: 'indicator-distribution-mutation',
+      silent: true,
+      domains: ['indicator', 'plan']
+    })
   }
 
   const loadCurrentDepartmentPlanDetails = async (force = false) => {
@@ -2606,6 +2624,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       ElMessage.success('已添加指标（草稿状态）')
       cancelAddIndicator()
       await refreshDistributionData()
+      broadcastDistributionMutation()
     } catch (error: any) {
       logger.error('[IndicatorDistributeView] saveNewIndicator failed:', error)
       ElMessage.error(getApiErrorMessage(error, '保存指标失败，请重试'))
@@ -2736,6 +2755,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       }
 
       await refreshDistributionData()
+      broadcastDistributionMutation()
       closeCopyIndicatorsDialog()
       ElMessage.success(
         copyClearExisting.value
@@ -2905,6 +2925,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       await strategicStore.deleteIndicator(String(child.id))
 
       await refreshDistributionData()
+      broadcastDistributionMutation()
       const stillExists = strategicStore.indicators.some(
         indicator => String(indicator.id) === String(child.id)
       )
@@ -3087,6 +3108,10 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     }
   })
 
+  // 2026-10-07 心跳/聚焦等轻源节流：与战略任务页同口径，45s 内不重复重刷下发数据
+  const LIGHT_REFRESH_SOURCES: string[] = ['heartbeat', 'window-focus', 'visibility-return']
+  let lastLightRefreshAt = 0
+
   const handleGlobalDataRefreshRequest = (event: Event) => {
     if (globalDataRefreshPromise) {
       return
@@ -3095,6 +3120,18 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     const detail = (event as CustomEvent<GlobalDataRefreshDetail>).detail
     // 2026-09-27 细粒度异步刷新：仅指标/计划/审批域变更才刷本视图
     if (!shouldRefreshForDomains(detail, ['indicator', 'plan', 'workflow'])) {
+      return
+    }
+    if (detail?.source && LIGHT_REFRESH_SOURCES.includes(detail.source)) {
+      const now = Date.now()
+      if (now - lastLightRefreshAt < 45 * 1000) {
+        return
+      }
+      lastLightRefreshAt = now
+    }
+    // 本视图自己发出的变更广播（indicator-distribution-mutation）：变更点已完成
+    // refreshDistributionData 真实刷新，这里跳过，避免同一份数据短时间重复重刷
+    if (detail?.source === 'indicator-distribution-mutation') {
       return
     }
     globalDataRefreshPromise = (async () => {
@@ -3249,6 +3286,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     try {
       await strategicStore.updateIndicator(child.id.toString(), updates)
       await refreshDistributionData()
+      broadcastDistributionMutation()
     } catch (error) {
       logger.error('[IndicatorDistributeView] 保存子指标编辑失败:', {
         indicatorId: child.id,
@@ -3462,6 +3500,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     }
 
     await refreshDistributionData()
+    broadcastDistributionMutation({ todosChanged: true })
   }
 
   // 下发：针对学院下所有草稿状态的子指标
@@ -3521,6 +3560,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         })
         applyLocalCollegePlanReportSummaryPatch('submitted')
         await refreshDistributionData()
+        broadcastDistributionMutation({ todosChanged: true })
         ElMessage.success('已发起下发审批')
       } catch (error) {
         logger.error('[IndicatorDistributeView] submit distribution approval failed:', error)
@@ -3573,6 +3613,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       })
       applyLocalCollegePlanReportSummaryPatch('submitted')
       await refreshDistributionData()
+      broadcastDistributionMutation({ todosChanged: true })
       ElMessage.success('已发起下发审批，审批通过后指标将正式下发')
     } catch (error) {
       logger.error('[IndicatorDistributeView] submit distribution approval failed:', error)
@@ -4169,6 +4210,14 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         [String(child.id)]: severity
       }
       ElMessage.success(severity ? '进度等级已调整，并已通知对应下级部门' : '进度等级已恢复未评定')
+      // 2026-10-07 实际回源：同步共享指标仓库并广播（含看板域），任务页鉴定
+      // 等级列与看板告警统计立即收敛，不再等下一次全量刷新
+      strategicStore.patchIndicator(String(child.id), { manualAlertSeverity: severity })
+      requestGlobalDataRefresh({
+        source: 'indicator-distribution-mutation',
+        silent: true,
+        domains: ['indicator', 'dashboard']
+      })
     } catch (error) {
       if (error !== 'cancel' && error !== 'close') {
         ElMessage.error(

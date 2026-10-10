@@ -744,6 +744,10 @@ interface PlanReportIndicatorDetailResponse {
   indicatorId: number
   progress?: number | null
   comment?: string | null
+  /** 自评进度等级 AHEAD/NORMAL/DELAYED（等级制填报） */
+  selfRating?: string | null
+  /** 完成情况描述（与 comment 同源，读侧优先） */
+  description?: string | null
   attachments?: Attachment[] | null
 }
 
@@ -2516,6 +2520,46 @@ export const indicatorFillApi = {
   }> {
     const reports = await loadPlanReportsByPlanId(Number(planId))
     return resolveCurrentMonthPlanReportSummaries(reports, reportOrgId, reportMonth)
+  },
+
+  /**
+   * 获取该组织「未提交草稿报告」的归属月份（2026-10-07 裁决）。
+   * 存在 DRAFT 草稿时，填报弹窗必须继续锁定在该月编辑草稿——
+   * 后端在草稿未提交前禁止新建其他月份报告（409），否则用户会撞资源冲突。
+   * 无 DRAFT 时返回 null，由调用方按「最早未填报月」逻辑处理。
+   */
+  async getOpenDraftReportMonth(
+    planId: number | string,
+    reportOrgId: number
+  ): Promise<string | null> {
+    const draft = await this.getOpenDraftReport(planId, reportOrgId)
+    return draft ? String(draft.reportMonth) : null
+  },
+
+  /**
+   * 获取该组织「未提交草稿报告」完整内容（含 indicatorDetails 明细与自评等级）。
+   * 用于填报列表的等级/说明回显（补签月份的草稿不落在当月摘要里）。
+   * 无 DRAFT 时返回 null。
+   */
+  async getOpenDraftReport(
+    planId: number | string,
+    reportOrgId: number
+  ): Promise<PlanReportSimpleResponse | null> {
+    try {
+      const reports = await loadPlanReportsByPlanId(Number(planId))
+      const draft = reports
+        .filter(
+          report =>
+            Number(report.reportOrgId) === Number(reportOrgId) &&
+            getNormalizedReportStatus(report.status) === 'DRAFT' &&
+            report.reportMonth
+        )
+        .sort((a, b) => String(a.reportMonth).localeCompare(String(b.reportMonth)))[0]
+      return draft ?? null
+    } catch (error) {
+      logger.warn('[indicatorFillApi] 加载未提交草稿报告失败:', error)
+      return null
+    }
   },
 
   /**

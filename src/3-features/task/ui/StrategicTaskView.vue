@@ -155,6 +155,9 @@ const {
   ensurePersistedTaskIdForIndicator,
   ensurePlanCanDistribute,
   existingTaskNames,
+  querySearchTask,
+  onTaskOptionSelect,
+  onTaskInputBlur,
   findCurrentPlanByDepartment,
   findCurrentPlanByOrgId,
   findExistingTaskIdByName,
@@ -352,6 +355,9 @@ async function initiateMutationForSelection() {
     })
     if (response.success) {
       ElMessage.success('异动已提交审批；审批期间该部门填报已锁死')
+      // 2026-10-07 实际回源：异动发起后真实刷新任务页指标与审批状态
+      // （该入口的选择列已移除，此函数暂不可达；保留刷新逻辑以防入口恢复）
+      void refreshTaskPageAfterIndicatorMutation()
     } else {
       ElMessage.error(response.message || '发起异动失败')
     }
@@ -858,17 +864,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <el-button size="small" :icon="Upload" @click="openStrategicImportDialog">
             导入
           </el-button>
-          <!-- P5 发起异动（仅战略部，选中单个指标） -->
-          <el-tooltip content="对选中的指标发起异动审批（战略发展部专属），审批期间该部门填报锁死">
-            <el-button
-              v-if="isStrategicDept && selectedIndicators.length === 1 && hasDistributedIndicators"
-              type="warning"
-              plain
-              @click="initiateMutationForSelection"
-            >
-              发起异动
-            </el-button>
-          </el-tooltip>
           <!-- 视图切换按钮 -->
           <el-button-group style="margin-left: 16px">
             <el-button
@@ -998,9 +993,8 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   border
                   highlight-current-row
                   class="unified-table"
-                  @selection-change="handleSelectionChange"
                 >
-                  <el-table-column prop="taskContent" label="战略任务" width="180">
+                  <el-table-column prop="taskContent" label="战略任务" width="200">
                     <template #default="{ row }">
                       <div class="task-cell-wrapper">
                         <div
@@ -1053,7 +1047,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="name" label="核心指标" min-width="150">
+                  <el-table-column prop="name" label="核心指标" min-width="300">
                     <template #default="{ row }">
                       <div
                         class="indicator-name-cell"
@@ -1119,7 +1113,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="weight" label="权重" width="100" align="center">
+                  <el-table-column prop="weight" label="权重" width="72" align="center">
                     <template #default="{ row }">
                       <div class="weight-cell" @dblclick="handleIndicatorDblClick(row, 'weight')">
                         <el-input
@@ -1141,7 +1135,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column label="自评进度等级" width="120" align="center">
+                  <el-table-column label="自评进度等级" width="132" align="center">
                     <template #default="{ row }">
                       <el-tag v-if="row.selfRating" size="small" type="info">
                         {{
@@ -1152,37 +1146,21 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       <span v-else style="color: #909399">—</span>
                     </template>
                   </el-table-column>
-                  <el-table-column label="鉴定进度等级" width="150" align="center">
+                  <el-table-column label="鉴定进度等级" width="140" align="center">
                     <template #default="{ row }">
                       <div class="manual-alert-cell">
                         <el-tooltip
-                          v-if="isStrategicDept"
-                          :disabled="
-                            canEditManualAlertLevel(currentPlanStatus, { readOnly: isReadOnly })
-                          "
-                          :content="
-                            isReadOnly ? MANUAL_ALERT_READONLY_HINT : MANUAL_ALERT_LOCKED_HINT
-                          "
+                          v-if="isStrategicDept || row.responsibleDept === selectedDepartment"
+                          :disabled="!isReadOnly"
+                          :content="MANUAL_ALERT_READONLY_HINT"
                           placement="top"
                         >
-                          <div
-                            class="manual-alert-select-wrapper"
-                            :class="{
-                              'manual-alert-select-wrapper--locked': !canEditManualAlertLevel(
-                                currentPlanStatus,
-                                { readOnly: isReadOnly }
-                              )
-                            }"
-                          >
+                          <div class="manual-alert-select-wrapper">
                             <el-select
                               :model-value="row.manualAlertSeverity ?? ''"
                               size="small"
                               class="manual-alert-select"
-                              :disabled="
-                                !canEditManualAlertLevel(currentPlanStatus, {
-                                  readOnly: isReadOnly
-                                }) || savingManualAlertIndicatorId === row.id
-                              "
+                              :disabled="isReadOnly || savingManualAlertIndicatorId === row.id"
                               :loading="savingManualAlertIndicatorId === row.id"
                               @change="
                                 value =>
@@ -1208,7 +1186,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column label="上报资料" width="110" align="center">
+                  <el-table-column label="上报资料" width="100" align="center">
                     <template #default="{ row }">
                       <span
                         v-if="
@@ -1228,7 +1206,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       <span v-else style="color: #909399">—</span>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="remark" label="备注" width="130">
+                  <el-table-column prop="remark" label="备注" width="160">
                     <template #default="{ row }">
                       <div
                         class="indicator-name-cell"
@@ -1255,7 +1233,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column label="操作" width="180" align="center">
+                  <el-table-column label="操作" width="128" align="center">
                     <template #default="{ row }">
                       <div class="action-buttons-inline">
                         <!-- 查看按钮 - 始终显示 -->
@@ -1544,25 +1522,16 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     <el-col :span="12">
                       <el-form-item class="required-form-item">
                         <template #label><span class="required-asterisk">*</span>战略任务</template>
-                        <el-select
-                          ref="taskSelectRef"
+                        <el-autocomplete
                           v-model="newRow.taskContent"
-                          filterable
-                          allow-create
-                          default-first-option
-                          placeholder="选择或输入战略任务名称"
+                          :fetch-suggestions="querySearchTask"
+                          placeholder="选择或输入战略任务名称（输入后点击其他位置即保留）"
                           style="width: 100%"
                           :teleported="false"
-                          @change="handleTaskSelect"
-                          @visible-change="handleTaskVisibleChange"
-                        >
-                          <el-option
-                            v-for="task in existingTaskNames"
-                            :key="task"
-                            :label="task"
-                            :value="task"
-                          />
-                        </el-select>
+                          clearable
+                          @select="onTaskOptionSelect"
+                          @blur="onTaskInputBlur"
+                        />
                       </el-form-item>
                     </el-col>
                   </el-row>
@@ -1782,14 +1751,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           }}</el-descriptions-item>
         </el-descriptions>
 
-        <el-collapse v-model="reportHistoryOpen" class="report-history-collapse">
-          <el-collapse-item title="上报记录（历次填报 / 含被驳回）" name="history">
-            <IndicatorFillHistory
-              v-if="reportHistoryOpen.includes('history') && currentDetailId"
-              :indicator-id="currentDetailId"
-            />
-          </el-collapse-item>
-        </el-collapse>
+        <!-- 上报记录：固定展开展示，不做折叠交互（2026-10-07 用户拍板） -->
+        <div class="report-history-section">
+          <div class="report-history-title">上报记录（历次填报 / 含被驳回）</div>
+          <IndicatorFillHistory v-if="currentDetailId" :indicator-id="currentDetailId" />
+        </div>
       </div>
     </el-drawer>
 

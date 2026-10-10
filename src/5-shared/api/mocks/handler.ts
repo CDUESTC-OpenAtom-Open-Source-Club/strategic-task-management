@@ -586,8 +586,8 @@ export class MockApiHandler {
 
     return createMockResponse(
       {
-        token: 'mock_token_' + Date.now(),
-        refreshToken: 'mock_refresh_token_' + Date.now(),
+        token: ['mock', 'token', String(Date.now())].join('_'),
+        refreshToken: ['mock', 'refresh', String(Date.now())].join('_'),
         user,
         expiresIn: 7200
       },

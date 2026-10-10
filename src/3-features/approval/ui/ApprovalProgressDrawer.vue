@@ -529,27 +529,11 @@ const displayedCurrentPlanApprovalName = computed(() => {
           />
           <template v-else>
             <ElAlert
-              v-if="hasPlanWorkflowData"
-              type="info"
-              title="审批人由后端流程定义自动决定，当前页面仅展示当前节点和审批结果。"
-              show-icon
-              :closable="false"
-              style="margin-bottom: 16px"
-            />
-            <ElAlert
-              v-if="hasPlanWorkflowData && isPlanPendingApproval && !hasPlanApprovalPermission"
-              type="warning"
-              title="当前角色或组织范围不匹配该审批节点，仅可查看审批进度和历史。"
-              show-icon
-              :closable="false"
-              style="margin-bottom: 16px"
-            />
-            <ElAlert
               v-if="
                 hasPlanWorkflowData && isPlanPendingApproval && !canCurrentUserHandlePlanApproval
               "
               type="warning"
-              title="当前节点按角色审批流转，你当前仅可查看审批进度和历史。"
+              title="你当前不是该节点的审批人，仅可查看审批进度和历史。"
               show-icon
               :closable="false"
               style="margin-bottom: 16px"

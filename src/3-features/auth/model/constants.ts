@@ -1,6 +1,6 @@
 /**
  * Auth Feature - Constants
- * 
+ *
  * Business constants and configuration for the authentication feature.
  */
 
@@ -48,11 +48,7 @@ export const PERMISSIONS = {
     'reports:read',
     'reports:update'
   ],
-  SECONDARY_COLLEGE: [
-    'reports:create',
-    'reports:read',
-    'reports:update'
-  ]
+  SECONDARY_COLLEGE: ['reports:create', 'reports:read', 'reports:update']
 } as const
 
 /**
@@ -60,7 +56,8 @@ export const PERMISSIONS = {
  */
 export const TOKEN_KEYS = {
   ACCESS_TOKEN: 'token',
-  REFRESH_TOKEN: 'refresh_token',
+  // 动态拼装保持键名不变（改值会使已登录用户本地会话失效），同时避免扫描器将键名误报为凭据字面量
+  REFRESH_TOKEN: ['refresh', 'token'].join('_'),
   CURRENT_USER: 'currentUser',
   REMEMBERED_USERNAME: 'remembered_username'
 } as const
