@@ -3462,20 +3462,23 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     return { value, label: `《${year} 年 ${month} 月填报》` }
   }
 
-  // 2026-10-07 裁决（月份选择器 B）：默认最早未填报月，可补签选择至当月；
-  // 未来月份与更早月份不可选（更早月份必然已填，后端另有防跳月强校验）
+  // 2026-10-10 用户裁决：后端防跳月强校验下，除首项（最早未填报月）外任何月份保存必 409，
+  // 故仅首项可选、其余月份置灰——保留完整月份序列作展示，但视觉上不再误导可选。
   const reportMonthOptions = computed(() => {
     const now = new Date()
     const current = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
     const start = lockedReportMonth.value || current
-    const options: { value: string; label: string }[] = []
+    const options: { value: string; label: string; disabled: boolean }[] = []
     let year = Number(start.slice(0, 4))
     let month = Number(start.slice(4, 6))
     const endYear = Number(current.slice(0, 4))
     const endMonth = Number(current.slice(4, 6))
     let guard = 0
     while ((year < endYear || (year === endYear && month <= endMonth)) && guard < 24) {
-      options.push(formatReportMonthOption(`${year}${String(month).padStart(2, '0')}`))
+      options.push({
+        ...formatReportMonthOption(`${year}${String(month).padStart(2, '0')}`),
+        disabled: options.length > 0
+      })
       month += 1
       if (month > 12) {
         month = 1
@@ -3484,7 +3487,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       guard += 1
     }
     if (options.length === 0) {
-      options.push(formatReportMonthOption(start))
+      options.push({ ...formatReportMonthOption(start), disabled: false })
     }
     return options
   })

@@ -1010,9 +1010,10 @@ const handleExportIndicatorList = async () => {
                 :key="m.value"
                 :label="m.label"
                 :value="m.value"
+                :disabled="m.disabled"
               />
             </el-select>
-            <span class="form-hint">默认最早未填报月份；可补签至当月，不可跳月</span>
+            <span class="form-hint">仅可填报最早未填报月份；该月审批通过后自动顺延至下月</span>
           </el-form-item>
           <el-form-item label="自评进度等级" required>
             <el-select
