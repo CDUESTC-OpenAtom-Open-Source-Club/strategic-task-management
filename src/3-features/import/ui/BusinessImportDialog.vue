@@ -45,7 +45,9 @@ const selectedFile = ref<UploadFile | null>(null)
 const previewResult = ref<ImportPreviewResponse | null>(null)
 const previewing = ref(false)
 const committing = ref(false)
-const autoSubmitAndApprove = ref(false)
+// 2026-10-10 测试0927 第016条落地：凡导入的 Excel 视为已经过审批，
+// 默认自动跑完下发审批链（后端 autoSubmitAndApprove 以系统管理员身份逐节点通过）
+const autoSubmitAndApprove = ref(true)
 const overwriteExisting = ref(false)
 const templateDownloading = ref(false)
 
@@ -296,7 +298,7 @@ watch(
       previewResult.value = null
       previewing.value = false
       committing.value = false
-      autoSubmitAndApprove.value = false
+      autoSubmitAndApprove.value = true
       overwriteExisting.value = false
       templateDownloading.value = false
     }
