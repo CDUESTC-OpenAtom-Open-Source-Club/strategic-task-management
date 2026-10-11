@@ -2178,7 +2178,17 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const applyLocalPlanWorkflowUiPatch = (target: 'submitted' | 'withdrawn') => {
     const nextStatus = target === 'withdrawn' ? 'WITHDRAWN' : 'IN_REVIEW'
     const nextBusinessStatus = target === 'withdrawn' ? 'DRAFT' : 'SUBMITTED'
+    const nextPlanStatus = target === 'withdrawn' ? 'DRAFT' : 'PENDING'
     const nextCanWithdraw = target === 'submitted'
+
+    // 2026-10-10 计划状态即时修复：乐观补丁此前只盖了审批状态摘要，
+    // 没更新"计划状态"标签的数据源（planStore 中 plan.status），且提交后
+    // 20s UI 挂起会拦截一切能修正它的刷新——计划状态只能等心跳/手动刷新。
+    // 这里同步更新计划状态，两个标签与按钮瞬时一致。
+    const plan = currentPlan.value as { status?: unknown } | null
+    if (plan) {
+      plan.status = nextPlanStatus
+    }
 
     currentPlanReportSummary.value = {
       ...(currentPlanReportSummary.value || {}),
@@ -2536,6 +2546,17 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
           currentPlanStatus.value === 'DISTRIBUTED' ||
           hasApprovalWorkflowReportBinding.value
         ) {
+          await preloadApprovalWorkflowDetail()
+        }
+      } else if (isLightGlobalRefreshSource(source)) {
+        // 2026-10-10 跨窗口实时修复③：WS 推送断线时的心跳/聚焦兜底——
+        // 强制刷新计划审批详情与待办任务，避免他窗状态流转后本窗状态/按钮卡死。
+        // light 源在入口处已有 45s 节流，这里不会造成请求风暴。
+        await Promise.allSettled([
+          approvalStore.loadPendingApprovals(),
+          hydrateCurrentPlanWorkflowState({ force: true })
+        ])
+        if (currentPlanStatus.value === 'PENDING' || currentPlanStatus.value === 'DISTRIBUTED') {
           await preloadApprovalWorkflowDetail()
         }
       }
@@ -3350,8 +3371,29 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 2026-10-07 重新发起审批：提交成功后后端工作流回写是异步的，窗口期内全局刷新
   // 拉回的可能是旧的「已退回」状态，会冲掉乐观补丁，导致必须手动刷新才更新。
   // 提交后 20s 内挂起外部触发的视图刷新，由提交链路的等待+强刷负责收敛。
+  // 2026-10-10 跨窗口实时修复④：挂起期内到达的审批推送不再直接丢弃——
+  // 记录挂起并在到期后补一次定向刷新，否则他人恰在挂起窗口内审批时
+  // 本窗会一直停在旧状态直到下一次心跳。
   let planSubmitUiHoldUntil = 0
+  let planSubmitHoldFlushTimer: ReturnType<typeof setTimeout> | null = null
   const PLAN_SUBMIT_UI_HOLD_MS = 20 * 1000
+
+  const scheduleHoldFlush = () => {
+    if (planSubmitHoldFlushTimer) {
+      return
+    }
+    const waitMs = Math.max(500, planSubmitUiHoldUntil - Date.now() + 500)
+    planSubmitHoldFlushTimer = setTimeout(() => {
+      planSubmitHoldFlushTimer = null
+      if (Date.now() >= planSubmitUiHoldUntil) {
+        void requestGlobalDataRefresh({
+          source: 'approval-state-refresh',
+          silent: true,
+          domains: ['plan', 'workflow']
+        })
+      }
+    }, waitMs)
+  }
 
   const handleGlobalDataRefreshRequest = (event: Event) => {
     if (isBootstrappingPage.value || globalDataRefreshPromise) {
@@ -3359,6 +3401,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
 
     if (Date.now() < planSubmitUiHoldUntil) {
+      scheduleHoldFlush()
       return
     }
 

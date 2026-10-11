@@ -42,8 +42,10 @@ const unreadCount = ref(0)
 const MAX_NOTIFICATION_HISTORY = 100
 
 // Reconnection settings
-const RECONNECT_INTERVAL = 5000
-const MAX_RECONNECT_ATTEMPTS = 5
+// 2026-10-10 跨窗口实时修复②：后端/前端重启的窗口期若放弃重连，已打开的页面将
+// 永远收不到实时推送（表现正是"必须手动刷新"）。改为指数退避无限重试，
+// 并在页面重新聚焦/网络恢复时立即重连。
+const RECONNECT_BACKOFF_STEPS_MS = [2_000, 4_000, 8_000, 16_000, 30_000, 60_000]
 const MAX_CONSECUTIVE_FAILURES = 2
 let reconnectAttempts = 0
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -51,6 +53,58 @@ let shouldReconnect = true
 let handshakeRejected = false
 let lastErrorMessage: string | null = null
 let consecutiveFailureCount = 0
+let reconnectListenersBound = false
+
+function scheduleReconnect(delayMs: number): void {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null
+    connectWebSocket()
+  }, delayMs)
+}
+
+function nextBackoffDelayMs(): number {
+  const step =
+    RECONNECT_BACKOFF_STEPS_MS[Math.min(reconnectAttempts, RECONNECT_BACKOFF_STEPS_MS.length - 1)]
+  return step
+}
+
+/**
+ * 断开状态下，页面重新聚焦或网络恢复时立即重连（重置退避等待）。
+ * 后端短暂重启后用户切回页面即可恢复推送，不必手动刷新。
+ */
+function handleReconnectTrigger(): void {
+  if (typeof window === 'undefined') {
+    return
+  }
+  if (ws.value?.readyState === WebSocket.OPEN || ws.value?.readyState === WebSocket.CONNECTING) {
+    return
+  }
+  if (!shouldReconnect || handshakeRejected) {
+    return
+  }
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+  if (import.meta.env.DEV) {
+    // eslint-disable-next-line no-console
+    console.log('[WebSocket] reconnect trigger (focus/online), reconnecting now')
+  }
+  connectWebSocket()
+}
+
+function bindReconnectListeners(): void {
+  if (reconnectListenersBound || typeof window === 'undefined') {
+    return
+  }
+  reconnectListenersBound = true
+  window.addEventListener('focus', handleReconnectTrigger)
+  window.addEventListener('online', handleReconnectTrigger)
+}
 
 /**
  * Get WebSocket URL from config
@@ -188,6 +242,7 @@ function showBrowserNotification(message: NotificationMessage): void {
  */
 function handleOpen(): void {
   connectionState.value = 'connected'
+  const isReconnectAfterDrop = reconnectAttempts > 0 || consecutiveFailureCount > 0
   reconnectAttempts = 0
   consecutiveFailureCount = 0
   handshakeRejected = false
@@ -196,6 +251,16 @@ function handleOpen(): void {
   if (import.meta.env.DEV) {
     // eslint-disable-next-line no-console
     console.log('[WebSocket] Connected')
+  }
+  // 2026-10-10 跨窗口实时修复⑤：断线重连成功的瞬间做一次全量数据刷新——
+  // 后端重启/网络中断期间错过的所有状态流转，在恢复连接时自动收敛，
+  // 不再依赖下一条推送或 45s 心跳，杜绝"重连后界面停在旧状态"。
+  if (isReconnectAfterDrop && typeof window !== 'undefined') {
+    requestGlobalDataRefresh({
+      source: 'approval-state-refresh',
+      silent: true,
+      domains: ['message', 'workflow', 'plan', 'indicator']
+    })
   }
 }
 
@@ -217,22 +282,14 @@ function handleClose(event?: CloseEvent): void {
     return
   }
 
-  // Attempt reconnection
-  if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-    if (import.meta.env.DEV) {
-      // eslint-disable-next-line no-console
-      console.log(
-        `[WebSocket] Reconnecting in ${RECONNECT_INTERVAL}ms (attempt ${reconnectAttempts + 1}/${MAX_RECONNECT_ATTEMPTS})`
-      )
-    }
-    reconnectTimer = setTimeout(() => {
-      reconnectAttempts++
-      connectWebSocket()
-    }, RECONNECT_INTERVAL)
-  } else {
-    shouldReconnect = false
-    logConnectionError('已达到最大重连次数，停止重试')
+  // 指数退避无限重试：后端重启/网络抖动后自动恢复，不再有重连次数上限
+  const delayMs = nextBackoffDelayMs()
+  reconnectAttempts++
+  if (import.meta.env.DEV) {
+    // eslint-disable-next-line no-console
+    console.log(`[WebSocket] Reconnecting in ${delayMs}ms (attempt ${reconnectAttempts})`)
   }
+  scheduleReconnect(delayMs)
 }
 
 /**
@@ -242,11 +299,11 @@ function handleError(error: Event): void {
   connectionState.value = 'error'
   consecutiveFailureCount++
 
-  if (consecutiveFailureCount >= MAX_CONSECUTIVE_FAILURES) {
-    shouldReconnect = false
-    handshakeRejected = true
+  if (consecutiveFailureCount === MAX_CONSECUTIVE_FAILURES) {
+    // 2026-10-10 跨窗口实时修复②：连续握手失败只记日志并继续退避重试，
+    // 不再永久放弃（后端重启窗口期曾导致页面永久失联，只能手动刷新恢复）。
     logConnectionError(
-      'WebSocket 握手连续失败，已暂停自动重连，请检查后端通知通道权限或可用性',
+      'WebSocket 握手连续失败，将继续按退避间隔重试（后端恢复后会自动重连）',
       error
     )
     return
@@ -283,6 +340,7 @@ export function connectWebSocket(): void {
   connectionState.value = 'connecting'
   shouldReconnect = true
   handshakeRejected = false
+  bindReconnectListeners()
 
   try {
     const url = getWebSocketUrl()

@@ -128,7 +128,9 @@ export function useAppLayout() {
       requestGlobalDataRefresh({
         source: 'heartbeat',
         silent: true,
-        domains: ['message', 'workflow']
+        // 2026-10-10 跨窗口实时修复③：心跳带 plan 域——WS 推送断线期间（如后端重启窗口期），
+        // 计划/审批状态仍能由心跳兜底收敛，不必手动刷新页面
+        domains: ['message', 'workflow', 'plan']
       })
     }, NOTIFICATION_HEARTBEAT_INTERVAL_MS)
   }
