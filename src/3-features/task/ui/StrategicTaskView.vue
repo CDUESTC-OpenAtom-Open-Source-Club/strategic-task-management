@@ -24,7 +24,6 @@ import {
   buildExportFileName,
   exportRowsToExcel,
   exportSheetsToExcel,
-  formatProgress,
   type ExcelExportColumn,
   type ExcelExportSheet,
   type ExcelRowTone
@@ -465,12 +464,7 @@ const strategicExportColumns: ExcelExportColumn<StrategicExportRow>[] = [
   { header: '备注', width: 24, getValue: row => row.remark || '-' },
   { header: '权重', width: 10, align: 'center', getValue: row => Number(row.weight || 0) },
   {
-    header: '进度',
-    width: 24,
-    getValue: row => formatProgress(row.progress, getDisplayedReportedProgress(row))
-  },
-  {
-    header: '进度等级判定',
+    header: '鉴定等级',
     width: 18,
     align: 'center',
     getValue: row => getManualAlertLabel(row.manualAlertSeverity)
@@ -1135,7 +1129,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column label="自评进度等级" width="132" align="center">
+                  <el-table-column label="自评等级" width="132" align="center">
                     <template #default="{ row }">
                       <el-tag v-if="row.selfRating" size="small" type="info">
                         {{
@@ -1719,20 +1713,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           >
           <el-descriptions-item label="指标类型">{{ currentDetail.type1 }}</el-descriptions-item>
           <el-descriptions-item label="权重">{{ currentDetail.weight }}</el-descriptions-item>
-          <el-descriptions-item label="当前进度"
-            >{{ currentDetail.progress }}%</el-descriptions-item
-          >
-          <el-descriptions-item label="填报进度">
-            <template v-if="shouldShowReportedProgress(currentDetail)">
-              <el-tooltip content="已提交但尚未审批通过的填报进度" placement="top">
-                <span style="color: #e6a23c; font-weight: 600"
-                  >{{ getDisplayedReportedProgress(currentDetail) }}%</span
-                >
-              </el-tooltip>
-            </template>
-            <span v-else style="color: #909399">暂无填报</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="进度等级判定">
+          <el-descriptions-item label="鉴定等级">
             <el-tag :type="getManualAlertTagType(currentDetail.manualAlertSeverity)" size="small">
               {{ getManualAlertLabel(currentDetail.manualAlertSeverity) }}
             </el-tag>
@@ -1981,7 +1962,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
 <style scoped src="./StrategicTaskView.css"></style>
 
 <style scoped>
-/* 计划未正式下发时锁定进度等级判定 */
+/* 计划未正式下发时锁定鉴定等级 */
 .manual-alert-select-wrapper--locked {
   cursor: not-allowed;
 }

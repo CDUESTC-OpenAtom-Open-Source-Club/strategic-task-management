@@ -552,23 +552,6 @@ function openApprovalCenterFromDashboard() {
                         <span class="detail-value">{{ indicator.type1 }}</span>
                       </div>
                       <div class="detail-row">
-                        <span class="detail-label">当前进度</span>
-                        <span class="detail-value">
-                          <el-progress
-                            :percentage="indicator.progress"
-                            :stroke-width="8"
-                            :color="
-                              indicator.progress >= 80
-                                ? '#67c23a'
-                                : indicator.progress >= 50
-                                  ? '#e6a23c'
-                                  : '#f56c6c'
-                            "
-                            style="width: 120px; display: inline-flex"
-                          />
-                        </span>
-                      </div>
-                      <div class="detail-row">
                         <span class="detail-label">权重</span>
                         <span class="detail-value">{{ indicator.weight }}</span>
                       </div>
@@ -719,23 +702,6 @@ function openApprovalCenterFromDashboard() {
                       <div class="detail-row">
                         <span class="detail-label">指标类型</span>
                         <span class="detail-value">{{ indicator.type1 }}</span>
-                      </div>
-                      <div class="detail-row">
-                        <span class="detail-label">当前进度</span>
-                        <span class="detail-value">
-                          <el-progress
-                            :percentage="indicator.progress"
-                            :stroke-width="8"
-                            :color="
-                              indicator.progress >= 80
-                                ? '#67c23a'
-                                : indicator.progress >= 50
-                                  ? '#e6a23c'
-                                  : '#f56c6c'
-                            "
-                            style="width: 120px; display: inline-flex"
-                          />
-                        </span>
                       </div>
                       <div class="detail-row">
                         <span class="detail-label">权重</span>
@@ -966,23 +932,6 @@ function openApprovalCenterFromDashboard() {
                       <div class="detail-row">
                         <span class="detail-label">指标类型</span>
                         <span class="detail-value">{{ indicator.type1 }}</span>
-                      </div>
-                      <div class="detail-row">
-                        <span class="detail-label">当前进度</span>
-                        <span class="detail-value">
-                          <el-progress
-                            :percentage="indicator.progress"
-                            :stroke-width="8"
-                            :color="
-                              indicator.progress >= 80
-                                ? '#67c23a'
-                                : indicator.progress >= 50
-                                  ? '#e6a23c'
-                                  : '#f56c6c'
-                            "
-                            style="width: 120px; display: inline-flex"
-                          />
-                        </span>
                       </div>
                       <div class="detail-row">
                         <span class="detail-label">权重</span>
@@ -1223,16 +1172,6 @@ function openApprovalCenterFromDashboard() {
               <span class="dept-badge">{{ row.dept }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="当前进度" width="160" align="center">
-            <template #default="{ row }">
-              <div class="progress-cell-new">
-                <div class="progress-bar-wrapper">
-                  <div class="progress-bar-fill" :style="{ width: row.progress + '%' }"></div>
-                </div>
-                <span class="delayed-tag">DELAYED {{ row.days }}D</span>
-              </div>
-            </template>
-          </el-table-column>
           <el-table-column label="闭环管理" width="130" align="center">
             <template #default="{ row }">
               <button
@@ -1378,10 +1317,6 @@ function openApprovalCenterFromDashboard() {
       <div class="detail-row">
         <span class="detail-label">指标类型</span>
         <span class="detail-value">{{ selectedIndicatorDetail.dashboard.type1 }}</span>
-      </div>
-      <div class="detail-row">
-        <span class="detail-label">当前进度</span>
-        <span class="detail-value">{{ selectedIndicatorDetail.dashboard.progress }}%</span>
       </div>
       <div class="detail-row">
         <span class="detail-label">权重</span>

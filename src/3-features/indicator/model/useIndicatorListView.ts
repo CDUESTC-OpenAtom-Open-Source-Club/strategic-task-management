@@ -643,7 +643,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       }
 
       if (usePlanReportFlow.value && Number.isFinite(reportId) && reportId > 0) {
-        const response = await getWorkflowInstanceDetailByBusiness('PLAN_REPORT', reportId)
+        const response = await getWorkflowInstanceDetailByBusiness('PLAN_REPORT', reportId, {
+          force: true
+        })
         currentPlanWorkflowDetail.value = response.data ?? null
         return
       }
@@ -654,7 +656,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       }
 
       if (Number.isFinite(resolvedPlanId) && resolvedPlanId > 0) {
-        const response = await getWorkflowInstanceDetailByBusiness('PLAN', resolvedPlanId)
+        const response = await getWorkflowInstanceDetailByBusiness('PLAN', resolvedPlanId, {
+          force: true
+        })
         currentPlanWorkflowDetail.value = response.data ?? null
         return
       }
@@ -2202,7 +2206,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   const reportDetailOverlay = ref<Record<string, any>>({})
 
   // 2026-10-07 裁决：等级制列数据回显——用「未提交草稿明细（优先）+ 当月报告摘要」
-  // 覆盖自评进度等级/进度说明/附件，全部填报角色（职能部门+二级学院）生效。
+  // 覆盖自评等级/进度说明/附件，全部填报角色（职能部门+二级学院）生效。
   const applyReportDetailOverlay = (list: StrategicIndicator[]): StrategicIndicator[] => {
     if (
       !Array.isArray(currentPlanReportSummary.value?.indicatorDetails) &&
@@ -4082,9 +4086,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
     const indicator = await refreshReportIndicatorSnapshot(currentReportIndicator.value)
 
-    // 2026-10-07 裁决：进度改为等级制（自评进度等级），不再采集百分比数值
+    // 2026-10-07 裁决：进度改为等级制（自评等级），不再采集百分比数值
     if (!reportForm.value.selfRating) {
-      ElMessage.warning('请选择自评进度等级')
+      ElMessage.warning('请选择自评等级')
       return
     }
 

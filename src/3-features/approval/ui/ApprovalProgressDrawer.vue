@@ -791,7 +791,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
               </div>
 
               <div v-if="indicator.submittedSelfRating" class="snapshot-section">
-                <div class="snapshot-section-title">自评进度等级</div>
+                <div class="snapshot-section-title">自评等级</div>
                 <div class="snapshot-section-content">
                   <ElTag size="small" type="info">{{
                     formatAppraisalLevel(indicator.submittedSelfRating)

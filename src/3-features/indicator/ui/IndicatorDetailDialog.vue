@@ -163,16 +163,6 @@ const getActionLabel = (action: string) => {
                 {{ indicator.remark || '无' }}
               </el-descriptions-item>
             </el-descriptions>
-
-            <div class="progress-section">
-              <h4>当前进度</h4>
-              <el-progress
-                :percentage="indicator.progress"
-                :status="getProgressStatus(indicator.progress)"
-                :stroke-width="16"
-                :text-inside="true"
-              />
-            </div>
           </div>
         </el-tab-pane>
 

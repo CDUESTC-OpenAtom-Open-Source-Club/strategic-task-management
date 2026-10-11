@@ -1947,7 +1947,11 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     }
 
     try {
-      const response = await getWorkflowInstanceDetailByBusiness(entityType, entityId)
+      // 2026-10-10 跨窗口实时修复：审批详情预加载绕过 30s WORKFLOW_DETAIL 缓存，
+      // 与战略任务页同口径——推送触发的刷新必须拿到最新实例状态。
+      const response = await getWorkflowInstanceDetailByBusiness(entityType, entityId, {
+        force: true
+      })
       if (response.success && response.data) {
         currentCollegeWorkflowDetail.value = response.data
       }

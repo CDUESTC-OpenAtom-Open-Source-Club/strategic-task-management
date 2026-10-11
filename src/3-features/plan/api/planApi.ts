@@ -744,7 +744,7 @@ interface PlanReportIndicatorDetailResponse {
   indicatorId: number
   progress?: number | null
   comment?: string | null
-  /** 自评进度等级 AHEAD/NORMAL/DELAYED（等级制填报） */
+  /** 自评等级 AHEAD/NORMAL/DELAYED（等级制填报） */
   selfRating?: string | null
   /** 完成情况描述（与 comment 同源，读侧优先） */
   description?: string | null

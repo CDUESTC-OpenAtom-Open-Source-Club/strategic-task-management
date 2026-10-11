@@ -676,7 +676,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
 
               <!-- D3：自评进度等级徽标（对齐主审批抽屉） -->
               <div v-if="indicator.submittedSelfRating" class="snapshot-section">
-                <div class="snapshot-section-title">自评进度等级</div>
+                <div class="snapshot-section-title">自评等级</div>
                 <div class="snapshot-section-content">
                   <ElTag size="small" type="info">{{
                     formatAppraisalLevel(indicator.submittedSelfRating)

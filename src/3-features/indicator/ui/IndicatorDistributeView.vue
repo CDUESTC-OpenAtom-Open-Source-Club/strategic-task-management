@@ -19,7 +19,6 @@ import {
   buildExportFileName,
   exportRowsToExcel,
   exportSheetsToExcel,
-  formatProgress,
   type ExcelExportColumn,
   type ExcelExportSheet,
   type ExcelRowTone
@@ -265,7 +264,7 @@ type DistributionExportChild = Partial<StrategicIndicator> & {
   pendingAttachmentDetails?: unknown[]
 }
 
-// 进度等级判定（与战略任务管理页同一套选项；当前编辑权限仅战略部负责人/分管校领导/系统管理员）
+// 鉴定等级（与战略任务管理页同一套选项；当前编辑权限仅战略部负责人/分管校领导/系统管理员）
 type ManualAlertSelectValue = Exclude<ManualAlertSeverity, null> | ''
 
 const manualAlertOptions: Array<{
@@ -330,16 +329,7 @@ const distributionExportColumns: ExcelExportColumn<DistributionExportRow>[] = [
   { header: '备注', width: 24, getValue: row => row.child.remark || '-' },
   { header: '权重', width: 10, align: 'center', getValue: row => Number(row.child.weight || 0) },
   {
-    header: '进度',
-    width: 24,
-    getValue: row =>
-      formatProgress(
-        row.child.progress ?? 0,
-        row.type === 'child' ? getDisplayedReportedProgress(row.child as StrategicIndicator) : null
-      )
-  },
-  {
-    header: '进度等级判定',
+    header: '鉴定等级',
     width: 18,
     align: 'center',
     getValue: row => getChildManualAlertLabel(getChildManualAlertSeverity(row.child))
@@ -1000,8 +990,8 @@ const handleDistributionImportCommitted = async () => {
 
                 <!-- 学院模式下不显示学院列 -->
 
-                <!-- 进度等级判定列（按业务要求替代原里程碑列；控件与战略任务管理页一致） -->
-                <el-table-column label="进度等级判定" width="140" align="center">
+                <!-- 鉴定等级列（按业务要求替代原里程碑列；控件与战略任务管理页一致） -->
+                <el-table-column label="鉴定等级" width="140" align="center">
                   <template #default="{ row }">
                     <template v-if="row.type !== 'child'">
                       <span class="manual-alert-placeholder">-</span>
@@ -1306,19 +1296,6 @@ const handleDistributionImportCommitted = async () => {
           <el-descriptions-item label="权重">{{
             currentDetailIndicator.weight
           }}</el-descriptions-item>
-          <el-descriptions-item label="当前进度">
-            {{ currentDetailIndicator.progress || 0 }}%
-          </el-descriptions-item>
-          <el-descriptions-item label="填报进度">
-            <template v-if="shouldShowReportedProgress(currentDetailIndicator)">
-              <el-tooltip content="已提交但尚未审批通过的填报进度" placement="top">
-                <span style="color: #e6a23c; font-weight: 600"
-                  >{{ getDisplayedReportedProgress(currentDetailIndicator) }}%</span
-                >
-              </el-tooltip>
-            </template>
-            <span v-else style="color: #909399">暂无填报</span>
-          </el-descriptions-item>
           <el-descriptions-item label="责任部门">
             {{ currentDetailIndicator.responsibleDept || '未分配' }}
           </el-descriptions-item>
@@ -1590,7 +1567,7 @@ const handleDistributionImportCommitted = async () => {
 <style scoped src="./IndicatorDistributeView.css"></style>
 <style src="./IndicatorDistributeView.global.css"></style>
 <style scoped>
-/* 进度等级判定列（与战略任务管理页一致） */
+/* 鉴定等级列（与战略任务管理页一致） */
 .manual-alert-cell {
   display: inline-flex;
   align-items: center;
