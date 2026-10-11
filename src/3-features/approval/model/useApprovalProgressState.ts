@@ -740,6 +740,10 @@ export function useApprovalProgressState(
     appendTarget(props.workflowEntityType, props.workflowEntityId ?? props.plan?.id)
     appendTarget(props.secondaryWorkflowEntityType, props.secondaryWorkflowEntityId)
     appendTarget('PLAN_REPORT', relatedPlanReportSummary.value?.id)
+    // 2026-10-10：指标异动审批链（PLAN_MUTATION_*，entity_type=INDICATOR）纳入审批历史
+    for (const mutation of props.mutationWorkflowEntities ?? []) {
+      appendTarget('INDICATOR', mutation.entityId)
+    }
 
     return targets
   })

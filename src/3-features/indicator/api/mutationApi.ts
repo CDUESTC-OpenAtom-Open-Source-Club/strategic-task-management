@@ -45,5 +45,23 @@ export const mutationApi = {
   /** 异动中指标清单（看板异动汇总数据源） */
   async inMutation(): Promise<ApiResponse<MutationInProgressItem[]>> {
     return apiClient.get('/indicators/mutations/in-progress')
+  },
+
+  /** 异动审批实例清单（审批中心「异动审批」卡片数据源，含进行中与已完成） */
+  async approvals(
+    orgId: number | string
+  ): Promise<
+    ApiResponse<
+      Array<{
+        instance_id: number
+        indicator_id: number
+        indicator_desc: string
+        status: string
+        created_at: string
+        completed_at?: string
+      }>
+    >
+  > {
+    return apiClient.get('/indicators/mutation-approvals', { params: { orgId } })
   }
 }

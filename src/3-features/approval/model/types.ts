@@ -155,6 +155,8 @@ export interface DistributionApprovalProgressDrawerProps {
   workflowEntityId?: number | string
   secondaryWorkflowEntityType?: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR'
   secondaryWorkflowEntityId?: number | string
+  /** 2026-10-10：指标异动审批实例（审批历史「异动审批」卡片数据源） */
+  mutationWorkflowEntities?: Array<{ entityId: number | string }>
 }
 
 export interface DistributionApprovalProgressDrawerEmit {

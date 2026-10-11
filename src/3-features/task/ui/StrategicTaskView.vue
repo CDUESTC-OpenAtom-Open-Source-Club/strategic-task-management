@@ -368,6 +368,34 @@ async function initiateMutationForSelection() {
     mutationApiLoading.value = false
   }
 }
+
+// 2026-10-10：异动审批实例 → 审批中心「审批历史」卡片（P1 修复：异动链不缺失前端）
+const departmentMutationWorkflowEntities = ref<Array<{ entityId: number }>>([])
+const loadDepartmentMutationWorkflowEntities = async () => {
+  try {
+    const orgId = resolveDepartmentIdByName(selectedDepartment.value)
+    if (!orgId) {
+      departmentMutationWorkflowEntities.value = []
+      return
+    }
+    const { mutationApi } = await import('@/features/indicator/api/mutationApi')
+    const response = await mutationApi.approvals(orgId)
+    const items = Array.isArray(response.data) ? response.data : []
+    departmentMutationWorkflowEntities.value = items
+      .filter(item => Number(item.indicator_id) > 0)
+      .map(item => ({ entityId: Number(item.indicator_id) }))
+  } catch (error) {
+    logger.warn('[StrategicTaskView] 加载异动审批实例失败:', error)
+  }
+}
+// 部门切换即预载（抽屉打开时数据已就绪，避免晚于历史卡片加载的时序问题）
+watch(
+  () => selectedDepartment.value,
+  () => {
+    void loadDepartmentMutationWorkflowEntities()
+  },
+  { immediate: true }
+)
 const strategicBatchExportDialogVisible = ref(false)
 const selectedStrategicExportDepartments = ref<string[]>([])
 const strategicImportDialogVisible = ref(false)
@@ -1952,6 +1980,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
       :workflow-entity-id="primaryApprovalWorkflowEntityId"
       :secondary-workflow-entity-type="secondaryApprovalWorkflowEntityType"
       :secondary-workflow-entity-id="secondaryApprovalWorkflowEntityId"
+      :mutation-workflow-entities="departmentMutationWorkflowEntities"
       approval-type="submission"
       @close="taskApprovalVisible = false"
       @refresh="handleApprovalRefresh"
