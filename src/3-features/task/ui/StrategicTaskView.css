@@ -2310,3 +2310,14 @@
   margin-left: 6px;
   flex-shrink: 0;
 }
+
+
+/* 2026-10-11 二级学院表格化：未选学院时的空态提示 */
+.college-empty-tip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 320px;
+  background: #fff;
+  border-radius: 8px;
+}

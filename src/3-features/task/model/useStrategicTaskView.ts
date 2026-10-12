@@ -3770,6 +3770,47 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     persistSelectedDepartment(dept)
   }
 
+  // ===== 2026-10-11 二级学院表格化（用户定案）：左侧选学院 → 表格展示该学院收到的指标 → 双击异动 =====
+  const collegeDepartments = computed(() => orgStore.getAllCollegeNames())
+  const selectedCollege = ref('')
+
+  const selectCollege = (college: string) => {
+    if (selectedCollege.value === college) {
+      return
+    }
+    selectedCollege.value = college
+  }
+
+  // 该学院收到的全部指标（含子指标；跨部门来源，不限当前职能部门计划）
+  const collegeTableIndicators = computed(() => {
+    if (!selectedCollege.value) {
+      return []
+    }
+    const target = normalizeDepartmentName(selectedCollege.value)
+    return normalizedIndicators.value
+      .filter(item => {
+        const candidate = item as {
+          responsibleDept?: string
+          targetDepartment?: string
+          targetOrgName?: string
+        }
+        const deptName = normalizeDepartmentName(
+          String(
+            candidate.targetDepartment ?? candidate.targetOrgName ?? candidate.responsibleDept ?? ''
+          )
+        )
+        return deptName === target || deptName.includes(target)
+      })
+      .sort((a, b) => {
+        const taskA = String(a.taskContent ?? '')
+        const taskB = String(b.taskContent ?? '')
+        if (taskA !== taskB) {
+          return taskA.localeCompare(taskB)
+        }
+        return Number(a.sortOrder ?? 0) - Number(b.sortOrder ?? 0)
+      })
+  })
+
   const _selectTask = (index: number) => {
     currentTaskIndex.value = index
   }
@@ -5110,6 +5151,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     findExistingTaskIdByName,
     formatDetailDate,
     functionalDepartments,
+    collegeDepartments,
+    selectedCollege,
+    selectCollege,
+    collegeTableIndicators,
     getCategoryColor,
     getCategoryText,
     getCurrentActorUserId,
@@ -5147,6 +5192,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     handleDistributeOrWithdraw,
     handleGlobalClick,
     handleIndicatorDblClick,
+    openMutationDialogForField,
     handleOpenApproval,
     handleRejectCurrentIndicatorWorkflow,
     handleSelectionChange,

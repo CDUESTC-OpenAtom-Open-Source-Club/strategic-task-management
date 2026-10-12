@@ -162,6 +162,10 @@ const {
   findExistingTaskIdByName,
   formatDetailDate,
   functionalDepartments,
+  collegeDepartments,
+  selectedCollege,
+  selectCollege,
+  collegeTableIndicators,
   getCategoryColor,
   getCategoryText,
   getDisplayedReportedProgress,
@@ -805,18 +809,33 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
     <!-- 左侧任务列表 - 动态隐藏 -->
     <aside class="task-sidebar">
       <div class="sidebar-header">
-        <div class="task-list-title">部门列表</div>
+        <div class="task-list-title">
+          {{ activeTaskTabName === 'functional' ? '部门列表' : '学院列表' }}
+        </div>
       </div>
 
       <ul class="task-list">
-        <li
-          v-for="dept in functionalDepartments"
-          :key="dept"
-          :class="['task-item', { active: selectedDepartment === dept }]"
-          @click="selectDepartment(dept)"
-        >
-          {{ dept }}
-        </li>
+        <!-- 2026-10-11 用户定案：职能部门 tab 列职能部门；二级学院 tab 列学院 -->
+        <template v-if="activeTaskTabName === 'functional'">
+          <li
+            v-for="dept in functionalDepartments"
+            :key="dept"
+            :class="['task-item', { active: selectedDepartment === dept }]"
+            @click="selectDepartment(dept)"
+          >
+            {{ dept }}
+          </li>
+        </template>
+        <template v-else>
+          <li
+            v-for="college in collegeDepartments"
+            :key="college"
+            :class="['task-item', { active: selectedCollege === college }]"
+            @click="selectCollege(college)"
+          >
+            {{ college }}
+          </li>
+        </template>
       </ul>
     </aside>
     <!-- 展开箭头独立于侧边栏 - 使用SVG图标 -->
@@ -1651,14 +1670,91 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
         </el-tab-pane>
 
         <el-tab-pane label="二级学院战略任务管理" name="college">
-          <div class="college-tree-panel">
-            <el-alert
-              type="info"
-              :closable="false"
-              style="margin-bottom: 12px"
-              title="按「职能部门 → 学院」层级查看下发到各学院的任务与指标，点击节点可下钻查看"
-            />
-            <TaskIndicatorTree :tasks="collegeTasks" :indicators="collegeIndicators" />
+          <!-- 2026-10-11 用户定案：与职能部门同构的表格视图——左侧选学院，表格展示该学院收到的全部指标，双击异动 -->
+          <div class="excel-table-wrapper">
+            <div v-if="!selectedCollege" class="college-empty-tip">
+              <el-empty description="请先在左侧选择学院" :image-size="120" />
+            </div>
+            <template v-else>
+              <div class="table-container">
+                <el-table
+                  :data="collegeTableIndicators"
+                  :span-method="getSpanMethod"
+                  border
+                  highlight-current-row
+                  class="unified-table"
+                >
+                  <el-table-column prop="taskContent" label="战略任务" width="200">
+                    <template #default="{ row }">
+                      <span
+                        class="indicator-name-text task-content-colored"
+                        :style="{ color: getCategoryColor(row.type2) }"
+                        >{{ row.taskContent || '未关联任务' }}</span
+                      >
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="name" label="核心指标" min-width="300">
+                    <template #default="{ row }">
+                      <div
+                        class="indicator-name-cell"
+                        @dblclick="handleIndicatorDblClick(row, 'name')"
+                      >
+                        <template v-if="row.name">
+                          <span class="indicator-name-text">{{ row.name }}</span>
+                        </template>
+                        <span v-else class="placeholder-text">未命名指标</span>
+                        <!-- 异动历史徽章（有变更时显示，悬停看历史） -->
+                        <div v-if="row.id" class="indicator-cell-footer">
+                          <MutationBadgePopover :indicator-id="row.id" />
+                        </div>
+                      </div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="weight" label="权重" width="72" align="center">
+                    <template #default="{ row }">
+                      <div @dblclick="handleIndicatorDblClick(row, 'weight')">
+                        <span>{{ row.weight }}</span>
+                      </div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="自评等级" width="132" align="center">
+                    <template #default="{ row }">
+                      <el-tag v-if="row.selfRating" size="small" type="info">
+                        {{
+                          { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' }[row.selfRating] ||
+                          row.selfRating
+                        }}
+                      </el-tag>
+                      <span v-else>—</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="鉴定进度等级" width="140" align="center">
+                    <template #default="{ row }">
+                      <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
+                        {{ getManualAlertLabel(row.manualAlertSeverity) }}
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="上报资料" width="100" align="center">
+                    <template #default="{ row }">
+                      <el-button link type="primary" size="small" @click="handleViewDetail(row)">
+                        查看
+                      </el-button>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="remark" label="备注" width="160">
+                    <template #default="{ row }">
+                      <div @dblclick="handleIndicatorDblClick(row, 'remark')">
+                        <span>{{ row.remark || '—' }}</span>
+                      </div>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </div>
+              <div class="excel-status-bar">
+                <div class="status-left">共 {{ collegeTableIndicators.length }} 条记录</div>
+              </div>
+            </template>
           </div>
         </el-tab-pane>
       </el-tabs>
