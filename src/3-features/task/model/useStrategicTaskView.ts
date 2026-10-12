@@ -3146,8 +3146,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     if (!canEdit.value) {
       return
     }
-    // 已下发状态下不允许编辑
+    // 2026-10-11 测试0927 第7条：已下发（稳定态）指标不允许直接编辑——
+    // 战略发展部双击可异动字段时弹出异动对话框（原地修改 + 走 PLAN_MUTATION_STRATEGY 三级审批）；
+    // 其他角色/字段保持只读。
     if (hasDistributedIndicators.value) {
+      void openMutationDialogForField(row, field)
       return
     }
     if (savingIndicatorId.value === row.id) {
@@ -3156,6 +3159,85 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     editingIndicatorId.value = row.id
     editingIndicatorField.value = field
     editingIndicatorValue.value = row[field as keyof StrategicIndicator]
+  }
+
+  /**
+   * 已下发指标的异动入口：仅战略发展部可发起；支持 指标内容/权重/备注 三类字段。
+   * 提交后走异动审批链，审批期间目标组织与全部学院锁死（后端硬校验）。
+   */
+  const openMutationDialogForField = async (row: StrategicIndicator, field: string) => {
+    const role = String(props.selectedRole || authStore.userRole || '').trim()
+    if (role !== 'strategic_dept') {
+      ElMessage.warning('已下发的指标只能由战略发展部发起异动调整')
+      return
+    }
+
+    const fieldMap: Record<
+      string,
+      { payloadKey: 'indicator_desc' | 'weight_percent' | 'remark'; label: string }
+    > = {
+      name: { payloadKey: 'indicator_desc', label: '指标内容' },
+      weight: { payloadKey: 'weight_percent', label: '权重' },
+      remark: { payloadKey: 'remark', label: '备注' }
+    }
+    const mapping = fieldMap[field]
+    if (!mapping) {
+      return
+    }
+
+    const currentValue =
+      mapping.payloadKey === 'weight_percent'
+        ? String(Number(row.weight ?? 0))
+        : String((row[field as keyof StrategicIndicator] as string | number | undefined) ?? '')
+
+    try {
+      const { value } = await ElMessageBox.prompt(
+        `该指标已下发，直接修改会被系统拒绝。是否发起「指标异动」调整${mapping.label}？` +
+          '确认后将启动异动审批（战略发展部负责人 → 分管校领导），审批期间目标部门与全部二级学院将被锁死。',
+        `发起指标异动 · ${mapping.label}`,
+        {
+          confirmButtonText: '发起异动',
+          cancelButtonText: '取消',
+          inputType: mapping.payloadKey === 'weight_percent' ? 'number' : 'textarea',
+          inputPlaceholder: `请输入新的${mapping.label}`,
+          inputValue: currentValue,
+          inputValidator: val => {
+            const trimmed = String(val ?? '').trim()
+            if (!trimmed) {
+              return `${mapping.label}不能为空`
+            }
+            if (mapping.payloadKey === 'weight_percent') {
+              const num = Number(trimmed)
+              if (!Number.isFinite(num) || num < 0 || num > 100) {
+                return '权重需为 0-100 之间的数字'
+              }
+            }
+            if (trimmed === currentValue.trim()) {
+              return `新${mapping.label}与当前值相同，无需异动`
+            }
+            return true
+          }
+        }
+      )
+
+      const payload =
+        mapping.payloadKey === 'weight_percent'
+          ? { weight_percent: Number(String(value).trim()) }
+          : { [mapping.payloadKey]: String(value).trim() }
+
+      const { mutationApi } = await import('@/features/indicator/api/mutationApi')
+      const response = await mutationApi.initiate(row.id as number, payload)
+      if (response.success) {
+        ElMessage.success('异动已提交审批；审批期间该部门与相关学院已锁死')
+        void refreshTaskPageAfterIndicatorMutation()
+      } else {
+        ElMessage.error(response.message || '发起异动失败')
+      }
+    } catch (error) {
+      if (error !== 'cancel' && error !== 'close') {
+        ElMessage.error(error instanceof Error ? error.message : '发起异动失败')
+      }
+    }
   }
 
   const isSavingIndicatorCell = (row: StrategicIndicator, field: string) =>

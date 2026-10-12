@@ -237,12 +237,12 @@ const {
   loadIndicatorWorkflowSnapshot,
   loadPendingPlanApprovalCount,
   newRow,
+  normalizedIndicators,
   normalizeDepartmentName,
   normalizeEditableText,
   normalizePreviewCandidateDisplayName,
   normalizeTaskId,
   normalizeWorkflowStepName,
-  normalizedIndicators,
   openApprovalSetupDialog,
   openNewRowDialog,
   orgStore,
@@ -305,15 +305,50 @@ const {
 const activeTaskTabName = ref<'functional' | 'college'>('functional')
 
 // 二级学院页签（P2）：筛出下发到学院的任务与指标，复用 TaskIndicatorTree 树状下钻
+// 2026-10-11 修复：原过滤只看 department 字段（二级学院子指标的 owner 是职能部门，
+// 该字段为空）导致链路「职能部门→学院」下发后学院 tab 显示 No Data。
+// 改为按目标部门（targetDepartment/targetOrgName）识别学院归属。
 const collegeIndicators = computed(() =>
-  (indicators.value || []).filter(item => {
-    const orgName = String((item as { department?: string }).department ?? '')
-    return orgName.includes('学院')
+  // 2026-10-11 修复：改用全量指标源（normalizedIndicators）——
+  // indicators 被"当前选中部门 + isStrategic + 当前计划范围"三重过滤，
+  // 学院子指标（owner=职能部门、有 parentIndicatorId）会被全部排除，导致学院 tab 恒为空。
+  (normalizedIndicators.value || []).filter(item => {
+    const candidate = item as {
+      department?: string
+      targetDepartment?: string
+      targetOrgName?: string
+      targetOrgId?: string | number
+      responsibleDept?: string
+    }
+    const targetName = String(
+      candidate.targetDepartment ??
+        candidate.targetOrgName ??
+        candidate.responsibleDept ??
+        candidate.department ??
+        ''
+    )
+    if (targetName.includes('学院')) {
+      return true
+    }
+    const targetOrgId = Number(candidate.targetOrgId ?? NaN)
+    return Number.isFinite(targetOrgId) && targetOrgId >= 55 && targetOrgId <= 62
   })
 )
 const collegeTasks = computed(() => {
-  const collegeTaskIds = new Set(collegeIndicators.value.map(item => String(item.taskId ?? '')))
-  return (taskList.value || []).filter(task => collegeTaskIds.has(String(task.id ?? '')))
+  // 2026-10-11 修复：store 的 tasks 以 taskContent 作为 id（非数字 taskId），
+  // 原按 taskId 匹配恒为空。改为按 任务名（taskContent）匹配，
+  // 同时保留数字 taskId 兜底匹配。
+  const collegeTaskNames = new Set(
+    collegeIndicators.value.map(item => String(item.taskContent ?? '')).filter(Boolean)
+  )
+  const collegeTaskIds = new Set(
+    collegeIndicators.value.map(item => String(item.taskId ?? '')).filter(Boolean)
+  )
+  return (taskList.value || []).filter(task => {
+    const byName = collegeTaskNames.has(String(task.title ?? ''))
+    const byId = collegeTaskIds.has(String(task.id ?? ''))
+    return byName || byId
+  })
 })
 
 type StrategicExportRow = StrategicIndicator & {
