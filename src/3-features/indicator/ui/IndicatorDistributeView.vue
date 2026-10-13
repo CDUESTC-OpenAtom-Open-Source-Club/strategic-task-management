@@ -264,7 +264,7 @@ type DistributionExportChild = Partial<StrategicIndicator> & {
   pendingAttachmentDetails?: unknown[]
 }
 
-// 鉴定等级（与战略任务管理页同一套选项；当前编辑权限仅战略部负责人/分管校领导/系统管理员）
+// 鉴定进度等级（与战略任务管理页同一套选项；当前编辑权限仅战略部负责人/分管校领导/系统管理员）
 type ManualAlertSelectValue = Exclude<ManualAlertSeverity, null> | ''
 
 const manualAlertOptions: Array<{
@@ -329,7 +329,7 @@ const distributionExportColumns: ExcelExportColumn<DistributionExportRow>[] = [
   { header: '备注', width: 24, getValue: row => row.child.remark || '-' },
   { header: '权重', width: 10, align: 'center', getValue: row => Number(row.child.weight || 0) },
   {
-    header: '鉴定等级',
+    header: '鉴定进度等级',
     width: 18,
     align: 'center',
     getValue: row => getChildManualAlertLabel(getChildManualAlertSeverity(row.child))
@@ -988,10 +988,26 @@ const handleDistributionImportCommitted = async () => {
                   </template>
                 </el-table-column>
 
-                <!-- 学院模式下不显示学院列 -->
+                <!-- 自评等级列（与战略任务管理页命名一致） -->
+                <el-table-column label="自评等级" width="110" align="center">
+                  <template #default="{ row }">
+                    <template v-if="row.type === 'child'">
+                      <el-tag v-if="row.child?.selfRating" size="small" type="info">
+                        {{
+                          {
+                            AHEAD: '超前完成',
+                            NORMAL: '正常',
+                            DELAYED: '延期'
+                          }[row.child.selfRating] || row.child.selfRating
+                        }}
+                      </el-tag>
+                      <span v-else style="color: #909399">—</span>
+                    </template>
+                  </template>
+                </el-table-column>
 
-                <!-- 鉴定等级列（按业务要求替代原里程碑列；控件与战略任务管理页一致） -->
-                <el-table-column label="鉴定等级" width="140" align="center">
+                <!-- 鉴定进度等级列（按业务要求替代原里程碑列；控件与战略任务管理页一致） -->
+                <el-table-column label="鉴定进度等级" width="140" align="center">
                   <template #default="{ row }">
                     <template v-if="row.type !== 'child'">
                       <span class="manual-alert-placeholder">-</span>
@@ -1567,7 +1583,7 @@ const handleDistributionImportCommitted = async () => {
 <style scoped src="./IndicatorDistributeView.css"></style>
 <style src="./IndicatorDistributeView.global.css"></style>
 <style scoped>
-/* 鉴定等级列（与战略任务管理页一致） */
+/* 鉴定进度等级列（与战略任务管理页一致） */
 .manual-alert-cell {
   display: inline-flex;
   align-items: center;
