@@ -3782,6 +3782,15 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   }
 
   // 该学院收到的全部指标（含子指标；跨部门来源，不限当前职能部门计划）
+  // 二级学院 tab：指标 id→完整指标映射，用于子指标行显示所属核心指标（名称+定性定量配色）
+  const indicatorById = computed(() => {
+    const map = new Map<string | number, (typeof normalizedIndicators.value)[number]>()
+    for (const item of normalizedIndicators.value) {
+      map.set(item.id, item)
+    }
+    return map
+  })
+
   const collegeTableIndicators = computed(() => {
     if (!selectedCollege.value) {
       return []
@@ -3802,14 +3811,56 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         return deptName === target || deptName.includes(target)
       })
       .sort((a, b) => {
-        const taskA = String(a.taskContent ?? '')
-        const taskB = String(b.taskContent ?? '')
-        if (taskA !== taskB) {
-          return taskA.localeCompare(taskB)
+        // 按所属核心指标分组相邻（同组同序），与职能部门 tab 的任务分组展示同构
+        const parentA = indicatorById.value.get(a.parentIndicatorId ?? '')?.name ?? ''
+        const parentB = indicatorById.value.get(b.parentIndicatorId ?? '')?.name ?? ''
+        if (parentA !== parentB) {
+          return parentA.localeCompare(parentB)
         }
         return Number(a.sortOrder ?? 0) - Number(b.sortOrder ?? 0)
       })
   })
+
+  // 二级学院 tab：核心指标列合并单元格元数据（同属一个核心指标的行首行 rowspan=组内行数）
+  const collegeSpanMetaMap = computed(() => {
+    const meta = new Map<number, { rowspan: number; colspan: number }>()
+    const rows = collegeTableIndicators.value
+    let index = 0
+    while (index < rows.length) {
+      const head = rows[index]
+      const parentKey = String(head?.parentIndicatorId ?? head?.id ?? '')
+      let end = index + 1
+      while (end < rows.length) {
+        const candidate = rows[end]
+        if (!candidate || String(candidate.parentIndicatorId ?? candidate.id ?? '') !== parentKey) {
+          break
+        }
+        end += 1
+      }
+      meta.set(index, { rowspan: end - index, colspan: 1 })
+      for (let i = index + 1; i < end; i += 1) {
+        meta.set(i, { rowspan: 0, colspan: 0 })
+      }
+      index = end
+    }
+    return meta
+  })
+
+  const collegeSpanMethod = ({
+    rowIndex,
+    columnIndex
+  }: {
+    row: Record<string, unknown>
+    column: unknown
+    rowIndex: number
+    columnIndex: number
+  }) => {
+    // 仅核心指标列（第 0 列）合并
+    if (columnIndex === 0) {
+      return collegeSpanMetaMap.value.get(rowIndex) ?? { rowspan: 1, colspan: 1 }
+    }
+    return { rowspan: 1, colspan: 1 }
+  }
 
   const _selectTask = (index: number) => {
     currentTaskIndex.value = index
@@ -5155,6 +5206,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     selectedCollege,
     selectCollege,
     collegeTableIndicators,
+    indicatorById,
+    collegeSpanMethod,
     getCategoryColor,
     getCategoryText,
     getCurrentActorUserId,

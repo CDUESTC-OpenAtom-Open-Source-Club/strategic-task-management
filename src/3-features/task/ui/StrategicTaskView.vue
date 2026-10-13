@@ -3,6 +3,8 @@ import { computed, ref } from 'vue'
 import TaskIndicatorTree from './TaskIndicatorTree.vue'
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
+import ReportHistoryBadge from '@/features/indicator/ui/ReportHistoryBadge.vue'
+import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
 import {
   Plus,
   View,
@@ -166,6 +168,8 @@ const {
   selectedCollege,
   selectCollege,
   collegeTableIndicators,
+  indicatorById,
+  collegeSpanMethod,
   getCategoryColor,
   getCategoryText,
   getDisplayedReportedProgress,
@@ -1679,10 +1683,46 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
               <div class="table-container">
                 <el-table
                   :data="collegeTableIndicators"
+                  :span-method="collegeSpanMethod"
                   border
                   highlight-current-row
                   class="unified-table"
                 >
+                  <el-table-column label="核心指标" min-width="200">
+                    <template #default="{ row }">
+                      <!-- 2026-10-13 用户定案：与职能部门 tab 核心指标列同构——同核心指标合并单元格、定性/定量配色、悬停类型提示 -->
+                      <el-tooltip
+                        :content="
+                          row.parentIndicatorId &&
+                          indicatorById.get(row.parentIndicatorId)?.type1 === '定性'
+                            ? '定性指标'
+                            : row.parentIndicatorId &&
+                                indicatorById.get(row.parentIndicatorId)?.type1 === '定量'
+                              ? '定量指标'
+                              : '未设置类型'
+                        "
+                        placement="top"
+                      >
+                        <span
+                          class="indicator-name-text"
+                          :class="
+                            row.parentIndicatorId &&
+                            indicatorById.get(row.parentIndicatorId)?.type1 === '定性'
+                              ? 'indicator-qualitative'
+                              : row.parentIndicatorId &&
+                                  indicatorById.get(row.parentIndicatorId)?.type1 === '定量'
+                                ? 'indicator-quantitative'
+                                : ''
+                          "
+                          >{{
+                            (row.parentIndicatorId &&
+                              indicatorById.get(row.parentIndicatorId)?.name) ||
+                            '—'
+                          }}</span
+                        >
+                      </el-tooltip>
+                    </template>
+                  </el-table-column>
                   <el-table-column prop="name" label="子指标名称" min-width="320">
                     <template #default="{ row }">
                       <div
@@ -1696,6 +1736,8 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         <!-- 异动历史徽章（有变更时显示，悬停看历史） -->
                         <div v-if="row.id" class="indicator-cell-footer">
                           <MutationBadgePopover :indicator-id="row.id" />
+                          <!-- 上报历史小标（每次上报更新，不走异动链，悬停看历次上报+资料） -->
+                          <ReportHistoryBadge :indicator-id="row.id" />
                         </div>
                       </div>
                     </template>
@@ -1725,11 +1767,10 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </el-tag>
                     </template>
                   </el-table-column>
-                  <el-table-column label="上报资料" width="100" align="center">
+                  <el-table-column label="上报资料" min-width="150">
                     <template #default="{ row }">
-                      <el-button link type="primary" size="small" @click="handleViewDetail(row)">
-                        查看
-                      </el-button>
+                      <!-- 只展示当前最新一次上报提交的资料；历次经右下角上报小标查看 -->
+                      <ReportMaterialsCell :indicator-id="row.id" />
                     </template>
                   </el-table-column>
                   <el-table-column label="上报状态" width="110" align="center">
@@ -1746,7 +1787,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   </el-table-column>
                   <el-table-column label="进度说明" min-width="160">
                     <template #default="{ row }">
-                      <span>{{ row.pendingRemark || row.remark || '—' }}</span>
+                      <span>{{ row.pendingRemark || '—' }}</span>
                     </template>
                   </el-table-column>
                   <el-table-column prop="remark" label="备注" width="160">
@@ -1754,6 +1795,13 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       <span class="indicator-name-text remark-text-wrap">{{
                         row.remark || '—'
                       }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="90" align="center" fixed="right">
+                    <template #default="{ row }">
+                      <el-button link type="primary" size="small" @click="handleViewDetail(row)">
+                        详情
+                      </el-button>
                     </template>
                   </el-table-column>
                 </el-table>

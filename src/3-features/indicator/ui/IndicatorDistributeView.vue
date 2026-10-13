@@ -26,6 +26,8 @@ import {
 import { DistributionApprovalProgressDrawer } from '@/features/approval'
 import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
+import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
+import ReportHistoryBadge from '@/features/indicator/ui/ReportHistoryBadge.vue'
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import {
   useIndicatorDistributeView,
@@ -858,6 +860,8 @@ const handleDistributionImportCommitted = async () => {
                             >{{ row.child?.name || '未命名' }}</span
                           >
                         </el-tooltip>
+                        <!-- 上报历史小标（每次上报更新，不走异动链，悬停看历次上报+资料） -->
+                        <ReportHistoryBadge v-if="row.child?.id" :indicator-id="row.child.id" />
                       </div>
                     </template>
                     <!-- 新增子指标行 -->
@@ -887,63 +891,6 @@ const handleDistributionImportCommitted = async () => {
                             >{{ row.child.name || '点击输入名称' }}</span
                           >
                         </el-tooltip>
-                      </div>
-                    </template>
-                  </template>
-                </el-table-column>
-
-                <!-- 备注列 -->
-                <el-table-column label="备注" width="140">
-                  <template #default="{ row }">
-                    <template v-if="row.type === 'indicator-only'">
-                      <span class="remark-text">-</span>
-                    </template>
-                    <template v-else-if="row.type === 'child'">
-                      <div
-                        class="child-remark-cell"
-                        @dblclick="handleChildDblClick(row.child, 'remark')"
-                      >
-                        <el-input
-                          v-if="
-                            editingChildId === row.child?.id?.toString() &&
-                            editingChildField === 'remark'
-                          "
-                          v-model="editingChildValue"
-                          type="textarea"
-                          :rows="1"
-                          autosize
-                          class="editing-field textarea-cell"
-                          @blur="saveChildEdit(row.child, 'remark')"
-                        />
-                        <span
-                          v-else-if="isSavingChildCell(row.child, 'remark')"
-                          class="cell-saving-text"
-                        >
-                          保存中...
-                        </span>
-                        <span v-else class="remark-text">{{ row.child?.remark || '-' }}</span>
-                      </div>
-                    </template>
-                    <template v-else-if="row.type === 'new-child'">
-                      <div
-                        class="new-child-cell"
-                        @click="handleNewChildRowClick(row.child.id, row.parentIndicatorId)"
-                      >
-                        <el-input
-                          v-if="editingNewChildId === row.child.id"
-                          v-model="row.child.remark"
-                          type="textarea"
-                          :rows="1"
-                          autosize
-                          placeholder="输入备注（选填）"
-                          class="new-child-editing textarea-cell"
-                        />
-                        <span
-                          v-else
-                          class="remark-text new-child-text"
-                          :class="{ 'placeholder-text': !row.child.remark }"
-                          >{{ row.child.remark || '-' }}</span
-                        >
                       </div>
                     </template>
                   </template>
@@ -1063,6 +1010,75 @@ const handleDistributionImportCommitted = async () => {
                             {{ getChildManualAlertLabel(getChildManualAlertSeverity(row.child)) }}
                           </el-tag>
                         </template>
+                      </div>
+                    </template>
+                  </template>
+                </el-table-column>
+
+                <!-- 上报资料列（2026-10-13 用户定案：展示当前最新一次上报提交的资料；历次经上报小标查看） -->
+                <el-table-column label="上报资料" min-width="150">
+                  <template #default="{ row }">
+                    <template v-if="row.type === 'child'">
+                      <ReportMaterialsCell :indicator-id="row.child?.id" />
+                    </template>
+                    <template v-else>
+                      <span class="remark-text">-</span>
+                    </template>
+                  </template>
+                </el-table-column>
+
+                <!-- 备注列（2026-10-13 用户定案：备注移到操作列前） -->
+                <el-table-column label="备注" width="140">
+                  <template #default="{ row }">
+                    <template v-if="row.type === 'indicator-only'">
+                      <span class="remark-text">-</span>
+                    </template>
+                    <template v-else-if="row.type === 'child'">
+                      <div
+                        class="child-remark-cell"
+                        @dblclick="handleChildDblClick(row.child, 'remark')"
+                      >
+                        <el-input
+                          v-if="
+                            editingChildId === row.child?.id?.toString() &&
+                            editingChildField === 'remark'
+                          "
+                          v-model="editingChildValue"
+                          type="textarea"
+                          :rows="1"
+                          autosize
+                          class="editing-field textarea-cell"
+                          @blur="saveChildEdit(row.child, 'remark')"
+                        />
+                        <span
+                          v-else-if="isSavingChildCell(row.child, 'remark')"
+                          class="cell-saving-text"
+                        >
+                          保存中...
+                        </span>
+                        <span v-else class="remark-text">{{ row.child?.remark || '-' }}</span>
+                      </div>
+                    </template>
+                    <template v-else-if="row.type === 'new-child'">
+                      <div
+                        class="new-child-cell"
+                        @click="handleNewChildRowClick(row.child.id, row.parentIndicatorId)"
+                      >
+                        <el-input
+                          v-if="editingNewChildId === row.child.id"
+                          v-model="row.child.remark"
+                          type="textarea"
+                          :rows="1"
+                          autosize
+                          placeholder="输入备注（选填）"
+                          class="new-child-editing textarea-cell"
+                        />
+                        <span
+                          v-else
+                          class="remark-text new-child-text"
+                          :class="{ 'placeholder-text': !row.child.remark }"
+                          >{{ row.child.remark || '-' }}</span
+                        >
                       </div>
                     </template>
                   </template>
@@ -1585,8 +1601,10 @@ const handleDistributionImportCommitted = async () => {
 <style scoped>
 /* 鉴定进度等级列（与战略任务管理页一致） */
 .manual-alert-cell {
-  display: inline-flex;
+  display: flex;
+  width: 100%;
   align-items: center;
+  justify-content: center;
 }
 
 .manual-alert-select {
