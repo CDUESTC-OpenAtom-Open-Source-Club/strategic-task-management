@@ -1679,21 +1679,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
               <div class="table-container">
                 <el-table
                   :data="collegeTableIndicators"
-                  :span-method="getSpanMethod"
                   border
                   highlight-current-row
                   class="unified-table"
                 >
-                  <el-table-column prop="taskContent" label="战略任务" width="200">
-                    <template #default="{ row }">
-                      <span
-                        class="indicator-name-text task-content-colored"
-                        :style="{ color: getCategoryColor(row.type2) }"
-                        >{{ row.taskContent || '未关联任务' }}</span
-                      >
-                    </template>
-                  </el-table-column>
-                  <el-table-column prop="name" label="核心指标" min-width="300">
+                  <el-table-column prop="name" label="子指标名称" min-width="320">
                     <template #default="{ row }">
                       <div
                         class="indicator-name-cell"
@@ -1742,11 +1732,28 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </el-button>
                     </template>
                   </el-table-column>
+                  <el-table-column label="上报状态" width="110" align="center">
+                    <template #default="{ row }">
+                      <el-tag
+                        v-if="row.hasCurrentMonthFill"
+                        size="small"
+                        :type="row.currentMonthApproved ? 'success' : 'warning'"
+                      >
+                        {{ row.currentMonthApproved ? '已上报' : '审批中' }}
+                      </el-tag>
+                      <span v-else style="color: #909399">未填报</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="进度说明" min-width="160">
+                    <template #default="{ row }">
+                      <span>{{ row.pendingRemark || row.remark || '—' }}</span>
+                    </template>
+                  </el-table-column>
                   <el-table-column prop="remark" label="备注" width="160">
                     <template #default="{ row }">
-                      <div @dblclick="handleIndicatorDblClick(row, 'remark')">
-                        <span>{{ row.remark || '—' }}</span>
-                      </div>
+                      <span class="indicator-name-text remark-text-wrap">{{
+                        row.remark || '—'
+                      }}</span>
                     </template>
                   </el-table-column>
                 </el-table>
