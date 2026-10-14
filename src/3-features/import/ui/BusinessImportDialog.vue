@@ -14,7 +14,8 @@ import {
 import {
   buildImportTemplateFileName,
   buildImportTemplateSheet,
-  getImportTemplateGuide
+  getImportTemplateGuide,
+  type ImportTemplateParentSeed
 } from '@/features/import/lib/importTemplate'
 import { canAutoApproveImport } from '@/features/import/lib/importPermissions'
 import { exportSheetsToExcel, type ExcelExportSheet } from '@/shared/lib/export/excel'
@@ -28,6 +29,12 @@ const props = defineProps<{
   sourceOrgId?: number | null
   sourceOrgName?: string | null
   cycleId?: number | null
+  /** 2026-10-14 P10：当前职能部门已接收的父级核心指标，用于下载模板时自动带出预填行 */
+  parentIndicators?: Array<{
+    id?: number | string
+    name?: string
+    taskContent?: string
+  }> | null
 }>()
 
 const emit = defineEmits<{
@@ -142,6 +149,18 @@ const downloadTemplate = async () => {
   templateDownloading.value = true
   try {
     const guide = getImportTemplateGuide(props.type)
+
+    // 2026-10-14 用户定案（P10）：学院子指标模板自动带出"当前职能部门已接收的父级核心指标"行
+    // （由父页面传入 availableParentIndicators，与导入校验的父级匹配口径完全一致），含内部 ID；
+    // 用户在行右侧补写子指标即可。未传/为空时退回通用示例行，不阻断下载。
+    const parentSeeds: ImportTemplateParentSeed[] | undefined = props.parentIndicators?.length
+      ? props.parentIndicators.map(item => ({
+          parentIndicator: String(item.name || '').trim(),
+          parentStrategicTask: String(item.taskContent || '').trim(),
+          parentIndicatorId: item.id
+        }))
+      : undefined
+
     const rulesSheet: ExcelExportSheet<Record<string, string>> = {
       sheetName: '填写说明',
       rows: guide.rules.map(rule => ({ rule })),
@@ -155,10 +174,14 @@ const downloadTemplate = async () => {
     }
 
     await exportSheetsToExcel(
-      [buildImportTemplateSheet(props.type), rulesSheet],
+      [buildImportTemplateSheet(props.type, parentSeeds), rulesSheet],
       buildImportTemplateFileName(props.type)
     )
-    ElMessage.success('模板下载成功，请按模板填写后上传')
+    ElMessage.success(
+      parentSeeds?.length
+        ? `模板下载成功：已自动带出 ${parentSeeds.length} 条父级核心指标，请在右侧补写子指标`
+        : '模板下载成功，请按模板填写后上传'
+    )
   } catch {
     ElMessage.error('模板下载失败，请稍后重试')
   } finally {

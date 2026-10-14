@@ -231,8 +231,8 @@ function openApprovalCenterFromDashboard() {
         <el-empty description="暂无数据" :image-size="200">
           <template #description>
             <div class="empty-description">
-              <p>当前没有可显示的指标数据</p>
-              <p class="empty-hint">请检查数据源或联系管理员</p>
+              <p>当前还没有下发到本单位的指标任务</p>
+              <p class="empty-hint">上级下发任务后，这里会自动显示对应数据</p>
             </div>
           </template>
           <el-button type="primary" @click="reloadData()">
@@ -273,31 +273,35 @@ function openApprovalCenterFromDashboard() {
         </div>
         <div class="summary-content">
           <div class="summary-header">
-            <span class="summary-tag">AI Intelligence Briefing</span>
-            <span class="summary-time">| UPDATE: {{ new Date().toLocaleDateString() }}</span>
+            <span class="summary-tag">任务完成简报</span>
+            <span class="summary-time"
+              >| {{ timeContext.currentYear }} 年度 · 更新于
+              {{ new Date().toLocaleDateString() }}</span
+            >
           </div>
           <p class="summary-text">
-            进度等级分布：超前完成
+            {{ timeContext.currentYear }} 年度当前共
+            <span class="highlight-primary">{{
+              (dashboardData.levelDistribution?.ahead ?? 0) +
+              (dashboardData.levelDistribution?.normal ?? 0) +
+              (dashboardData.levelDistribution?.delayed ?? 0)
+            }}</span>
+            项任务：超前完成
             <span class="highlight-primary">{{ dashboardData.levelDistribution?.ahead ?? 0 }}</span>
-            项、正常 {{ dashboardData.levelDistribution?.normal ?? 0 }} 项、延期
+            项、正常推进 {{ dashboardData.levelDistribution?.normal ?? 0 }} 项、延期
             {{ dashboardData.levelDistribution?.delayed ?? 0 }} 项。
             <!-- H3（2026-09-19 定案）：延期口径统一为人工鉴定三档（levelDistribution），与圆环图同源 -->
             <template v-if="(dashboardData.levelDistribution?.delayed ?? 0) > 0">
-              {{ selectedMonth }}月存在
+              其中
               <span class="highlight-danger"
-                >{{ dashboardData.levelDistribution?.delayed ?? 0 }} 项延期</span
+                >{{ dashboardData.levelDistribution?.delayed ?? 0 }} 项</span
               >
-              任务需重点关注。
+              已鉴定为延期。
             </template>
-            <template v-else>
-              {{ selectedMonth }}月整体执行状态良好，<span class="highlight-success"
-                >无延期指标</span
-              >。
-            </template>
-            完成率达 <span class="highlight-success">{{ dashboardData.completionRate }}%</span>，
-            {{ dashboardData.completionRate >= 80 ? '进度符合预期' : '建议加快推进滞后任务' }}。
+            <template v-else> 暂无延期鉴定。 </template>
+            总体完成率 <span class="highlight-success">{{ dashboardData.completionRate }}%</span>。
             <button type="button" class="drill-btn" @click.prevent="handleSummaryDrillClick">
-              立即下钻诊断 →
+              查看分布明细 →
             </button>
           </p>
         </div>

@@ -32,6 +32,7 @@ const props = withDefaults(defineProps<DistributionApprovalProgressDrawerProps>(
   workflowEntityId: undefined,
   secondaryWorkflowEntityType: undefined,
   secondaryWorkflowEntityId: undefined,
+  mutationWorkflowEntities: () => [],
   routeTarget: ''
 })
 

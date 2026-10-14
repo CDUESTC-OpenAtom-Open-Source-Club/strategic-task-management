@@ -3,12 +3,16 @@ import { computed, ref } from 'vue'
 import TaskIndicatorTree from './TaskIndicatorTree.vue'
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
+import ReportHistoryBadge from '@/features/indicator/ui/ReportHistoryBadge.vue'
+import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
+import ReportStatusCell from '@/features/indicator/ui/ReportStatusCell.vue'
 import {
   Plus,
   View,
   Download,
   Delete,
   ArrowDown,
+  ArrowLeftBold,
   Check,
   Loading,
   Upload
@@ -162,6 +166,13 @@ const {
   findExistingTaskIdByName,
   formatDetailDate,
   functionalDepartments,
+  collegeDepartments,
+  selectedCollege,
+  selectCollege,
+  collegeTableIndicators,
+  collegeDepartmentsScoped,
+  indicatorById,
+  collegeSpanMethod,
   getCategoryColor,
   getCategoryText,
   getDisplayedReportedProgress,
@@ -237,12 +248,12 @@ const {
   loadIndicatorWorkflowSnapshot,
   loadPendingPlanApprovalCount,
   newRow,
+  normalizedIndicators,
   normalizeDepartmentName,
   normalizeEditableText,
   normalizePreviewCandidateDisplayName,
   normalizeTaskId,
   normalizeWorkflowStepName,
-  normalizedIndicators,
   openApprovalSetupDialog,
   openNewRowDialog,
   orgStore,
@@ -265,6 +276,10 @@ const {
   refreshCurrentDepartmentView,
   refreshIndicatorWorkflowContext,
   refreshTaskPageAfterIndicatorMutation,
+  hasMutationDraft,
+  mutationDraftLabels,
+  submitMutationDraft,
+  cancelMutationDraft,
   registerTaskLocally,
   rejectIndicatorReview,
   resetApprovalSetupDialog,
@@ -304,16 +319,60 @@ const {
 
 const activeTaskTabName = ref<'functional' | 'college'>('functional')
 
+// 2026-10-13 用户定案：二级学院 tab 未选学院时的左侧入口引导（呼吸高亮 + 指向气泡），选中后消失
+// 仅当当前职能部门确实有下发学院时才引导（列表为空时引导会指向空列表，反而更困惑）
+const showCollegeGuide = computed(
+  () =>
+    activeTaskTabName.value === 'college' &&
+    !selectedCollege.value &&
+    collegeDepartmentsScoped.value.length > 0
+)
+
 // 二级学院页签（P2）：筛出下发到学院的任务与指标，复用 TaskIndicatorTree 树状下钻
+// 2026-10-11 修复：原过滤只看 department 字段（二级学院子指标的 owner 是职能部门，
+// 该字段为空）导致链路「职能部门→学院」下发后学院 tab 显示 No Data。
+// 改为按目标部门（targetDepartment/targetOrgName）识别学院归属。
 const collegeIndicators = computed(() =>
-  (indicators.value || []).filter(item => {
-    const orgName = String((item as { department?: string }).department ?? '')
-    return orgName.includes('学院')
+  // 2026-10-11 修复：改用全量指标源（normalizedIndicators）——
+  // indicators 被"当前选中部门 + isStrategic + 当前计划范围"三重过滤，
+  // 学院子指标（owner=职能部门、有 parentIndicatorId）会被全部排除，导致学院 tab 恒为空。
+  (normalizedIndicators.value || []).filter(item => {
+    const candidate = item as {
+      department?: string
+      targetDepartment?: string
+      targetOrgName?: string
+      targetOrgId?: string | number
+      responsibleDept?: string
+    }
+    const targetName = String(
+      candidate.targetDepartment ??
+        candidate.targetOrgName ??
+        candidate.responsibleDept ??
+        candidate.department ??
+        ''
+    )
+    if (targetName.includes('学院')) {
+      return true
+    }
+    const targetOrgId = Number(candidate.targetOrgId ?? NaN)
+    return Number.isFinite(targetOrgId) && targetOrgId >= 55 && targetOrgId <= 62
   })
 )
 const collegeTasks = computed(() => {
-  const collegeTaskIds = new Set(collegeIndicators.value.map(item => String(item.taskId ?? '')))
-  return (taskList.value || []).filter(task => collegeTaskIds.has(String(task.id ?? '')))
+  // 2026-10-11 修复：store 的 tasks 以 taskContent 作为 id（非数字 taskId），
+  // 原按 taskId 匹配恒为空。改为按 任务名（taskContent）匹配，
+  // 同时保留数字 taskId 兜底匹配。
+  const collegeTaskNames = new Set(
+    collegeIndicators.value.map(item => String(item.taskContent ?? '')).filter(Boolean)
+  )
+  const collegeTaskIds = new Set(
+    collegeIndicators.value.map(item => String(item.taskId ?? '')).filter(Boolean)
+  )
+  return (taskList.value || []).filter(task => {
+    const byName = collegeTaskNames.has(String(task.title ?? ''))
+    const byId = collegeTaskIds.has(String(task.id ?? ''))
+    return byName || byId
+  })
 })
 
 type StrategicExportRow = StrategicIndicator & {
@@ -323,51 +382,40 @@ type StrategicExportRow = StrategicIndicator & {
 const strategicExporting = ref(false)
 
 /**
- * P5 发起异动：原地修改 + 写快照 + 启动 PLAN_MUTATION_STRATEGY 三级审批；
- * 审批期间该组织全面锁死填报/提交。
+ * 2026-10-14 用户定案（P8 表单式异动）：
+ * 已下发指标双击字段就地编辑 → 改动攒入异动草稿（内存态，刷新即丢）→
+ * 顶部「发起异动」按钮一次性提交全部攒改，走 PLAN_MUTATION_STRATEGY 审批链；
+ * 驳回后后端自动清除 mutation_status，可再次发起。
  */
 const mutationApiLoading = ref(false)
-async function initiateMutationForSelection() {
-  const row = selectedIndicators.value[0]
-  if (!row?.id) {
-    ElMessage.warning('请先选中一条指标')
-    return
-  }
+
+// 2026-10-10：异动审批实例 → 审批中心「审批历史」卡片（P1 修复：异动链不缺失前端）
+const departmentMutationWorkflowEntities = ref<Array<{ entityId: number }>>([])
+const loadDepartmentMutationWorkflowEntities = async () => {
   try {
-    const { value } = await ElMessageBox.prompt(
-      '是否确认改动？确认后将启动异动审批（战略部负责人 → 分管校领导），' +
-        '审批期间该部门填报与提交将全面锁死。',
-      '发起指标异动',
-      {
-        confirmButtonText: '确认改动',
-        cancelButtonText: '取消',
-        inputType: 'textarea',
-        inputPlaceholder: '请输入新的指标内容（原地修改，历史版本可在指标框右下角查看）',
-        inputValue: row.name || '',
-        inputValidator: val => (val && val.trim() ? true : '指标内容不能为空')
-      }
-    )
-    mutationApiLoading.value = true
+    const orgId = resolveDepartmentIdByName(selectedDepartment.value)
+    if (!orgId) {
+      departmentMutationWorkflowEntities.value = []
+      return
+    }
     const { mutationApi } = await import('@/features/indicator/api/mutationApi')
-    const response = await mutationApi.initiate(row.id as number, {
-      indicator_desc: String(value || '').trim()
-    })
-    if (response.success) {
-      ElMessage.success('异动已提交审批；审批期间该部门填报已锁死')
-      // 2026-10-07 实际回源：异动发起后真实刷新任务页指标与审批状态
-      // （该入口的选择列已移除，此函数暂不可达；保留刷新逻辑以防入口恢复）
-      void refreshTaskPageAfterIndicatorMutation()
-    } else {
-      ElMessage.error(response.message || '发起异动失败')
-    }
+    const response = await mutationApi.approvals(orgId)
+    const items = Array.isArray(response.data) ? response.data : []
+    departmentMutationWorkflowEntities.value = items
+      .filter(item => Number(item.indicator_id) > 0)
+      .map(item => ({ entityId: Number(item.indicator_id) }))
   } catch (error) {
-    if (error !== 'cancel' && error !== 'close') {
-      ElMessage.error(error instanceof Error ? error.message : '发起异动失败')
-    }
-  } finally {
-    mutationApiLoading.value = false
+    logger.warn('[StrategicTaskView] 加载异动审批实例失败:', error)
   }
 }
+// 部门切换即预载（抽屉打开时数据已就绪，避免晚于历史卡片加载的时序问题）
+watch(
+  () => selectedDepartment.value,
+  () => {
+    void loadDepartmentMutationWorkflowEntities()
+  },
+  { immediate: true }
+)
 const strategicBatchExportDialogVisible = ref(false)
 const selectedStrategicExportDepartments = ref<string[]>([])
 const strategicImportDialogVisible = ref(false)
@@ -742,22 +790,42 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
     <!-- 左侧任务列表 - 动态隐藏 -->
     <aside class="task-sidebar">
       <div class="sidebar-header">
-        <div class="task-list-title">部门列表</div>
+        <div class="task-list-title">
+          {{ activeTaskTabName === 'functional' ? '部门列表' : '学院列表' }}
+        </div>
       </div>
 
       <ul class="task-list">
-        <li
-          v-for="dept in functionalDepartments"
-          :key="dept"
-          :class="['task-item', { active: selectedDepartment === dept }]"
-          @click="selectDepartment(dept)"
-        >
-          {{ dept }}
-        </li>
+        <!-- 2026-10-11 用户定案：职能部门 tab 列职能部门；二级学院 tab 列学院 -->
+        <template v-if="activeTaskTabName === 'functional'">
+          <li
+            v-for="dept in functionalDepartments"
+            :key="dept"
+            :class="['task-item', { active: selectedDepartment === dept }]"
+            @click="selectDepartment(dept)"
+          >
+            {{ dept }}
+          </li>
+        </template>
+        <template v-else>
+          <!-- 2026-10-13 用户定案：学院列表按左侧已选职能部门下钻，只列该部门下发的目标学院 -->
+          <li
+            v-for="college in collegeDepartmentsScoped"
+            :key="college"
+            :class="['task-item', { active: selectedCollege === college }]"
+            @click="selectCollege(college)"
+          >
+            {{ college }}
+          </li>
+          <li v-if="collegeDepartmentsScoped.length === 0" class="task-item college-scope-empty">
+            当前职能部门暂无下发给学院的指标
+          </li>
+        </template>
       </ul>
     </aside>
     <!-- 展开箭头独立于侧边栏 - 使用SVG图标 -->
-    <div class="sidebar-toggle">
+    <!-- 2026-10-13 用户定案：二级学院 tab 未选学院时，左侧入口加呼吸高亮引导（3 次后转静态） -->
+    <div class="sidebar-toggle" :class="{ 'sidebar-toggle--guide': showCollegeGuide }">
       <svg class="toggle-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
         <path
           d="M9 6L15 12L9 18"
@@ -770,6 +838,13 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
       </svg>
       <span class="toggle-hint">{{ selectedDepartment || functionalDepartments[0] || '' }}</span>
     </div>
+    <!-- 左侧入口引导气泡（指向真实交互入口，点击学院后消失） -->
+    <transition name="el-fade-in">
+      <div v-if="showCollegeGuide" class="college-guide-bubble">
+        <span class="college-guide-bubble__arrow">←</span>
+        请选择学院
+      </div>
+    </transition>
 
     <!-- 右侧详情区域 - Excel风格 -->
     <section
@@ -858,6 +933,20 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <el-button size="small" :icon="Upload" @click="openStrategicImportDialog">
             导入
           </el-button>
+          <!-- 2026-10-14 用户定案（P8）：就地编辑攒改后，顶部出现「发起异动」一键提交 -->
+          <template v-if="hasMutationDraft">
+            <el-button
+              size="small"
+              type="warning"
+              :loading="mutationApiLoading"
+              @click="submitMutationDraft"
+            >
+              发起异动（{{ mutationDraftLabels.join('、') }}）
+            </el-button>
+            <el-button size="small" :disabled="mutationApiLoading" @click="cancelMutationDraft">
+              取消异动
+            </el-button>
+          </template>
           <!-- 视图切换按钮 -->
           <el-button-group style="margin-left: 16px">
             <el-button
@@ -1588,14 +1677,150 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
         </el-tab-pane>
 
         <el-tab-pane label="二级学院战略任务管理" name="college">
-          <div class="college-tree-panel">
-            <el-alert
-              type="info"
-              :closable="false"
-              style="margin-bottom: 12px"
-              title="按「职能部门 → 学院」层级查看下发到各学院的任务与指标，点击节点可下钻查看"
-            />
-            <TaskIndicatorTree :tasks="collegeTasks" :indicators="collegeIndicators" />
+          <!-- 2026-10-11 用户定案：与职能部门同构的表格视图——左侧选学院，表格展示该学院收到的全部指标，双击异动 -->
+          <div class="excel-table-wrapper">
+            <div v-if="!selectedCollege" class="college-empty-tip">
+              <!-- 2026-10-13 用户定案：中央提示增强（深色大字 + 图标 + 辅助说明），作为左侧入口引导的辅助 -->
+              <template v-if="collegeDepartmentsScoped.length > 0">
+                <el-icon class="college-empty-icon"><ArrowLeftBold /></el-icon>
+                <div class="college-empty-main">请先在左侧选择对应学院</div>
+                <div class="college-empty-sub">
+                  点击左侧「学院列表」中的学院名称，这里将展示该学院收到的战略任务指标
+                </div>
+              </template>
+              <!-- 当前职能部门未下发学院：引导切换部门而不是选学院 -->
+              <template v-else>
+                <div class="college-empty-main">当前职能部门暂未向学院下发指标</div>
+                <div class="college-empty-sub">
+                  请在上方「职能部门战略任务管理」中切换其他职能部门，或先完成指标下发
+                </div>
+              </template>
+            </div>
+            <template v-else>
+              <div class="table-container">
+                <el-table
+                  :data="collegeTableIndicators"
+                  :span-method="collegeSpanMethod"
+                  border
+                  highlight-current-row
+                  class="unified-table"
+                >
+                  <el-table-column label="核心指标" min-width="200">
+                    <template #default="{ row }">
+                      <!-- 2026-10-13 用户定案：与职能部门 tab 核心指标列同构——同核心指标合并单元格、定性/定量配色、悬停类型提示 -->
+                      <el-tooltip
+                        :content="
+                          row.parentIndicatorId &&
+                          indicatorById.get(row.parentIndicatorId)?.type1 === '定性'
+                            ? '定性指标'
+                            : row.parentIndicatorId &&
+                                indicatorById.get(row.parentIndicatorId)?.type1 === '定量'
+                              ? '定量指标'
+                              : '未设置类型'
+                        "
+                        placement="top"
+                      >
+                        <span
+                          class="indicator-name-text"
+                          :class="
+                            row.parentIndicatorId &&
+                            indicatorById.get(row.parentIndicatorId)?.type1 === '定性'
+                              ? 'indicator-qualitative'
+                              : row.parentIndicatorId &&
+                                  indicatorById.get(row.parentIndicatorId)?.type1 === '定量'
+                                ? 'indicator-quantitative'
+                                : ''
+                          "
+                          >{{
+                            (row.parentIndicatorId &&
+                              indicatorById.get(row.parentIndicatorId)?.name) ||
+                            '—'
+                          }}</span
+                        >
+                      </el-tooltip>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="name" label="子指标名称" min-width="320">
+                    <template #default="{ row }">
+                      <div
+                        class="indicator-name-cell"
+                        @dblclick="handleIndicatorDblClick(row, 'name')"
+                      >
+                        <template v-if="row.name">
+                          <span class="indicator-name-text">{{ row.name }}</span>
+                        </template>
+                        <span v-else class="placeholder-text">未命名指标</span>
+                        <!-- 异动历史徽章（有变更时显示，悬停看历史） -->
+                        <div v-if="row.id" class="indicator-cell-footer">
+                          <MutationBadgePopover :indicator-id="row.id" />
+                          <!-- 上报历史小标（每次上报更新，不走异动链，悬停看历次上报+资料） -->
+                          <ReportHistoryBadge :indicator-id="row.id" />
+                        </div>
+                      </div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="weight" label="权重" width="72" align="center">
+                    <template #default="{ row }">
+                      <div @dblclick="handleIndicatorDblClick(row, 'weight')">
+                        <span>{{ row.weight }}</span>
+                      </div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="自评等级" width="132" align="center">
+                    <template #default="{ row }">
+                      <el-tag v-if="row.selfRating" size="small" type="info">
+                        {{
+                          { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' }[row.selfRating] ||
+                          row.selfRating
+                        }}
+                      </el-tag>
+                      <span v-else>—</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="鉴定进度等级" width="140" align="center">
+                    <template #default="{ row }">
+                      <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
+                        {{ getManualAlertLabel(row.manualAlertSeverity) }}
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="上报资料" min-width="150">
+                    <template #default="{ row }">
+                      <!-- 只展示当前最新一次上报提交的资料；历次经右下角上报小标查看 -->
+                      <ReportMaterialsCell :indicator-id="row.id" />
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="上报状态" width="110" align="center">
+                    <template #default="{ row }">
+                      <!-- 取最新一次非草稿上报的真实审批状态（hasCurrentMonthFill 是"能否继续填报"字段，不反映上报历史） -->
+                      <ReportStatusCell :indicator-id="row.id" />
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="进度说明" min-width="160">
+                    <template #default="{ row }">
+                      <span>{{ row.pendingRemark || '—' }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="remark" label="备注" width="160">
+                    <template #default="{ row }">
+                      <span class="indicator-name-text remark-text-wrap">{{
+                        row.remark || '—'
+                      }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="90" align="center" fixed="right">
+                    <template #default="{ row }">
+                      <el-button link type="primary" size="small" @click="handleViewDetail(row)">
+                        详情
+                      </el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </div>
+              <div class="excel-status-bar">
+                <div class="status-left">共 {{ collegeTableIndicators.length }} 条记录</div>
+              </div>
+            </template>
           </div>
         </el-tab-pane>
       </el-tabs>
@@ -1952,6 +2177,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
       :workflow-entity-id="primaryApprovalWorkflowEntityId"
       :secondary-workflow-entity-type="secondaryApprovalWorkflowEntityType"
       :secondary-workflow-entity-id="secondaryApprovalWorkflowEntityId"
+      :mutation-workflow-entities="departmentMutationWorkflowEntities"
       approval-type="submission"
       @close="taskApprovalVisible = false"
       @refresh="handleApprovalRefresh"
