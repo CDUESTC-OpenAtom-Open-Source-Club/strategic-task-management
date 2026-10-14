@@ -2312,12 +2312,114 @@
 }
 
 
-/* 2026-10-11 二级学院表格化：未选学院时的空态提示 */
+/* 2026-10-11 二级学院表格化：未选学院时的空态提示
+   （2026-10-13 增强版样式见文件末尾的中央空态引导区块） */
+
+/* 2026-10-13 二级学院 tab：当前职能部门无学院下发时的空态提示 */
+.task-item.college-scope-empty {
+  color: #909399;
+  font-size: 13px;
+  cursor: default;
+  justify-content: center;
+  text-align: center;
+  padding: 16px 12px;
+  white-space: normal;
+  line-height: 1.6;
+}
+.task-item.college-scope-empty::before {
+  display: none;
+}
+.task-item.college-scope-empty:hover {
+  background: transparent;
+}
+
+/* ================================================================
+   2026-10-13 二级学院 tab：左侧入口引导（呼吸高亮 3 次后转静态 + 指向气泡）
+   与中央空态增强配套，颜色规范：#1677ff 主色 / #e8f2ff 辅助背景 / #344054 正文
+   ================================================================ */
+@keyframes college-guide-pulse {
+  0%,
+  100% {
+    box-shadow:
+      2px 4px 12px rgba(64, 158, 255, 0.3),
+      0 2px 4px rgba(0, 0, 0, 0.1);
+  }
+  50% {
+    box-shadow:
+      0 0 0 7px rgba(22, 119, 255, 0.16),
+      3px 6px 20px rgba(22, 119, 255, 0.5);
+  }
+}
+
+@keyframes college-guide-nudge {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(-3px);
+  }
+}
+
+.sidebar-toggle--guide {
+  background: linear-gradient(135deg, #1677ff 0%, #2c5282 100%);
+  animation: college-guide-pulse 0.8s ease-in-out 3;
+}
+
+.sidebar-toggle--guide .toggle-icon {
+  animation: college-guide-nudge 0.8s ease-in-out 3;
+}
+
+/* 指向左侧入口的引导气泡（不拦截点击，选中学学院后由模板 v-if 移除） */
+.college-guide-bubble {
+  position: absolute;
+  left: 42px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  background: #e8f2ff;
+  color: #1677ff;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 999px;
+  box-shadow: 0 2px 10px rgba(22, 119, 255, 0.22);
+  z-index: 31;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.college-guide-bubble__arrow {
+  font-weight: 700;
+}
+
+/* 中央空态增强：深色大字 + 指引图标 + 辅助说明 */
 .college-empty-tip {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   min-height: 320px;
   background: #fff;
   border-radius: 8px;
+}
+
+.college-empty-icon {
+  font-size: 30px;
+  color: #1677ff;
+  margin-bottom: 2px;
+}
+
+.college-empty-main {
+  font-size: 16px;
+  font-weight: 600;
+  color: #344054;
+}
+
+.college-empty-sub {
+  font-size: 13px;
+  color: #667085;
 }

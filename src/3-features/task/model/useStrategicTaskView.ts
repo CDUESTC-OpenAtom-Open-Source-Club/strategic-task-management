@@ -3141,16 +3141,155 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     editingValue.value = ''
   }
 
+  // ===== 2026-10-14 用户定案：P8 异动改为「表单式就地编辑 + 顶部一键发起」=====
+  // 已下发指标双击进入就地编辑：改动只写内存草稿（不落库、刷新即丢），
+  // 顶部出现「发起异动」按钮，点击后把整条指标的全部攒改一次性提交走 PLAN_MUTATION_STRATEGY 审批。
+  const mutationDraft = ref<{
+    indicatorId: string | number
+    changes: { indicator_desc?: string; weight_percent?: number; remark?: string }
+    labels: string[]
+  } | null>(null)
+
+  const mutationApiLoading = ref(false)
+
+  const hasMutationDraft = computed(() => Boolean(mutationDraft.value))
+  const mutationDraftLabels = computed(() => mutationDraft.value?.labels ?? [])
+
+  const MUTATION_FIELD_MAP: Record<
+    string,
+    { payloadKey: 'indicator_desc' | 'weight_percent' | 'remark'; label: string }
+  > = {
+    name: { payloadKey: 'indicator_desc', label: '指标内容' },
+    weight: { payloadKey: 'weight_percent', label: '权重' },
+    remark: { payloadKey: 'remark', label: '备注' }
+  }
+
+  // 就地编辑保存 → 已下发时写入草稿而不是落库
+  const applyMutationDraftChange = (row: StrategicIndicator, field: string, rawValue: unknown) => {
+    const mapping = MUTATION_FIELD_MAP[field]
+    if (!mapping) {
+      return false
+    }
+    const currentDraft = mutationDraft.value
+    // 一次异动只能针对同一条指标（表单即整条指标）
+    if (currentDraft && String(currentDraft.indicatorId) !== String(row.id)) {
+      ElMessage.warning('一次异动只能调整同一条指标，请先提交或取消当前异动')
+      return false
+    }
+
+    let nextValue: string | number
+    if (mapping.payloadKey === 'weight_percent') {
+      const num = Number(rawValue)
+      if (!Number.isFinite(num) || num < 0 || num > 100) {
+        ElMessage.warning('权重需为 0-100 之间的数字')
+        return false
+      }
+      nextValue = num
+    } else {
+      const text = String(rawValue ?? '').trim()
+      if (!text) {
+        ElMessage.warning(`${mapping.label}不能为空`)
+        return false
+      }
+      nextValue = text
+    }
+
+    const originalValue =
+      mapping.payloadKey === 'weight_percent'
+        ? Number(row.weight ?? 0)
+        : String((row[field as keyof StrategicIndicator] as string | number | undefined) ?? '')
+    const unchanged =
+      mapping.payloadKey === 'weight_percent'
+        ? Number(originalValue) === nextValue
+        : String(originalValue).trim() === String(nextValue)
+
+    const changes = { ...(currentDraft?.changes ?? {}) }
+    const labels = new Set(currentDraft?.labels ?? [])
+    if (unchanged) {
+      delete changes[mapping.payloadKey]
+      labels.delete(mapping.label)
+    } else {
+      changes[mapping.payloadKey] = nextValue
+      labels.add(mapping.label)
+    }
+
+    mutationDraft.value = Object.keys(changes).length
+      ? { indicatorId: row.id, changes, labels: [...labels] }
+      : null
+
+    // 同步内存显示（表格立即反映编辑结果，刷新后还原）
+    const target = strategicStore.indicators.find(item => String(item.id) === String(row.id))
+    if (target) {
+      if (mapping.payloadKey === 'weight_percent') {
+        ;(target as { weight?: number }).weight = Number(nextValue)
+      } else if (mapping.payloadKey === 'indicator_desc') {
+        ;(target as { name?: string }).name = String(nextValue)
+      } else {
+        ;(target as { remark?: string }).remark = String(nextValue)
+      }
+    }
+    return true
+  }
+
+  const cancelMutationDraft = () => {
+    mutationDraft.value = null
+    ElMessage.info('已取消本次异动编辑')
+    void refreshTaskPageAfterIndicatorMutation()
+  }
+
+  // 顶部「发起异动」：一次性提交全部攒改，走异动审批链
+  const submitMutationDraft = async () => {
+    const draft = mutationDraft.value
+    if (!draft) {
+      return
+    }
+    const summary = draft.labels.join('、')
+    try {
+      await ElMessageBox.confirm(
+        `将提交以下异动调整：${summary}。\n确认后启动异动审批（战略发展部负责人 → 分管校领导），` +
+          '审批期间目标部门与全部二级学院将被锁死；驳回后可重新发起。',
+        '发起指标异动',
+        { confirmButtonText: '确认发起', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch {
+      return
+    }
+    try {
+      mutationApiLoading.value = true
+      const { mutationApi } = await import('@/features/indicator/api/mutationApi')
+      const response = await mutationApi.initiate(draft.indicatorId as number, draft.changes)
+      if (response.success) {
+        mutationDraft.value = null
+        ElMessage.success('异动已提交审批；审批期间该部门填报已锁死')
+        void refreshTaskPageAfterIndicatorMutation()
+      } else {
+        ElMessage.error(response.message || '发起异动失败')
+      }
+    } catch (error) {
+      ElMessage.error(error instanceof Error ? error.message : '发起异动失败')
+    } finally {
+      mutationApiLoading.value = false
+    }
+  }
+
   // 指标双击编辑
   const handleIndicatorDblClick = (row: StrategicIndicator, field: string) => {
     if (!canEdit.value) {
       return
     }
-    // 2026-10-11 测试0927 第7条：已下发（稳定态）指标不允许直接编辑——
-    // 战略发展部双击可异动字段时弹出异动对话框（原地修改 + 走 PLAN_MUTATION_STRATEGY 三级审批）；
-    // 其他角色/字段保持只读。
+    // 2026-10-14 用户定案：已下发指标双击进入就地编辑，改动攒入异动草稿，
+    // 由顶部「发起异动」按钮统一提交；未下发指标维持原有直接落库编辑。
     if (hasDistributedIndicators.value) {
-      void openMutationDialogForField(row, field)
+      const mapping = MUTATION_FIELD_MAP[field]
+      if (!mapping) {
+        return
+      }
+      if (savingIndicatorId.value === row.id) {
+        return
+      }
+      editingIndicatorId.value = row.id
+      editingIndicatorField.value = field
+      editingIndicatorValue.value = row[field as keyof StrategicIndicator]
       return
     }
     if (savingIndicatorId.value === row.id) {
@@ -3266,6 +3405,15 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       progress: 'progress',
       remark: 'remark',
       sortOrder: 'sortOrder'
+    }
+
+    // 2026-10-14 用户定案：已下发指标的就地编辑只攒入异动草稿（内存态，不落库），
+    // 由顶部「发起异动」按钮一次性提交走审批；刷新页面即丢弃未发起的改动。
+    if (hasDistributedIndicators.value && MUTATION_FIELD_MAP[field]) {
+      const value = editingIndicatorValue.value
+      cancelIndicatorEdit()
+      applyMutationDraftChange(row, field, value)
+      return
     }
 
     try {
@@ -3771,8 +3919,40 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   }
 
   // ===== 2026-10-11 二级学院表格化（用户定案）：左侧选学院 → 表格展示该学院收到的指标 → 双击异动 =====
+  // ===== 2026-10-13 用户定案：二级学院 tab 按左侧已选职能部门下钻——学院列表与表格都只呈现
+  // "当前职能部门 → 二级学院"这条下发链上的数据，不混入其他职能部门下发的指标 =====
   const collegeDepartments = computed(() => orgStore.getAllCollegeNames())
   const selectedCollege = ref('')
+
+  // 当前职能部门（职能部门 tab 左侧选中项）下发给学院的全部目标学院
+  const collegeDepartmentsScoped = computed(() => {
+    const allColleges = collegeDepartments.value
+    const ownerDept = normalizeDepartmentName(selectedDepartment.value || '')
+    if (!ownerDept) {
+      return allColleges
+    }
+    const scoped = new Set<string>()
+    for (const item of normalizedIndicators.value) {
+      if (item.ownerDept !== ownerDept) {
+        continue
+      }
+      const candidate = item as {
+        targetOrgName?: string
+        targetDepartment?: string
+        responsibleDept?: string
+      }
+      const target = normalizeDepartmentName(
+        String(
+          candidate.targetOrgName ?? candidate.targetDepartment ?? candidate.responsibleDept ?? ''
+        )
+      )
+      const matched = allColleges.find(college => normalizeDepartmentName(college) === target)
+      if (matched) {
+        scoped.add(matched)
+      }
+    }
+    return [...scoped].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+  })
 
   const selectCollege = (college: string) => {
     if (selectedCollege.value === college) {
@@ -3781,7 +3961,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     selectedCollege.value = college
   }
 
-  // 该学院收到的全部指标（含子指标；跨部门来源，不限当前职能部门计划）
+  // 切换职能部门时，原选中学院可能不在新部门的下发范围——自动清空选中
+  watch(collegeDepartmentsScoped, scoped => {
+    if (selectedCollege.value && !scoped.includes(selectedCollege.value)) {
+      selectedCollege.value = ''
+    }
+  })
+
+  // 该学院收到的指标：只取"当前职能部门 → 该学院"链路（ownerDept 过滤）
   // 二级学院 tab：指标 id→完整指标映射，用于子指标行显示所属核心指标（名称+定性定量配色）
   const indicatorById = computed(() => {
     const map = new Map<string | number, (typeof normalizedIndicators.value)[number]>()
@@ -3796,8 +3983,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       return []
     }
     const target = normalizeDepartmentName(selectedCollege.value)
+    const ownerDept = normalizeDepartmentName(selectedDepartment.value || '')
     return normalizedIndicators.value
       .filter(item => {
+        if (ownerDept && item.ownerDept !== ownerDept) {
+          return false
+        }
         const candidate = item as {
           responsibleDept?: string
           targetDepartment?: string
@@ -5206,6 +5397,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     selectedCollege,
     selectCollege,
     collegeTableIndicators,
+    collegeDepartmentsScoped,
     indicatorById,
     collegeSpanMethod,
     getCategoryColor,
@@ -5246,6 +5438,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     handleGlobalClick,
     handleIndicatorDblClick,
     openMutationDialogForField,
+    hasMutationDraft,
+    mutationDraftLabels,
+    submitMutationDraft,
+    cancelMutationDraft,
     handleOpenApproval,
     handleRejectCurrentIndicatorWorkflow,
     handleSelectionChange,

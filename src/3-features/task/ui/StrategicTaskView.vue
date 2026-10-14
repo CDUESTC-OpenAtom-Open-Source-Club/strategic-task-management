@@ -5,12 +5,14 @@ import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
 import ReportHistoryBadge from '@/features/indicator/ui/ReportHistoryBadge.vue'
 import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
+import ReportStatusCell from '@/features/indicator/ui/ReportStatusCell.vue'
 import {
   Plus,
   View,
   Download,
   Delete,
   ArrowDown,
+  ArrowLeftBold,
   Check,
   Loading,
   Upload
@@ -168,6 +170,7 @@ const {
   selectedCollege,
   selectCollege,
   collegeTableIndicators,
+  collegeDepartmentsScoped,
   indicatorById,
   collegeSpanMethod,
   getCategoryColor,
@@ -273,6 +276,10 @@ const {
   refreshCurrentDepartmentView,
   refreshIndicatorWorkflowContext,
   refreshTaskPageAfterIndicatorMutation,
+  hasMutationDraft,
+  mutationDraftLabels,
+  submitMutationDraft,
+  cancelMutationDraft,
   registerTaskLocally,
   rejectIndicatorReview,
   resetApprovalSetupDialog,
@@ -311,6 +318,15 @@ const {
 } = useStrategicTaskView(props)
 
 const activeTaskTabName = ref<'functional' | 'college'>('functional')
+
+// 2026-10-13 用户定案：二级学院 tab 未选学院时的左侧入口引导（呼吸高亮 + 指向气泡），选中后消失
+// 仅当当前职能部门确实有下发学院时才引导（列表为空时引导会指向空列表，反而更困惑）
+const showCollegeGuide = computed(
+  () =>
+    activeTaskTabName.value === 'college' &&
+    !selectedCollege.value &&
+    collegeDepartmentsScoped.value.length > 0
+)
 
 // 二级学院页签（P2）：筛出下发到学院的任务与指标，复用 TaskIndicatorTree 树状下钻
 // 2026-10-11 修复：原过滤只看 department 字段（二级学院子指标的 owner 是职能部门，
@@ -366,51 +382,12 @@ type StrategicExportRow = StrategicIndicator & {
 const strategicExporting = ref(false)
 
 /**
- * P5 发起异动：原地修改 + 写快照 + 启动 PLAN_MUTATION_STRATEGY 三级审批；
- * 审批期间该组织全面锁死填报/提交。
+ * 2026-10-14 用户定案（P8 表单式异动）：
+ * 已下发指标双击字段就地编辑 → 改动攒入异动草稿（内存态，刷新即丢）→
+ * 顶部「发起异动」按钮一次性提交全部攒改，走 PLAN_MUTATION_STRATEGY 审批链；
+ * 驳回后后端自动清除 mutation_status，可再次发起。
  */
 const mutationApiLoading = ref(false)
-async function initiateMutationForSelection() {
-  const row = selectedIndicators.value[0]
-  if (!row?.id) {
-    ElMessage.warning('请先选中一条指标')
-    return
-  }
-  try {
-    const { value } = await ElMessageBox.prompt(
-      '是否确认改动？确认后将启动异动审批（战略部负责人 → 分管校领导），' +
-        '审批期间该部门填报与提交将全面锁死。',
-      '发起指标异动',
-      {
-        confirmButtonText: '确认改动',
-        cancelButtonText: '取消',
-        inputType: 'textarea',
-        inputPlaceholder: '请输入新的指标内容（原地修改，历史版本可在指标框右下角查看）',
-        inputValue: row.name || '',
-        inputValidator: val => (val && val.trim() ? true : '指标内容不能为空')
-      }
-    )
-    mutationApiLoading.value = true
-    const { mutationApi } = await import('@/features/indicator/api/mutationApi')
-    const response = await mutationApi.initiate(row.id as number, {
-      indicator_desc: String(value || '').trim()
-    })
-    if (response.success) {
-      ElMessage.success('异动已提交审批；审批期间该部门填报已锁死')
-      // 2026-10-07 实际回源：异动发起后真实刷新任务页指标与审批状态
-      // （该入口的选择列已移除，此函数暂不可达；保留刷新逻辑以防入口恢复）
-      void refreshTaskPageAfterIndicatorMutation()
-    } else {
-      ElMessage.error(response.message || '发起异动失败')
-    }
-  } catch (error) {
-    if (error !== 'cancel' && error !== 'close') {
-      ElMessage.error(error instanceof Error ? error.message : '发起异动失败')
-    }
-  } finally {
-    mutationApiLoading.value = false
-  }
-}
 
 // 2026-10-10：异动审批实例 → 审批中心「审批历史」卡片（P1 修复：异动链不缺失前端）
 const departmentMutationWorkflowEntities = ref<Array<{ entityId: number }>>([])
@@ -831,19 +808,24 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           </li>
         </template>
         <template v-else>
+          <!-- 2026-10-13 用户定案：学院列表按左侧已选职能部门下钻，只列该部门下发的目标学院 -->
           <li
-            v-for="college in collegeDepartments"
+            v-for="college in collegeDepartmentsScoped"
             :key="college"
             :class="['task-item', { active: selectedCollege === college }]"
             @click="selectCollege(college)"
           >
             {{ college }}
           </li>
+          <li v-if="collegeDepartmentsScoped.length === 0" class="task-item college-scope-empty">
+            当前职能部门暂无下发给学院的指标
+          </li>
         </template>
       </ul>
     </aside>
     <!-- 展开箭头独立于侧边栏 - 使用SVG图标 -->
-    <div class="sidebar-toggle">
+    <!-- 2026-10-13 用户定案：二级学院 tab 未选学院时，左侧入口加呼吸高亮引导（3 次后转静态） -->
+    <div class="sidebar-toggle" :class="{ 'sidebar-toggle--guide': showCollegeGuide }">
       <svg class="toggle-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
         <path
           d="M9 6L15 12L9 18"
@@ -856,6 +838,13 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
       </svg>
       <span class="toggle-hint">{{ selectedDepartment || functionalDepartments[0] || '' }}</span>
     </div>
+    <!-- 左侧入口引导气泡（指向真实交互入口，点击学院后消失） -->
+    <transition name="el-fade-in">
+      <div v-if="showCollegeGuide" class="college-guide-bubble">
+        <span class="college-guide-bubble__arrow">←</span>
+        请选择学院
+      </div>
+    </transition>
 
     <!-- 右侧详情区域 - Excel风格 -->
     <section
@@ -944,6 +933,20 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <el-button size="small" :icon="Upload" @click="openStrategicImportDialog">
             导入
           </el-button>
+          <!-- 2026-10-14 用户定案（P8）：就地编辑攒改后，顶部出现「发起异动」一键提交 -->
+          <template v-if="hasMutationDraft">
+            <el-button
+              size="small"
+              type="warning"
+              :loading="mutationApiLoading"
+              @click="submitMutationDraft"
+            >
+              发起异动（{{ mutationDraftLabels.join('、') }}）
+            </el-button>
+            <el-button size="small" :disabled="mutationApiLoading" @click="cancelMutationDraft">
+              取消异动
+            </el-button>
+          </template>
           <!-- 视图切换按钮 -->
           <el-button-group style="margin-left: 16px">
             <el-button
@@ -1677,7 +1680,21 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <!-- 2026-10-11 用户定案：与职能部门同构的表格视图——左侧选学院，表格展示该学院收到的全部指标，双击异动 -->
           <div class="excel-table-wrapper">
             <div v-if="!selectedCollege" class="college-empty-tip">
-              <el-empty description="请先在左侧选择学院" :image-size="120" />
+              <!-- 2026-10-13 用户定案：中央提示增强（深色大字 + 图标 + 辅助说明），作为左侧入口引导的辅助 -->
+              <template v-if="collegeDepartmentsScoped.length > 0">
+                <el-icon class="college-empty-icon"><ArrowLeftBold /></el-icon>
+                <div class="college-empty-main">请先在左侧选择对应学院</div>
+                <div class="college-empty-sub">
+                  点击左侧「学院列表」中的学院名称，这里将展示该学院收到的战略任务指标
+                </div>
+              </template>
+              <!-- 当前职能部门未下发学院：引导切换部门而不是选学院 -->
+              <template v-else>
+                <div class="college-empty-main">当前职能部门暂未向学院下发指标</div>
+                <div class="college-empty-sub">
+                  请在上方「职能部门战略任务管理」中切换其他职能部门，或先完成指标下发
+                </div>
+              </template>
             </div>
             <template v-else>
               <div class="table-container">
@@ -1775,14 +1792,8 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   </el-table-column>
                   <el-table-column label="上报状态" width="110" align="center">
                     <template #default="{ row }">
-                      <el-tag
-                        v-if="row.hasCurrentMonthFill"
-                        size="small"
-                        :type="row.currentMonthApproved ? 'success' : 'warning'"
-                      >
-                        {{ row.currentMonthApproved ? '已上报' : '审批中' }}
-                      </el-tag>
-                      <span v-else style="color: #909399">未填报</span>
+                      <!-- 取最新一次非草稿上报的真实审批状态（hasCurrentMonthFill 是"能否继续填报"字段，不反映上报历史） -->
+                      <ReportStatusCell :indicator-id="row.id" />
                     </template>
                   </el-table-column>
                   <el-table-column label="进度说明" min-width="160">

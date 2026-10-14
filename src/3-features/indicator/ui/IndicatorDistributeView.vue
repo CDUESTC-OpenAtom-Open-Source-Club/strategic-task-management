@@ -1397,6 +1397,7 @@ const handleDistributionImportCommitted = async () => {
       :source-org-id="currentDepartmentOrgId"
       :source-org-name="currentDept"
       :cycle-id="currentDistributionImportCycleId"
+      :parent-indicators="availableParentIndicators"
       @committed="handleDistributionImportCommitted"
     />
 

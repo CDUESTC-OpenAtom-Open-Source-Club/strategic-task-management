@@ -14,7 +14,12 @@ export function useIndicatorFills(indicatorId: number | string | null | undefine
     const planStore = usePlanStore()
     pending = planStore
       .loadIndicatorFillHistory(indicatorId)
-      .then(history => (Array.isArray(history) ? history.filter(Boolean) : []))
+      .then(history =>
+        Array.isArray(history)
+          ? // 草稿不算上报历史：DRAFT 经状态映射后为 undefined，只有 submitted/approved/rejected 才进入上报资料与历史小标
+            history.filter(fill => Boolean(fill?.status))
+          : []
+      )
       .catch(() => [])
     cache.set(key, pending)
   }

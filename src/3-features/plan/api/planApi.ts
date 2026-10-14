@@ -1051,6 +1051,12 @@ async function resolveIndicatorReportContext(
       if (matchedCollegeReceivingPlan?.id) {
         return Number(matchedCollegeReceivingPlan.id)
       }
+
+      // 2026-10-13 多账号隔离测试发现：学院指标可能来自多个职能部门（如纪委办+教务处各自下发），
+      // 若精确匹配来源计划失败后落入下方"仅按 target+year"的通用兜底，会把 A 部门计划下的
+      // 上报历史串到 B 部门的指标上（上报资料/历史小标/审批寻址全部错位）。
+      // 学院上下文必须精确命中来源计划，找不到就承认无关联计划，由调用方按无历史处理。
+      return null
     }
 
     const matchedPlan = allPlans.find(plan => {

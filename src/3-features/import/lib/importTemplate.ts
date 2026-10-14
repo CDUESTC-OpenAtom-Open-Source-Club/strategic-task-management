@@ -93,8 +93,9 @@ const distributionImportGuide: ImportTemplateGuide = {
   rules: [
     '表头建议放在第一行，列顺序可以调整，系统会按列名识别。',
     '必填列：父级核心指标、子指标名称、指标类型；如果填写学院，必须和当前选择的学院一致。',
+    '模板已自动带出当前职能部门下发给该学院的父级核心指标行（含「父级核心指标ID」）；请保留 ID 列不要修改，在其右侧补写子指标名称/类型/权重即可；一个父级指标要拆多个子指标时，复制该行后修改子指标列。',
+    '「父级核心指标ID」填写时按内部 ID 精确关联（推荐）；留空时回退按父级核心指标名称匹配，重名时可能匹配失败。',
     '「父级战略任务」用于标明子指标的来源任务，请填写本部门已接收的战略任务名称（可在战略任务管理页查看），便于定位父级指标。',
-    '父级核心指标必须能匹配当前职能部门已接收或可拆分的父级指标。',
     '权重按同一父级指标下的学院子指标合计检查，合计不是 100 会给出警告。'
   ]
 }
@@ -103,12 +104,54 @@ export function getImportTemplateGuide(type: BusinessImportType): ImportTemplate
   return type === 'strategic-task' ? strategicImportGuide : distributionImportGuide
 }
 
+export interface ImportTemplateParentSeed {
+  /** 父级核心指标名称（用于「父级核心指标」列预填） */
+  parentIndicator: string
+  /** 父级战略任务名称（用于「父级战略任务」列预填） */
+  parentStrategicTask?: string
+  /** 父级核心指标内部 ID（用于「父级核心指标ID」列预填，精确关联） */
+  parentIndicatorId?: string | number
+}
+
+/**
+ * 2026-10-14 用户定案（P10）：下载模板时自动带出当前职能部门/学院已有的父级核心指标——
+ * 每个已有父级指标预填一行（含「父级核心指标ID」列），用户只需在其右侧补写子指标行，
+ * 或把一行拆成多行即可；导入时按内部ID精确关联（后端已支持三类校验）。
+ */
 export function buildImportTemplateSheet(
-  type: BusinessImportType
+  type: BusinessImportType,
+  parentSeeds?: ImportTemplateParentSeed[]
 ): ExcelExportSheet<Record<string, string>> {
   const guide = getImportTemplateGuide(type)
+  const withIdColumn = type !== 'strategic-task'
+  const columns: ImportTemplateGuideColumn[] = withIdColumn
+    ? [
+        ...guide.columns.slice(0, 3),
+        { key: 'parentIndicatorId', label: '父级核心指标ID' },
+        ...guide.columns.slice(3)
+      ]
+    : guide.columns
 
-  const columns: ExcelExportColumn<Record<string, string>>[] = guide.columns.map(column => ({
+  const seedRows: Record<string, string>[] =
+    withIdColumn && parentSeeds?.length
+      ? parentSeeds.map(seed => ({
+          college: '',
+          parentStrategicTask: seed.parentStrategicTask ?? '',
+          parentIndicator: seed.parentIndicator,
+          parentIndicatorId:
+            seed.parentIndicatorId === undefined || seed.parentIndicatorId === null
+              ? ''
+              : String(seed.parentIndicatorId),
+          indicatorName: '',
+          indicatorType: '',
+          weight: '',
+          remark: ''
+        }))
+      : []
+
+  const rows = seedRows.length ? seedRows : guide.rows
+
+  const exportColumns: ExcelExportColumn<Record<string, string>>[] = columns.map(column => ({
     header: column.label,
     width: 22,
     getValue: row => row[column.key] || ''
@@ -116,8 +159,8 @@ export function buildImportTemplateSheet(
 
   return {
     sheetName: type === 'strategic-task' ? '职能部门指标模板' : '学院子指标模板',
-    rows: guide.rows,
-    columns
+    rows,
+    columns: exportColumns
   }
 }
 
