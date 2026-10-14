@@ -10,7 +10,17 @@ const importTypes: BusinessImportType[] = ['strategic-task', 'distribution']
 
 const expectedHeaders: Record<BusinessImportType, string[]> = {
   'strategic-task': ['职能部门', '任务类型', '战略任务', '核心指标', '指标类型', '权重', '备注'],
-  distribution: ['学院', '父级战略任务', '父级核心指标', '子指标名称', '指标类型', '权重', '备注']
+  // 2026-10-14 P10：学院子指标模板新增「父级核心指标ID」列（下载时自动带出已有父级指标，按 ID 精确关联）
+  distribution: [
+    '学院',
+    '父级战略任务',
+    '父级核心指标',
+    '父级核心指标ID',
+    '子指标名称',
+    '指标类型',
+    '权重',
+    '备注'
+  ]
 }
 
 const expectedSheetNames: Record<BusinessImportType, string> = {
@@ -39,9 +49,11 @@ describe('import/lib/importTemplate', () => {
     const guide = getImportTemplateGuide(type)
     const firstRow = guide.rows[0]
 
-    guide.columns.forEach((column, index) => {
-      expect(String(sheet.columns[index].getValue(firstRow, index))).toBe(
-        firstRow[column.key] || ''
+    // 按列头名回查 guide 的 key（distribution 模板含「父级核心指标ID」附加列，示例行无值时取空串）
+    sheet.columns.forEach(column => {
+      const guideColumn = guide.columns.find(item => item.label === column.header)
+      expect(String(column.getValue(firstRow, 0))).toBe(
+        guideColumn ? firstRow[guideColumn.key] || '' : ''
       )
     })
   })
