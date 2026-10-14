@@ -491,45 +491,76 @@ const strategicExportDepartmentsIndeterminate = computed(
     selectedStrategicExportDepartments.value.length < functionalDepartments.value.length
 )
 
-const strategicExportColumns: ExcelExportColumn<StrategicExportRow>[] = [
-  {
-    header: '内部ID',
-    width: 12,
-    align: 'center',
-    getValue: row => (row as { id?: number | string }).id ?? '-'
-  },
-  { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
-  { header: '部门', width: 18, getValue: row => row.exportDepartment },
-  { header: '战略任务', width: 28, getValue: row => row.taskContent || '-' },
-  { header: '核心指标', width: 32, getValue: row => row.name || '-' },
-  { header: '指标类型', width: 12, align: 'center', getValue: row => row.type1 || '-' },
-  {
-    header: '任务类别',
-    width: 12,
-    align: 'center',
-    getValue: row => getCategoryText(row.type2)
-  },
-  { header: '备注', width: 24, getValue: row => row.remark || '-' },
-  { header: '权重', width: 10, align: 'center', getValue: row => Number(row.weight || 0) },
-  {
-    header: '鉴定等级',
-    width: 18,
-    align: 'center',
-    getValue: row => getManualAlertLabel(row.manualAlertSeverity)
-  },
-  {
-    header: '附件',
-    width: 42,
-    getValue: row =>
-      buildAttachmentCell(
-        (row as StrategicIndicator & { pendingAttachmentDetails?: unknown[] })
-          .pendingAttachmentDetails?.length
-          ? (row as StrategicIndicator & { pendingAttachmentDetails?: unknown[] })
-              .pendingAttachmentDetails
-          : row.pendingAttachments
-      )
-  }
-]
+// 2026-10-14 用户定案：导出与界面同构——同一战略任务的多行在「战略任务」列合并为一个单元格；
+// 「内部ID」列移除（导入按名称匹配，导出面向领导阅读，无需内部主键）。
+const buildStrategicExportColumns = (
+  rows: StrategicExportRow[]
+): ExcelExportColumn<StrategicExportRow>[] => {
+  // 计算「战略任务」连续分组的合并行数：仅组首行携带 rowSpan，其余行为被合并的从属行
+  const taskSpanByIndex = new Map<number, number>()
+  rows.forEach((row, index) => {
+    const key = row.taskContent || '-'
+    const prevKey = index > 0 ? rows[index - 1].taskContent || '-' : null
+    if (prevKey === key) {
+      taskSpanByIndex.set(index, 0)
+      return
+    }
+    let end = index + 1
+    while (end < rows.length && (rows[end].taskContent || '-') === key) {
+      end += 1
+    }
+    taskSpanByIndex.set(index, end - index)
+  })
+
+  return [
+    { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
+    { header: '部门', width: 18, getValue: row => row.exportDepartment },
+    {
+      header: '战略任务',
+      width: 28,
+      getValue: (row, index) => {
+        const text = row.taskContent || '-'
+        const span = taskSpanByIndex.get(index) ?? 1
+        if (span > 1) {
+          return { value: text, rowSpan: span, alignVertical: 'center' }
+        }
+        // 被上方合并覆盖的从属行：write-excel-file 要求传 null
+        if (span === 0) {
+          return null
+        }
+        return text
+      }
+    },
+    { header: '核心指标', width: 32, getValue: row => row.name || '-' },
+    { header: '指标类型', width: 12, align: 'center', getValue: row => row.type1 || '-' },
+    {
+      header: '任务类别',
+      width: 12,
+      align: 'center',
+      getValue: row => getCategoryText(row.type2)
+    },
+    { header: '备注', width: 24, getValue: row => row.remark || '-' },
+    { header: '权重', width: 10, align: 'center', getValue: row => Number(row.weight || 0) },
+    {
+      header: '鉴定进度等级',
+      width: 18,
+      align: 'center',
+      getValue: row => getManualAlertLabel(row.manualAlertSeverity)
+    },
+    {
+      header: '附件',
+      width: 42,
+      getValue: row =>
+        buildAttachmentCell(
+          (row as StrategicIndicator & { pendingAttachmentDetails?: unknown[] })
+            .pendingAttachmentDetails?.length
+            ? (row as StrategicIndicator & { pendingAttachmentDetails?: unknown[] })
+                .pendingAttachmentDetails
+            : row.pendingAttachments
+        )
+    }
+  ]
+}
 
 const findStrategicExportPlanByDepartment = (department: string) => {
   const normalizedDepartment = normalizeDepartmentName(department)
@@ -662,7 +693,7 @@ const buildStrategicExportSheet = (
 ): ExcelExportSheet<StrategicExportRow> => ({
   sheetName: department || '当前部门',
   rows,
-  columns: strategicExportColumns,
+  columns: buildStrategicExportColumns(rows),
   emptyMessage: '当前部门暂无可导出的战略任务指标',
   getRowTone: getStrategicExportRowTone,
   getRowTextColor: getStrategicExportRowTextColor

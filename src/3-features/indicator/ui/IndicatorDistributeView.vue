@@ -310,43 +310,79 @@ const distributionExportCollegesIndeterminate = computed(
     selectedDistributionExportColleges.value.length < colleges.value.length
 )
 
-const distributionExportColumns: ExcelExportColumn<DistributionExportRow>[] = [
-  {
-    header: '内部ID',
-    width: 12,
-    align: 'center',
-    getValue: row => (row as { id?: number | string }).id ?? '-'
-  },
-  { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
-  { header: '学院', width: 20, getValue: row => row.exportCollege },
-  { header: '父级战略任务', width: 28, getValue: row => row.taskTitle || '-' },
-  { header: '父级核心指标', width: 32, getValue: row => row.indicator.name || '-' },
-  { header: '子指标名称', width: 32, getValue: row => row.child.name || '-' },
-  {
-    header: '指标类型',
-    width: 12,
-    align: 'center',
-    getValue: row => getDistributionChildTypeText(row.child)
-  },
-  { header: '备注', width: 24, getValue: row => row.child.remark || '-' },
-  { header: '权重', width: 10, align: 'center', getValue: row => Number(row.child.weight || 0) },
-  {
-    header: '鉴定进度等级',
-    width: 18,
-    align: 'center',
-    getValue: row => getChildManualAlertLabel(getChildManualAlertSeverity(row.child))
-  },
-  {
-    header: '附件',
-    width: 42,
-    getValue: row =>
-      buildAttachmentCell(
-        row.child.pendingAttachmentDetails?.length
-          ? row.child.pendingAttachmentDetails
-          : row.child.pendingAttachments
-      )
-  }
-]
+// 2026-10-14 用户定案：导出与界面同构——同一父级核心指标下的多行子指标在「父级核心指标」列
+// 合并为一个单元格；「内部ID」列移除（名称精确匹配即可，导出面向领导阅读）。
+const buildDistributionExportColumns = (
+  rows: DistributionExportRow[]
+): ExcelExportColumn<DistributionExportRow>[] => {
+  const parentSpanByIndex = new Map<number, number>()
+  rows.forEach((row, index) => {
+    const key = String(row.indicator?.id ?? row.indicator?.name ?? '-')
+    const prevKey =
+      index > 0
+        ? String(rows[index - 1].indicator?.id ?? rows[index - 1].indicator?.name ?? '-')
+        : null
+    if (prevKey === key) {
+      parentSpanByIndex.set(index, 0)
+      return
+    }
+    let end = index + 1
+    while (
+      end < rows.length &&
+      String(rows[end].indicator?.id ?? rows[end].indicator?.name ?? '-') === key
+    ) {
+      end += 1
+    }
+    parentSpanByIndex.set(index, end - index)
+  })
+
+  return [
+    { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
+    { header: '学院', width: 20, getValue: row => row.exportCollege },
+    { header: '父级战略任务', width: 28, getValue: row => row.taskTitle || '-' },
+    {
+      header: '父级核心指标',
+      width: 32,
+      getValue: (row, index) => {
+        const text = row.indicator.name || '-'
+        const span = parentSpanByIndex.get(index) ?? 1
+        if (span > 1) {
+          return { value: text, rowSpan: span, alignVertical: 'center' }
+        }
+        // 被上方合并覆盖的从属行：write-excel-file 要求传 null
+        if (span === 0) {
+          return null
+        }
+        return text
+      }
+    },
+    { header: '子指标名称', width: 32, getValue: row => row.child.name || '-' },
+    {
+      header: '指标类型',
+      width: 12,
+      align: 'center',
+      getValue: row => getDistributionChildTypeText(row.child)
+    },
+    { header: '备注', width: 24, getValue: row => row.child.remark || '-' },
+    { header: '权重', width: 10, align: 'center', getValue: row => Number(row.child.weight || 0) },
+    {
+      header: '鉴定进度等级',
+      width: 18,
+      align: 'center',
+      getValue: row => getChildManualAlertLabel(getChildManualAlertSeverity(row.child))
+    },
+    {
+      header: '附件',
+      width: 42,
+      getValue: row =>
+        buildAttachmentCell(
+          row.child.pendingAttachmentDetails?.length
+            ? row.child.pendingAttachmentDetails
+            : row.child.pendingAttachments
+        )
+    }
+  ]
+}
 
 const getDistributionChildTypeText = (child: DistributionExportChild): string => {
   const normalized = normalizeIndicatorTypeLabel(child.type1 || child.indicatorType1 || '')
@@ -437,7 +473,7 @@ const buildDistributionExportSheet = (
 ): ExcelExportSheet<DistributionExportRow> => ({
   sheetName: college || '当前学院',
   rows,
-  columns: distributionExportColumns,
+  columns: buildDistributionExportColumns(rows),
   emptyMessage: '当前学院暂无可导出的子指标数据',
   getRowTone: getDistributionExportRowTone,
   getRowTextColor: getDistributionExportRowTextColor

@@ -117,9 +117,15 @@ export function buildSheetData<T>(sheet: ExcelExportSheet<T>): SheetData {
   const bodyRows = sheet.rows.map((row, rowIndex) => {
     const rowTone = sheet.getRowTone?.(row, rowIndex) ?? 'default'
     const rowTextColor = sheet.getRowTextColor?.(row, rowIndex)
-    return sheet.columns.map(column =>
-      toStyledCell(column.getValue(row, rowIndex), {}, column, rowTone, rowTextColor)
-    )
+    return sheet.columns.map(column => {
+      const value = column.getValue(row, rowIndex)
+      // 2026-10-14：getValue 返回 null 表示该单元格被上方 rowSpan 合并覆盖，
+      // write-excel-file 要求被覆盖单元格原样传 null/undefined，不得携带值。
+      if (value === null || value === undefined) {
+        return null
+      }
+      return toStyledCell(value, {}, column, rowTone, rowTextColor)
+    })
   })
 
   return [headerRow, ...bodyRows]
