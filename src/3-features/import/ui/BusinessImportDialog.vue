@@ -31,7 +31,6 @@ const props = defineProps<{
   cycleId?: number | null
   /** 2026-10-14 P10：当前职能部门已接收的父级核心指标，用于下载模板时自动带出预填行 */
   parentIndicators?: Array<{
-    id?: number | string
     name?: string
     taskContent?: string
   }> | null
@@ -156,8 +155,7 @@ const downloadTemplate = async () => {
     const parentSeeds: ImportTemplateParentSeed[] | undefined = props.parentIndicators?.length
       ? props.parentIndicators.map(item => ({
           parentIndicator: String(item.name || '').trim(),
-          parentStrategicTask: String(item.taskContent || '').trim(),
-          parentIndicatorId: item.id
+          parentStrategicTask: String(item.taskContent || '').trim()
         }))
       : undefined
 

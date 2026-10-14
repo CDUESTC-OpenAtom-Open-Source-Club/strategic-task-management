@@ -284,30 +284,64 @@ const {
 
 const indicatorListExporting = ref(false)
 
-const indicatorListExportColumns: ExcelExportColumn<StrategicIndicator>[] = [
-  { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
-  { header: '内部ID', width: 12, align: 'center', getValue: row => row.id ?? '-' },
-  { header: '来源部门', width: 18, getValue: row => row.ownerDept || '-' },
-  { header: '责任部门', width: 18, getValue: row => row.responsibleDept || '-' },
-  { header: '战略任务', width: 28, getValue: row => row.taskContent || '-' },
-  { header: '核心指标', width: 32, getValue: row => row.name || '-' },
-  { header: '指标类型', width: 12, align: 'center', getValue: row => row.type1 || '-' },
-  { header: '任务类别', width: 12, align: 'center', getValue: row => row.type2 || '-' },
-  { header: '备注', width: 24, getValue: row => row.remark || '-' },
-  { header: '权重', width: 10, align: 'center', getValue: row => Number(row.weight || 0) },
-  {
-    header: '鉴定等级',
-    width: 18,
-    align: 'center',
-    getValue: row => getManualAlertLabel(row.manualAlertSeverity)
-  },
-  { header: '填报说明', width: 28, getValue: row => row.pendingRemark || '-' },
-  {
-    header: '附件',
-    width: 42,
-    getValue: row => buildAttachmentCell(resolveIndicatorAttachmentItems(row))
-  }
-]
+// 2026-10-14 用户定案：与战略任务管理/下发界面同构——同一战略任务多行在「战略任务」列合并；移除「内部ID」列
+const buildIndicatorListExportColumns = (
+  rows: StrategicIndicator[]
+): ExcelExportColumn<StrategicIndicator>[] => {
+  const taskSpanByIndex = new Map<number, number>()
+  rows.forEach((row, index) => {
+    const key = row.taskContent || '-'
+    const prevKey = index > 0 ? rows[index - 1].taskContent || '-' : null
+    if (prevKey === key) {
+      taskSpanByIndex.set(index, 0)
+      return
+    }
+    let end = index + 1
+    while (end < rows.length && (rows[end].taskContent || '-') === key) {
+      end += 1
+    }
+    taskSpanByIndex.set(index, end - index)
+  })
+
+  return [
+    { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
+    { header: '来源部门', width: 18, getValue: row => row.ownerDept || '-' },
+    { header: '责任部门', width: 18, getValue: row => row.responsibleDept || '-' },
+    {
+      header: '战略任务',
+      width: 28,
+      getValue: (row, index) => {
+        const text = row.taskContent || '-'
+        const span = taskSpanByIndex.get(index) ?? 1
+        if (span > 1) {
+          return { value: text, rowSpan: span, alignVertical: 'center' }
+        }
+        // 被上方合并覆盖的从属行：write-excel-file 要求传 null
+        if (span === 0) {
+          return null
+        }
+        return text
+      }
+    },
+    { header: '核心指标', width: 32, getValue: row => row.name || '-' },
+    { header: '指标类型', width: 12, align: 'center', getValue: row => row.type1 || '-' },
+    { header: '任务类别', width: 12, align: 'center', getValue: row => row.type2 || '-' },
+    { header: '备注', width: 24, getValue: row => row.remark || '-' },
+    { header: '权重', width: 10, align: 'center', getValue: row => Number(row.weight || 0) },
+    {
+      header: '鉴定进度等级',
+      width: 18,
+      align: 'center',
+      getValue: row => getManualAlertLabel(row.manualAlertSeverity)
+    },
+    { header: '填报说明', width: 28, getValue: row => row.pendingRemark || '-' },
+    {
+      header: '附件',
+      width: 42,
+      getValue: row => buildAttachmentCell(resolveIndicatorAttachmentItems(row))
+    }
+  ]
+}
 
 const getIndicatorListExportRows = (): StrategicIndicator[] => {
   const source =
@@ -371,7 +405,7 @@ const handleExportIndicatorList = async () => {
       {
         sheetName: scopeName,
         rows,
-        columns: indicatorListExportColumns,
+        columns: buildIndicatorListExportColumns(rows),
         getRowTone: getIndicatorListExportRowTone
       },
       buildExportFileName('指标填报与管理', scopeName)
