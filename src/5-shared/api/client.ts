@@ -184,16 +184,9 @@ export class ApiClient {
         return response.data
       },
       (error: unknown) => {
-        const requestUrl = axios.isAxiosError(error) ? error.config?.url || '' : ''
-        const isAuthRequest =
-          requestUrl.includes('/auth/login') || requestUrl.includes('/auth/refresh')
-
-        // 处理 401 错误：清除 Token 并跳转登录。登录/刷新接口自身失败时交给调用方展示错误。
-        if (axios.isAxiosError(error) && error.response?.status === 401 && !isAuthRequest) {
-          logger.warn('[API] 401 Unauthorized - redirecting to login')
-          tokenManager.clearAccessToken()
-          window.location.href = '/login'
-        }
+        // 401 统一由共享响应拦截器（responseInterceptors.ts）处理：先尝试刷新 Token 并重试，
+        // 刷新失败才清理会话跳转登录。此处不再重复处理，避免刷新过程中被整页跳转打断
+        // （曾导致使用中页面突然刷新回登录页的问题）。
 
         // 前置拦截器已经转成统一错误格式时，直接透传，避免把 400 再包装成 500/未知错误
         if (!axios.isAxiosError(error)) {

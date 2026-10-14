@@ -25,12 +25,6 @@ vi.mock('@/features/workflow/api', () => ({
   startWorkflow: vi.fn()
 }))
 
-vi.mock('@/entities/milestone/api/milestoneApi', () => ({
-  milestoneApi: {
-    getMilestonesByIndicatorIds: vi.fn()
-  }
-}))
-
 describe('feature API cache integration', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -175,9 +169,9 @@ describe('feature API cache integration', () => {
     await getTasksByOrg(7)
 
     expect(apiClientMock.get).toHaveBeenCalledTimes(1)
-    expect(cacheManager.get(buildQueryKey('task', 'list', { orgId: 7, version: 'v1' }))?.scope).toBe(
-      'session'
-    )
+    expect(
+      cacheManager.get(buildQueryKey('task', 'list', { orgId: 7, version: 'v1' }))?.scope
+    ).toBe('session')
   })
 
   it('stores organization cache in session scope with versioned key', async () => {
@@ -195,9 +189,9 @@ describe('feature API cache integration', () => {
 
     await orgApi.getAllDepartments()
 
-    expect(
-      cacheManager.get(buildQueryKey('org', 'departments', { version: 'v2' }))?.scope
-    ).toBe('session')
+    expect(cacheManager.get(buildQueryKey('org', 'departments', { version: 'v2' }))?.scope).toBe(
+      'session'
+    )
   })
 
   it('persists cycle list cache for time context initialization', async () => {

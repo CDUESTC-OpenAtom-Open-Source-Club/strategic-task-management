@@ -20,7 +20,7 @@ env:
 jobs:
   quality:
     name: Quality Checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout code
@@ -61,3 +61,10 @@ jobs:
           VITE_USE_MOCK: false
           VITE_ENABLE_DEVTOOLS: false
           VITE_LOG_LEVEL: warn
+
+      - name: Upload production bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist/**
+          retention-days: 14

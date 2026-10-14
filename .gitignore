@@ -54,3 +54,4 @@ docs/账号密码对照表.md
 
 # Archive directories (backup files, not for production)
 docs/archive/
+.mimosa/

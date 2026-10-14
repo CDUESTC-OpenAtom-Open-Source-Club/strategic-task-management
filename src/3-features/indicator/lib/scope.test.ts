@@ -24,7 +24,6 @@ const createIndicator = (overrides: Partial<StrategicIndicator> = {}): Strategic
     progress: 0,
     status: 'DISTRIBUTED',
     year: 2026,
-    milestones: [],
     statusAudit: [],
     ...overrides
   }) as StrategicIndicator

@@ -11,12 +11,6 @@ vi.mock('@/shared/api/client', () => ({
   apiClient: apiClientMock
 }))
 
-vi.mock('@/entities/milestone/api/milestoneApi', () => ({
-  milestoneApi: {
-    getMilestonesByIndicatorIds: vi.fn()
-  }
-}))
-
 describe('task query getTasksByYear', () => {
   beforeEach(() => {
     setActivePinia(createPinia())

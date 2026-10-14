@@ -19,16 +19,12 @@ import type { IndicatorVO, IndicatorCreateRequest } from '@/shared/types/backend
  * 指标 API 服务
  * 包含指标下发相关的接口
  *
- * Note: IndicatorVO, MilestoneVO, and related types are now imported from backend-aligned.ts
+ * Note: IndicatorVO and related types are now imported from backend-aligned.ts
  * to ensure consistency across the application.
  */
 
 // Re-export types for backward compatibility
-export type {
-  IndicatorVO,
-  MilestoneVO,
-  IndicatorCreateRequest
-} from '@/shared/types/backend-aligned'
+export type { IndicatorVO, IndicatorCreateRequest } from '@/shared/types/backend-aligned'
 
 function withIndicatorCacheContext(params?: Record<string, unknown>): Record<string, unknown> {
   return {
@@ -364,6 +360,12 @@ export const indicatorApi = {
         ...(typeof planId === 'number' ? { planId } : {}),
         reason: reason || ''
       })
+    }).then(result => {
+      // 2026-10-07：与单个撤回同口径，撤回后失效指标缓存并刷新消息中心，
+      // 保证审批人待办与各视图实时收敛
+      invalidateIndicatorListCaches()
+      void import('@/shared/lib/messageCenterRefresh').then(m => m.requestMessageCenterRefresh())
+      return result
     })
   },
 

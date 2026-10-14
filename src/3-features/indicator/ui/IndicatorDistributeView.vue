@@ -8,29 +8,27 @@ import {
   View,
   Search,
   RefreshLeft,
-  Timer,
-  Delete,
   Download,
   Upload
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import type { StrategicIndicator } from '@/shared/types'
+import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import {
   buildAttachmentCell,
   buildExportFileName,
   exportRowsToExcel,
   exportSheetsToExcel,
-  formatMilestones,
-  formatProgress,
-  hasReachedMilestone,
-  MILESTONE_REACHED_TEXT_COLOR,
   type ExcelExportColumn,
   type ExcelExportSheet,
   type ExcelRowTone
 } from '@/shared/lib/export/excel'
-import IndicatorMilestoneTimeline from '@/features/indicator/ui/IndicatorMilestoneTimeline.vue'
 import { DistributionApprovalProgressDrawer } from '@/features/approval'
 import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
+import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
+import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
+import ReportHistoryBadge from '@/features/indicator/ui/ReportHistoryBadge.vue'
+import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import {
   useIndicatorDistributeView,
   type IndicatorDistributeViewProps
@@ -44,9 +42,7 @@ const {
   _distributeNewChildren,
   _formatColleges,
   _formatCollegesShort,
-  _formatMilestones,
   _getChildIndicators,
-  _getCurrentMonthTargetProgress,
   _getIndicatorTypeColor,
   _getPendingChildCount,
   _getStatusTagType,
@@ -60,8 +56,6 @@ const {
   _newIndicatorList,
   _selectParentSpanMethod,
   _selectingParentForIndex,
-  addFormMilestone,
-  addMilestone,
   addRowFormRef,
   addingParentId,
   applyLocalCollegePlanPatch,
@@ -78,8 +72,6 @@ const {
   approvalWorkflowReportSummary,
   authStore,
   availableParentIndicators,
-  buildDraftMilestonesFromForm,
-  buildLocalMilestonesFromForm,
   buildTaskTypeMap,
   canCurrentUserApproveCurrentPlan,
   canCurrentUserSubmitCurrentDepartmentDistribution,
@@ -90,12 +82,18 @@ const {
   canWithdrawCurrentCollegePlan,
   cancelAddIndicator,
   cancelChildEdit,
-  cloneParentMilestonesForForm,
   collegeDropdownVisible,
   collegeIndicators,
   collegeOverallStatus,
   collegeTableData,
   collegeTotalWeight,
+  canEditChildManualAlert,
+  childManualAlertEditable,
+  getChildManualAlertLabel,
+  getChildManualAlertSeverity,
+  getChildManualAlertTagType,
+  handleChildManualAlertChange,
+  savingChildManualAlertId,
   colleges,
   closeCopyIndicatorsDialog,
   confirmDepartmentPlanApprovalSubmission,
@@ -138,6 +136,8 @@ const {
   deletingChildId,
   departmentAliasNameMap,
   detailDrawerVisible,
+  reportHistoryOpen,
+  currentDetailId,
   distributionApprovalButtonText,
   distributionApprovalButtonType,
   distributionRecordCount,
@@ -147,41 +147,29 @@ const {
   editingChildField,
   editingChildId,
   editingChildValue,
-  editingMilestones,
-  editingMilestonesChild,
   editingNewChildId,
   filteredColleges,
   formatDetailDate,
-  generateMonthlyMilestones,
-  generateMonthlyMilestonesForExisting,
-  generateMonthlyMilestonesForForm,
-  generateMonthlyMilestonesLocal,
   getChildLifecycleStatus,
   getChildStatus,
   getCollegeChildCount,
   getCollegeStatus,
   getDeptNameByOrgId,
-  getEditingChildName,
-  getEditingChildType,
   getDisplayedReportedProgress,
   getIndicatorTaskId,
   getIndicatorTypeLabel,
-  getMilestonesTooltip,
   getMyCollegeIndicators,
   getOrgIdByDeptName,
   getPlanIndicatorNumber,
   getPlanIndicatorText,
   getRowClassName,
-  getSortedMilestones,
   handleApprovalRefresh,
   handleApprovalStatusPopoverShow,
   handleBatchDistribute,
   handleBatchWithdraw,
   handleChildDblClick,
   handleCloseApprovalSetupDialog,
-  handleFormIndicatorTypeChange,
   handleGlobalMousedown,
-  handleMilestoneDateChange,
   handleNewChildRowClick,
   handleOpenApproval,
   handleParentIndicatorChange,
@@ -195,12 +183,10 @@ const {
   isDeletingChild,
   isFunctionalDept,
   isInteractingWithCollegeSelect,
-  isMilestoneCompleted,
   isQualitativeIndicator,
   isSameDepartment,
   isSavingChildCell,
   isSavingIndicator,
-  isSavingMilestones,
   isStrategicDept,
   lastEditTime,
   latestCollegePlanReportSummary,
@@ -211,7 +197,6 @@ const {
   matchesCurrentDepartmentPlanContext,
   matchesCurrentSelectedCollegePlanContext,
   matchesDepartment,
-  milestonesDialogVisible,
   newChildIndicators,
   newIndicatorForm,
   normalizeDepartmentName,
@@ -225,13 +210,11 @@ const {
   openAddIndicatorForm,
   openCopyIndicatorsDialog,
   openDistributionApprovalSetupDialog,
-  openMilestonesDialog,
   orgStore,
   pageBootstrapPromise,
   parseColleges,
   pendingApprovalCount,
   pendingCollegePlanUiState,
-  persistIndicatorMilestones,
   planStore,
   plansWithIndicators,
   preloadCurrentCollegeWorkflowDetail,
@@ -239,8 +222,6 @@ const {
   refreshDistributionData,
   refreshDistributionPromise,
   removeChildIndicator,
-  removeFormMilestone,
-  removeMilestone,
   removeNewChildRow,
   resetApprovalSetupDialog,
   resolveCurrentStepExpectedRoleCodes,
@@ -249,7 +230,6 @@ const {
   resolvePlanYear,
   routeApprovalPlan,
   saveChildEdit,
-  saveMilestones,
   saveNewIndicator,
   savingChildField,
   savingChildId,
@@ -262,15 +242,11 @@ const {
   selectedCollege,
   selectedCollegePlanUiStatus,
   shouldShowReportedProgress,
-  sortLocalMilestonesByDate,
   strategicStore,
   syncSelectedCollegeFromApprovalRoute,
   taskApprovalVisible,
   timeContext,
-  toBatchDistributionMilestones,
-  toMilestoneBatchPayload,
   validateAndSaveNewChild,
-  validateMilestoneProgress,
   waitForPageBootstrap,
   withdrawButtonDisabled,
   withdrawButtonDisabledReason,
@@ -286,10 +262,24 @@ type DistributionExportChild = Partial<StrategicIndicator> & {
   type1?: string | null
   indicatorType1?: string | null
   progress?: number | string | null
-  milestones?: unknown[]
   pendingAttachments?: unknown
   pendingAttachmentDetails?: unknown[]
 }
+
+// 鉴定进度等级（与战略任务管理页同一套选项；当前编辑权限仅战略部负责人/分管校领导/系统管理员）
+type ManualAlertSelectValue = Exclude<ManualAlertSeverity, null> | ''
+
+const manualAlertOptions: Array<{
+  label: string
+  value: ManualAlertSelectValue
+  type: 'success' | 'info' | 'warning' | 'danger'
+}> = [
+  // 进度等级三档（2026-09-17 定案）：存储码沿用 alert severity，新增 AHEAD/NORMAL
+  { label: '未评定', value: '', type: 'info' },
+  { label: '超前完成', value: 'AHEAD', type: 'success' },
+  { label: '正常', value: 'NORMAL', type: 'success' },
+  { label: '延期', value: 'DELAYED', type: 'warning' }
+]
 
 interface DistributionExportRow {
   exportCollege: string
@@ -320,41 +310,79 @@ const distributionExportCollegesIndeterminate = computed(
     selectedDistributionExportColleges.value.length < colleges.value.length
 )
 
-const distributionExportColumns: ExcelExportColumn<DistributionExportRow>[] = [
-  { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
-  { header: '学院', width: 20, getValue: row => row.exportCollege },
-  { header: '父级战略任务', width: 28, getValue: row => row.taskTitle || '-' },
-  { header: '父级核心指标', width: 32, getValue: row => row.indicator.name || '-' },
-  { header: '子指标名称', width: 32, getValue: row => row.child.name || '-' },
-  {
-    header: '指标类型',
-    width: 12,
-    align: 'center',
-    getValue: row => getDistributionChildTypeText(row.child)
-  },
-  { header: '备注', width: 24, getValue: row => row.child.remark || '-' },
-  { header: '权重', width: 10, align: 'center', getValue: row => Number(row.child.weight || 0) },
-  {
-    header: '进度',
-    width: 24,
-    getValue: row =>
-      formatProgress(
-        row.child.progress ?? 0,
-        row.type === 'child' ? getDisplayedReportedProgress(row.child as StrategicIndicator) : null
-      )
-  },
-  { header: '里程碑', width: 34, getValue: row => formatMilestones(row.child.milestones) },
-  {
-    header: '附件',
-    width: 42,
-    getValue: row =>
-      buildAttachmentCell(
-        row.child.pendingAttachmentDetails?.length
-          ? row.child.pendingAttachmentDetails
-          : row.child.pendingAttachments
-      )
-  }
-]
+// 2026-10-14 用户定案：导出与界面同构——同一父级核心指标下的多行子指标在「父级核心指标」列
+// 合并为一个单元格；「内部ID」列移除（名称精确匹配即可，导出面向领导阅读）。
+const buildDistributionExportColumns = (
+  rows: DistributionExportRow[]
+): ExcelExportColumn<DistributionExportRow>[] => {
+  const parentSpanByIndex = new Map<number, number>()
+  rows.forEach((row, index) => {
+    const key = String(row.indicator?.id ?? row.indicator?.name ?? '-')
+    const prevKey =
+      index > 0
+        ? String(rows[index - 1].indicator?.id ?? rows[index - 1].indicator?.name ?? '-')
+        : null
+    if (prevKey === key) {
+      parentSpanByIndex.set(index, 0)
+      return
+    }
+    let end = index + 1
+    while (
+      end < rows.length &&
+      String(rows[end].indicator?.id ?? rows[end].indicator?.name ?? '-') === key
+    ) {
+      end += 1
+    }
+    parentSpanByIndex.set(index, end - index)
+  })
+
+  return [
+    { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
+    { header: '学院', width: 20, getValue: row => row.exportCollege },
+    { header: '父级战略任务', width: 28, getValue: row => row.taskTitle || '-' },
+    {
+      header: '父级核心指标',
+      width: 32,
+      getValue: (row, index) => {
+        const text = row.indicator.name || '-'
+        const span = parentSpanByIndex.get(index) ?? 1
+        if (span > 1) {
+          return { value: text, rowSpan: span, alignVertical: 'center' }
+        }
+        // 被上方合并覆盖的从属行：write-excel-file 要求传 null
+        if (span === 0) {
+          return null
+        }
+        return text
+      }
+    },
+    { header: '子指标名称', width: 32, getValue: row => row.child.name || '-' },
+    {
+      header: '指标类型',
+      width: 12,
+      align: 'center',
+      getValue: row => getDistributionChildTypeText(row.child)
+    },
+    { header: '备注', width: 24, getValue: row => row.child.remark || '-' },
+    { header: '权重', width: 10, align: 'center', getValue: row => Number(row.child.weight || 0) },
+    {
+      header: '鉴定进度等级',
+      width: 18,
+      align: 'center',
+      getValue: row => getChildManualAlertLabel(getChildManualAlertSeverity(row.child))
+    },
+    {
+      header: '附件',
+      width: 42,
+      getValue: row =>
+        buildAttachmentCell(
+          row.child.pendingAttachmentDetails?.length
+            ? row.child.pendingAttachmentDetails
+            : row.child.pendingAttachments
+        )
+    }
+  ]
+}
 
 const getDistributionChildTypeText = (child: DistributionExportChild): string => {
   const normalized = normalizeIndicatorTypeLabel(child.type1 || child.indicatorType1 || '')
@@ -435,9 +463,8 @@ const getDistributionExportRowTextColor = (row: DistributionExportRow): string |
     return undefined
   }
 
-  return hasReachedMilestone(row.child.progress, getSortedMilestones(row.child.milestones))
-    ? MILESTONE_REACHED_TEXT_COLOR
-    : undefined
+  // 里程碑移除后不再依据里程碑进度渲染导出文字颜色
+  return undefined
 }
 
 const buildDistributionExportSheet = (
@@ -446,7 +473,7 @@ const buildDistributionExportSheet = (
 ): ExcelExportSheet<DistributionExportRow> => ({
   sheetName: college || '当前学院',
   rows,
-  columns: distributionExportColumns,
+  columns: buildDistributionExportColumns(rows),
   emptyMessage: '当前学院暂无可导出的子指标数据',
   getRowTone: getDistributionExportRowTone,
   getRowTextColor: getDistributionExportRowTextColor
@@ -547,7 +574,7 @@ const currentDistributionImportCycleId = computed(() => {
 })
 
 // 导入入口暂不在页面显示，保留原有实现，后续恢复时只需切回 true。
-const distributionImportEnabled = false
+const distributionImportEnabled = true
 const distributionImportDisabledReason = '导入功能暂不启用'
 
 const openDistributionImportDialog = () => {
@@ -745,7 +772,7 @@ const handleDistributionImportCommitted = async () => {
                 <el-icon><Download /></el-icon>
                 导出
               </el-button>
-              <!-- 导入入口当前不用，保留代码；恢复时将 distributionImportEnabled 改为 true。 -->
+              <!-- 导入入口已恢复启用（distributionImportEnabled = true，2026-09-17 定案） -->
               <el-button
                 v-if="distributionImportEnabled"
                 :icon="Upload"
@@ -869,6 +896,8 @@ const handleDistributionImportCommitted = async () => {
                             >{{ row.child?.name || '未命名' }}</span
                           >
                         </el-tooltip>
+                        <!-- 上报历史小标（每次上报更新，不走异动链，悬停看历次上报+资料） -->
+                        <ReportHistoryBadge v-if="row.child?.id" :indicator-id="row.child.id" />
                       </div>
                     </template>
                     <!-- 新增子指标行 -->
@@ -903,7 +932,138 @@ const handleDistributionImportCommitted = async () => {
                   </template>
                 </el-table-column>
 
-                <!-- 备注列 -->
+                <!-- 权重列 -->
+                <el-table-column label="权重" width="80" align="center">
+                  <template #default="{ row }">
+                    <template v-if="row.type === 'indicator-only'">
+                      <span class="weight-text">-</span>
+                    </template>
+                    <template v-else-if="row.type === 'child'">
+                      <div class="weight-cell" @dblclick="handleChildDblClick(row.child, 'weight')">
+                        <el-input-number
+                          v-if="
+                            editingChildId === row.child?.id?.toString() &&
+                            editingChildField === 'weight'
+                          "
+                          v-model="editingChildValue"
+                          :min="0"
+                          :max="100"
+                          size="small"
+                          :controls="false"
+                          style="width: 60px"
+                          class="editing-field"
+                          @blur="saveChildEdit(row.child, 'weight')"
+                        />
+                        <span
+                          v-else-if="isSavingChildCell(row.child, 'weight')"
+                          class="cell-saving-text"
+                        >
+                          保存中...
+                        </span>
+                        <span v-else class="weight-text editable">{{
+                          row.child?.weight ?? '-'
+                        }}</span>
+                      </div>
+                    </template>
+                    <template v-else-if="row.type === 'new-child'">
+                      <span class="weight-text">{{ row.child?.weight ?? 10 }}</span>
+                    </template>
+                  </template>
+                </el-table-column>
+
+                <!-- 自评等级列（与战略任务管理页命名一致） -->
+                <el-table-column label="自评等级" width="110" align="center">
+                  <template #default="{ row }">
+                    <template v-if="row.type === 'child'">
+                      <el-tag v-if="row.child?.selfRating" size="small" type="info">
+                        {{
+                          {
+                            AHEAD: '超前完成',
+                            NORMAL: '正常',
+                            DELAYED: '延期'
+                          }[row.child.selfRating] || row.child.selfRating
+                        }}
+                      </el-tag>
+                      <span v-else style="color: #909399">—</span>
+                    </template>
+                  </template>
+                </el-table-column>
+
+                <!-- 鉴定进度等级列（按业务要求替代原里程碑列；控件与战略任务管理页一致） -->
+                <el-table-column label="鉴定进度等级" width="140" align="center">
+                  <template #default="{ row }">
+                    <template v-if="row.type !== 'child'">
+                      <span class="manual-alert-placeholder">-</span>
+                    </template>
+                    <template v-else>
+                      <div class="manual-alert-cell">
+                        <template v-if="canEditChildManualAlert">
+                          <el-tooltip
+                            :disabled="childManualAlertEditable"
+                            content="计划正式下发后才能调整进度等级"
+                            placement="top"
+                          >
+                            <div
+                              class="manual-alert-select-wrapper"
+                              :class="{
+                                'manual-alert-select-wrapper--locked': !childManualAlertEditable
+                              }"
+                            >
+                              <el-select
+                                :model-value="getChildManualAlertSeverity(row.child)"
+                                size="small"
+                                class="manual-alert-select"
+                                :disabled="
+                                  !childManualAlertEditable ||
+                                  savingChildManualAlertId === String(row.child?.id)
+                                "
+                                :loading="savingChildManualAlertId === String(row.child?.id)"
+                                @change="
+                                  value =>
+                                    handleChildManualAlertChange(
+                                      row.child,
+                                      value as ManualAlertSelectValue
+                                    )
+                                "
+                              >
+                                <el-option
+                                  v-for="option in manualAlertOptions"
+                                  :key="option.value || 'NONE'"
+                                  :label="option.label"
+                                  :value="option.value"
+                                />
+                              </el-select>
+                            </div>
+                          </el-tooltip>
+                        </template>
+                        <template v-else>
+                          <el-tag
+                            :type="
+                              getChildManualAlertTagType(getChildManualAlertSeverity(row.child))
+                            "
+                            size="small"
+                          >
+                            {{ getChildManualAlertLabel(getChildManualAlertSeverity(row.child)) }}
+                          </el-tag>
+                        </template>
+                      </div>
+                    </template>
+                  </template>
+                </el-table-column>
+
+                <!-- 上报资料列（2026-10-13 用户定案：展示当前最新一次上报提交的资料；历次经上报小标查看） -->
+                <el-table-column label="上报资料" min-width="150">
+                  <template #default="{ row }">
+                    <template v-if="row.type === 'child'">
+                      <ReportMaterialsCell :indicator-id="row.child?.id" />
+                    </template>
+                    <template v-else>
+                      <span class="remark-text">-</span>
+                    </template>
+                  </template>
+                </el-table-column>
+
+                <!-- 备注列（2026-10-13 用户定案：备注移到操作列前） -->
                 <el-table-column label="备注" width="140">
                   <template #default="{ row }">
                     <template v-if="row.type === 'indicator-only'">
@@ -956,206 +1116,6 @@ const handleDistributionImportCommitted = async () => {
                           >{{ row.child.remark || '-' }}</span
                         >
                       </div>
-                    </template>
-                  </template>
-                </el-table-column>
-
-                <!-- 权重列 -->
-                <el-table-column label="权重" width="80" align="center">
-                  <template #default="{ row }">
-                    <template v-if="row.type === 'indicator-only'">
-                      <span class="weight-text">-</span>
-                    </template>
-                    <template v-else-if="row.type === 'child'">
-                      <div class="weight-cell" @dblclick="handleChildDblClick(row.child, 'weight')">
-                        <el-input-number
-                          v-if="
-                            editingChildId === row.child?.id?.toString() &&
-                            editingChildField === 'weight'
-                          "
-                          v-model="editingChildValue"
-                          :min="0"
-                          :max="100"
-                          size="small"
-                          :controls="false"
-                          style="width: 60px"
-                          class="editing-field"
-                          @blur="saveChildEdit(row.child, 'weight')"
-                        />
-                        <span
-                          v-else-if="isSavingChildCell(row.child, 'weight')"
-                          class="cell-saving-text"
-                        >
-                          保存中...
-                        </span>
-                        <span v-else class="weight-text editable">{{
-                          row.child?.weight ?? '-'
-                        }}</span>
-                      </div>
-                    </template>
-                    <template v-else-if="row.type === 'new-child'">
-                      <span class="weight-text">{{ row.child?.weight ?? 10 }}</span>
-                    </template>
-                  </template>
-                </el-table-column>
-
-                <!-- 学院模式下不显示学院列 -->
-
-                <!-- 里程碑列 -->
-                <el-table-column label="里程碑" width="100" align="center">
-                  <template #default="{ row }">
-                    <template v-if="row.type === 'indicator-only'">
-                      <span class="milestone-count">-</span>
-                    </template>
-                    <template v-else-if="row.type === 'child'">
-                      <el-popover
-                        placement="left"
-                        :width="320"
-                        trigger="hover"
-                        :disabled="!row.child?.milestones?.length"
-                      >
-                        <template #reference>
-                          <div
-                            class="milestone-cell"
-                            :class="{
-                              editable: canManageChildDraft(row.child)
-                            }"
-                            @dblclick="
-                              canManageChildDraft(row.child) && openMilestonesDialog(row.child)
-                            "
-                          >
-                            <span class="milestone-count">
-                              {{ row.child?.milestones?.length || 0 }} 个里程碑
-                            </span>
-                          </div>
-                        </template>
-                        <div class="milestone-popover">
-                          <div class="milestone-popover-title">里程碑列表</div>
-                          <div
-                            v-for="(ms, idx) in getMilestonesTooltip(row.child)"
-                            :key="ms.id"
-                            class="milestone-item"
-                            :class="{
-                              'milestone-completed': isMilestoneCompleted(row.child, ms.progress)
-                            }"
-                          >
-                            <div class="milestone-item-header">
-                              <span class="milestone-index">{{ idx + 1 }}.</span>
-                              <span class="milestone-name">{{ ms.name || '未命名' }}</span>
-                              <el-icon
-                                v-if="isMilestoneCompleted(row.child, ms.progress)"
-                                class="milestone-check-icon"
-                              >
-                                <Check />
-                              </el-icon>
-                            </div>
-                            <div class="milestone-item-info">
-                              <span>预期: {{ ms.expectedDate || '未设置' }}</span>
-                              <span>进度: {{ ms.progress }}%</span>
-                            </div>
-                          </div>
-                          <div v-if="!row.child?.milestones?.length" class="milestone-empty">
-                            暂无里程碑
-                          </div>
-                        </div>
-                      </el-popover>
-                    </template>
-                    <template v-else-if="row.type === 'new-child'">
-                      <el-popover
-                        placement="left"
-                        :width="320"
-                        trigger="hover"
-                        :disabled="!row.child?.milestones?.length"
-                      >
-                        <template #reference>
-                          <div
-                            class="milestone-cell editable"
-                            @dblclick.stop="openMilestonesDialog(row.child)"
-                          >
-                            <span class="milestone-count">
-                              {{ row.child?.milestones?.length || 0 }} 个里程碑
-                            </span>
-                          </div>
-                        </template>
-                        <div class="milestone-popover">
-                          <div class="milestone-popover-title">里程碑列表</div>
-                          <div
-                            v-for="(ms, idx) in getMilestonesTooltip(row.child)"
-                            :key="ms.id"
-                            class="milestone-item"
-                          >
-                            <div class="milestone-item-header">
-                              <span class="milestone-index">{{ idx + 1 }}.</span>
-                              <span class="milestone-name">{{ ms.name || '未命名' }}</span>
-                            </div>
-                            <div class="milestone-item-info">
-                              <span>预期: {{ ms.expectedDate || '未设置' }}</span>
-                              <span>进度: {{ ms.progress }}%</span>
-                            </div>
-                          </div>
-                          <div v-if="!row.child?.milestones?.length" class="milestone-empty">
-                            暂无里程碑
-                          </div>
-                        </div>
-                      </el-popover>
-                    </template>
-                  </template>
-                </el-table-column>
-
-                <!-- 进度列 -->
-                <el-table-column label="进度" width="100" align="center">
-                  <template #default="{ row }">
-                    <template v-if="row.type === 'indicator-only'">
-                      <span class="progress-text">-</span>
-                    </template>
-                    <template v-else-if="row.type === 'child'">
-                      <div
-                        class="progress-cell"
-                        @dblclick="handleChildDblClick(row.child, 'progress')"
-                      >
-                        <el-input-number
-                          v-if="
-                            editingChildId === row.child.id.toString() &&
-                            editingChildField === 'progress'
-                          "
-                          v-model="editingChildValue"
-                          :min="0"
-                          :max="100"
-                          :precision="0"
-                          size="small"
-                          class="editing-field"
-                          @blur="saveChildEdit(row.child, 'progress')"
-                          @keyup.enter="saveChildEdit(row.child, 'progress')"
-                          @keyup.esc="cancelChildEdit"
-                        />
-                        <span
-                          v-else-if="isSavingChildCell(row.child, 'progress')"
-                          class="cell-saving-text"
-                        >
-                          保存中...
-                        </span>
-                        <span
-                          v-else
-                          class="progress-text"
-                          :class="{
-                            editable: canManageChildDraft(row.child)
-                          }"
-                        >
-                          {{ row.child?.progress || 0 }}%
-                        </span>
-                        <el-tooltip
-                          v-if="shouldShowReportedProgress(row.child)"
-                          content="填报进度"
-                          placement="top"
-                        >
-                          <span class="reported-progress"
-                            >({{ getDisplayedReportedProgress(row.child) }}%)</span
-                          >
-                        </el-tooltip>
-                      </div>
-                    </template>
-                    <template v-else-if="row.type === 'new-child'">
-                      <span class="progress-text">-</span>
                     </template>
                   </template>
                 </el-table-column>
@@ -1277,13 +1237,7 @@ const handleDistributionImportCommitted = async () => {
                     <el-col :span="8">
                       <el-form-item class="required-form-item">
                         <template #label><span class="required-asterisk">*</span>指标类型</template>
-                        <el-select
-                          v-model="newIndicatorForm.type1"
-                          style="width: 100%"
-                          @change="
-                            (val: string) => handleFormIndicatorTypeChange(val as '定量' | '定性')
-                          "
-                        >
+                        <el-select v-model="newIndicatorForm.type1" style="width: 100%">
                           <el-option label="定性" value="定性" />
                           <el-option label="定量" value="定量" />
                         </el-select>
@@ -1325,70 +1279,6 @@ const handleDistributionImportCommitted = async () => {
                           :autosize="{ minRows: 2, maxRows: 10 }"
                           placeholder="输入备注内容（选填）"
                         />
-                      </el-form-item>
-                    </el-col>
-                  </el-row>
-                  <el-row :gutter="16">
-                    <el-col :span="24">
-                      <el-form-item class="required-form-item">
-                        <template #label><span class="required-asterisk">*</span>里程碑</template>
-                        <div class="milestone-form-area">
-                          <el-button
-                            v-if="newIndicatorForm.type1 === '定性'"
-                            size="small"
-                            type="primary"
-                            plain
-                            @click="addFormMilestone"
-                          >
-                            <el-icon><Plus /></el-icon> 添加里程碑
-                          </el-button>
-                          <div v-if="newIndicatorForm.milestones.length > 0" class="milestone-list">
-                            <div
-                              v-for="(ms, idx) in newIndicatorForm.milestones"
-                              :key="ms.id"
-                              class="milestone-form-item"
-                            >
-                              <span class="milestone-index">{{ idx + 1 }}.</span>
-                              <el-input
-                                v-model="ms.name"
-                                placeholder="里程碑名称"
-                                style="width: 160px"
-                                size="small"
-                              />
-                              <el-input-number
-                                v-model="ms.targetProgress"
-                                :min="0"
-                                :max="100"
-                                placeholder="目标进度%"
-                                size="small"
-                                style="width: 110px"
-                              />
-                              <el-date-picker
-                                v-model="ms.deadline"
-                                type="date"
-                                placeholder="截止日期"
-                                size="small"
-                                style="width: 130px"
-                                value-format="YYYY-MM-DD"
-                              />
-                              <el-button
-                                type="danger"
-                                size="small"
-                                text
-                                @click="removeFormMilestone(idx)"
-                              >
-                                <el-icon><Delete /></el-icon>
-                              </el-button>
-                            </div>
-                          </div>
-                          <span v-else class="milestone-hint">
-                            {{
-                              newIndicatorForm.type1 === '定量'
-                                ? '选择定量后自动生成12月里程碑'
-                                : '暂无里程碑，点击添加'
-                            }}
-                          </span>
-                        </div>
                       </el-form-item>
                     </el-col>
                   </el-row>
@@ -1474,19 +1364,6 @@ const handleDistributionImportCommitted = async () => {
           <el-descriptions-item label="权重">{{
             currentDetailIndicator.weight
           }}</el-descriptions-item>
-          <el-descriptions-item label="当前进度">
-            {{ currentDetailIndicator.progress || 0 }}%
-          </el-descriptions-item>
-          <el-descriptions-item label="填报进度">
-            <template v-if="shouldShowReportedProgress(currentDetailIndicator)">
-              <el-tooltip content="已提交但尚未审批通过的填报进度" placement="top">
-                <span style="color: #e6a23c; font-weight: 600"
-                  >{{ getDisplayedReportedProgress(currentDetailIndicator) }}%</span
-                >
-              </el-tooltip>
-            </template>
-            <span v-else style="color: #909399">暂无填报</span>
-          </el-descriptions-item>
           <el-descriptions-item label="责任部门">
             {{ currentDetailIndicator.responsibleDept || '未分配' }}
           </el-descriptions-item>
@@ -1497,19 +1374,16 @@ const handleDistributionImportCommitted = async () => {
             {{ currentDetailIndicator.remark || '暂无备注' }}
           </el-descriptions-item>
         </el-descriptions>
-
-        <div
-          v-if="currentDetailIndicator.milestones && currentDetailIndicator.milestones.length > 0"
-          class="milestone-section"
-        >
-          <div class="divider"></div>
-          <h4>里程碑节点</h4>
-          <IndicatorMilestoneTimeline
-            :milestones="currentDetailIndicator.milestones"
-            :current-progress="currentDetailIndicator.progress"
-          />
-        </div>
       </div>
+
+      <el-collapse v-model="reportHistoryOpen" class="report-history-collapse">
+        <el-collapse-item title="上报记录（历次填报 / 含被驳回）" name="history">
+          <IndicatorFillHistory
+            v-if="reportHistoryOpen?.includes('history') && currentDetailId"
+            :indicator-id="currentDetailId"
+          />
+        </el-collapse-item>
+      </el-collapse>
     </el-drawer>
 
     <el-dialog
@@ -1559,6 +1433,7 @@ const handleDistributionImportCommitted = async () => {
       :source-org-id="currentDepartmentOrgId"
       :source-org-name="currentDept"
       :cycle-id="currentDistributionImportCycleId"
+      :parent-indicators="availableParentIndicators"
       @committed="handleDistributionImportCommitted"
     />
 
@@ -1695,107 +1570,6 @@ const handleDistributionImportCommitted = async () => {
       @refresh="handleApprovalRefresh"
     />
 
-    <!-- 里程碑编辑弹窗 -->
-    <el-dialog
-      v-model="milestonesDialogVisible"
-      title="编辑里程碑"
-      width="700px"
-      :close-on-click-modal="false"
-      :close-on-press-escape="!isSavingMilestones"
-      :show-close="!isSavingMilestones"
-    >
-      <div v-if="editingMilestonesChild" class="milestone-edit-dialog">
-        <!-- 指标信息 -->
-        <div class="indicator-info-header">
-          <div class="info-item">
-            <span class="label">指标名称：</span>
-            <span class="value">{{ getEditingChildName() }}</span>
-          </div>
-          <div class="info-item">
-            <span class="label">指标类型：</span>
-            <el-tag size="small" :type="getEditingChildType() === '定量' ? 'primary' : 'warning'">
-              {{ getEditingChildType() }}
-            </el-tag>
-          </div>
-        </div>
-
-        <el-divider />
-
-        <!-- 操作按钮 -->
-        <div class="milestone-actions">
-          <el-button size="small" type="primary" :icon="Plus" @click="addMilestone">
-            添加里程碑
-          </el-button>
-          <el-button
-            v-if="getEditingChildType() === '定量'"
-            size="small"
-            type="success"
-            :icon="Timer"
-            @click="generateMonthlyMilestones"
-          >
-            生成12个月里程碑
-          </el-button>
-          <span class="milestone-count-hint"> 当前共 {{ editingMilestones.length }} 个里程碑 </span>
-        </div>
-
-        <!-- 里程碑列表 -->
-        <div class="milestone-edit-list">
-          <el-empty
-            v-if="editingMilestones.length === 0"
-            description="暂无里程碑，点击上方按钮添加"
-            :image-size="80"
-          />
-
-          <!-- 里程碑编辑表单 -->
-          <div v-for="(ms, idx) in editingMilestones" :key="ms.id" class="milestone-edit-item">
-            <div class="milestone-index">{{ idx + 1 }}.</div>
-            <div class="milestone-fields">
-              <el-input
-                v-model="ms.name"
-                placeholder="里程碑名称"
-                size="small"
-                class="field-name"
-              />
-              <el-input-number
-                v-model="ms.progress"
-                :min="0"
-                :max="100"
-                placeholder="目标进度%"
-                size="small"
-                class="field-progress"
-                @change="validateMilestoneProgress(idx)"
-              />
-              <el-date-picker
-                v-model="ms.expectedDate"
-                type="date"
-                placeholder="截止日期"
-                size="small"
-                value-format="YYYY-MM-DD"
-                class="field-date"
-                @change="handleMilestoneDateChange"
-              />
-              <el-button
-                type="danger"
-                size="small"
-                :icon="Delete"
-                circle
-                @click="removeMilestone(idx)"
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <template #footer>
-        <el-button :disabled="isSavingMilestones" @click="milestonesDialogVisible = false">
-          取消
-        </el-button>
-        <el-button type="primary" :loading="isSavingMilestones" @click="saveMilestones">
-          保存
-        </el-button>
-      </template>
-    </el-dialog>
-
     <!-- 选择关联核心指标弹框（已改为内联选择，此弹窗已不再使用，可删除） -->
     <!-- 选择关联核心指标弹框 -->
     <el-dialog
@@ -1823,6 +1597,12 @@ const handleDistributionImportCommitted = async () => {
                     {{ getIndicatorTypeLabel(row.indicator) }}
                   </el-tag>
                   <span class="indicator-name">{{ row.indicator.name }}</span>
+                  <!-- D10：异动/改名历史徽标（悬停看历史，无变更自动隐藏） -->
+                  <MutationBadgePopover
+                    v-if="row.indicator?.id"
+                    class="indicator-row-badge"
+                    :indicator-id="row.indicator.id"
+                  />
                 </div>
               </div>
             </template>
@@ -1855,3 +1635,20 @@ const handleDistributionImportCommitted = async () => {
 
 <style scoped src="./IndicatorDistributeView.css"></style>
 <style src="./IndicatorDistributeView.global.css"></style>
+<style scoped>
+/* 鉴定进度等级列（与战略任务管理页一致） */
+.manual-alert-cell {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+}
+
+.manual-alert-select {
+  width: 120px;
+}
+
+.manual-alert-select-wrapper--locked {
+  cursor: not-allowed;
+}
+</style>

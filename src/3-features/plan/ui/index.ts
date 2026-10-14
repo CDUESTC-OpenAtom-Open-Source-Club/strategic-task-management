@@ -7,9 +7,6 @@
  */
 
 // Views
-export { default as PlanListView } from './PlanListView.vue'
-export { default as PlanEditView } from './PlanEditView.vue'
-export { default as PlanDetailView } from './PlanDetailView.vue'
 export { default as PlanAuditView } from './PlanAuditView.vue'
 
 // Components

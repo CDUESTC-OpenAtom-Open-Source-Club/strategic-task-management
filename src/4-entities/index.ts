@@ -13,7 +13,6 @@
  */
 
 export * from './indicator'
-export * from './milestone'
 export * from './organization'
 export * from './plan'
 export * from './user'

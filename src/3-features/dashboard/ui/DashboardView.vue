@@ -8,8 +8,8 @@ import {
   Top,
   Close
 } from '@element-plus/icons-vue'
+import { useApprovalCenter } from '@/features/approval/lib/useApprovalCenter'
 import BreadcrumbNav from '@/shared/ui/layout/BreadcrumbNav.vue'
-import ScoreCompositionChart from '@/shared/ui/charts/ScoreCompositionChart.vue'
 import AlertDistributionChart from '@/shared/ui/charts/AlertDistributionChart.vue'
 import DepartmentProgressChart from './DepartmentProgressChart.vue'
 import TaskSankeyChart from '@/shared/ui/charts/TaskSankeyChart.vue'
@@ -65,8 +65,6 @@ const {
   filteredMonthIndicators,
   getCollegeRankingData,
   getCollegeStatsForFunctionalDept,
-  getCurrentMilestoneIndex,
-  getCurrentTargetProgress,
   getDeptStatsAtMonth,
   getIndicatorStatus,
   getStatusClass,
@@ -87,6 +85,9 @@ const {
   handleResize,
   handleSankeyLinkClick,
   handleSankeyNodeClick,
+  handleIndicatorRowClick,
+  handleCloseIndicatorDetail,
+  selectedIndicatorDetail,
   handleSourceClick,
   handleStatusFilterClick,
   handleUrge,
@@ -132,6 +133,12 @@ const {
   strategicStore,
   timeContext
 } = useDashboardView(props)
+
+// P7 待办/已办入口：首页直接展示待办并直达审批中心
+const approvalCenterCard = useApprovalCenter()
+function openApprovalCenterFromDashboard() {
+  approvalCenterCard.openApprovalCenter(null)
+}
 </script>
 
 <template>
@@ -142,6 +149,21 @@ const {
         <el-button type="primary" :icon="Download" @click="handleExport">导出报表</el-button>
       </div>
     </div>
+
+    <!-- P7 待办/已办入口卡：待办直达审批中心 -->
+    <el-alert
+      v-if="(messageStore?.todoCount || 0) > 0"
+      type="warning"
+      :closable="false"
+      class="dashboard-todo-card"
+      @click="openApprovalCenterFromDashboard"
+    >
+      <template #title>
+        <span class="dashboard-todo-card__text">
+          您有 <strong>{{ messageStore?.todoCount || 0 }}</strong> 条待办尚未处理，点击进入审批中心
+        </span>
+      </template>
+    </el-alert>
 
     <!-- 降级模式提示 - Requirements 1.4, 10.5 -->
     <el-alert
@@ -209,8 +231,8 @@ const {
         <el-empty description="暂无数据" :image-size="200">
           <template #description>
             <div class="empty-description">
-              <p>当前没有可显示的指标数据</p>
-              <p class="empty-hint">请检查数据源或联系管理员</p>
+              <p>当前还没有下发到本单位的指标任务</p>
+              <p class="empty-hint">上级下发任务后，这里会自动显示对应数据</p>
             </div>
           </template>
           <el-button type="primary" @click="reloadData()">
@@ -251,28 +273,35 @@ const {
         </div>
         <div class="summary-content">
           <div class="summary-header">
-            <span class="summary-tag">AI Intelligence Briefing</span>
-            <span class="summary-time">| UPDATE: {{ new Date().toLocaleDateString() }}</span>
+            <span class="summary-tag">任务完成简报</span>
+            <span class="summary-time"
+              >| {{ timeContext.currentYear }} 年度 · 更新于
+              {{ new Date().toLocaleDateString() }}</span
+            >
           </div>
           <p class="summary-text">
-            全校战略执行总分 <span class="highlight-primary">{{ dashboardData.totalScore }}</span
-            >。
-            <template v-if="dashboardData.alertIndicators.severe > 0">
-              {{ selectedMonth }}月存在
+            {{ timeContext.currentYear }} 年度当前共
+            <span class="highlight-primary">{{
+              (dashboardData.levelDistribution?.ahead ?? 0) +
+              (dashboardData.levelDistribution?.normal ?? 0) +
+              (dashboardData.levelDistribution?.delayed ?? 0)
+            }}</span>
+            项任务：超前完成
+            <span class="highlight-primary">{{ dashboardData.levelDistribution?.ahead ?? 0 }}</span>
+            项、正常推进 {{ dashboardData.levelDistribution?.normal ?? 0 }} 项、延期
+            {{ dashboardData.levelDistribution?.delayed ?? 0 }} 项。
+            <!-- H3（2026-09-19 定案）：延期口径统一为人工鉴定三档（levelDistribution），与圆环图同源 -->
+            <template v-if="(dashboardData.levelDistribution?.delayed ?? 0) > 0">
+              其中
               <span class="highlight-danger"
-                >{{ dashboardData.alertIndicators.severe }} 项严重预警</span
+                >{{ dashboardData.levelDistribution?.delayed ?? 0 }} 项</span
               >
-              任务需重点关注。
+              已鉴定为延期。
             </template>
-            <template v-else>
-              {{ selectedMonth }}月整体执行状态良好，<span class="highlight-success"
-                >无严重预警</span
-              >。
-            </template>
-            完成率达 <span class="highlight-success">{{ dashboardData.completionRate }}%</span>，
-            {{ dashboardData.completionRate >= 80 ? '进度符合预期' : '建议加快推进滞后任务' }}。
+            <template v-else> 暂无延期鉴定。 </template>
+            总体完成率 <span class="highlight-success">{{ dashboardData.completionRate }}%</span>。
             <button type="button" class="drill-btn" @click.prevent="handleSummaryDrillClick">
-              立即下钻诊断 →
+              查看分布明细 →
             </button>
           </p>
         </div>
@@ -463,18 +492,12 @@ const {
                     <span class="status-dot"></span>正常 {{ selectedDeptStats.normal }}
                   </span>
                   <span
-                    class="status-summary-item warning"
-                    :class="{ active: selectedStatusFilter === 'warning' }"
-                    @click="handleStatusFilterClick('warning')"
-                  >
-                    <span class="status-dot"></span>预警 {{ selectedDeptStats.warning }}
-                  </span>
-                  <span
                     class="status-summary-item delayed"
                     :class="{ active: selectedStatusFilter === 'delayed' }"
                     @click="handleStatusFilterClick('delayed')"
                   >
-                    <span class="status-dot"></span>延期 {{ selectedDeptStats.delayed }}
+                    <span class="status-dot"></span>延期
+                    {{ selectedDeptStats.warning + selectedDeptStats.delayed }}
                   </span>
                 </div>
                 <div v-if="selectedDeptIndicators.length === 0" class="empty-indicator-list">
@@ -493,7 +516,14 @@ const {
                     popper-class="indicator-detail-popover"
                   >
                     <template #reference>
-                      <div class="indicator-status-item" :class="getStatusClass(indicator.status)">
+                      <div
+                        class="indicator-status-item indicator-status-item--clickable"
+                        :class="getStatusClass(indicator.status)"
+                        role="button"
+                        tabindex="0"
+                        @click="handleIndicatorRowClick(indicator)"
+                        @keydown.enter="handleIndicatorRowClick(indicator)"
+                      >
                         <div class="indicator-info">
                           <div class="indicator-name" :title="indicator.name">
                             {{ indicator.name }}
@@ -524,38 +554,6 @@ const {
                       <div class="detail-row">
                         <span class="detail-label">指标类型</span>
                         <span class="detail-value">{{ indicator.type1 }}</span>
-                      </div>
-                      <div class="detail-row">
-                        <span class="detail-label">当前进度</span>
-                        <span class="detail-value">
-                          <el-progress
-                            :percentage="indicator.progress"
-                            :stroke-width="8"
-                            :color="
-                              indicator.progress >= 80
-                                ? '#67c23a'
-                                : indicator.progress >= 50
-                                  ? '#e6a23c'
-                                  : '#f56c6c'
-                            "
-                            style="width: 120px; display: inline-flex"
-                          />
-                        </span>
-                      </div>
-                      <div
-                        v-if="indicator.targetProgress !== null || indicator.milestoneIndex"
-                        class="detail-row"
-                      >
-                        <span class="detail-label">目标进度</span>
-                        <span class="detail-value"
-                          >{{
-                            indicator.targetProgress !== null
-                              ? indicator.targetProgress + '%'
-                              : '-'
-                          }}{{
-                            indicator.milestoneIndex ? ' (' + indicator.milestoneIndex + ')' : ''
-                          }}</span
-                        >
                       </div>
                       <div class="detail-row">
                         <span class="detail-label">权重</span>
@@ -646,18 +644,12 @@ const {
                     <span class="status-dot"></span>正常 {{ monthIndicatorStats.normal }}
                   </span>
                   <span
-                    class="status-summary-item warning"
-                    :class="{ active: selectedStatusFilter === 'warning' }"
-                    @click="handleStatusFilterClick('warning')"
-                  >
-                    <span class="status-dot"></span>预警 {{ monthIndicatorStats.warning }}
-                  </span>
-                  <span
                     class="status-summary-item delayed"
                     :class="{ active: selectedStatusFilter === 'delayed' }"
                     @click="handleStatusFilterClick('delayed')"
                   >
-                    <span class="status-dot"></span>延期 {{ monthIndicatorStats.delayed }}
+                    <span class="status-dot"></span>延期
+                    {{ monthIndicatorStats.warning + monthIndicatorStats.delayed }}
                   </span>
                 </div>
                 <div v-if="monthIndicators.length === 0" class="empty-indicator-list">
@@ -676,7 +668,14 @@ const {
                     popper-class="indicator-detail-popover"
                   >
                     <template #reference>
-                      <div class="indicator-status-item" :class="getStatusClass(indicator.status)">
+                      <div
+                        class="indicator-status-item indicator-status-item--clickable"
+                        :class="getStatusClass(indicator.status)"
+                        role="button"
+                        tabindex="0"
+                        @click="handleIndicatorRowClick(indicator)"
+                        @keydown.enter="handleIndicatorRowClick(indicator)"
+                      >
                         <div class="indicator-info">
                           <div class="indicator-name" :title="indicator.name">
                             {{ indicator.name }}
@@ -707,38 +706,6 @@ const {
                       <div class="detail-row">
                         <span class="detail-label">指标类型</span>
                         <span class="detail-value">{{ indicator.type1 }}</span>
-                      </div>
-                      <div class="detail-row">
-                        <span class="detail-label">当前进度</span>
-                        <span class="detail-value">
-                          <el-progress
-                            :percentage="indicator.progress"
-                            :stroke-width="8"
-                            :color="
-                              indicator.progress >= 80
-                                ? '#67c23a'
-                                : indicator.progress >= 50
-                                  ? '#e6a23c'
-                                  : '#f56c6c'
-                            "
-                            style="width: 120px; display: inline-flex"
-                          />
-                        </span>
-                      </div>
-                      <div
-                        v-if="indicator.targetProgress !== null || indicator.milestoneIndex"
-                        class="detail-row"
-                      >
-                        <span class="detail-label">目标进度</span>
-                        <span class="detail-value"
-                          >{{
-                            indicator.targetProgress !== null
-                              ? indicator.targetProgress + '%'
-                              : '-'
-                          }}{{
-                            indicator.milestoneIndex ? ' (' + indicator.milestoneIndex + ')' : ''
-                          }}</span
-                        >
                       </div>
                       <div class="detail-row">
                         <span class="detail-label">权重</span>
@@ -904,18 +871,12 @@ const {
                     <span class="status-dot"></span>正常 {{ collegeMonthIndicatorStats.normal }}
                   </span>
                   <span
-                    class="status-summary-item warning"
-                    :class="{ active: selectedStatusFilter === 'warning' }"
-                    @click="handleStatusFilterClick('warning')"
-                  >
-                    <span class="status-dot"></span>预警 {{ collegeMonthIndicatorStats.warning }}
-                  </span>
-                  <span
                     class="status-summary-item delayed"
                     :class="{ active: selectedStatusFilter === 'delayed' }"
                     @click="handleStatusFilterClick('delayed')"
                   >
-                    <span class="status-dot"></span>延期 {{ collegeMonthIndicatorStats.delayed }}
+                    <span class="status-dot"></span>延期
+                    {{ collegeMonthIndicatorStats.warning + collegeMonthIndicatorStats.delayed }}
                   </span>
                 </div>
                 <div v-if="collegeMonthIndicators.length === 0" class="empty-indicator-list">
@@ -937,7 +898,14 @@ const {
                     popper-class="indicator-detail-popover"
                   >
                     <template #reference>
-                      <div class="indicator-status-item" :class="getStatusClass(indicator.status)">
+                      <div
+                        class="indicator-status-item indicator-status-item--clickable"
+                        :class="getStatusClass(indicator.status)"
+                        role="button"
+                        tabindex="0"
+                        @click="handleIndicatorRowClick(indicator)"
+                        @keydown.enter="handleIndicatorRowClick(indicator)"
+                      >
                         <div class="indicator-info">
                           <div class="indicator-name" :title="indicator.name">
                             {{ indicator.name }}
@@ -968,38 +936,6 @@ const {
                       <div class="detail-row">
                         <span class="detail-label">指标类型</span>
                         <span class="detail-value">{{ indicator.type1 }}</span>
-                      </div>
-                      <div class="detail-row">
-                        <span class="detail-label">当前进度</span>
-                        <span class="detail-value">
-                          <el-progress
-                            :percentage="indicator.progress"
-                            :stroke-width="8"
-                            :color="
-                              indicator.progress >= 80
-                                ? '#67c23a'
-                                : indicator.progress >= 50
-                                  ? '#e6a23c'
-                                  : '#f56c6c'
-                            "
-                            style="width: 120px; display: inline-flex"
-                          />
-                        </span>
-                      </div>
-                      <div
-                        v-if="indicator.targetProgress !== null || indicator.milestoneIndex"
-                        class="detail-row"
-                      >
-                        <span class="detail-label">目标进度</span>
-                        <span class="detail-value"
-                          >{{
-                            indicator.targetProgress !== null
-                              ? indicator.targetProgress + '%'
-                              : '-'
-                          }}{{
-                            indicator.milestoneIndex ? ' (' + indicator.milestoneIndex + ')' : ''
-                          }}</span
-                        >
                       </div>
                       <div class="detail-row">
                         <span class="detail-label">权重</span>
@@ -1098,33 +1034,41 @@ const {
 
       <!-- 图表区域 -->
       <el-row :gutter="16" class="chart-section">
-        <!-- 得分构成 -->
+        <!-- 异动汇总（P5） -->
         <el-col :xs="24" :md="8">
           <el-card shadow="hover" class="chart-card card-animate">
             <template #header>
               <div class="card-header">
-                <div style="display: flex; align-items: center; gap: 4px">
-                  <span class="card-title">得分构成</span>
-                  <el-tooltip :content="helpTexts.scoreComposition" placement="top" effect="light">
-                    <el-icon class="help-icon"><QuestionFilled /></el-icon>
-                  </el-tooltip>
-                </div>
+                <span class="card-title">指标异动汇总</span>
               </div>
             </template>
-            <ScoreCompositionChart
-              :basic-score="dashboardData.basicScore"
-              :development-score="dashboardData.developmentScore"
+            <el-empty
+              v-if="dashboardStore.mutationSummary.length === 0"
+              description="当前无异动中的指标"
+              :image-size="60"
             />
+            <ul v-else class="mutation-summary">
+              <li
+                v-for="item in dashboardStore.mutationSummary"
+                :key="item.id"
+                class="mutation-summary__item"
+              >
+                <span class="mutation-summary__name">{{ item.indicator_desc }}</span>
+                <span class="mutation-summary__time">
+                  {{ item.mutation_started_at?.slice(0, 10) }} 起
+                </span>
+              </li>
+            </ul>
           </el-card>
         </el-col>
 
-        <!-- 预警分布 -->
+        <!-- 进度等级分布 -->
         <el-col :xs="24" :md="8">
           <el-card shadow="hover" class="chart-card card-animate">
             <template #header>
               <div class="card-header">
                 <div style="display: flex; align-items: center; gap: 4px">
-                  <span class="card-title">预警分布</span>
+                  <span class="card-title">进度等级分布</span>
                   <el-tooltip :content="helpTexts.alertDistribution" placement="top" effect="light">
                     <el-icon class="help-icon"><QuestionFilled /></el-icon>
                   </el-tooltip>
@@ -1132,9 +1076,12 @@ const {
               </div>
             </template>
             <AlertDistributionChart
-              :severe="dashboardData.alertIndicators.severe"
-              :moderate="dashboardData.alertIndicators.moderate"
-              :normal="dashboardData.alertIndicators.normal"
+              :ahead="dashboardData.levelDistribution?.ahead ?? 0"
+              :normal="dashboardData.levelDistribution?.normal ?? 0"
+              :delayed="
+                (dashboardData.alertIndicators.severe || 0) +
+                (dashboardData.alertIndicators.moderate || 0)
+              "
               @click="handleAlertClick"
             />
           </el-card>
@@ -1227,16 +1174,6 @@ const {
           <el-table-column label="责任主体" width="140" align="center">
             <template #default="{ row }">
               <span class="dept-badge">{{ row.dept }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="当前进度" width="160" align="center">
-            <template #default="{ row }">
-              <div class="progress-cell-new">
-                <div class="progress-bar-wrapper">
-                  <div class="progress-bar-fill" :style="{ width: row.progress + '%' }"></div>
-                </div>
-                <span class="delayed-tag">DELAYED {{ row.days }}D</span>
-              </div>
             </template>
           </el-table-column>
           <el-table-column label="闭环管理" width="130" align="center">
@@ -1372,6 +1309,99 @@ const {
       </template> </template
     ><!-- 结束 v-else 正常数据展示 -->
   </div>
+  <!-- A5 点行下钻：指标完整详情对话框 -->
+  <ElDialog
+    :model-value="selectedIndicatorDetail !== null"
+    :title="selectedIndicatorDetail?.dashboard?.name || '指标详情'"
+    width="480px"
+    append-to-body
+    @update:model-value="handleCloseIndicatorDetail"
+  >
+    <div v-if="selectedIndicatorDetail?.dashboard" class="indicator-full-detail">
+      <div class="detail-row">
+        <span class="detail-label">指标类型</span>
+        <span class="detail-value">{{ selectedIndicatorDetail.dashboard.type1 }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">权重</span>
+        <span class="detail-value">{{ selectedIndicatorDetail.dashboard.weight }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">责任部门</span>
+        <span class="detail-value">{{ selectedIndicatorDetail.dashboard.responsibleDept }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">所属战略任务</span>
+        <span class="detail-value">{{
+          selectedIndicatorDetail.dashboard.taskContent || '未关联'
+        }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">完成状态</span>
+        <span class="detail-value">
+          <span
+            class="status-tag"
+            :class="getStatusClass(selectedIndicatorDetail.dashboard.status)"
+          >
+            {{ getStatusText(selectedIndicatorDetail.dashboard.status) }}
+          </span>
+        </span>
+      </div>
+    </div>
+    <template #footer>
+      <ElButton @click="handleCloseIndicatorDetail">关闭</ElButton>
+    </template>
+  </ElDialog>
 </template>
 
-<style scoped src="./DashboardView.css"></style>
+<style scoped src="./DashboardView.css">
+.level-distribution {
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  padding: 12px 0;
+}
+.level-distribution__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.level-distribution__num {
+  font-size: 28px;
+  font-weight: 600;
+}
+.level-distribution__item--ahead .level-distribution__num {
+  color: #67c23a;
+}
+.level-distribution__item--normal .level-distribution__num {
+  color: #409eff;
+}
+.level-distribution__item--delayed .level-distribution__num {
+  color: #e6a23c;
+}
+.level-distribution__label {
+  font-size: 13px;
+  color: #606266;
+}
+
+.mutation-summary {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 180px;
+  overflow: auto;
+}
+.mutation-summary__item {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px dashed #ebeef5;
+  font-size: 13px;
+}
+.mutation-summary__time {
+  color: #909399;
+  white-space: nowrap;
+}
+</style>

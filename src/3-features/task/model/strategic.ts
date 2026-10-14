@@ -9,7 +9,6 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { StrategicIndicator, StrategicTask } from '@/shared/types'
 import { indicatorApi } from '@/features/indicator/api'
-import { milestoneApi } from '@/entities/milestone/api/milestoneApi'
 import { strategicApi } from '@/features/task/api/strategicApi'
 import { alertApi, type ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import { logger } from '@/shared/lib/utils/logger'
@@ -133,8 +132,12 @@ function normalizeManualAlertSeverity(value: unknown): ManualAlertSeverity {
   const normalized = String(value || '')
     .trim()
     .toUpperCase()
-  if (normalized === 'INFO' || normalized === 'WARNING' || normalized === 'CRITICAL') {
+  if (normalized === 'AHEAD' || normalized === 'NORMAL' || normalized === 'DELAYED') {
     return normalized
+  }
+  // 旧预警档位归并（用户定案 2026-09-18）：INFO/WARNING/CRITICAL 一律显示为「延期」
+  if (normalized === 'INFO' || normalized === 'WARNING' || normalized === 'CRITICAL') {
+    return 'DELAYED'
   }
   return null
 }
@@ -210,19 +213,6 @@ function toBackendIndicatorType(...values: unknown[]): '定性' | '定量' {
   return normalizeIndicatorType(...values)
 }
 
-function normalizeMilestoneStatus(status: unknown): 'pending' | 'completed' | 'overdue' {
-  const normalized = String(status || '')
-    .trim()
-    .toUpperCase()
-  if (normalized === 'COMPLETED') {
-    return 'completed'
-  }
-  if (normalized === 'DELAYED' || normalized === 'CANCELED' || normalized === 'OVERDUE') {
-    return 'overdue'
-  }
-  return 'pending'
-}
-
 function normalizeIndicatorType(...values: unknown[]): '定性' | '定量' {
   for (const value of values) {
     const normalized = String(value || '')
@@ -242,26 +232,6 @@ function normalizeIndicatorType(...values: unknown[]): '定性' | '定量' {
   }
 
   return '定量'
-}
-
-function normalizeMilestones(rawMilestones: unknown): StrategicIndicator['milestones'] {
-  if (!Array.isArray(rawMilestones)) {
-    return []
-  }
-
-  return rawMilestones.map((milestone, index) => {
-    const item = getRecord(milestone)
-    return {
-      id: getString(item, 'id', 'milestoneId') || `milestone-${index}`,
-      name: getString(item, 'name', 'milestoneName') || `里程碑${index + 1}`,
-      targetProgress: getNumber(item, 'targetProgress', 'weightPercent'),
-      deadline: getString(item, 'deadline', 'dueDate'),
-      status: normalizeMilestoneStatus(item.status),
-      isPaired: getBoolean(item, 'isPaired') ?? false,
-      weightPercent: getNumber(item, 'weightPercent', 'targetProgress'),
-      sortOrder: getNumber(item, 'sortOrder') || index
-    }
-  })
 }
 
 function normalizeType2FromTaskType(taskType: unknown): '发展性' | '基础性' {
@@ -343,7 +313,6 @@ export function toStrategicIndicator(raw: unknown): StrategicIndicator {
     remark: getString(item, 'remark'),
     canWithdraw: getBoolean(item, 'canWithdraw') ?? status === 'DISTRIBUTED',
     taskContent: taskContent,
-    milestones: normalizeMilestones(item.milestones),
     targetValue: getNumber(item, 'targetValue') || 100,
     actualValue: getNumber(item, 'actualValue', 'progress'),
     unit: getString(item, 'unit') || '%',
@@ -477,41 +446,6 @@ function applyTaskMetadata(
       taskContent: taskInfo.taskName || indicator.taskContent
     }
   })
-}
-
-async function hydrateIndicatorMilestones(
-  list: StrategicIndicator[]
-): Promise<StrategicIndicator[]> {
-  const indicatorsWithoutMilestones = list.filter(indicator => !indicator.milestones?.length)
-  if (indicatorsWithoutMilestones.length === 0) {
-    return list
-  }
-
-  // 批量查询：1 个请求替代 N 个请求，消除 N+1 问题
-  const indicatorIds = indicatorsWithoutMilestones
-    .map(i => Number(i.id))
-    .filter(id => Number.isFinite(id))
-
-  const milestoneMap = new Map<string, StrategicIndicator['milestones']>()
-
-  if (indicatorIds.length > 0) {
-    try {
-      const response = await milestoneApi.getMilestonesByIndicatorIds(indicatorIds)
-      if (response?.success && response.data) {
-        // response.data 是 Record<number, Milestone[]>
-        for (const [idStr, rawMilestones] of Object.entries(response.data)) {
-          milestoneMap.set(idStr, normalizeMilestones(rawMilestones))
-        }
-      }
-    } catch (err) {
-      logger.warn('[Strategic Store] Batch milestones fetch failed, falling back to empty', err)
-    }
-  }
-
-  return list.map(indicator => ({
-    ...indicator,
-    milestones: milestoneMap.get(String(indicator.id)) ?? indicator.milestones ?? []
-  }))
 }
 
 function normalizeIndicators(
@@ -683,7 +617,7 @@ async function hydrateManualAlertLevels(list: StrategicIndicator[]): Promise<Str
       }
     })
   } catch (alertError) {
-    logger.warn('[Strategic Store] 手动预警等级加载失败，跳过预警等级回显', alertError)
+    logger.warn('[Strategic Store] 手动进度等级加载失败，跳过进度等级回显', alertError)
     return list
   }
 }
@@ -777,13 +711,19 @@ export const useStrategicStore = defineStore('strategic', () => {
 
   // ============ Actions ============
 
-  async function loadIndicatorsByYear(year: number, options: { force?: boolean } = {}) {
+  async function loadIndicatorsByYear(
+    year: number,
+    options: { force?: boolean; background?: boolean } = {}
+  ) {
     if (loadingYearPromise.value && loadingYear.value === year) {
       return loadingYearPromise.value
     }
 
-    loading.value = true
-    loadingState.value.indicators = true
+    // background=true：静默刷新，不翻转 loading 状态，避免看板等页面铺骨架屏（2026-10-07 异步局部刷新）
+    if (!options.background) {
+      loading.value = true
+      loadingState.value.indicators = true
+    }
     loadingState.value.error = null
     error.value = null
 
@@ -812,8 +752,7 @@ export const useStrategicStore = defineStore('strategic', () => {
           const normalized = normalizeIndicators(response.data as BackendIndicatorListPayload)
           const taskLookup = buildTaskLookup(tasksResponse.data)
           const aligned = applyTaskMetadata(normalized, taskLookup)
-          const hydrated = await hydrateIndicatorMilestones(aligned)
-          const alertHydrated = await hydrateManualAlertLevels(hydrated)
+          const alertHydrated = await hydrateManualAlertLevels(aligned)
 
           // 统一部门字段：ID/别名 -> 标准部门名（含合并名称），避免跨页面筛选不命中
           const orgStore = useOrgStore()
@@ -841,8 +780,10 @@ export const useStrategicStore = defineStore('strategic', () => {
         logger.error('[Strategic Store] Failed to load indicators:', err)
         throw err
       } finally {
-        loading.value = false
-        loadingState.value.indicators = false
+        if (!options.background) {
+          loading.value = false
+          loadingState.value.indicators = false
+        }
         loadingYearPromise.value = null
         loadingYear.value = null
       }
@@ -964,7 +905,7 @@ export const useStrategicStore = defineStore('strategic', () => {
   async function updateManualAlertLevel(id: string, severity: ManualAlertSeverity) {
     try {
       if (!/^\d+$/.test(id)) {
-        throw new Error(`指标 ${id} 尚未持久化，无法设置预警等级`)
+        throw new Error(`指标 ${id} 尚未持久化，无法设置进度等级`)
       }
 
       await alertApi.setManualAlertLevel(id, severity)

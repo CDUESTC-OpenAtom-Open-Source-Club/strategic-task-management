@@ -16,6 +16,7 @@ import { buildDashboardSummary, getIndicatorStatusAtMonth } from '@/features/das
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
 import {
   GLOBAL_DATA_REFRESH_REQUEST_EVENT,
+  shouldRefreshForDomains,
   type GlobalDataRefreshDetail
 } from '@/5-shared/lib/dataFreshness'
 
@@ -44,17 +45,12 @@ export function useDashboardView(props: DashboardViewProps) {
   }
 
   // 帮助提示内容
+  // P4 A2：删除分数体系文案(totalScore/basicScore/developmentScore/scoreComposition)
   const helpTexts = {
-    totalScore:
-      '总得分 = 基础性指标得分 + 发展性指标得分，满分120分。基础性指标满分100分，发展性指标满分20分。',
-    basicScore: '基础性指标是必须完成的核心指标，根据各指标完成进度加权计算得分，满分100分。',
-    developmentScore: '发展性指标是鼓励性指标，完成后可获得额外加分，满分20分。',
-    warningCount:
-      '预警任务按所选月份的里程碑状态计算：延期视为严重预警，未逾期但未达标视为中度预警。',
-    scoreComposition: '展示基础性指标和发展性指标的得分占比，帮助了解整体得分构成。',
-    alertDistribution:
-      '按所选月份统计指标状态：严重预警表示该月底前应完成的里程碑未达标，中度预警表示当月目标未达标但尚未逾期。',
-    completionRate: '完成率 = 所选月份状态为正常或超前完成的指标数 / 总指标数 × 100%。',
+    warningCount: '延期任务按所选月份状态统计：延期表示该指标进度等级被判定为滞后，需上级关注。',
+    alertDistribution: '按所选月份统计指标进度等级分布：超前完成、正常、延期。',
+    completionRate:
+      '完成率 = 所选月份状态为正常或超前的指标数 / 总指标数 × 100%。未下发或延期指标不计入完成。',
     departmentProgress:
       '展示各部门的指标完成进度，进度条颜色表示状态：绿色（≥80%）、黄色（50%-80%）、红色（<50%）。',
     benchmark: '展示各部门执行进度与基准线对比，红色表示低于基准线，蓝色表示达标。',
@@ -90,7 +86,15 @@ export function useDashboardView(props: DashboardViewProps) {
   type IndicatorStatus = 'normal' | 'ahead' | 'warning' | 'delayed'
 
   // 月份筛选和下钻状态（用于堆叠柱状图）
-  const selectedMonth = ref(new Date().getMonth() + 1) // 默认当前月
+  // P4 口径：看板默认展示「上个月」；1 月时上个月为去年 12 月（仅月份数值，年份由 timeContext 承载）
+  const previousMonthNumber = new Date().getMonth() === 0 ? 12 : new Date().getMonth()
+
+  // P5 看板异动汇总：异动审批中的指标清单
+  // P4-C1：迁移至 dashboard store,此处仅做引用转发
+  const mutationSummary = computed(() => dashboardStore.mutationSummary)
+  const loadMutationSummary = () => dashboardStore.fetchMutationSummary()
+
+  const selectedMonth = ref(previousMonthNumber) // 默认上月
   const isDrillDown = ref(false) // 是否处于下钻状态
   const drilledDept = ref('') // 下钻选中的部门
 
@@ -99,14 +103,14 @@ export function useDashboardView(props: DashboardViewProps) {
   const showMonthIndicatorCard = ref(false) // 控制月份指标卡片显示
 
   // ============ 学院看板状态（职能部门视角）============
-  const collegeSelectedMonth = ref(new Date().getMonth() + 1) // 学院看板选中月份
+  const collegeSelectedMonth = ref(previousMonthNumber) // 学院看板选中月份（默认上月）
   const isCollegeDrillDown = ref(false) // 学院看板下钻状态
   const drilledCollege = ref('') // 下钻选中的学院
   const selectedMonthInCollegeDrillDown = ref<number | null>(null) // 学院下钻后选中的月份
   const showCollegeMonthIndicatorCard = ref(false) // 学院月份指标卡片显示
 
   // ============ 分院排名看板状态 ============
-  const collegeRankingMonth = ref(new Date().getMonth() + 1) // 分院排名选中月份
+  const collegeRankingMonth = ref(previousMonthNumber) // 分院排名选中月份（默认上月）
   const selectedOwnerDeptFilter = ref<string>('all') // 职能部门筛选（战略发展部用）
 
   // 状态颜色配置
@@ -118,73 +122,18 @@ export function useDashboardView(props: DashboardViewProps) {
   }
 
   // 计算指标状态的函数
+  // 口径依据《SISM-业务口径决议录-2026-09-16》：里程碑移除后改由
+  // 「人工进度等级 + 生命周期状态 + 进度」推导，详见 dashboard/lib/summaryMetrics。
   const getIndicatorStatus = (indicator: Indicator): IndicatorStatus => {
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-
-    const milestones = indicator.milestones || []
-    if (milestones.length === 0) {
-      return 'normal'
-    }
-
-    const currentProgress = indicator.progress || 0
-
-    // 按 dueDate 排序里程碑
-    const sortedMilestones = [...milestones].sort(
-      (a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()
-    )
-
-    // 检查是否有已过期但未达标的里程碑（延期）
-    for (const milestone of sortedMilestones) {
-      const deadlineDate = new Date(milestone.dueDate)
-      deadlineDate.setHours(23, 59, 59, 999)
-
-      if (deadlineDate < today && currentProgress < milestone.targetProgress) {
-        return 'delayed'
-      }
-    }
-
-    // 找到离今天最近的未来里程碑（dueDate > 今天）
-    const nextMilestone = sortedMilestones.find(m => {
-      const deadlineDate = new Date(m.dueDate)
-      deadlineDate.setHours(23, 59, 59, 999)
-      return deadlineDate >= today
-    })
-
-    if (!nextMilestone) {
-      // 没有未来的里程碑，检查最后一个里程碑是否完成
-      const lastMilestone = sortedMilestones[sortedMilestones.length - 1]
-      if (lastMilestone && currentProgress >= lastMilestone.targetProgress) {
-        return 'ahead' // 全部完成
-      }
-      return 'normal'
-    }
-
-    // 检查是否超前完成
-    if (currentProgress >= nextMilestone.targetProgress) {
-      return 'ahead'
-    }
-
-    // 检查是否预警（距离 dueDate ≤ 3 天且未达标）
-    const nextDeadline = new Date(nextMilestone.dueDate)
-    nextDeadline.setHours(23, 59, 59, 999)
-    const daysUntilDeadline = Math.ceil(
-      (nextDeadline.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
-    )
-
-    if (daysUntilDeadline <= 3 && currentProgress < nextMilestone.targetProgress) {
-      return 'warning'
-    }
-
-    return 'normal'
+    return getIndicatorStatusAtMonth(indicator, selectedMonth.value, timeContext.currentYear)
   }
 
-  // 获取状态显示文本
+  // 获取状态显示文本（三档口径：原「预警」状态并入「延期」展示）
   const getStatusText = (status: IndicatorStatus): string => {
     const statusMap: Record<IndicatorStatus, string> = {
       normal: '正常',
       ahead: '超前完成',
-      warning: '预警',
+      warning: '延期',
       delayed: '延期'
     }
     return statusMap[status]
@@ -201,67 +150,9 @@ export function useDashboardView(props: DashboardViewProps) {
     return classMap[status]
   }
 
-  // 获取当月目标进度（离今天最近的里程碑的目标进度）
-  const getCurrentTargetProgress = (indicator: Indicator): number | null => {
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-
-    const milestones = indicator.milestones || []
-    if (milestones.length === 0) {
-      return null
-    }
-
-    // 按 dueDate 排序里程碑
-    const sortedMilestones = [...milestones].sort(
-      (a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()
-    )
-
-    // 找到离今天最近的里程碑（dueDate >= 今天）
-    const nextMilestone = sortedMilestones.find(m => {
-      const deadlineDate = new Date(m.dueDate)
-      deadlineDate.setHours(23, 59, 59, 999)
-      return deadlineDate >= today
-    })
-
-    if (nextMilestone) {
-      return nextMilestone.targetProgress
-    }
-
-    // 如果没有未来的里程碑，返回最后一个里程碑的目标
-    const lastMilestone = sortedMilestones[sortedMilestones.length - 1]
-    return lastMilestone ? lastMilestone.targetProgress : null
-  }
-
-  // 获取当前里程碑序号信息（如 "2/5" 表示第2个里程碑，共5个）
-  const getCurrentMilestoneIndex = (indicator: Indicator): string | null => {
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-
-    const milestones = indicator.milestones || []
-    if (milestones.length === 0) {
-      return null
-    }
-
-    const total = milestones.length
-
-    // 按 dueDate 排序里程碑
-    const sortedMilestones = [...milestones].sort(
-      (a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()
-    )
-
-    // 找到离今天最近的里程碑（dueDate >= 今天）
-    const nextMilestoneIndex = sortedMilestones.findIndex(m => {
-      const deadlineDate = new Date(m.dueDate)
-      deadlineDate.setHours(23, 59, 59, 999)
-      return deadlineDate >= today
-    })
-
-    if (nextMilestoneIndex !== -1) {
-      return `${nextMilestoneIndex + 1}/${total}`
-    }
-
-    // 如果没有未来的里程碑，返回最后一个
-    return `${total}/${total}`
+  // 里程碑机制已移除：不再有里程碑目标进度。
+  const getCurrentTargetProgress = (_indicator: Indicator): number | null => {
+    return null
   }
 
   const getIndicatorIdentity = (indicator: {
@@ -356,17 +247,20 @@ export function useDashboardView(props: DashboardViewProps) {
       .map(i => ({
         ...i,
         status: getUnifiedIndicatorStatus(i, getIndicatorStatus(i)),
-        targetProgress: getCurrentTargetProgress(i),
-        milestoneIndex: getCurrentMilestoneIndex(i)
+        targetProgress: getCurrentTargetProgress(i)
       }))
   })
 
-  // 筛选后的指标列表（根据状态筛选）
+  // 筛选后的指标列表（根据状态筛选；三档口径：选「延期」时包含原预警状态）
   const filteredDeptIndicators = computed(() => {
     if (!selectedStatusFilter.value) {
       return selectedDeptIndicators.value
     }
-    return selectedDeptIndicators.value.filter(i => i.status === selectedStatusFilter.value)
+    return selectedDeptIndicators.value.filter(i =>
+      selectedStatusFilter.value === 'delayed'
+        ? i.status === 'delayed' || i.status === 'warning'
+        : i.status === selectedStatusFilter.value
+    )
   })
 
   // 点击状态筛选
@@ -505,17 +399,20 @@ export function useDashboardView(props: DashboardViewProps) {
       .map(i => ({
         ...i,
         status: getUnifiedIndicatorStatus(i, getIndicatorStatusAtMonth(i, month, currentYear)),
-        targetProgress: getCurrentTargetProgress(i),
-        milestoneIndex: getCurrentMilestoneIndex(i)
+        targetProgress: getCurrentTargetProgress(i)
       }))
   })
 
-  // 月份指标筛选后的列表
+  // 月份指标筛选后的列表（三档口径：选「延期」时包含原预警状态）
   const filteredMonthIndicators = computed(() => {
     if (!selectedStatusFilter.value) {
       return monthIndicators.value
     }
-    return monthIndicators.value.filter(i => i.status === selectedStatusFilter.value)
+    return monthIndicators.value.filter(i =>
+      selectedStatusFilter.value === 'delayed'
+        ? i.status === 'delayed' || i.status === 'warning'
+        : i.status === selectedStatusFilter.value
+    )
   })
 
   // 月份指标状态统计
@@ -730,8 +627,7 @@ export function useDashboardView(props: DashboardViewProps) {
       .map(i => ({
         ...i,
         status: getUnifiedIndicatorStatus(i, getIndicatorStatusAtMonth(i, month, currentYear)),
-        targetProgress: getCurrentTargetProgress(i),
-        milestoneIndex: getCurrentMilestoneIndex(i)
+        targetProgress: getCurrentTargetProgress(i)
       }))
 
     // 职能部门视角：只看自己下发的
@@ -748,7 +644,12 @@ export function useDashboardView(props: DashboardViewProps) {
     if (!selectedStatusFilter.value) {
       return collegeMonthIndicators.value
     }
-    return collegeMonthIndicators.value.filter(i => i.status === selectedStatusFilter.value)
+    // 三档口径：选「延期」时包含原预警状态
+    return collegeMonthIndicators.value.filter(i =>
+      selectedStatusFilter.value === 'delayed'
+        ? i.status === 'delayed' || i.status === 'warning'
+        : i.status === selectedStatusFilter.value
+    )
   })
 
   // 学院月份指标状态统计
@@ -978,20 +879,34 @@ export function useDashboardView(props: DashboardViewProps) {
   )
 
   // 重新加载数据函数
-  const reloadData = async () => {
-    try {
+  // silent=true（2026-10-07 异步局部刷新）：事件驱动/定时兜底刷新走后台静默，
+  // 强制绕过缓存取新数据，但不翻转页面加载状态——看板不再整页铺骨架屏。
+  const reloadData = async (options: { silent?: boolean } = {}) => {
+    const silent = options.silent === true
+    if (!silent) {
       startLoading()
-      clearError()
+    }
+    clearError()
+    try {
       await Promise.all([
-        strategicStore.loadIndicatorsByYear(timeContext.currentYear),
+        silent
+          ? strategicStore.loadIndicatorsByYear(timeContext.currentYear, {
+              force: true,
+              background: true
+            })
+          : strategicStore.loadIndicatorsByYear(timeContext.currentYear),
         dashboardStore.fetchAlertStats(),
         dashboardStore.fetchUnclosedAlerts()
       ])
     } catch (err) {
-      setError(err instanceof Error ? err.message : '重新加载失败')
       logger.error('[Dashboard] Failed to reload data:', err)
+      if (!silent) {
+        setError(err instanceof Error ? err.message : '重新加载失败')
+      }
     } finally {
-      endLoading()
+      if (!silent) {
+        endLoading()
+      }
     }
   }
 
@@ -1224,7 +1139,7 @@ export function useDashboardView(props: DashboardViewProps) {
           指标总数: item.totalIndicators,
           已完成: item.completedIndicators,
           进行中: item.totalIndicators - item.completedIndicators,
-          预警数: item.alertCount,
+          延期数: item.alertCount,
           状态: item.status === 'success' ? '优秀' : item.status === 'warning' ? '良好' : '需改进'
         }))
 
@@ -1251,7 +1166,6 @@ export function useDashboardView(props: DashboardViewProps) {
           指标类型: item.type,
           权重: item.weight,
           完成进度: `${item.progress}%`,
-          里程碑进度: item.milestoneProgress,
           审批状态:
             item.approvalStatus === 'approved'
               ? '已通过'
@@ -1286,7 +1200,6 @@ export function useDashboardView(props: DashboardViewProps) {
           指标类别: item.type2,
           权重: item.weight,
           完成进度: `${item.progress}%`,
-          里程碑进度: item.milestoneProgress,
           审批状态:
             item.approvalStatus === 'approved'
               ? '已通过'
@@ -1354,6 +1267,54 @@ export function useDashboardView(props: DashboardViewProps) {
     dashboardStore.drillDownToDepartment(target, isCollege ? 'college' : 'functional')
   }
 
+  // A5 点行下钻：选中部门视图中的指标行，弹出完整详情卡（复用 popover 数据，不新增接口）
+  const selectedIndicatorDetail = ref<{
+    dashboard: (typeof filteredDeptIndicators.value)[number]
+  } | null>(null)
+
+  const handleIndicatorRowClick = (indicator: {
+    id?: string | number
+    name?: string
+    responsibleDept?: string
+  }) => {
+    const pool = [
+      ...filteredDeptIndicators.value,
+      ...filteredMonthIndicators.value,
+      ...filteredCollegeMonthIndicators.value
+    ]
+    const match = pool.find(item => String(item.id) === String(indicator.id)) as
+      | (typeof filteredDeptIndicators.value)[number]
+      | undefined
+    if (!match) {
+      return
+    }
+
+    // P4 点行下钻：行所属部门与当前下钻部门不同且属于可下钻层级时，驱动层级切换
+    const rowDept = String(
+      (match as { responsibleDept?: string }).responsibleDept ??
+        (match as { department?: string }).department ??
+        ''
+    )
+    const currentDrilled = String(drilledDept.value || '')
+    if (rowDept && rowDept !== currentDrilled && rowDept !== props.departmentName) {
+      const isCollege =
+        String((match as { targetOrgType?: string }).targetOrgType ?? '').toLowerCase() ===
+          'academic' || rowDept.includes('学院')
+      try {
+        dashboardStore.drillDownToDepartment(rowDept, isCollege ? 'college' : 'functional')
+        return
+      } catch {
+        // 下钻失败则退回详情抽屉
+      }
+    }
+
+    selectedIndicatorDetail.value = { dashboard: match }
+  }
+
+  const handleCloseIndicatorDetail = () => {
+    selectedIndicatorDetail.value = null
+  }
+
   // 任务来源点击筛选
   const handleSourceClick = (source: string) => {
     dashboardStore.applyFilter({ sourceOwner: source })
@@ -1366,25 +1327,23 @@ export function useDashboardView(props: DashboardViewProps) {
   }
 
   // KPI 卡片数据（带趋势）
+  // P4 A2：删除「战略执行总分/发展性指标得分」分数卡,改为「超前完成/正常推进」等级计数
   const _kpiCards = computed(() => {
     const data = dashboardData.value
-    const _indicators = dashboardStore.visibleIndicators
-
-    // 计算上期数据（模拟趋势）
-    const lastMonthScore = Math.max(0, data.totalScore - Math.floor(Math.random() * 10) + 5)
-    const scoreTrend = data.totalScore - lastMonthScore
+    const distribution = data.levelDistribution ?? { ahead: 0, normal: 0, delayed: 0 }
+    const totalCount = distribution.ahead + distribution.normal + distribution.delayed
 
     return [
       {
-        label: '战略执行总分',
-        helpText: helpTexts.totalScore,
-        value: data.totalScore,
-        unit: '分',
-        trend: Math.abs(scoreTrend),
-        isUp: scoreTrend >= 0,
-        predict: Math.min(120, data.totalScore + 8),
-        desc: '年度目标: 120分',
-        percent: Math.round((data.totalScore / 120) * 100),
+        label: '超前完成',
+        helpText: helpTexts.alertDistribution,
+        value: distribution.ahead,
+        unit: '项',
+        trend: 2,
+        isUp: true,
+        predict: distribution.ahead + 1,
+        desc: '已提前达成',
+        percent: totalCount > 0 ? Math.round((distribution.ahead / totalCount) * 100) : 0,
         icon: 'Aim',
         gradient: 'primary'
       },
@@ -1402,31 +1361,31 @@ export function useDashboardView(props: DashboardViewProps) {
         gradient: 'success'
       },
       {
-        label: '严重预警任务',
+        label: '延期任务',
         helpText: helpTexts.warningCount,
-        value: data.alertIndicators.severe,
+        value: distribution.delayed,
         unit: '项',
         trend: 2,
         isUp: false,
-        predict: Math.max(0, data.alertIndicators.severe - 3),
+        predict: Math.max(0, distribution.delayed - 3),
         desc: '需重点关注推进',
         percent: Math.max(
           0,
-          100 - (data.alertIndicators.severe / Math.max(1, data.totalIndicators)) * 100
+          100 - (distribution.delayed / Math.max(1, data.totalIndicators)) * 100
         ),
         icon: 'Warning',
         gradient: 'danger'
       },
       {
-        label: '发展性指标得分',
-        helpText: helpTexts.developmentScore,
-        value: data.developmentScore,
-        unit: '分',
-        trend: 1.5,
+        label: '正常推进',
+        helpText: helpTexts.alertDistribution,
+        value: distribution.normal,
+        unit: '项',
+        trend: 1,
         isUp: true,
-        predict: Math.min(20, data.developmentScore + 3),
-        desc: '满分20分',
-        percent: (data.developmentScore / 20) * 100,
+        predict: distribution.normal + 2,
+        desc: '进度符合预期',
+        percent: totalCount > 0 ? Math.round((distribution.normal / totalCount) * 100) : 0,
         icon: 'TrendCharts',
         gradient: 'purple'
       }
@@ -1731,16 +1690,14 @@ export function useDashboardView(props: DashboardViewProps) {
             tooltip += `${params[0].name}<br/>`
             tooltip += `<span style="color: ${statusColors.ahead}">●</span> 超前: ${dataItem?.ahead || 0}<br/>`
             tooltip += `<span style="color: ${statusColors.normal}">●</span> 正常: ${dataItem?.normal || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.warning}">●</span> 预警: ${dataItem?.warning || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.delayed}">●</span> 延期: ${dataItem?.delayed || 0}<br/>`
+            tooltip += `<span style="color: ${statusColors.delayed}">●</span> 延期: ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}<br/>`
             tooltip += `总计: ${dataItem?.total || 0}`
           } else {
             // 部门视图显示统计
             tooltip += `${selectedMonth.value}月完成情况<br/>`
             tooltip += `<span style="color: ${statusColors.ahead}">■</span> 超前: ${dataItem?.ahead || 0}<br/>`
             tooltip += `<span style="color: ${statusColors.normal}">■</span> 正常: ${dataItem?.normal || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.warning}">■</span> 预警: ${dataItem?.warning || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.delayed}">■</span> 延期: ${dataItem?.delayed || 0}<br/>`
+            tooltip += `<span style="color: ${statusColors.delayed}">■</span> 延期: ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}<br/>`
             tooltip += `总计: ${dataItem?.total || 0}<br/>`
             tooltip += `<span style="color: #409eff; font-size: 11px;">点击查看月度趋势</span>`
           }
@@ -1748,7 +1705,7 @@ export function useDashboardView(props: DashboardViewProps) {
         }
       },
       legend: {
-        data: ['超前完成', '正常', '预警', '延期'],
+        data: ['超前完成', '正常', '延期'],
         bottom: 0,
         left: 'center',
         itemWidth: 12,
@@ -1815,16 +1772,7 @@ export function useDashboardView(props: DashboardViewProps) {
           data: data.map(d => d.normal || 0)
         },
         {
-          name: '预警',
-          type: 'bar',
-          stack: 'total',
-          barWidth: isDrillDown.value ? 40 : 30,
-          itemStyle: {
-            color: statusColors.warning
-          },
-          data: data.map(d => d.warning || 0)
-        },
-        {
+          // 三档口径：原「预警」桶并入「延期」展示
           name: '延期',
           type: 'bar',
           stack: 'total',
@@ -1833,7 +1781,7 @@ export function useDashboardView(props: DashboardViewProps) {
             color: statusColors.delayed,
             borderRadius: isDrillDown.value ? [0, 0, 0, 0] : [0, 4, 4, 0]
           },
-          data: data.map(d => d.delayed || 0)
+          data: data.map(d => (d.warning || 0) + (d.delayed || 0))
         }
       ]
     })
@@ -2066,15 +2014,13 @@ export function useDashboardView(props: DashboardViewProps) {
             tooltip += `${params[0].name}<br/>`
             tooltip += `<span style="color: ${statusColors.ahead}">●</span> 超前: ${dataItem?.ahead || 0}<br/>`
             tooltip += `<span style="color: ${statusColors.normal}">●</span> 正常: ${dataItem?.normal || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.warning}">●</span> 预警: ${dataItem?.warning || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.delayed}">●</span> 延期: ${dataItem?.delayed || 0}<br/>`
+            tooltip += `<span style="color: ${statusColors.delayed}">●</span> 延期: ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}<br/>`
             tooltip += `总计: ${dataItem?.total || 0}`
           } else {
             tooltip += `${collegeSelectedMonth.value}月完成情况<br/>`
             tooltip += `<span style="color: ${statusColors.ahead}">■</span> 超前: ${dataItem?.ahead || 0}<br/>`
             tooltip += `<span style="color: ${statusColors.normal}">■</span> 正常: ${dataItem?.normal || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.warning}">■</span> 预警: ${dataItem?.warning || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.delayed}">■</span> 延期: ${dataItem?.delayed || 0}<br/>`
+            tooltip += `<span style="color: ${statusColors.delayed}">■</span> 延期: ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}<br/>`
             tooltip += `总计: ${dataItem?.total || 0}<br/>`
             tooltip += `<span style="color: #409eff; font-size: 11px;">点击查看月度趋势</span>`
           }
@@ -2082,7 +2028,7 @@ export function useDashboardView(props: DashboardViewProps) {
         }
       },
       legend: {
-        data: ['超前完成', '正常', '预警', '延期'],
+        data: ['超前完成', '正常', '延期'],
         bottom: 0,
         left: 'center',
         itemWidth: 12,
@@ -2149,16 +2095,7 @@ export function useDashboardView(props: DashboardViewProps) {
           data: data.map(d => d.normal || 0)
         },
         {
-          name: '预警',
-          type: 'bar',
-          stack: 'total',
-          barWidth: isCollegeDrillDown.value ? 40 : 30,
-          itemStyle: {
-            color: statusColors.warning
-          },
-          data: data.map(d => d.warning || 0)
-        },
-        {
+          // 三档口径：原「预警」桶并入「延期」展示
           name: '延期',
           type: 'bar',
           stack: 'total',
@@ -2167,7 +2104,7 @@ export function useDashboardView(props: DashboardViewProps) {
             color: statusColors.delayed,
             borderRadius: isCollegeDrillDown.value ? [0, 0, 0, 0] : [0, 4, 4, 0]
           },
-          data: data.map(d => d.delayed || 0)
+          data: data.map(d => (d.warning || 0) + (d.delayed || 0))
         }
       ]
     })
@@ -2281,8 +2218,7 @@ export function useDashboardView(props: DashboardViewProps) {
                 <div style="margin-top: 6px; padding-top: 6px; border-top: 1px dashed #e4e7ed;">
                   <span style="color: #67c23a; margin-right: 8px;">超前 ${dataItem?.ahead || 0}</span>
                   <span style="color: #409eff; margin-right: 8px;">正常 ${dataItem?.normal || 0}</span>
-                  <span style="color: #e6a23c; margin-right: 8px;">预警 ${dataItem?.warning || 0}</span>
-                  <span style="color: #f56c6c;">延期 ${dataItem?.delayed || 0}</span>
+                  <span style="color: #f56c6c;">延期 ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}</span>
                 </div>`
         }
       },
@@ -2465,6 +2401,35 @@ export function useDashboardView(props: DashboardViewProps) {
     benchmarkChartInstance?.dispose()
     collegeChartInstance?.dispose()
     collegeRankingChartInstance?.dispose()
+    stopDashboardAutoRefresh()
+  })
+
+  // 5 分钟定时兜底（2026-09-19 用户拍板恢复）：PR #65 改为 WS 事件驱动后，
+  // 若 WS 断开/漏推，数据将停留在旧状态——本定时器作为断连场景的兜底刷新，
+  // 页面不可见时跳过，卸载时清理。
+  const DASHBOARD_AUTO_REFRESH_INTERVAL = 5 * 60 * 1000
+  let dashboardAutoRefreshTimer: number | null = null
+
+  const startDashboardAutoRefresh = () => {
+    stopDashboardAutoRefresh()
+    dashboardAutoRefreshTimer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') {
+        return
+      }
+      void reloadData({ silent: true })
+      void loadMutationSummary()
+    }, DASHBOARD_AUTO_REFRESH_INTERVAL)
+  }
+
+  const stopDashboardAutoRefresh = () => {
+    if (dashboardAutoRefreshTimer !== null) {
+      window.clearInterval(dashboardAutoRefreshTimer)
+      dashboardAutoRefreshTimer = null
+    }
+  }
+
+  onMounted(() => {
+    startDashboardAutoRefresh()
   })
 
   const handleGlobalDataRefreshRequest = (event: Event) => {
@@ -2473,9 +2438,15 @@ export function useDashboardView(props: DashboardViewProps) {
     }
 
     const detail = (event as CustomEvent<GlobalDataRefreshDetail>).detail
+    // 2026-09-27 细粒度异步刷新：看板仅响应 dashboard 域（审批终态/指标变更），
+    // 流程中间环节的通知不再触发看板全量重载；窗口聚焦/可见性兜底不受影响
+    if (!shouldRefreshForDomains(detail, ['dashboard'])) {
+      return
+    }
     globalDataRefreshPromise = (async () => {
       logger.info('[DashboardView] handling global data refresh request', detail)
-      await reloadData()
+      // 事件驱动刷新一律后台静默：数据就地更新，不打断当前浏览（2026-10-07）
+      await reloadData({ silent: true })
     })().finally(() => {
       globalDataRefreshPromise = null
     })
@@ -2525,7 +2496,6 @@ export function useDashboardView(props: DashboardViewProps) {
     filteredMonthIndicators,
     getCollegeRankingData,
     getCollegeStatsForFunctionalDept,
-    getCurrentMilestoneIndex,
     getCurrentTargetProgress,
     getDeptStatsAtMonth,
     getIndicatorStatus,
@@ -2547,6 +2517,9 @@ export function useDashboardView(props: DashboardViewProps) {
     handleResize,
     handleSankeyLinkClick,
     handleSankeyNodeClick,
+    handleIndicatorRowClick,
+    handleCloseIndicatorDetail,
+    selectedIndicatorDetail,
     handleSourceClick,
     handleStatusFilterClick,
     handleUrge,

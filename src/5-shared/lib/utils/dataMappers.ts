@@ -7,18 +7,6 @@ import type { StrategicIndicator } from '@/shared/types'
 
 type BackendSyncField = keyof StrategicIndicator
 
-type MilestoneLike = {
-  milestoneId?: number | string | null
-  id?: number | string | null
-  milestoneName?: string | null
-  name?: string | null
-  targetProgress?: number | null
-  dueDate?: string | null
-  deadline?: string | null
-  status?: string | null
-  sortOrder?: number | null
-}
-
 const BACKEND_FIELDS: readonly BackendSyncField[] = [
   'name',
   'type1',
@@ -29,7 +17,6 @@ const BACKEND_FIELDS: readonly BackendSyncField[] = [
   'taskId',
   'taskContent',
   'description',
-  'milestones',
   'progress',
   'status',
   'year',
@@ -96,32 +83,6 @@ export function convertToUpdateRequest(
 
   if ('statusAudit' in updates && updates.statusAudit) {
     request.statusAudit = JSON.stringify(updates.statusAudit)
-  }
-
-  if ('milestones' in updates && updates.milestones) {
-    request.milestones = updates.milestones.map((milestone, index) => {
-      const ms = milestone as MilestoneLike
-      const milestoneId = parseOptionalNumericId(ms.milestoneId) ?? parseOptionalNumericId(ms.id)
-
-      let backendStatus = 'NOT_STARTED'
-      if (ms.status) {
-        const statusMap: Record<string, string> = {
-          pending: 'NOT_STARTED',
-          completed: 'COMPLETED',
-          overdue: 'DELAYED'
-        }
-        backendStatus = statusMap[ms.status] || ms.status
-      }
-
-      return {
-        milestoneId,
-        milestoneName: ms.milestoneName || ms.name || '',
-        targetProgress: ms.targetProgress || 0,
-        dueDate: ms.dueDate || ms.deadline || '',
-        status: backendStatus,
-        sortOrder: ms.sortOrder !== undefined ? ms.sortOrder : index
-      }
-    })
   }
 
   return request

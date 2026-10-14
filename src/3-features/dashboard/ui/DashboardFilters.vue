@@ -104,6 +104,16 @@ const handleReset = () => {
   emit('apply')
 }
 
+// alertLevel 筛选通道沿用旧键值（图表扇区点击写入），标签按三档口径显示中文
+const progressLevelLabel = (level?: string) => {
+  const labels: Record<string, string> = {
+    severe: '延期',
+    moderate: '滞后',
+    normal: '正常'
+  }
+  return level ? (labels[level] ?? level) : ''
+}
+
 const handleCloseTag = (key: keyof typeof localFilters.value) => {
   localFilters.value[key] = undefined
   handleApply()
@@ -163,25 +173,6 @@ const hasFilters = computed(() => {
         </el-select>
       </el-form-item>
 
-      <el-form-item label="预警级别">
-        <el-select
-          v-model="localFilters.alertLevel"
-          placeholder="全部"
-          clearable
-          style="width: 130px"
-        >
-          <el-option label="严重 (<30%)" value="severe">
-            <span style="color: #f56c6c">严重</span>
-          </el-option>
-          <el-option label="中度 (30%-60%)" value="moderate">
-            <span style="color: #e6a23c">中度</span>
-          </el-option>
-          <el-option label="正常 (≥60%)" value="normal">
-            <span style="color: #67c23a">正常</span>
-          </el-option>
-        </el-select>
-      </el-form-item>
-
       <el-form-item>
         <el-button type="primary" :icon="hasFilters ? 'Search' : undefined" @click="handleApply">
           {{ hasFilters ? '应用筛选' : '查询' }}
@@ -225,7 +216,7 @@ const hasFilters = computed(() => {
         size="small"
         @close="handleCloseTag('alertLevel')"
       >
-        预警: {{ localFilters.alertLevel }}
+        进度等级: {{ progressLevelLabel(localFilters.alertLevel) }}
       </el-tag>
     </div>
   </div>

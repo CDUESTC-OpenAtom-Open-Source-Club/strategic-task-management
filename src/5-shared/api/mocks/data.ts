@@ -4,13 +4,7 @@
  */
 
 import type { ApiResponse, PageResponse } from '@/shared/types/entities'
-import {
-  mockUsers,
-  mockAssessmentCycles,
-  mockStrategicTasks,
-  mockIndicators,
-  mockMilestones
-} from './fixtures'
+import { mockUsers, mockAssessmentCycles, mockStrategicTasks, mockIndicators } from './fixtures'
 import { mockDashboardData } from './fixtures/mockDashboardData'
 
 // ===========================================
@@ -52,7 +46,6 @@ export { mockUsers }
 export { mockAssessmentCycles }
 export { mockStrategicTasks }
 export { mockIndicators }
-export { mockMilestones }
 export { mockDashboardData }
 
 // ===========================================

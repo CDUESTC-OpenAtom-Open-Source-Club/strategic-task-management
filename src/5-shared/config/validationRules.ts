@@ -1,9 +1,9 @@
 /**
  * 数据验证规则配置文件
- * 
+ *
  * 定义指标、里程碑、用户等实体的验证规则
  * 用于 DataValidator Composable 进行数据完整性和格式校验
- * 
+ *
  * @requirements 2.4, 2.6, 5.2, 9.1, 9.2, 9.3
  */
 
@@ -133,31 +133,17 @@ export type EntityValidationRules = Record<string, ValidationRule>
  */
 export const PROGRESS_APPROVAL_STATUS_VALUES = [
   'NONE',
-  'DRAFT', 
-  'PENDING', 
-  'APPROVED', 
+  'DRAFT',
+  'PENDING',
+  'APPROVED',
   'REJECTED'
-] as const
-
-/**
- * 里程碑状态枚举值
- * @requirement 2.4 - Milestone status validation
- */
-export const MILESTONE_STATUS_VALUES = [
-  'pending', 
-  'completed', 
-  'overdue'
 ] as const
 
 /**
  * 用户角色枚举值
  * @requirement 5.2 - User role enum validation
  */
-export const USER_ROLE_VALUES = [
-  'strategic_dept', 
-  'functional_dept', 
-  'secondary_college'
-] as const
+export const USER_ROLE_VALUES = ['strategic_dept', 'functional_dept', 'secondary_college'] as const
 
 /**
  * 指标状态枚举值
@@ -200,159 +186,153 @@ export const AUDIT_ACTION_VALUES = [
 
 /**
  * 指标数据验证规则
- * 
+ *
  * @requirement 9.2 - Progress value range validation (0-100)
  * @requirement 9.3 - Weight value validation (non-negative number)
  */
 export const indicatorValidationRules: EntityValidationRules = {
-  id: { 
-    required: true, 
+  id: {
+    required: true,
     type: 'string',
     minLength: 1,
     description: '指标ID'
   } as StringValidationRule,
-  
-  name: { 
-    required: true, 
-    type: 'string', 
+
+  name: {
+    required: true,
+    type: 'string',
     minLength: 1,
     maxLength: 200,
     description: '指标名称'
   } as StringValidationRule,
-  
-  progress: { 
-    required: true, 
-    type: 'number', 
-    min: 0, 
+
+  progress: {
+    required: true,
+    type: 'number',
+    min: 0,
     max: 100,
     description: '进度百分比'
   } as NumberValidationRule,
-  
-  weight: { 
-    required: true, 
-    type: 'number', 
+
+  weight: {
+    required: true,
+    type: 'number',
     min: 0,
     description: '权重值'
   } as NumberValidationRule,
-  
-  responsibleDept: { 
-    required: true, 
+
+  responsibleDept: {
+    required: true,
     type: 'string',
     minLength: 1,
     description: '责任部门'
   } as StringValidationRule,
-  
-  year: { 
-    required: true, 
-    type: 'number', 
-    min: 2020, 
+
+  year: {
+    required: true,
+    type: 'number',
+    min: 2020,
     max: 2030,
     integer: true,
     description: '年份'
   } as NumberValidationRule,
-  
-  milestones: { 
-    required: false, 
-    type: 'array',
-    description: '里程碑列表'
-  } as ArrayValidationRule,
-  
-  progressApprovalStatus: { 
-    required: false, 
-    type: 'enum', 
+
+  progressApprovalStatus: {
+    required: false,
+    type: 'enum',
     values: PROGRESS_APPROVAL_STATUS_VALUES,
     description: '进度审批状态'
   } as EnumValidationRule,
-  
+
   isQualitative: {
     required: false,
     type: 'boolean',
     description: '是否为定性指标'
   } as BooleanValidationRule,
-  
+
   type1: {
     required: false,
     type: 'enum',
     values: INDICATOR_TYPE1_VALUES,
     description: '指标类型1（定性/定量）'
   } as EnumValidationRule,
-  
+
   type2: {
     required: false,
     type: 'enum',
     values: INDICATOR_TYPE2_VALUES,
     description: '指标类型2（发展性/基础性）'
   } as EnumValidationRule,
-  
+
   status: {
     required: false,
     type: 'enum',
     values: INDICATOR_STATUS_VALUES,
     description: '指标状态'
   } as EnumValidationRule,
-  
+
   targetValue: {
     required: false,
     type: 'number',
     min: 0,
     description: '目标值'
   } as NumberValidationRule,
-  
+
   actualValue: {
     required: false,
     type: 'number',
     min: 0,
     description: '实际值'
   } as NumberValidationRule,
-  
+
   unit: {
     required: false,
     type: 'string',
     description: '单位'
   } as StringValidationRule,
-  
+
   responsiblePerson: {
     required: false,
     type: 'string',
     description: '责任人'
   } as StringValidationRule,
-  
+
   isStrategic: {
     required: false,
     type: 'boolean',
     description: '是否为战略指标'
   } as BooleanValidationRule,
-  
+
   ownerDept: {
     required: false,
     type: 'string',
     description: '发布方部门'
   } as StringValidationRule,
-  
+
   parentIndicatorId: {
     required: false,
     type: 'string',
     description: '父指标ID'
   } as StringValidationRule,
-  
+
   createTime: {
     required: false,
     type: 'string',
     description: '创建时间'
   } as StringValidationRule,
-  
+
   remark: {
     required: false,
     type: 'string',
     description: '备注'
   } as StringValidationRule,
-  
+
   taskContent: {
     required: false,
     type: 'string',
     description: '关联的战略任务内容'
   } as StringValidationRule,
-  
+
   pendingProgress: {
     required: false,
     type: 'number',
@@ -360,13 +340,13 @@ export const indicatorValidationRules: EntityValidationRules = {
     max: 100,
     description: '待审批的进度值'
   } as NumberValidationRule,
-  
+
   pendingRemark: {
     required: false,
     type: 'string',
     description: '待审批的说明'
   } as StringValidationRule,
-  
+
   statusAudit: {
     required: false,
     type: 'array',
@@ -378,104 +358,31 @@ export const indicatorValidationRules: EntityValidationRules = {
 // 里程碑验证规则
 // ============================================================================
 
-/**
- * 里程碑数据验证规则
- * 
- * @requirement 2.4 - Milestone data validation with complete fields
- * @requirement 9.1 - Date format validation
- * @requirement 9.2 - Progress value range validation (0-100)
- */
-export const milestoneValidationRules: EntityValidationRules = {
-  id: { 
-    required: true, 
-    type: 'string',
-    minLength: 1,
-    description: '里程碑ID'
-  } as StringValidationRule,
-  
-  name: { 
-    required: true, 
-    type: 'string',
-    minLength: 1,
-    maxLength: 100,
-    description: '里程碑名称'
-  } as StringValidationRule,
-  
-  targetProgress: { 
-    required: true, 
-    type: 'number', 
-    min: 0, 
-    max: 100,
-    description: '目标进度'
-  } as NumberValidationRule,
-  
-  deadline: { 
-    required: true, 
-    type: 'date',
-    description: '截止时间'
-  } as DateValidationRule,
-  
-  status: { 
-    required: true, 
-    type: 'enum', 
-    values: MILESTONE_STATUS_VALUES,
-    description: '里程碑状态'
-  } as EnumValidationRule,
-  
-  isPaired: {
-    required: false,
-    type: 'boolean',
-    description: '是否已配对'
-  } as BooleanValidationRule,
-  
-  weightPercent: {
-    required: false,
-    type: 'number',
-    min: 0,
-    max: 100,
-    description: '权重百分比'
-  } as NumberValidationRule,
-  
-  sortOrder: {
-    required: false,
-    type: 'number',
-    min: 0,
-    integer: true,
-    description: '排序顺序'
-  } as NumberValidationRule,
-  
-  indicatorId: {
-    required: false,
-    type: 'string',
-    description: '关联的指标ID'
-  } as StringValidationRule
-}
-
 // ============================================================================
 // 用户验证规则
 // ============================================================================
 
 /**
  * 用户数据验证规则
- * 
+ *
  * @requirement 5.2 - User role enum validation
  */
 export const userValidationRules: EntityValidationRules = {
-  id: { 
-    required: true, 
+  id: {
+    required: true,
     type: 'string',
     minLength: 1,
     description: '用户ID'
   } as StringValidationRule,
-  
-  name: { 
-    required: true, 
+
+  name: {
+    required: true,
     type: 'string',
     minLength: 1,
     maxLength: 50,
     description: '用户姓名'
   } as StringValidationRule,
-  
+
   username: {
     required: false,
     type: 'string',
@@ -483,33 +390,33 @@ export const userValidationRules: EntityValidationRules = {
     maxLength: 50,
     description: '用户名'
   } as StringValidationRule,
-  
-  role: { 
-    required: true, 
-    type: 'enum', 
+
+  role: {
+    required: true,
+    type: 'enum',
     values: USER_ROLE_VALUES,
     description: '用户角色'
   } as EnumValidationRule,
-  
-  department: { 
-    required: true, 
+
+  department: {
+    required: true,
     type: 'string',
     minLength: 1,
     description: '所属部门'
   } as StringValidationRule,
-  
+
   avatar: {
     required: false,
     type: 'string',
     description: '头像URL'
   } as StringValidationRule,
-  
+
   createdAt: {
     required: false,
     type: 'date',
     description: '创建时间'
   } as DateValidationRule,
-  
+
   updatedAt: {
     required: false,
     type: 'date',
@@ -523,7 +430,7 @@ export const userValidationRules: EntityValidationRules = {
 
 /**
  * 状态审计日志条目验证规则
- * 
+ *
  * @requirement 3.4 - statusAudit audit log field validation
  */
 export const statusAuditEntryValidationRules: EntityValidationRules = {
@@ -533,57 +440,57 @@ export const statusAuditEntryValidationRules: EntityValidationRules = {
     minLength: 1,
     description: '审计日志ID'
   } as StringValidationRule,
-  
+
   timestamp: {
     required: true,
     type: 'date',
     description: '操作时间'
   } as DateValidationRule,
-  
+
   operator: {
     required: true,
     type: 'string',
     minLength: 1,
     description: '操作人用户名'
   } as StringValidationRule,
-  
+
   operatorName: {
     required: false,
     type: 'string',
     description: '操作人姓名'
   } as StringValidationRule,
-  
+
   operatorDept: {
     required: false,
     type: 'string',
     description: '操作人部门'
   } as StringValidationRule,
-  
+
   action: {
     required: true,
     type: 'enum',
     values: AUDIT_ACTION_VALUES,
     description: '操作类型'
   } as EnumValidationRule,
-  
+
   comment: {
     required: false,
     type: 'string',
     description: '操作备注'
   } as StringValidationRule,
-  
+
   previousStatus: {
     required: false,
     type: 'string',
     description: '变更前状态'
   } as StringValidationRule,
-  
+
   newStatus: {
     required: false,
     type: 'string',
     description: '变更后状态'
   } as StringValidationRule,
-  
+
   previousProgress: {
     required: false,
     type: 'number',
@@ -591,7 +498,7 @@ export const statusAuditEntryValidationRules: EntityValidationRules = {
     max: 100,
     description: '变更前进度'
   } as NumberValidationRule,
-  
+
   newProgress: {
     required: false,
     type: 'number',
@@ -611,7 +518,6 @@ export const statusAuditEntryValidationRules: EntityValidationRules = {
 export const indicatorDefaultValues: Record<string, unknown> = {
   progress: 0,
   weight: 0,
-  milestones: [],
   progressApprovalStatus: 'NONE',
   isQualitative: false,
   isStrategic: false,
@@ -621,17 +527,6 @@ export const indicatorDefaultValues: Record<string, unknown> = {
   remark: '',
   statusAudit: [],
   year: new Date().getFullYear()
-}
-
-/**
- * 里程碑字段默认值
- */
-export const milestoneDefaultValues: Record<string, unknown> = {
-  targetProgress: 0,
-  status: 'pending',
-  isPaired: false,
-  weightPercent: 0,
-  sortOrder: 0
 }
 
 /**
@@ -664,7 +559,6 @@ export const statusAuditEntryDefaultValues: Record<string, unknown> = {
  */
 export const allValidationRules = {
   indicator: indicatorValidationRules,
-  milestone: milestoneValidationRules,
   user: userValidationRules,
   statusAuditEntry: statusAuditEntryValidationRules
 } as const
@@ -674,7 +568,6 @@ export const allValidationRules = {
  */
 export const allDefaultValues = {
   indicator: indicatorDefaultValues,
-  milestone: milestoneDefaultValues,
   user: userDefaultValues,
   statusAuditEntry: statusAuditEntryDefaultValues
 } as const
@@ -683,10 +576,9 @@ export const allDefaultValues = {
 // 类型导出
 // ============================================================================
 
-export type ProgressApprovalStatusValue = typeof PROGRESS_APPROVAL_STATUS_VALUES[number]
-export type MilestoneStatusValue = typeof MILESTONE_STATUS_VALUES[number]
-export type UserRoleValue = typeof USER_ROLE_VALUES[number]
-export type IndicatorStatusValue = typeof INDICATOR_STATUS_VALUES[number]
-export type IndicatorType1Value = typeof INDICATOR_TYPE1_VALUES[number]
-export type IndicatorType2Value = typeof INDICATOR_TYPE2_VALUES[number]
-export type AuditActionValue = typeof AUDIT_ACTION_VALUES[number]
+export type ProgressApprovalStatusValue = (typeof PROGRESS_APPROVAL_STATUS_VALUES)[number]
+export type UserRoleValue = (typeof USER_ROLE_VALUES)[number]
+export type IndicatorStatusValue = (typeof INDICATOR_STATUS_VALUES)[number]
+export type IndicatorType1Value = (typeof INDICATOR_TYPE1_VALUES)[number]
+export type IndicatorType2Value = (typeof INDICATOR_TYPE2_VALUES)[number]
+export type AuditActionValue = (typeof AUDIT_ACTION_VALUES)[number]

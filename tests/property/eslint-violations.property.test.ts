@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { execSync } from 'child_process'
+import { execFileSync } from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
 
@@ -37,8 +37,6 @@ function readEslintResults(projectRoot: string): {
   rawOutput: string
   exitCode: number
 } {
-  const command =
-    'npx eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --ignore-path .gitignore --format json'
   const execOptions = {
     cwd: projectRoot,
     encoding: 'utf-8' as const,
@@ -47,7 +45,21 @@ function readEslintResults(projectRoot: string): {
   }
 
   try {
-    const rawOutput = execSync(command, execOptions)
+    // execFileSync 数组传参，不经 shell 拼接，消除命令注入面
+    const rawOutput = execFileSync(
+      'npx',
+      [
+        'eslint',
+        '.',
+        '--ext',
+        '.vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts',
+        '--ignore-path',
+        '.gitignore',
+        '--format',
+        'json'
+      ],
+      execOptions
+    )
 
     return {
       results: JSON.parse(rawOutput) as EslintResult[],

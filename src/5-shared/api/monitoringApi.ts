@@ -58,7 +58,14 @@ export interface AlertStats {
   }
 }
 
-export type ManualAlertSeverity = 'INFO' | 'WARNING' | 'CRITICAL' | null
+export type ManualAlertSeverity =
+  | 'AHEAD'
+  | 'NORMAL'
+  | 'DELAYED'
+  | 'INFO'
+  | 'WARNING'
+  | 'CRITICAL'
+  | null
 
 type ApiEnvelope<T> = {
   code?: number
@@ -153,12 +160,15 @@ export const alertApi = {
     return Object.fromEntries(
       Object.entries(payload || {}).map(([indicatorId, severity]) => {
         const normalized = String(severity || '').toUpperCase()
-        return [
-          indicatorId,
-          normalized === 'INFO' || normalized === 'WARNING' || normalized === 'CRITICAL'
-            ? (normalized as Exclude<ManualAlertSeverity, null>)
-            : null
-        ]
+        // 三档进度等级直接放行；旧预警档位归并显示为「延期」（用户定案 2026-09-18）
+        const threeTier: ManualAlertSeverity[] = ['AHEAD', 'NORMAL', 'DELAYED']
+        if (threeTier.includes(normalized as ManualAlertSeverity)) {
+          return [indicatorId, normalized as Exclude<ManualAlertSeverity, null>]
+        }
+        if (normalized === 'INFO' || normalized === 'WARNING' || normalized === 'CRITICAL') {
+          return [indicatorId, 'DELAYED']
+        }
+        return [indicatorId, null]
       })
     )
   },

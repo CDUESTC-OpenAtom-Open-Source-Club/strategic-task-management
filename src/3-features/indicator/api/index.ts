@@ -1,5 +1,4 @@
 export { indicatorApi } from './indicator'
-export { milestoneApi } from './milestone'
 export * from './query'
 export * from './mutations'
 export * from './types'

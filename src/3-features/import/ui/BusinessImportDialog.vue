@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { QuestionFilled, Upload, UploadFilled } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { Download, Upload, UploadFilled } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UploadFile, UploadFiles } from 'element-plus'
 import {
   businessImportApi,
@@ -11,6 +11,15 @@ import {
   type ImportPreviewResponse,
   type ImportRowPreview
 } from '@/features/import/api/businessImport'
+import {
+  buildImportTemplateFileName,
+  buildImportTemplateSheet,
+  getImportTemplateGuide,
+  type ImportTemplateParentSeed
+} from '@/features/import/lib/importTemplate'
+import { canAutoApproveImport } from '@/features/import/lib/importPermissions'
+import { exportSheetsToExcel, type ExcelExportSheet } from '@/shared/lib/export/excel'
+import { useAuthStore } from '@/features/auth/model/store'
 
 const props = defineProps<{
   visible: boolean
@@ -20,6 +29,11 @@ const props = defineProps<{
   sourceOrgId?: number | null
   sourceOrgName?: string | null
   cycleId?: number | null
+  /** 2026-10-14 P10：当前职能部门已接收的父级核心指标，用于下载模板时自动带出预填行 */
+  parentIndicators?: Array<{
+    name?: string
+    taskContent?: string
+  }> | null
 }>()
 
 const emit = defineEmits<{
@@ -37,28 +51,20 @@ const selectedFile = ref<UploadFile | null>(null)
 const previewResult = ref<ImportPreviewResponse | null>(null)
 const previewing = ref(false)
 const committing = ref(false)
-const autoSubmitAndApprove = ref(false)
+// 2026-10-10 测试0927 第016条落地：凡导入的 Excel 视为已经过审批，
+// 默认自动跑完下发审批链（后端 autoSubmitAndApprove 以系统管理员身份逐节点通过）
+const autoSubmitAndApprove = ref(true)
 const overwriteExisting = ref(false)
-const guidePopoverVisible = ref(false)
-let guidePopoverCloseTimer: ReturnType<typeof window.setTimeout> | null = null
-
-interface ImportGuideColumn {
-  key: string
-  label: string
-  required?: boolean
-}
-
-interface ImportGuideContent {
-  title: string
-  targetName: string
-  columns: ImportGuideColumn[]
-  rows: Record<string, string>[]
-  rules: string[]
-}
+const templateDownloading = ref(false)
 
 const isStrategicImport = computed(() => props.type === 'strategic-task')
 const dialogTitle = computed(() =>
   isStrategicImport.value ? '导入职能部门指标表' : '导入学院子指标表'
+)
+const authStore = useAuthStore()
+// 填报人可解析预览和确认导入（含覆盖）；自动发起审批仅部门最高领导人可用，无权限角色显示禁用并带提示
+const canAutoApprove = computed(() =>
+  canAutoApproveImport((authStore.user as { roles?: unknown } | null)?.roles)
 )
 const targetLabel = computed(() => (isStrategicImport.value ? '当前职能部门' : '当前学院'))
 const canPreview = computed(
@@ -135,114 +141,50 @@ const formatAutoDispatchBlockedMessage = (result: ImportCommitResponse) => {
   return `${importSummary}；下发已阻止：${reason}`
 }
 
-const strategicImportGuide: ImportGuideContent = {
-  title: '职能部门指标表示例',
-  targetName: '职能部门',
-  columns: [
-    { key: 'department', label: '职能部门' },
-    { key: 'taskType', label: '任务类型', required: true },
-    { key: 'strategicTask', label: '战略任务', required: true },
-    { key: 'indicatorName', label: '核心指标', required: true },
-    { key: 'indicatorType', label: '指标类型', required: true },
-    { key: 'weight', label: '权重' },
-    { key: 'milestones', label: '里程碑明细' },
-    { key: 'remark', label: '备注' }
-  ],
-  rows: [
-    {
-      department: '教务处',
-      taskType: '发展性',
-      strategicTask: '推进本科教育教学改革',
-      indicatorName: '建设智慧教学质量监测体系',
-      indicatorType: '定量',
-      weight: '20%',
-      milestones:
-        '1. 完成方案设计（2026-03-31，30%）\n2. 完成平台试运行（2026-06-30，70%）\n3. 完成年度评估（2026-12-31，100%）',
-      remark: '可填写说明'
-    },
-    {
-      department: '教务处',
-      taskType: '基础性',
-      strategicTask: '完善专业建设质量保障机制',
-      indicatorName: '完成重点专业年度质量报告',
-      indicatorType: '定性',
-      weight: '15',
-      milestones: '质量报告初稿（2026-09-30，60%）\n正式提交（2026-12-31，100%）',
-      remark: ''
-    }
-  ],
-  rules: [
-    '表头建议放在第一行，列顺序可以调整，系统会按列名识别。',
-    '带 * 的列为必填；如果填写职能部门，必须和当前选择的职能部门一致。',
-    '权重支持 10、10%、0.1 三种写法，系统会统一换算为百分制。',
-    '里程碑可以放在一个单元格内多行填写，日期支持 2026-03-31 或 2026-03-31 00:00。'
-  ]
-}
-const distributionImportGuide: ImportGuideContent = {
-  title: '学院子指标表示例',
-  targetName: '学院',
-  columns: [
-    { key: 'college', label: '学院' },
-    { key: 'parentStrategicTask', label: '父级战略任务' },
-    { key: 'parentIndicator', label: '父级核心指标', required: true },
-    { key: 'indicatorName', label: '子指标名称', required: true },
-    { key: 'indicatorType', label: '指标类型', required: true },
-    { key: 'weight', label: '权重' },
-    { key: 'milestones', label: '里程碑明细' },
-    { key: 'remark', label: '备注' }
-  ],
-  rows: [
-    {
-      college: '计算机学院',
-      parentStrategicTask: '推进本科教育教学改革',
-      parentIndicator: '建设智慧教学质量监测体系',
-      indicatorName: '完成学院课程质量数据接入',
-      indicatorType: '定量',
-      weight: '40%',
-      milestones:
-        '1. 完成课程清单梳理（2026-04-30，40%）\n2. 完成数据接入与核验（2026-09-30，80%）\n3. 完成年度归档（2026-12-31，100%）',
-      remark: '按父级指标拆分'
-    },
-    {
-      college: '计算机学院',
-      parentStrategicTask: '完善专业建设质量保障机制',
-      parentIndicator: '完成重点专业年度质量报告',
-      indicatorName: '提交学院专业质量分析报告',
-      indicatorType: '定性',
-      weight: '60',
-      milestones: '报告初稿（2026-10-31，70%）\n正式提交（2026-12-20，100%）',
-      remark: ''
-    }
-  ],
-  rules: [
-    '表头建议放在第一行，列顺序可以调整，系统会按列名识别。',
-    '带 * 的列为必填；如果填写学院，必须和当前选择的学院一致。',
-    '父级核心指标必须能匹配当前职能部门已接收或可拆分的父级指标。',
-    '权重按同一父级指标下的学院子指标合计检查，合计不是 100 会给出警告。'
-  ]
-}
-const currentGuide = computed(() =>
-  isStrategicImport.value ? strategicImportGuide : distributionImportGuide
-)
-
-const clearGuidePopoverCloseTimer = () => {
-  if (guidePopoverCloseTimer) {
-    window.clearTimeout(guidePopoverCloseTimer)
-    guidePopoverCloseTimer = null
+const downloadTemplate = async () => {
+  if (templateDownloading.value) {
+    return
   }
-}
+  templateDownloading.value = true
+  try {
+    const guide = getImportTemplateGuide(props.type)
 
-const showGuidePopover = () => {
-  clearGuidePopoverCloseTimer()
-  guidePopoverVisible.value = true
-}
+    // 2026-10-14 用户定案（P10）：学院子指标模板自动带出"当前职能部门已接收的父级核心指标"行
+    // （由父页面传入 availableParentIndicators，与导入校验的父级匹配口径完全一致），含内部 ID；
+    // 用户在行右侧补写子指标即可。未传/为空时退回通用示例行，不阻断下载。
+    const parentSeeds: ImportTemplateParentSeed[] | undefined = props.parentIndicators?.length
+      ? props.parentIndicators.map(item => ({
+          parentIndicator: String(item.name || '').trim(),
+          parentStrategicTask: String(item.taskContent || '').trim()
+        }))
+      : undefined
 
-const scheduleHideGuidePopover = () => {
-  clearGuidePopoverCloseTimer()
-  guidePopoverCloseTimer = window.setTimeout(() => {
-    guidePopoverVisible.value = false
-    guidePopoverCloseTimer = null
-  }, 120)
+    const rulesSheet: ExcelExportSheet<Record<string, string>> = {
+      sheetName: '填写说明',
+      rows: guide.rules.map(rule => ({ rule })),
+      columns: [
+        {
+          header: '填写说明',
+          width: 60,
+          getValue: row => row.rule
+        }
+      ]
+    }
+
+    await exportSheetsToExcel(
+      [buildImportTemplateSheet(props.type, parentSeeds), rulesSheet],
+      buildImportTemplateFileName(props.type)
+    )
+    ElMessage.success(
+      parentSeeds?.length
+        ? `模板下载成功：已自动带出 ${parentSeeds.length} 条父级核心指标，请在右侧补写子指标`
+        : '模板下载成功，请按模板填写后上传'
+    )
+  } catch {
+    ElMessage.error('模板下载失败，请稍后重试')
+  } finally {
+    templateDownloading.value = false
+  }
 }
 
 const handleFileChange = (uploadFile: UploadFile, uploadFiles: UploadFiles) => {
@@ -296,6 +238,22 @@ const handleCommit = async () => {
     return
   }
 
+  if (autoSubmitAndApprove.value) {
+    try {
+      await ElMessageBox.confirm(
+        '确认后将写入本次导入数据，并自动发起审批流程；审批通过后任务将正式下发。是否继续？',
+        '导入并自动下发审批',
+        {
+          confirmButtonText: '确认下发',
+          cancelButtonText: '再想想',
+          type: 'warning'
+        }
+      )
+    } catch {
+      return
+    }
+  }
+
   committing.value = true
   try {
     const request = {
@@ -344,6 +302,14 @@ const actionText = (action: ImportRowPreview['action']) => {
   return '错误'
 }
 
+const handleDialogBeforeClose = (done: () => void) => {
+  if (previewing.value || committing.value) {
+    ElMessage.info('正在处理中，请等待完成后再关闭')
+    return
+  }
+  done()
+}
+
 watch(
   () => props.visible,
   value => {
@@ -353,10 +319,9 @@ watch(
       previewResult.value = null
       previewing.value = false
       committing.value = false
-      autoSubmitAndApprove.value = false
+      autoSubmitAndApprove.value = true
       overwriteExisting.value = false
-      guidePopoverVisible.value = false
-      clearGuidePopoverCloseTimer()
+      templateDownloading.value = false
     }
   }
 )
@@ -367,66 +332,12 @@ watch(
     v-model="dialogVisible"
     width="min(860px, calc(100vw - 32px))"
     :close-on-click-modal="!previewing && !committing"
+    :close-on-press-escape="!previewing && !committing"
+    :before-close="handleDialogBeforeClose"
   >
     <template #header>
       <div class="business-import-header">
         <span class="business-import-title">{{ dialogTitle }}</span>
-        <el-popover
-          v-model:visible="guidePopoverVisible"
-          trigger="manual"
-          placement="bottom-end"
-          width="min(960px, calc(100vw - 32px))"
-        >
-          <div
-            class="business-import-guide"
-            @mouseenter="showGuidePopover"
-            @mouseleave="scheduleHideGuidePopover"
-          >
-            <div class="guide-title">{{ currentGuide.title }}</div>
-            <div class="guide-context">
-              <span>{{ currentGuide.targetName }}</span>
-              <strong>{{ targetOrgName || '当前选择对象' }}</strong>
-              <span>周期</span>
-              <strong>{{ cycleId || '-' }}</strong>
-            </div>
-
-            <div class="guide-table-scroll" role="region" aria-label="导入示例表格">
-              <table class="guide-table">
-                <thead>
-                  <tr>
-                    <th v-for="column in currentGuide.columns" :key="column.key">
-                      {{ column.label }}<span v-if="column.required" class="required-mark">*</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="(row, rowIndex) in currentGuide.rows" :key="rowIndex">
-                    <td v-for="column in currentGuide.columns" :key="column.key">
-                      {{ row[column.key] || '-' }}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
-            <ul class="guide-rules">
-              <li v-for="rule in currentGuide.rules" :key="rule">{{ rule }}</li>
-            </ul>
-          </div>
-
-          <template #reference>
-            <el-button
-              class="import-guide-button"
-              :icon="QuestionFilled"
-              text
-              type="primary"
-              @mouseenter="showGuidePopover"
-              @mouseleave="scheduleHideGuidePopover"
-            >
-              详情？
-            </el-button>
-          </template>
-        </el-popover>
       </div>
     </template>
 
@@ -469,7 +380,19 @@ watch(
         <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
         <div class="el-upload__text">拖拽 Excel 文件到这里，或点击选择</div>
         <template #tip>
-          <div class="el-upload__tip">仅支持 .xlsx，一次只导入当前选中的部门或学院。</div>
+          <div class="upload-tip-row">
+            <span class="el-upload__tip">仅支持 .xlsx，一次只导入当前选中的部门或学院。</span>
+            <el-button
+              class="download-template-button"
+              type="primary"
+              text
+              :icon="Download"
+              :loading="templateDownloading"
+              @click="downloadTemplate"
+            >
+              下载模板
+            </el-button>
+          </div>
         </template>
       </el-upload>
 
@@ -577,8 +500,23 @@ watch(
       </template>
 
       <div class="commit-options">
-        <el-checkbox v-model="overwriteExisting">覆盖已有数据</el-checkbox>
-        <el-checkbox v-model="autoSubmitAndApprove">导入后自动发起并完成审批</el-checkbox>
+        <el-tooltip
+          content="默认为追加模式：文件内容作为新数据写入；勾选后，与现有指标同名的行会更新原数据，而不是重复新增。"
+          placement="top"
+        >
+          <el-checkbox v-model="overwriteExisting">覆盖已有数据</el-checkbox>
+        </el-tooltip>
+        <el-tooltip
+          content="仅部门最高负责人（分管校领导/学院院长、战略部负责人）可使用自动发起审批"
+          :disabled="canAutoApprove"
+          placement="top"
+        >
+          <span>
+            <el-checkbox v-model="autoSubmitAndApprove" :disabled="!canAutoApprove"
+              >导入后自动发起并完成审批</el-checkbox
+            >
+          </span>
+        </el-tooltip>
       </div>
     </div>
 
@@ -617,11 +555,6 @@ watch(
   font-size: 16px;
   font-weight: 600;
   line-height: 24px;
-}
-
-.import-guide-button {
-  min-height: 36px;
-  padding-inline: 10px;
 }
 
 .business-import-dialog {
@@ -743,88 +676,16 @@ watch(
   margin-left: 0;
 }
 
-.business-import-guide {
+.upload-tip-row {
   display: flex;
-  flex-direction: column;
-  gap: 16px;
-  max-height: min(70vh, 620px);
-  overflow-y: auto;
-}
-
-.guide-title {
-  color: #111827;
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 22px;
-}
-
-.guide-context {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  color: #6b7280;
-  line-height: 24px;
-}
-
-.guide-context strong {
-  color: #111827;
-}
-
-.guide-table-scroll {
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   width: 100%;
-  overflow-x: auto;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
 }
 
-.guide-table {
-  width: 100%;
-  min-width: 900px;
-  border-collapse: collapse;
-  background: #fff;
-  table-layout: fixed;
-}
-
-.guide-table th,
-.guide-table td {
-  border-bottom: 1px solid #e5e7eb;
-  border-right: 1px solid #e5e7eb;
-  padding: 10px 12px;
-  color: #374151;
-  font-size: 13px;
-  line-height: 20px;
-  text-align: left;
-  vertical-align: top;
-  white-space: pre-line;
-  word-break: break-word;
-}
-
-.guide-table th {
-  background: #f3f4f6;
-  color: #111827;
-  font-weight: 600;
-}
-
-.guide-table th:last-child,
-.guide-table td:last-child {
-  border-right: 0;
-}
-
-.guide-table tbody tr:last-child td {
-  border-bottom: 0;
-}
-
-.required-mark {
-  margin-left: 2px;
-  color: #dc2626;
-}
-
-.guide-rules {
-  margin: 0;
-  padding-left: 18px;
-  color: #4b5563;
-  font-size: 13px;
-  line-height: 22px;
+.download-template-button {
+  flex-shrink: 0;
 }
 
 @media (max-width: 640px) {
@@ -834,8 +695,8 @@ watch(
     padding-right: 24px;
   }
 
-  .import-guide-button {
-    min-height: 44px;
+  .upload-tip-row {
+    flex-wrap: wrap;
   }
 
   .business-import-summary,

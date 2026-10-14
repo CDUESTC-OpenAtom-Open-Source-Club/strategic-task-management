@@ -3,7 +3,7 @@ import { ref, computed, watch } from 'vue'
 import { Folder, Document, Warning, Connection } from '@element-plus/icons-vue'
 // eslint-disable-next-line no-restricted-syntax -- Backend-aligned types use strategic_task terminology
 import type { StrategicTask, StrategicIndicator } from '@/shared/types'
-import { useStrategicStore } from '@/stores/strategic'
+import { useStrategicStore } from '@/features/task/model/strategic'
 
 // 节点统计接口
 interface NodeStats {
@@ -17,37 +17,10 @@ interface NodeStats {
 type IndicatorCategory = 'normal' | 'warning' | 'ahead'
 
 /**
- * 根据当前日期和里程碑计算预期进度
- * 返回当前应达到的目标进度值
+ * 里程碑机制已移除：不再有里程碑预期进度。
  */
-const getExpectedProgress = (indicator: StrategicIndicator): number => {
-  const milestones = indicator.milestones
-
-  // 无里程碑时返回0
-  if (!milestones || milestones.length === 0) {
-    return 0
-  }
-
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-
-  // 按截止日期排序
-  const sortedMilestones = [...milestones].sort(
-    (a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime()
-  )
-
-  // 找到当前活跃的里程碑（第一个截止日期 >= 今天的）
-  for (const milestone of sortedMilestones) {
-    const deadline = new Date(milestone.deadline)
-    deadline.setHours(23, 59, 59, 999)
-
-    if (deadline >= today) {
-      return milestone.targetProgress
-    }
-  }
-
-  // 所有里程碑已过期，返回最后一个的目标进度
-  return sortedMilestones[sortedMilestones.length - 1].targetProgress
+const getExpectedProgress = (_indicator: StrategicIndicator): number => {
+  return 0
 }
 
 /**
@@ -347,7 +320,7 @@ const defaultExpandedKeys = computed(() => treeData.value.map(t => t.id))
                   <span class="stats-value">{{ data.stats.normal }}项</span>
                 </div>
                 <div class="stats-row warning">
-                  <span class="stats-label">预警:</span>
+                  <span class="stats-label">延期:</span>
                   <span class="stats-value">{{ data.stats.warning }}项</span>
                 </div>
                 <div class="stats-row ahead">

@@ -78,7 +78,7 @@ export interface DashboardViewState {
  */
 export interface DashboardStatistics {
   completionRate: number
-  totalScore: number
+  // P4 A2: 删 totalScore(数据源 levelDistribution 已替代)
   warningCount: number
   alertStats: AlertSummary
   totalIndicators: number

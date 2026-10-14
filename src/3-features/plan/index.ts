@@ -11,7 +11,7 @@ export { planApi, indicatorFillApi, planFillApi } from './api/planApi'
 export type { PlanVO, TaskVO, IndicatorVO, IndicatorFillVO, PlanFillVO } from './api/planApi'
 
 // Views
-export { PlanListView, PlanEditView, PlanDetailView, PlanAuditView } from './ui'
+export { PlanAuditView } from './ui'
 
 // Components
 export { PlanAuditPanel, PlanFillWorkspace } from './ui'

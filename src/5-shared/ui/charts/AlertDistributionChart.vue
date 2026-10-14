@@ -6,32 +6,28 @@ import { PieChart } from 'echarts/charts'
 import { TooltipComponent, LegendComponent, GraphicComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 
-import { getColorByIndex as _getColorByIndex, getGradientColor } from '@/shared/lib/utils/colors'
+import { getGradientColor } from '@/shared/lib/utils/colors'
 
 use([PieChart, TooltipComponent, LegendComponent, GraphicComponent, CanvasRenderer])
 
+// 进度等级三档（2026-09-17 定案）：超前完成 / 正常 / 延期
 const props = defineProps<{
-  severe: number
-  moderate: number
+  ahead: number
   normal: number
+  delayed: number
 }>()
 
 const emit = defineEmits<{
   click: [level: 'severe' | 'moderate' | 'normal']
 }>()
 
-const total = computed(() => props.severe + props.moderate + props.normal)
+const total = computed(() => props.ahead + props.normal + props.delayed)
 
 const chartOption = computed(() => ({
   tooltip: {
     trigger: 'item',
     formatter: (params: { name: string; value: number; percent: number }) => {
-      const levelMap: Record<string, string> = {
-        严重预警: '当月底前应完成的里程碑未达标',
-        中度预警: '当月里程碑未达目标但尚未逾期',
-        正常: '当月状态正常或已超前完成'
-      }
-      return `${params.name}<br/>数量: ${params.value}个<br/>占比: ${params.percent}%<br/>${levelMap[params.name] || ''}`
+      return `${params.name}<br/>数量: ${params.value}个<br/>占比: ${params.percent}%`
     }
   },
   legend: {
@@ -44,7 +40,7 @@ const chartOption = computed(() => ({
   },
   series: [
     {
-      name: '预警分布',
+      name: '进度等级分布',
       type: 'pie',
       radius: ['40%', '65%'],
       center: ['35%', '50%'],
@@ -70,24 +66,24 @@ const chartOption = computed(() => ({
       labelLine: { show: false },
       data: [
         {
-          value: props.severe,
-          name: '严重预警',
+          value: props.ahead,
+          name: '超前完成',
           itemStyle: {
-            color: getGradientColor('#F56C6C', '#F56C6CCC')
-          }
-        },
-        {
-          value: props.moderate,
-          name: '中度预警',
-          itemStyle: {
-            color: getGradientColor('#E6A23C', '#E6A23CCC')
+            color: getGradientColor('#67C23A', '#67C23ACC')
           }
         },
         {
           value: props.normal,
           name: '正常',
           itemStyle: {
-            color: getGradientColor('#67C23A', '#67C23ACC')
+            color: getGradientColor('#409EFF', '#409EFFCC')
+          }
+        },
+        {
+          value: props.delayed,
+          name: '延期',
+          itemStyle: {
+            color: getGradientColor('#F56C6C', '#F56C6CCC')
           }
         }
       ]
@@ -124,9 +120,10 @@ const chartOption = computed(() => ({
 }))
 
 const handleChartClick = (params: { name: string }) => {
+  // 点击扇区沿用原 alertLevel 筛选通道：延期→severe，超前完成/正常→normal
   const levelMap: Record<string, 'severe' | 'moderate' | 'normal'> = {
-    严重预警: 'severe',
-    中度预警: 'moderate',
+    延期: 'severe',
+    超前完成: 'normal',
     正常: 'normal'
   }
   const level = levelMap[params.name]

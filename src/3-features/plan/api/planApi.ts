@@ -38,6 +38,45 @@ import {
 } from '@/features/workflow/api'
 import { useAuthStore } from '@/features/auth/model/store'
 
+/**
+ * H4（2026-09-19 定案）：「最早未填月」从计划下发月起算，不再从当年 1 月起算。
+ * 下发月取该计划+组织「首份报告的创建月份」（首份报告必然产生于下发之后）。
+ * 实现方式：把起扫点之前的月份全部垫入已填集合，下游扫描逻辑不变。
+ */
+function padMonthsBeforeFirstReport(
+  months: Set<string>,
+  reports: Array<{
+    reportOrgId?: number | string | null
+    reportMonth?: string | null
+    createdAt?: string | null
+  }>,
+  reportOrgId: number
+): Set<string> {
+  const orgReports = reports.filter(
+    report =>
+      Number(report.reportOrgId) === Number(reportOrgId) &&
+      report.isDeleted !== true &&
+      Boolean(report.createdAt)
+  )
+  if (orgReports.length === 0) {
+    return months
+  }
+  const firstMonth = orgReports
+    .map(report => String(report.createdAt).slice(0, 7).replace('-', ''))
+    .sort()[0]
+  if (!firstMonth || !/^\d{6}$/.test(firstMonth)) {
+    return months
+  }
+  const padded = new Set(months)
+  for (let m = 1; m <= 12; m++) {
+    const value = `${String(firstMonth).slice(0, 4)}${String(m).padStart(2, '0')}`
+    if (value < firstMonth) {
+      padded.add(value)
+    }
+  }
+  return padded
+}
+
 export interface SubmitPlanApprovalPayload {
   workflowCode: string
   comment?: string
@@ -104,8 +143,6 @@ export interface IndicatorFillVO {
   auditComment?: string
   auditedBy?: string
   auditedAt?: string
-  milestoneId?: number
-  milestoneName?: string
 }
 
 export interface PlanFillVO {
@@ -528,9 +565,7 @@ const mockIndicatorFills: IndicatorFillVO[] = [
     filledByName: '张老师',
     createdAt: '2025-02-15T14:20:00',
     updatedAt: '2025-02-15T14:20:00',
-    status: 'SUBMITTED',
-    milestoneId: 1,
-    milestoneName: '第一季度里程碑'
+    status: 'SUBMITTED'
   },
   {
     fillId: 3,
@@ -645,7 +680,6 @@ function convertIndicatorVOToIndicator(vo: PlanIndicatorVO): Indicator {
     task_id: vo.taskId,
     name: vo.name,
     definition: vo.definition,
-    milestones: [], // 里程碑将单独获取
     createdAt: vo.createdAt,
     updatedAt: vo.updatedAt,
     latest_progress: latestFill?.progress,
@@ -671,9 +705,7 @@ function convertIndicatorFillVOToIndicatorFill(vo: IndicatorFillVO): IndicatorFi
     status: vo.status ? convertFillStatus(vo.status) : undefined,
     audit_comment: vo.auditComment,
     audited_by: vo.auditedBy,
-    audited_at: vo.auditedAt,
-    milestone_id: vo.milestoneId,
-    milestone_name: vo.milestoneName
+    audited_at: vo.auditedAt
   }
 }
 
@@ -712,7 +744,10 @@ interface PlanReportIndicatorDetailResponse {
   indicatorId: number
   progress?: number | null
   comment?: string | null
-  milestoneNote?: string | null
+  /** 自评等级 AHEAD/NORMAL/DELAYED（等级制填报） */
+  selfRating?: string | null
+  /** 完成情况描述（与 comment 同源，读侧优先） */
+  description?: string | null
   attachments?: Attachment[] | null
 }
 
@@ -879,7 +914,10 @@ function isLockedPlanReportStatus(status?: string | null): boolean {
   return ['SUBMITTED', 'IN_REVIEW', 'APPROVED'].includes(getNormalizedReportStatus(status))
 }
 
-async function resolveIndicatorFillSaveContext(indicatorId: number | string): Promise<{
+async function resolveIndicatorFillSaveContext(
+  indicatorId: number | string,
+  targetMonth?: string
+): Promise<{
   context: IndicatorReportContext
   currentMonthReports: PlanReportSimpleResponse[]
   latestCurrentMonthReport?: PlanReportSimpleResponse
@@ -887,11 +925,13 @@ async function resolveIndicatorFillSaveContext(indicatorId: number | string): Pr
 }> {
   const context = await resolveIndicatorReportContext(indicatorId)
   const reports = await loadPlanReportsByPlanId(context.planId)
+  // 「审批中不可重复保存」检查按目标填报月判断（显式传月优先，当前月仅兜底），
+  // 否则当前月报告进入审批后会连带锁死下一个月的填报（月度上报链断裂）。
+  const effectiveMonth = String(targetMonth || '').trim() || context.reportMonth
   const currentMonthReports = reports
     .filter(
       report =>
-        Number(report.reportOrgId) === context.reportOrgId &&
-        report.reportMonth === context.reportMonth
+        Number(report.reportOrgId) === context.reportOrgId && report.reportMonth === effectiveMonth
     )
     .sort(
       (a, b) =>
@@ -1011,6 +1051,12 @@ async function resolveIndicatorReportContext(
       if (matchedCollegeReceivingPlan?.id) {
         return Number(matchedCollegeReceivingPlan.id)
       }
+
+      // 2026-10-13 多账号隔离测试发现：学院指标可能来自多个职能部门（如纪委办+教务处各自下发），
+      // 若精确匹配来源计划失败后落入下方"仅按 target+year"的通用兜底，会把 A 部门计划下的
+      // 上报历史串到 B 部门的指标上（上报资料/历史小标/审批寻址全部错位）。
+      // 学院上下文必须精确命中来源计划，找不到就承认无关联计划，由调用方按无历史处理。
+      return null
     }
 
     const matchedPlan = allPlans.find(plan => {
@@ -1637,7 +1683,6 @@ export const planApi = {
                 task_id: planId,
                 name: ind.indicatorName || ind.name || '',
                 definition: ind.indicatorDesc || ind.description || '',
-                milestones: [],
                 createdAt: ind.createdAt,
                 updatedAt: ind.updatedAt,
                 latest_progress: ind.progress,
@@ -2078,12 +2123,12 @@ export const indicatorFillApi = {
   // 使用模拟数据标志（后端就绪后设为 false）
   useMockData: USE_MOCK,
 
-  async ensureEditable(indicatorId: number | string): Promise<void> {
+  async ensureEditable(indicatorId: number | string, reportMonth?: string): Promise<void> {
     if (this.useMockData) {
       return
     }
 
-    await resolveIndicatorFillSaveContext(indicatorId)
+    await resolveIndicatorFillSaveContext(indicatorId, reportMonth)
   },
 
   /**
@@ -2210,8 +2255,7 @@ export const indicatorFillApi = {
         filled_by: 'current_user',
         filled_by_name: '当前用户',
         created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        milestone_id: form.milestone_id
+        updated_at: new Date().toISOString()
       }
 
       mockIndicatorFills.push({
@@ -2225,8 +2269,7 @@ export const indicatorFillApi = {
         filledBy: newFill.filled_by,
         filledByName: newFill.filled_by_name,
         createdAt: newFill.created_at,
-        updatedAt: newFill.updated_at,
-        milestoneId: newFill.milestone_id as number
+        updatedAt: newFill.updated_at
       })
 
       return {
@@ -2238,8 +2281,15 @@ export const indicatorFillApi = {
     }
 
     const { context, editableExistingReport } = await resolveIndicatorFillSaveContext(
-      form.indicator_id
+      form.indicator_id,
+      form.reportMonth
     )
+
+    // 本次填报目标月（单一数据源）：弹窗按「指标级最早未填报月」算出的显式月份优先；
+    // context.reportMonth（当前月）只作为未显式传月的旧调用方兜底，绝不覆盖显式值。
+    // 建草稿（POST /reports）必须使用该目标月，否则会先按旧口径建出错误月份的空草稿，
+    // 再被后端按指标级守卫拒绝（409 + 脏草稿）。
+    const targetReportMonth = String(form.reportMonth || '').trim() || context.reportMonth
 
     const operatorUserId =
       Number(
@@ -2255,7 +2305,6 @@ export const indicatorFillApi = {
               indicator_name: context.indicatorName,
               progress: form.progress,
               content: form.content,
-              milestone_id: form.milestone_id,
               attachment_ids: []
             }
           ]
@@ -2265,7 +2314,7 @@ export const indicatorFillApi = {
         indicatorName: String(item.indicator_name || ''),
         progress: Number(item.progress),
         content: String(item.content || ''),
-        milestoneId: item.milestone_id,
+        selfRating: (item as { selfRating?: string }).selfRating,
         attachmentIds: Array.isArray((item as { attachment_ids?: unknown[] }).attachment_ids)
           ? ((item as { attachment_ids?: unknown[] }).attachment_ids ?? [])
               .map(value => Number(value))
@@ -2286,7 +2335,7 @@ export const indicatorFillApi = {
       const createResponse = await apiClient.post<ApiResponse<PlanReportSimpleResponse>>(
         '/reports',
         {
-          reportMonth: context.reportMonth,
+          reportMonth: targetReportMonth,
           reportOrgId: context.reportOrgId,
           reportOrgType: context.reportOrgType,
           planId: context.planId,
@@ -2319,7 +2368,7 @@ export const indicatorFillApi = {
           progress: item.progress,
           issues: item.content,
           nextPlan: item.content,
-          milestoneNote: item.milestoneId ? String(item.milestoneId) : null,
+          selfRating: item.selfRating,
           attachmentIds: item.attachmentIds
         }))
       }
@@ -2479,6 +2528,106 @@ export const indicatorFillApi = {
     return resolveCurrentMonthPlanReportSummaries(reports, reportOrgId, reportMonth)
   },
 
+  /**
+   * 获取该组织「未提交草稿报告」的归属月份（2026-10-07 裁决）。
+   * 存在 DRAFT 草稿时，填报弹窗必须继续锁定在该月编辑草稿——
+   * 后端在草稿未提交前禁止新建其他月份报告（409），否则用户会撞资源冲突。
+   * 无 DRAFT 时返回 null，由调用方按「最早未填报月」逻辑处理。
+   */
+  async getOpenDraftReportMonth(
+    planId: number | string,
+    reportOrgId: number
+  ): Promise<string | null> {
+    const draft = await this.getOpenDraftReport(planId, reportOrgId)
+    return draft ? String(draft.reportMonth) : null
+  },
+
+  /**
+   * 获取该组织「未提交草稿报告」完整内容（含 indicatorDetails 明细与自评等级）。
+   * 用于填报列表的等级/说明回显（补签月份的草稿不落在当月摘要里）。
+   * 无 DRAFT 时返回 null。
+   */
+  async getOpenDraftReport(
+    planId: number | string,
+    reportOrgId: number
+  ): Promise<PlanReportSimpleResponse | null> {
+    try {
+      const reports = await loadPlanReportsByPlanId(Number(planId))
+      const draft = reports
+        .filter(
+          report =>
+            Number(report.reportOrgId) === Number(reportOrgId) &&
+            getNormalizedReportStatus(report.status) === 'DRAFT' &&
+            report.reportMonth
+        )
+        .sort((a, b) => String(a.reportMonth).localeCompare(String(b.reportMonth)))[0]
+      return draft ?? null
+    } catch (error) {
+      logger.warn('[indicatorFillApi] 加载未提交草稿报告失败:', error)
+      return null
+    }
+  },
+
+  /**
+   * 获取指定计划下某组织已存在上报的报告月份集合（YYYYMM）。
+   * 用于「归属月份只能选最早未填报月」的前端锁定（B6 会议定案）。
+   * 加载失败时返回 null（与「确实没有上报记录」的空集合区分开），由调用方降级处理。
+   */
+
+  async getExistingReportMonths(
+    planId: number | string,
+    reportOrgId: number
+  ): Promise<string[] | null> {
+    try {
+      const reports = await loadPlanReportsByPlanId(Number(planId))
+      const months = new Set<string>()
+      reports.forEach(report => {
+        if (Number(report.reportOrgId) === Number(reportOrgId) && report.reportMonth) {
+          months.add(String(report.reportMonth))
+        }
+      })
+      return Array.from(padMonthsBeforeFirstReport(months, reports, reportOrgId))
+    } catch (error) {
+      logger.warn('[indicatorFillApi] 加载计划已上报月份集合失败:', error)
+      return null
+    }
+  },
+
+  /**
+   * 获取指定计划下某组织、某个指标已存在填报记录的报告月份集合（YYYYMM）。
+   *
+   * 指标级粒度：只有该指标的明细（indicatorDetails）出现在某月报告中，该月才算「已填报」。
+   * 与后端 ReportApplicationService 防跳月校验（按指标 + 月判断最早未填月）对齐，
+   * 避免同月第二个指标被弹窗锁到下一个月而触发 409。
+   * 加载失败时返回 null（与「确实没有上报记录」的空集合区分开），由调用方降级处理。
+   */
+  async getExistingReportMonthsForIndicator(
+    planId: number | string,
+    reportOrgId: number,
+    indicatorId: number | string
+  ): Promise<string[] | null> {
+    try {
+      const reports = await loadPlanReportsByPlanId(Number(planId))
+      const numericIndicatorId = Number(indicatorId)
+      const months = new Set<string>()
+      reports.forEach(report => {
+        if (Number(report.reportOrgId) !== Number(reportOrgId) || !report.reportMonth) {
+          return
+        }
+        const hasIndicatorRecord = (report.indicatorDetails || []).some(
+          detail => Number(detail.indicatorId) === numericIndicatorId
+        )
+        if (hasIndicatorRecord) {
+          months.add(String(report.reportMonth))
+        }
+      })
+      return Array.from(padMonthsBeforeFirstReport(months, reports, reportOrgId))
+    } catch (error) {
+      logger.warn('[indicatorFillApi] 加载指标已上报月份集合失败:', error)
+      return null
+    }
+  },
+
   async submitCurrentMonthPlanReport(
     planId: number | string,
     reportOrgId: number,
@@ -2558,7 +2707,6 @@ export const indicatorFillApi = {
         progress: isTarget ? normalizedProgress : Number(detail.progress ?? 0),
         issues: content,
         nextPlan: content,
-        milestoneNote: detail.milestoneNote ?? null,
         attachmentIds: Array.isArray(detail.attachments)
           ? detail.attachments
               .map(attachment => Number(attachment.id))

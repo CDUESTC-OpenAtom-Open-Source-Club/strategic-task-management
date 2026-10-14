@@ -1349,3 +1349,36 @@
     padding: var(--spacing-xl);
   }
 }
+
+/* A5 点行下钻：指标行可点击 */
+.indicator-status-item--clickable {
+  cursor: pointer;
+}
+
+.indicator-status-item--clickable:focus-visible {
+  outline: 2px solid #409eff;
+  outline-offset: 1px;
+}
+
+/* 指标完整详情对话框 */
+.indicator-full-detail .detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid #ebeef5;
+}
+
+.indicator-full-detail .detail-label {
+  color: #909399;
+  font-size: 13px;
+  flex: none;
+}
+
+.indicator-full-detail .detail-value {
+  color: #303133;
+  font-size: 13px;
+  text-align: right;
+  word-break: break-all;
+}

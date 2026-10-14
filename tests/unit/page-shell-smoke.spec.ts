@@ -17,12 +17,17 @@ function createViewModel(overrides: Record<string, unknown> = {}) {
     overallStatus: { type: 'info', label: '草稿' },
     approvalFlowStatusMeta: { tagType: 'info', label: '未发起', description: '' },
     currentApprovalStatusMeta: { tagType: 'info', label: '未发起', description: '' },
+    currentMonthlyReportStatusMeta: { type: 'info', label: '未填报' },
     currentApprovalCandidateNames: [] as string[],
     currentApprovalFlowName: '',
     currentApprovalStepName: '',
     currentApprovalWorkflowStatus: '',
     indicators: [] as unknown[],
     functionalDepartments: ref([] as string[]),
+    collegeDepartmentsScoped: ref([] as string[]),
+    hasMutationDraft: false,
+    mutationDraftLabels: [] as string[],
+    mutationApiLoading: false,
     selectedDepartment: '',
     currentIndicator: null,
     selectedIndicators: [] as unknown[],
@@ -41,16 +46,18 @@ function createViewModel(overrides: Record<string, unknown> = {}) {
     currentSelectedCollegePlan: ref(null),
     currentSelectedCollegePlanDetails: ref(null),
     dashboardData: {
-      totalScore: 0,
-      basicScore: 0,
-      developmentScore: 0,
+      levelDistribution: { ahead: 0, normal: 0, delayed: 0 },
       completionRate: 0,
       warningCount: 0,
       totalIndicators: 0,
       completedIndicators: 0,
       alertIndicators: { severe: 0, moderate: 0, normal: 0 }
     },
-    dashboardStore: { departmentSummary: [] as unknown[], breadcrumbs: [] as unknown[] },
+    dashboardStore: {
+      departmentSummary: [] as unknown[],
+      breadcrumbs: [] as unknown[],
+      mutationSummary: [] as unknown[]
+    },
     currentRole: 'strategic_dept',
     delayedTasks: [] as unknown[],
     _kpiCards: [] as unknown[],
@@ -77,7 +84,6 @@ function createViewModel(overrides: Record<string, unknown> = {}) {
     pageHasError: false,
     filterForm: {},
     newRow: {
-      milestones: [],
       type1: '定性',
       type2: '基础性',
       weight: 0,
@@ -86,7 +92,6 @@ function createViewModel(overrides: Record<string, unknown> = {}) {
       taskContent: ''
     },
     newIndicatorForm: {
-      milestones: [],
       type1: '定性',
       type2: '基础性',
       weight: 0,

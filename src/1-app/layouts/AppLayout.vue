@@ -44,8 +44,8 @@ const { tabs, activeTab, handleTabClick } = useNavigation(viewingRole)
 
 const {
   unreadCount,
-  pendingApprovalPreviewMessages,
-  hasPendingApprovalPreviewMessages,
+  unreadPreviewMessages,
+  hasUnreadPreviewMessages,
   notificationPreviewLoading,
   handleNotificationHover,
   handleNotificationClick,
@@ -287,32 +287,42 @@ const handleDropdownCommand = async (command: string) => {
 
             <div class="notification-preview">
               <div class="notification-preview__header">
-                <span>待审批通知</span>
-                <span>最多 3 条</span>
+                <span>未读消息</span>
+                <span>待审批优先 · 滚轮查看更多</span>
               </div>
 
               <div v-if="notificationPreviewLoading" class="notification-preview__empty">
                 加载中...
               </div>
-              <div
-                v-else-if="!hasPendingApprovalPreviewMessages"
-                class="notification-preview__empty"
-              >
-                暂无待审批通知
+              <div v-else-if="!hasUnreadPreviewMessages" class="notification-preview__empty">
+                暂无未读消息
               </div>
               <div v-else class="notification-preview__list">
                 <button
-                  v-for="message in pendingApprovalPreviewMessages"
+                  v-for="message in unreadPreviewMessages"
                   :key="message.id"
                   type="button"
                   class="notification-preview__item"
-                  @click="handleNotificationClick"
+                  :class="{ 'notification-preview__item--approval': message.approvalTodo }"
+                  @click="handleNotificationClick(message)"
                 >
-                  <span class="notification-preview__title">{{ message.title }}</span>
+                  <span class="notification-preview__title">
+                    <span
+                      class="notification-preview__kind"
+                      :class="
+                        message.approvalTodo
+                          ? 'notification-preview__kind--approval'
+                          : 'notification-preview__kind--notice'
+                      "
+                    >
+                      {{ message.approvalTodo ? '待审批' : '通知' }}
+                    </span>
+                    {{ message.title }}
+                  </span>
                   <span class="notification-preview__content">{{ message.content }}</span>
                   <span class="notification-preview__meta">
                     <span class="notification-preview__route">
-                      {{ resolveNotificationApprovalRoute(message) || '待补充' }}
+                      {{ resolveNotificationApprovalRoute(message) }}
                     </span>
                     <span class="notification-preview__time">
                       {{ formatNotificationTime(message.createdAt) }}
@@ -353,7 +363,7 @@ const handleDropdownCommand = async (command: string) => {
                 <!-- All users visible -->
                 <el-dropdown-item command="changePassword">
                   <el-icon><Lock /></el-icon>
-                  修改密码
+                  个人中心
                 </el-dropdown-item>
 
                 <el-dropdown-item command="logout" :divided="canAccessAdminConsole">
@@ -694,6 +704,9 @@ const handleDropdownCommand = async (command: string) => {
 .notification-preview__list {
   display: flex;
   flex-direction: column;
+  /* 2026-10-10 N7：默认约 3 条高度，滚轮上下滚动查看更多未读 */
+  max-height: 288px;
+  overflow-y: auto;
 }
 
 .notification-preview__item {
@@ -704,14 +717,47 @@ const handleDropdownCommand = async (command: string) => {
   padding: 10px 14px;
   border: 0;
   border-bottom: 1px solid #f1f5f9;
+  border-left: 3px solid transparent;
   background: #fff;
   color: inherit;
   text-align: left;
   cursor: pointer;
+  flex-shrink: 0;
 }
 
 .notification-preview__item:hover {
   background: #f8fafc;
+}
+
+/* 待审批消息：橙色系左条与底色，与普通通知区分（大小一致） */
+.notification-preview__item--approval {
+  border-left-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.notification-preview__item--approval:hover {
+  background: #fef3c7;
+}
+
+.notification-preview__kind {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  vertical-align: 1px;
+}
+
+.notification-preview__kind--approval {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.notification-preview__kind--notice {
+  background: #eff6ff;
+  color: #1d4ed8;
 }
 
 .notification-preview__title {
@@ -840,6 +886,11 @@ const handleDropdownCommand = async (command: string) => {
 
 .content-area {
   min-height: calc(100vh - 180px);
+}
+
+/* 仅战略任务管理页：取消强制最小高度，由页面自身按视口精确取高，避免整页滚动 */
+.content-area:has(.strategic-task-container) {
+  min-height: 0;
 }
 
 /* ========== Responsive ========== */

@@ -105,20 +105,6 @@ export interface IndicatorTarget {
 }
 
 /**
- * Milestone
- * Progress milestone for indicator tracking
- */
-export interface Milestone {
-  id: number
-  indicatorId: number
-  name: string
-  targetDate: string
-  status: string
-  description?: string
-  completionDate?: string
-}
-
-/**
  * Distribution Chain Entry
  * Tracks indicator distribution across organizational hierarchy
  */
@@ -212,7 +198,6 @@ export interface Indicator {
   statusAudit?: string // JSON string
 
   // Related entities
-  milestones?: Milestone[]
   distributionChain?: DistributionChainEntry[]
 
   // Qualitative options (for qualitative indicators)

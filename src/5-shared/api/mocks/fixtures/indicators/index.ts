@@ -10,7 +10,6 @@ export { indicators2025 } from './indicators2025'
 export { indicators2026 } from './indicators2026'
 
 // 导出工具函数
-export { generateQuarterlyMilestones, generateHistoricalMilestones } from './utils'
 
 // 导入用于合并
 import { indicators2023 } from './indicators2023'

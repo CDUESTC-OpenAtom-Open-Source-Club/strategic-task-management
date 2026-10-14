@@ -103,7 +103,7 @@ export interface PlanApprovalDetailItem {
 }
 
 export interface WorkflowHistoryTarget {
-  entityType: 'PLAN' | 'PLAN_REPORT'
+  entityType: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR'
   entityId: number
 }
 
@@ -121,7 +121,7 @@ export interface PlanReportIndicatorDetailItem {
   indicatorId: number
   progress?: number | null
   comment?: string | null
-  milestoneNote?: string | null
+  selfRating?: string | null
   attachments?: PlanReportAttachmentItem[] | null
 }
 
@@ -151,10 +151,12 @@ export interface DistributionApprovalProgressDrawerProps {
   approvalType?: 'distribution' | 'submission'
   historyViewMode?: 'auto' | 'card-only'
   workflowCode?: string | string[]
-  workflowEntityType?: 'PLAN' | 'PLAN_REPORT'
+  workflowEntityType?: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR'
   workflowEntityId?: number | string
-  secondaryWorkflowEntityType?: 'PLAN' | 'PLAN_REPORT'
+  secondaryWorkflowEntityType?: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR'
   secondaryWorkflowEntityId?: number | string
+  /** 2026-10-10：指标异动审批实例（审批历史「异动审批」卡片数据源） */
+  mutationWorkflowEntities?: Array<{ entityId: number | string }>
 }
 
 export interface DistributionApprovalProgressDrawerEmit {

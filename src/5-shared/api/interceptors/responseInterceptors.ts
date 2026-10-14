@@ -26,6 +26,11 @@ import { API_TARGET, USE_MOCK } from '@/shared/config/api'
 const backendDisplayTarget = API_TARGET || '当前配置的后端地址'
 
 async function loadMockResponse(config: InternalAxiosRequestConfig): Promise<unknown> {
+  if (!import.meta.env.DEV) {
+    // mock 数据只在开发/测试构建中打包，生产构建不包含 mocks chunk
+    logger.warn('🎭 [Mock Mode] 生产构建不含 mock 数据，请求将由真实后端处理:', config.url)
+    return undefined
+  }
   const { MockApiHandler } = await import('@/shared/api/mocks/handler')
   return MockApiHandler.handleRequest(config)
 }

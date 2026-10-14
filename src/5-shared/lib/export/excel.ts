@@ -2,8 +2,6 @@ import type { Cell, SheetData } from 'write-excel-file/browser'
 
 export type ExcelRowTone = 'default' | 'basic' | 'development' | 'draft' | 'warning'
 
-export const MILESTONE_REACHED_TEXT_COLOR = '#c62828'
-
 export interface ExcelExportColumn<T> {
   header: string
   width?: number
@@ -119,9 +117,15 @@ export function buildSheetData<T>(sheet: ExcelExportSheet<T>): SheetData {
   const bodyRows = sheet.rows.map((row, rowIndex) => {
     const rowTone = sheet.getRowTone?.(row, rowIndex) ?? 'default'
     const rowTextColor = sheet.getRowTextColor?.(row, rowIndex)
-    return sheet.columns.map(column =>
-      toStyledCell(column.getValue(row, rowIndex), {}, column, rowTone, rowTextColor)
-    )
+    return sheet.columns.map(column => {
+      const value = column.getValue(row, rowIndex)
+      // 2026-10-14：getValue 返回 null 表示该单元格被上方 rowSpan 合并覆盖，
+      // write-excel-file 要求被覆盖单元格原样传 null/undefined，不得携带值。
+      if (value === null || value === undefined) {
+        return null
+      }
+      return toStyledCell(value, {}, column, rowTone, rowTextColor)
+    })
   })
 
   return [headerRow, ...bodyRows]
@@ -201,46 +205,6 @@ export function formatProgress(currentValue: unknown, reportedValue?: unknown): 
   }
 
   return `${currentText}（填报进度：${formatPercent(reported)}）`
-}
-
-export function formatMilestones(milestones?: unknown[] | null): string {
-  if (!Array.isArray(milestones) || milestones.length === 0) {
-    return '-'
-  }
-
-  return milestones
-    .map((milestone, index) => {
-      const item = isRecord(milestone) ? milestone : {}
-      const name = getFirstText(item, ['name', 'milestoneName']) || `里程碑${index + 1}`
-      const deadline =
-        formatMilestoneDeadline(getFirstValue(item, ['deadline', 'dueDate', 'expectedDate'])) ||
-        '未设置'
-      const progress =
-        toFiniteNumber(getFirstValue(item, ['targetProgress', 'progress', 'weightPercent'])) ?? 0
-      return `${index + 1}. ${name}（${deadline}，${progress}%）`
-    })
-    .join('\n')
-}
-
-export function hasReachedMilestone(
-  currentProgress: unknown,
-  milestones?: unknown[] | null
-): boolean {
-  const progress = toFiniteNumber(currentProgress)
-  if (progress === null || !Array.isArray(milestones) || milestones.length === 0) {
-    return false
-  }
-
-  return milestones.some(milestone => {
-    if (!isRecord(milestone)) {
-      return false
-    }
-
-    const targetProgress = toFiniteNumber(
-      getFirstValue(milestone, ['targetProgress', 'progress', 'weightPercent'])
-    )
-    return targetProgress !== null && progress >= targetProgress
-  })
 }
 
 export function normalizeExportAttachments(input: unknown): ExportAttachment[] {
@@ -359,26 +323,6 @@ function formatPercent(value: number | null): string {
     return '-'
   }
   return Number.isInteger(value) ? `${value}%` : `${Number(value.toFixed(2))}%`
-}
-
-function formatMilestoneDeadline(value: unknown): string {
-  if (value === undefined || value === null || value === '') {
-    return ''
-  }
-
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return `${value.getFullYear()}-${padDatePart(value.getMonth() + 1)}-${padDatePart(
-      value.getDate()
-    )} ${padDatePart(value.getHours())}:${padDatePart(value.getMinutes())}`
-  }
-
-  const text = String(value).trim()
-  const dateTimeMatch = text.match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2})/)
-  if (dateTimeMatch) {
-    return `${dateTimeMatch[1]} ${dateTimeMatch[2]}`
-  }
-
-  return text
 }
 
 function padDatePart(value: number): string {

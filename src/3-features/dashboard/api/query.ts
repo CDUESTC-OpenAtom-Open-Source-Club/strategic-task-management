@@ -12,7 +12,7 @@ import { logger } from '@/shared/lib/utils/logger'
 import type { DashboardData, DepartmentProgress, AlertSummary } from '@/shared/types'
 
 const DASHBOARD_POLICY = createShortMemoryPolicy(CACHE_TTL.DASHBOARD, {
-  staleWhileRevalidate: true,
+  staleWhileRevalidate: false,
   tags: ['dashboard.overview']
 })
 
@@ -115,7 +115,7 @@ export async function getAlertSummary(): Promise<AlertSummary> {
       key: buildQueryKey('dashboard', 'alertSummary'),
       policy: {
         ...createShortMemoryPolicy(CACHE_TTL.WORKFLOW_DETAIL, {
-          staleWhileRevalidate: true,
+          staleWhileRevalidate: false,
           tags: ['dashboard.overview']
         })
       },

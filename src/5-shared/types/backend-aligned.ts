@@ -60,14 +60,6 @@ export enum IndicatorStatus {
   ARCHIVED = 'ARCHIVED'
 }
 
-export enum MilestoneStatus {
-  NOT_STARTED = 'NOT_STARTED',
-  IN_PROGRESS = 'IN_PROGRESS',
-  COMPLETED = 'COMPLETED',
-  DELAYED = 'DELAYED',
-  CANCELED = 'CANCELED'
-}
-
 export enum ReportStatus {
   DRAFT = 'DRAFT',
   SUBMITTED = 'SUBMITTED',
@@ -261,34 +253,15 @@ export interface StatusAuditEntry {
 }
 
 /**
- * Milestone entity (milestone table)
- */
-export interface Milestone {
-  milestoneId: number
-  indicatorId: number
-  milestoneName: string
-  milestoneDesc: string | null
-  dueDate: string
-  weightPercent: number
-  status: MilestoneStatus
-  sortOrder: number
-  inheritedFrom: number | null
-  targetProgress: number
-  isPaired: boolean
-  createdAt: string
-  updatedAt: string
-}
-
-/**
  * Progress Report entity (progress_report table)
+ *
+ * 注：achieved_milestone 列已随 V87 迁移删除，此处同步移除以免与后端 schema 不符。
  */
 export interface ProgressReport {
   reportId: number
   indicatorId: number
-  milestoneId: number | null
   adhocTaskId: number | null
   percentComplete: number
-  achievedMilestone: boolean
   narrative: string | null
   reporterId: number
   status: ReportStatus
@@ -315,11 +288,12 @@ export interface ApprovalRecord {
 
 /**
  * Alert Event entity (alert_event table)
+ *
+ * 注：milestone_id 列已随 V87 迁移删除（alert_event 表实际无此列），此处同步移除。
  */
 export interface AlertEvent {
   alertId: number
   indicatorId: number | null
-  milestoneId: number | null
   severity: AlertSeverity
   alertMessage: string
   status: AlertStatus
@@ -537,7 +511,6 @@ export interface IndicatorVO {
   updatedAt: string
   taskType?: 'BASIC' | 'DEVELOPMENT' | string
   // Extended fields for frontend alignment
-  milestones?: MilestoneVO[]
   canDistribute?: boolean
   canWithdraw?: boolean
   targetValue?: number | null
@@ -549,24 +522,6 @@ export interface IndicatorVO {
   remark?: string | null
   // 后端返回的type字段（定量/定性）
   indicatorType?: string | null
-}
-
-/**
- * Milestone VO matching backend API
- */
-export interface MilestoneVO {
-  milestoneId: number
-  indicatorId: number
-  indicatorDesc: string
-  milestoneName: string
-  milestoneDesc?: string
-  dueDate: string
-  weightPercent: number
-  status: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'DELAYED' | 'CANCELED'
-  sortOrder: number
-  inheritedFromId?: number
-  createdAt: string
-  updatedAt: string
 }
 
 /**
@@ -588,13 +543,6 @@ export interface IndicatorCreateRequest {
   progress?: number
   year?: number
   canWithdraw?: boolean
-  milestones?: Array<{
-    milestoneName: string
-    milestoneDesc?: string
-    dueDate: string
-    weightPercent: number
-    sortOrder?: number
-  }>
 }
 
 /**
@@ -633,13 +581,6 @@ export interface BatchDistributePageIndicatorsRequest {
     remark?: string
     progress?: number
     customDesc?: string
-    milestones?: Array<{
-      milestoneName: string
-      description?: string
-      dueDate?: string
-      targetProgress?: number
-      sortOrder?: number
-    }>
   }>
 }
 

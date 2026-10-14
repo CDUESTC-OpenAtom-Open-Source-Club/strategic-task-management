@@ -1,6 +1,6 @@
 /**
  * API 路径一致性属性测试
- * 
+ *
  * **Feature: production-deployment-integration, Property 1: API 路径一致性**
  * **Validates: Requirements 1.1**
  */
@@ -16,21 +16,14 @@ const BACKEND_ENDPOINTS = {
     getByOwnerOrg: { method: 'GET', path: '/api/indicators/owner/{ownerOrgId}' },
     getByTargetOrg: { method: 'GET', path: '/api/indicators/target/{targetOrgId}' },
     search: { method: 'GET', path: '/api/indicators/search' },
-    checkDistributionEligibility: { method: 'GET', path: '/api/indicators/{id}/distribution-eligibility' },
+    checkDistributionEligibility: {
+      method: 'GET',
+      path: '/api/indicators/{id}/distribution-eligibility'
+    },
     distribute: { method: 'POST', path: '/api/indicators/{id}/distribute' },
     batchDistribute: { method: 'POST', path: '/api/indicators/{id}/distribute/batch' },
-    getDistributed: { method: 'GET', path: '/api/indicators/{id}/distributed' },
-  },
-  milestones: {
-    getById: { method: 'GET', path: '/api/milestones/{id}' },
-    getByIndicator: { method: 'GET', path: '/api/milestones/indicator/{indicatorId}' },
-    getNextToReport: { method: 'GET', path: '/api/milestones/indicator/{indicatorId}/next-to-report' },
-    getUnpaired: { method: 'GET', path: '/api/milestones/indicator/{indicatorId}/unpaired' },
-    isPaired: { method: 'GET', path: '/api/milestones/{id}/is-paired' },
-    getPairingStatus: { method: 'GET', path: '/api/milestones/indicator/{indicatorId}/pairing-status' },
-    canReport: { method: 'GET', path: '/api/milestones/indicator/{indicatorId}/can-report/{milestoneId}' },
-    validateWeights: { method: 'GET', path: '/api/milestones/indicator/{indicatorId}/weight-validation' },
-  },
+    getDistributed: { method: 'GET', path: '/api/indicators/{id}/distributed' }
+  }
 } as const
 
 const FRONTEND_API_PATHS = {
@@ -45,20 +38,9 @@ const FRONTEND_API_PATHS = {
     checkDistributionEligibility: '/indicators/{id}/distribution-eligibility',
     distribute: '/indicators/{id}/distribute',
     batchDistribute: '/indicators/{id}/distribute/batch',
-    getDistributed: '/indicators/{id}/distributed',
-  },
-  milestones: {
-    getByIndicator: '/milestones/indicator/{indicatorId}',
-    getNextToReport: '/milestones/indicator/{indicatorId}/next-to-report',
-    getUnpaired: '/milestones/indicator/{indicatorId}/unpaired',
-    isPaired: '/milestones/{id}/is-paired',
-    getPairingStatus: '/milestones/indicator/{indicatorId}/pairing-status',
-    canReport: '/milestones/indicator/{indicatorId}/can-report/{milestoneId}',
-    getById: '/milestones/{id}',
-    validateWeights: '/milestones/indicator/{indicatorId}/weight-validation',
-  },
+    getDistributed: '/indicators/{id}/distributed'
+  }
 } as const
-
 
 function toFullApiPath(frontendPath: string): string {
   return `/api${frontendPath}`
@@ -77,30 +59,14 @@ describe('API Path Consistency Property Tests', () => {
   describe('Property 1: API 路径一致性', () => {
     it('should have matching backend endpoints for all frontend indicator API paths', () => {
       fc.assert(
-        fc.property(
-          fc.constantFrom(...Object.keys(FRONTEND_API_PATHS.indicators)),
-          (apiKey) => {
-            const frontendPath = FRONTEND_API_PATHS.indicators[apiKey as keyof typeof FRONTEND_API_PATHS.indicators]
-            const backendEndpoint = BACKEND_ENDPOINTS.indicators[apiKey as keyof typeof BACKEND_ENDPOINTS.indicators]
-            expect(backendEndpoint).toBeDefined()
-            expect(pathsMatch(frontendPath, backendEndpoint.path)).toBe(true)
-          }
-        ),
-        { numRuns: 100 }
-      )
-    })
-
-    it('should have matching backend endpoints for all frontend milestone API paths', () => {
-      fc.assert(
-        fc.property(
-          fc.constantFrom(...Object.keys(FRONTEND_API_PATHS.milestones)),
-          (apiKey) => {
-            const frontendPath = FRONTEND_API_PATHS.milestones[apiKey as keyof typeof FRONTEND_API_PATHS.milestones]
-            const backendEndpoint = BACKEND_ENDPOINTS.milestones[apiKey as keyof typeof BACKEND_ENDPOINTS.milestones]
-            expect(backendEndpoint).toBeDefined()
-            expect(pathsMatch(frontendPath, backendEndpoint.path)).toBe(true)
-          }
-        ),
+        fc.property(fc.constantFrom(...Object.keys(FRONTEND_API_PATHS.indicators)), apiKey => {
+          const frontendPath =
+            FRONTEND_API_PATHS.indicators[apiKey as keyof typeof FRONTEND_API_PATHS.indicators]
+          const backendEndpoint =
+            BACKEND_ENDPOINTS.indicators[apiKey as keyof typeof BACKEND_ENDPOINTS.indicators]
+          expect(backendEndpoint).toBeDefined()
+          expect(pathsMatch(frontendPath, backendEndpoint.path)).toBe(true)
+        }),
         { numRuns: 100 }
       )
     })
@@ -113,12 +79,9 @@ describe('API Path Consistency Property Tests', () => {
         }
       }
       fc.assert(
-        fc.property(
-          fc.constantFrom(...allBackendEndpoints),
-          (endpointInfo) => {
-            expect(endpointInfo.path.startsWith('/api/')).toBe(true)
-          }
-        ),
+        fc.property(fc.constantFrom(...allBackendEndpoints), endpointInfo => {
+          expect(endpointInfo.path.startsWith('/api/')).toBe(true)
+        }),
         { numRuns: 100 }
       )
     })
@@ -133,18 +96,15 @@ describe('API Path Consistency Property Tests', () => {
         }
       }
       fc.assert(
-        fc.property(
-          fc.constantFrom(...allPaths),
-          (path) => {
-            expect(path.startsWith('/')).toBe(true)
-            expect(path.includes('//')).toBe(false)
-            const paramMatches = path.match(/\{[^}]+\}/g) || []
-            for (const param of paramMatches) {
-              const paramName = param.slice(1, -1)
-              expect(/^[a-zA-Z][a-zA-Z0-9]*$/.test(paramName)).toBe(true)
-            }
+        fc.property(fc.constantFrom(...allPaths), path => {
+          expect(path.startsWith('/')).toBe(true)
+          expect(path.includes('//')).toBe(false)
+          const paramMatches = path.match(/\{[^}]+\}/g) || []
+          for (const param of paramMatches) {
+            const paramName = param.slice(1, -1)
+            expect(/^[a-zA-Z][a-zA-Z0-9]*$/.test(paramName)).toBe(true)
           }
-        ),
+        }),
         { numRuns: 100 }
       )
     })

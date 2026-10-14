@@ -400,6 +400,8 @@ export const useMessageStore = defineStore('message-center', () => {
 
     try {
       await messagesApi.markAsRead(messageId)
+      // 2026-10-07 实际回源：以服务端为准校准本地已读状态与计数，不做纯乐观收尾
+      void refreshMessageCenter().catch(() => {})
     } catch (err) {
       message.isRead = previousReadState
       message.readState = previousReadState ? 'READ' : 'UNREAD'
@@ -432,6 +434,8 @@ export const useMessageStore = defineStore('message-center', () => {
 
     try {
       await messagesApi.markAllAsRead()
+      // 2026-10-07 实际回源：以服务端为准校准本地已读状态与计数
+      void refreshMessageCenter().catch(() => {})
     } catch (err) {
       previousStates.forEach(previous => {
         const target = rawMessages.value.find(message => message.id === previous.id)

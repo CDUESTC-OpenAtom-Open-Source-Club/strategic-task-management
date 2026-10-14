@@ -2,10 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildAttachmentCell,
   buildSheetData,
-  formatMilestones,
   formatProgress,
-  hasReachedMilestone,
-  MILESTONE_REACHED_TEXT_COLOR,
   normalizeExportAttachments,
   normalizeSheetName
 } from './excel'
@@ -61,32 +58,6 @@ describe('excel export helpers', () => {
     expect(normalizeSheetName('党委/办公室:统战部*2026')).toBe('党委 办公室 统战部 2026')
   })
 
-  it('formats milestone details for wrapped cells', () => {
-    expect(
-      formatMilestones([
-        { name: '阶段一', deadline: '2026-03-31', targetProgress: 30 },
-        { milestoneName: '阶段二', expectedDate: '2026-06-30T00:00:00', progress: 60 }
-      ])
-    ).toBe('1. 阶段一（2026-03-31，30%）\n2. 阶段二（2026-06-30 00:00，60%）')
-  })
-
-  it('detects rows whose current progress has reached at least one milestone', () => {
-    expect(
-      hasReachedMilestone(60, [
-        { name: '阶段一', targetProgress: 30 },
-        { name: '阶段二', progress: 80 }
-      ])
-    ).toBe(true)
-
-    expect(
-      hasReachedMilestone(20, [
-        { name: '阶段一', targetProgress: 30 },
-        { name: '阶段二', progress: 80 }
-      ])
-    ).toBe(false)
-    expect(hasReachedMilestone(60, [])).toBe(false)
-  })
-
   it('applies row text color without removing row tone background', () => {
     const sheetData = buildSheetData({
       sheetName: '测试',
@@ -104,22 +75,22 @@ describe('excel export helpers', () => {
         }
       ],
       getRowTone: () => 'development',
-      getRowTextColor: () => MILESTONE_REACHED_TEXT_COLOR
+      getRowTextColor: () => '#c62828'
     })
 
     expect(sheetData[1][0]).toMatchObject({
       value: '达标行',
       backgroundColor: '#eaf4ff',
-      textColor: MILESTONE_REACHED_TEXT_COLOR
+      textColor: '#c62828'
     })
     expect(sheetData[1][1]).toMatchObject({
       value: 60,
       backgroundColor: '#eaf4ff',
-      textColor: MILESTONE_REACHED_TEXT_COLOR
+      textColor: '#c62828'
     })
     expect(sheetData[1][2]).toMatchObject({
       type: 'Formula',
-      textColor: MILESTONE_REACHED_TEXT_COLOR
+      textColor: '#c62828'
     })
   })
 })

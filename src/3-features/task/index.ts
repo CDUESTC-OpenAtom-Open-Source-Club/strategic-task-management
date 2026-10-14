@@ -11,12 +11,7 @@ export { useTaskStore } from './model/store'
 
 // API exports
 export { strategicApi } from './api/strategicApi'
-export type {
-  StrategicTaskVO,
-  IndicatorVO,
-  MilestoneVO,
-  AssessmentCycleVO
-} from './api/strategicApi'
+export type { StrategicTaskVO, IndicatorVO, AssessmentCycleVO } from './api/strategicApi'
 
 // Lib exports
 export * from './lib/utils'

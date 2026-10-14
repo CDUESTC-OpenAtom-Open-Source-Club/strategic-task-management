@@ -9,7 +9,6 @@ import { buildQueryKey, fetchWithCache } from '@/shared/lib/utils/cache'
 import { createMemoryDetailPolicy, createSessionListPolicy } from '@/shared/lib/utils/cache-config'
 import { getCachedUserContext } from '@/shared/lib/utils/cacheContext'
 import type { ApiResponse, StrategicTask } from '@/shared/types'
-import { milestoneApi } from '@/entities/milestone/api/milestoneApi'
 
 const TASK_LIST_POLICY = createSessionListPolicy({
   tags: ['task.list']
@@ -164,61 +163,5 @@ export async function getTaskIndicators(taskId: number): Promise<ApiResponse<any
       tags: ['task.detail', `task.detail.${taskId}`, 'indicator.list', `indicator.task.${taskId}`]
     },
     fetcher: () => api.get(`/indicators/task/${taskId}`)
-  })
-}
-
-/**
- * Get task milestones
- *
- * API: GET /api/v1/indicators/task/{taskId} + GET /api/v1/milestones/by-indicators?ids=...
- * 使用批量接口替代 N+1 请求
- *
- * @param taskId - Task ID
- * @returns Task milestones
- */
-export async function getTaskMilestones(taskId: number): Promise<ApiResponse<any[]>> {
-  return fetchWithCache({
-    key: buildQueryKey('task', 'milestones', withTaskCacheContext({ taskId })),
-    policy: {
-      ...TASK_DETAIL_POLICY,
-      staleWhileRevalidate: true,
-      tags: ['task.detail', `task.detail.${taskId}`, 'milestone.list']
-    },
-    fetcher: async () => {
-      const indicatorsResponse = await api.get<ApiResponse<any[]>>(`/indicators/task/${taskId}`)
-
-      if (!indicatorsResponse?.success || !Array.isArray(indicatorsResponse.data)) {
-        return {
-          ...indicatorsResponse,
-          data: []
-        }
-      }
-
-      const indicatorIds = indicatorsResponse.data
-        .map(
-          (indicator: { indicatorId?: number; id?: number }) =>
-            indicator.indicatorId ?? indicator.id
-        )
-        .filter((id: number | undefined): id is number => typeof id === 'number')
-
-      if (indicatorIds.length === 0) {
-        return { ...indicatorsResponse, data: [] }
-      }
-
-      try {
-        const batchResponse = await milestoneApi.getMilestonesByIndicatorIds(indicatorIds)
-        const allMilestones: any[] = []
-        if (batchResponse?.success && batchResponse.data) {
-          for (const milestones of Object.values(batchResponse.data)) {
-            if (Array.isArray(milestones)) {
-              allMilestones.push(...milestones)
-            }
-          }
-        }
-        return { ...indicatorsResponse, data: allMilestones }
-      } catch {
-        return { ...indicatorsResponse, data: [] }
-      }
-    }
   })
 }

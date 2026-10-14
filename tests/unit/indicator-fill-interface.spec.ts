@@ -29,7 +29,7 @@ vi.mock('element-plus', async () => {
 })
 
 import { usePlanStore } from '@/features/plan/model/store'
-import IndicatorFillHistory from '@/shared/ui/form/indicator/IndicatorFillHistory.vue'
+import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 
 const passthroughStub = (name: string, tag = 'div') =>
   defineComponent({

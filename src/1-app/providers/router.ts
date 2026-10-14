@@ -10,6 +10,7 @@
 
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/features/auth/model/store'
+import { isDingTalkContainer, tryDingTalkAutoLogin } from '@/features/auth/lib/dingtalk'
 import { tokenManager } from '@/shared/lib/utils/tokenManager'
 import { logger } from '@/shared/lib/utils/logger'
 import { hasAdminConsoleAccess } from '@/shared/lib/permissions/adminConsoleAccess'
@@ -46,6 +47,16 @@ const ensureAuthRestored = async () => {
 }
 
 const routes: RouteRecordRaw[] = [
+  {
+    // 钉钉工作台 applink 的 path 不能带查询参数（会 404），
+    // 因此 sourceId 编在路径段里，由本重定向转为消息中心查询参数
+    path: '/mt/:sourceId',
+    name: 'DingTalkTodoPathRedirect',
+    redirect: to => ({
+      path: '/messages',
+      query: { sourceId: String(to.params.sourceId || '') }
+    })
+  },
   {
     path: '/login',
     name: 'Login',
@@ -124,48 +135,24 @@ const routes: RouteRecordRaw[] = [
       // ============================================================
 
       /**
-       * @deprecated As a formal entry point.
-       * Plan management is being consolidated into `/strategic-tasks`.
-       * This route is retained temporarily for compatibility and backup access.
+       * 历史废弃入口兼容：计划管理页已下线，统一收敛到战略任务管理。
+       * 早期版本遗留的独立"计划管理"页面（含未实现的提交按钮）不再对外提供。
        */
       {
         path: 'plans',
-        name: 'PlanList',
-        component: () => import('@/features/plan/ui/PlanListView.vue'),
-        meta: { title: '计划列表 - 战略指标管理系统' }
+        redirect: '/strategic-tasks'
       },
-
-      /**
-       * @deprecated As a formal entry point.
-       * Retained temporarily while the strategic workbench absorbs plan detail flows.
-       */
       {
         path: 'plans/:id',
-        name: 'plan-detail',
-        component: () => import('@/features/plan/ui/PlanDetailView.vue'),
-        meta: { title: '计划详情 - 战略指标管理系统' }
+        redirect: '/strategic-tasks'
       },
-
-      /**
-       * @deprecated As a formal entry point.
-       * Retained temporarily while the strategic workbench absorbs plan editing flows.
-       */
       {
         path: 'plans/:id/edit',
-        name: 'plan-edit',
-        component: () => import('@/features/plan/ui/PlanEditView.vue'),
-        meta: { roles: ['strategic_dept'], title: '编辑计划 - 战略指标管理系统' }
+        redirect: '/strategic-tasks'
       },
-
-      /**
-       * @deprecated As a formal entry point.
-       * Retained temporarily while the strategic workbench absorbs plan creation flows.
-       */
       {
         path: 'plans/create',
-        name: 'plan-create',
-        component: () => import('@/features/plan/ui/PlanEditView.vue'),
-        meta: { roles: ['strategic_dept'], title: '创建计划 - 战略指标管理系统' }
+        redirect: '/strategic-tasks'
       },
 
       /**
@@ -210,7 +197,15 @@ const router = createRouter({
 })
 
 // Navigation guards
+
 router.beforeEach(async (to, _from, next) => {
+  // 钉钉工作台 applink 拼装会产生双斜杠路径（首页根地址尾斜杠 + path 头斜杠），
+  // 例：//mt/xxx —— 路由匹配会失败落到 404，这里统一剥掉多余的斜杠
+  if (to.path.startsWith('//')) {
+    next({ path: to.path.replace(/^\/+/, '/'), query: to.query, hash: to.hash, replace: true })
+    return
+  }
+
   // 开始进度进度条（如果是页面导航）
   if (_from.name !== undefined) {
     startProgress()
@@ -225,6 +220,12 @@ router.beforeEach(async (to, _from, next) => {
 
   // 确保认证状态已从 localStorage 恢复
   await ensureAuthRestored()
+
+  // 钉钉容器内且当前未登录：先尝试静默免登（结果会话内缓存）。
+  // 成功则直接放行原目标路由（待办深链直达审批页）；失败则落到登录页并展示原因。
+  if (!useAuthStore().isAuthenticated && isDingTalkContainer()) {
+    await tryDingTalkAutoLogin()
+  }
 
   const authStore = useAuthStore()
   const currentOrgId = Number(authStore.user?.orgId ?? NaN)

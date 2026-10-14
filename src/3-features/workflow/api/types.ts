@@ -173,6 +173,8 @@ export interface ReassignRequest {
 export interface WorkflowTaskDecisionRequest {
   approved: boolean
   comment?: string
+  /** 鉴定进度等级（P1 上报链改造）：AHEAD=超前 / NORMAL=正常 / DELAYED=延期 */
+  appraisalLevel?: string
 }
 
 // ============================================================

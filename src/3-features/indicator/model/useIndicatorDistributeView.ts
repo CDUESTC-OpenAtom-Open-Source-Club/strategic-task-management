@@ -25,12 +25,11 @@ import { useApprovalRouteAutopen } from '@/features/approval/lib'
 import { indicatorFillApi } from '@/features/plan/api/planApi'
 import { getUsersByOrgId } from '@/features/user/api/query'
 import { indicatorApi } from '@/features/indicator/api'
-import { milestoneApi } from '@/entities/milestone/api/milestoneApi'
+import { formatPendingApprovalLabel } from '@/shared/lib/utils/workflowStepLabel'
 import { logger } from '@/shared/lib/utils/logger'
-import { resolveMilestoneDisplayState } from '@/shared/lib/utils/milestoneDisplay'
+import { alertApi, type ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import type { Plan } from '@/shared/types'
 import { canUseAsFunctionalParentIndicator } from '@/features/indicator/lib/scope'
-import { sortMilestonesByProgress } from '@/shared/lib/utils/milestoneSort'
 import { getPlanStatusDisplay, normalizePlanStatus } from '@/features/task/lib/planStatus'
 import { strategicApi } from '@/features/task/api/strategicApi'
 import { getWorkflowDefinitionPreviewByCode } from '@/features/workflow/api'
@@ -42,8 +41,11 @@ import { getWorkflowInstanceDetailByBusiness } from '@/features/workflow/api/que
 import { buildQueryKey, invalidateQueries } from '@/shared/lib/utils/cache'
 import {
   GLOBAL_DATA_REFRESH_REQUEST_EVENT,
+  requestGlobalDataRefresh,
+  shouldRefreshForDomains,
   type GlobalDataRefreshDetail
 } from '@/5-shared/lib/dataFreshness'
+import { requestMessageCenterRefresh } from '@/shared/lib/messageCenterRefresh'
 
 export interface IndicatorDistributeViewProps {
   viewingRole?: string
@@ -367,6 +369,8 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   // 指标详情侧边栏
   const detailDrawerVisible = ref(false)
   const currentDetailIndicator = ref<StrategicIndicator | null>(null)
+  // P3 上报记录分区
+  const reportHistoryOpen = ref<string[]>([])
   const addRowFormRef = ref<HTMLElement | null>(null)
   const lastEditTime = ref(new Date().toLocaleString())
 
@@ -1233,7 +1237,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       ['SUBMITTED', 'IN_REVIEW', 'PENDING'].includes(workflowStatus)
     ) {
       return {
-        label: stepName ? `待${stepName}审批` : '审批中',
+        label: formatPendingApprovalLabel(stepName),
         tagType: 'warning' as const,
         description:
           candidateNames.length > 0
@@ -1563,6 +1567,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       })
       applyLocalCollegePlanReportSummaryPatch('submitted')
       await refreshDistributionData()
+      broadcastDistributionMutation({ todosChanged: true })
       handleCloseApprovalSetupDialog()
       taskApprovalVisible.value = true
       ElMessage.success('已发起下发审批')
@@ -1571,6 +1576,21 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     } finally {
       approvalSubmitting.value = false
     }
+  }
+
+  // 2026-10-07 实际回源广播：下发视图的指标/计划变更完成后，通知任务页/看板等
+  // 并行视图定向刷新；本视图数据由 refreshDistributionData 真实刷新，广播会被
+  // 自身 handler 按 source 跳过，不会重复重刷。
+  const broadcastDistributionMutation = (options?: { todosChanged?: boolean }) => {
+    if (options?.todosChanged) {
+      // 下发提交/撤回会改变审批人待办，消息中心一并刷新
+      requestMessageCenterRefresh()
+    }
+    requestGlobalDataRefresh({
+      source: 'indicator-distribution-mutation',
+      silent: true,
+      domains: ['indicator', 'plan']
+    })
   }
 
   const loadCurrentDepartmentPlanDetails = async (force = false) => {
@@ -1927,7 +1947,11 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     }
 
     try {
-      const response = await getWorkflowInstanceDetailByBusiness(entityType, entityId)
+      // 2026-10-10 跨窗口实时修复：审批详情预加载绕过 30s WORKFLOW_DETAIL 缓存，
+      // 与战略任务页同口径——推送触发的刷新必须拿到最新实例状态。
+      const response = await getWorkflowInstanceDetailByBusiness(entityType, entityId, {
+        force: true
+      })
       if (response.success && response.data) {
         currentCollegeWorkflowDetail.value = response.data
       }
@@ -2152,7 +2176,6 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         weight:
           getPlanIndicatorNumber(source, 'weightPercent', 'weight') || storeIndicator?.weight || 0,
         year: Number(source.year) || storeIndicator?.year || timeContext.currentYear,
-        milestones: storeIndicator?.milestones || [],
         statusAudit: storeIndicator?.statusAudit || [],
         parentIndicatorId: parentIndicatorId || undefined
       } as StrategicIndicator & {
@@ -2280,8 +2303,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     name: '',
     remark: '',
     weight: 10,
-    targetProgress: 100,
-    milestones: []
+    targetProgress: 100
   })
 
   // 选择关联指标弹框是否可见（保留用于内联选择）
@@ -2298,10 +2320,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     remark: string // 备注
     weight: number // 权重
     targetProgress: number // 定量指标目标进度
-    milestones: { id: string; name: string; targetProgress: number; deadline: string }[] // 里程碑
   }
-
-  type FormMilestone = NewIndicatorItem['milestones'][number]
 
   // 弹框中的新增指标列表
   const _newIndicatorList = ref<NewIndicatorItem[]>([])
@@ -2407,8 +2426,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       name: '',
       remark: '',
       weight: 10,
-      targetProgress: 100,
-      milestones: []
+      targetProgress: 100
     }
     isAddingIndicator.value = true
 
@@ -2457,81 +2475,8 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       name: '',
       remark: '',
       weight: 10,
-      targetProgress: 100,
-      milestones: []
+      targetProgress: 100
     }
-  }
-
-  const cloneParentMilestonesForForm = (indicator: StrategicIndicator): FormMilestone[] => {
-    if (!Array.isArray(indicator.milestones) || indicator.milestones.length === 0) {
-      return []
-    }
-
-    return indicator.milestones.map((milestone, index) => {
-      const rawMilestone = milestone as {
-        id?: string | number
-        name?: string
-        targetProgress?: number | string
-        progress?: number | string
-        deadline?: string
-        expectedDate?: string
-      }
-
-      const rawProgress = Number(rawMilestone.targetProgress ?? rawMilestone.progress ?? 0)
-
-      return {
-        // 新增子指标时复制父指标里程碑，只继承内容，不复用已有数据库主键。
-        id: `copied-ms-${Date.now()}-${index}`,
-        name: String(rawMilestone.name || indicator.name || `里程碑 ${index + 1}`),
-        targetProgress: Number.isFinite(rawProgress) ? rawProgress : 0,
-        deadline: String(rawMilestone.deadline || rawMilestone.expectedDate || '')
-      }
-    })
-  }
-
-  const buildDraftMilestonesFromForm = (
-    milestones: FormMilestone[]
-  ): StrategicIndicator['milestones'] =>
-    milestones.map(m => ({
-      id: m.id,
-      name: m.name,
-      targetProgress: m.targetProgress,
-      deadline: m.deadline,
-      status: 'pending' as const
-    }))
-
-  const buildLocalMilestonesFromForm = (milestones: FormMilestone[]): LocalMilestone[] =>
-    milestones.map(m => ({
-      id: m.id,
-      name: m.name,
-      expectedDate: m.deadline,
-      progress: m.targetProgress
-    }))
-
-  const resolveTargetValueFromMilestones = (
-    milestones: Array<
-      | FormMilestone
-      | LocalMilestone
-      | {
-          targetProgress?: number | string
-          progress?: number | string
-        }
-    >,
-    fallback = 100
-  ): number => {
-    const lastMilestone = milestones[milestones.length - 1]
-    if (!lastMilestone) {
-      return fallback
-    }
-
-    const rawValue =
-      'targetProgress' in lastMilestone
-        ? lastMilestone.targetProgress
-        : 'progress' in lastMilestone
-          ? lastMilestone.progress
-          : fallback
-    const resolvedValue = Number(rawValue)
-    return Number.isFinite(resolvedValue) ? resolvedValue : fallback
   }
 
   const resolveParentTargetProgress = (indicator: StrategicIndicator): number => {
@@ -2540,24 +2485,12 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       return targetValue
     }
 
-    if (Array.isArray(indicator.milestones) && indicator.milestones.length > 0) {
-      const lastMilestone = indicator.milestones[indicator.milestones.length - 1] as
-        | { targetProgress?: number | string; progress?: number | string }
-        | undefined
-      const fallbackProgress = Number(
-        lastMilestone?.targetProgress ?? lastMilestone?.progress ?? NaN
-      )
-      if (Number.isFinite(fallbackProgress) && fallbackProgress >= 0) {
-        return fallbackProgress
-      }
-    }
-
+    // 里程碑移除后无里程碑进度可回退，统一默认 100
     return 100
   }
 
   // 选择关联指标
   const selectParentIndicator = (indicator: StrategicIndicator) => {
-    const copiedMilestones = cloneParentMilestonesForForm(indicator)
     const resolvedType = getIndicatorTypeLabel(indicator)
 
     newIndicatorForm.value.parentIndicatorId = indicator.id.toString()
@@ -2569,11 +2502,6 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     newIndicatorForm.value.weight = Number(indicator.weight ?? 10) || 10
     newIndicatorForm.value.targetProgress = resolveParentTargetProgress(indicator)
     newIndicatorForm.value.type1 = resolvedType
-    newIndicatorForm.value.milestones = copiedMilestones
-    // 如果父指标没有里程碑，再按原有规则兜底生成
-    if (newIndicatorForm.value.type1 === '定量' && newIndicatorForm.value.milestones.length === 0) {
-      generateMonthlyMilestonesForForm()
-    }
     selectParentDialogVisible.value = false
   }
 
@@ -2585,116 +2513,6 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     if (indicator) {
       selectParentIndicator(indicator)
     }
-  }
-
-  // 为表单生成12个月里程碑（定量指标）
-  const generateMonthlyMilestonesForForm = () => {
-    const currentYear = timeContext.currentYear
-    const indicatorName = newIndicatorForm.value.name || '指标完成'
-    newIndicatorForm.value.milestones = []
-
-    for (let month = 1; month <= 12; month++) {
-      const lastDay = new Date(currentYear, month, 0).getDate()
-      const deadline = `${currentYear}-${String(month).padStart(2, '0')}-${lastDay}`
-      const progress = Math.round((month / 12) * 100)
-
-      newIndicatorForm.value.milestones.push({
-        id: `ms-${Date.now()}-${month}`,
-        name: indicatorName,
-        targetProgress: progress,
-        deadline: deadline
-      })
-    }
-  }
-
-  // 指标类型变更时的处理
-  const handleFormIndicatorTypeChange = (newType: '定量' | '定性') => {
-    if (newType === '定量') {
-      // 定量指标：只有当没有里程碑时才自动生成12个月里程碑
-      if (newIndicatorForm.value.milestones.length === 0) {
-        generateMonthlyMilestonesForForm()
-      }
-      // 如果已有里程碑，保留它们不做任何操作
-    }
-    // 定性指标：保留已有里程碑，让用户手动管理
-    // 不再清空里程碑
-  }
-
-  // 添加里程碑（表单）
-  const addFormMilestone = () => {
-    newIndicatorForm.value.milestones.push({
-      id: `ms-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      name: '',
-      targetProgress: 0,
-      deadline: ''
-    })
-  }
-
-  // 删除里程碑（表单）
-  const removeFormMilestone = (index: number) => {
-    newIndicatorForm.value.milestones.splice(index, 1)
-  }
-
-  const toMilestoneBatchPayload = (
-    milestones: Array<
-      | { id?: string | number; name?: string; targetProgress?: number; deadline?: string }
-      | { id?: string | number; name?: string; progress?: number; expectedDate?: string }
-    >,
-    options: {
-      includeExistingIds?: boolean
-    } = {}
-  ) =>
-    milestones.map((milestone, index) => {
-      const rawId = Number(milestone.id)
-      const numericId =
-        options.includeExistingIds !== false && Number.isFinite(rawId) && rawId > 0
-          ? rawId
-          : undefined
-      const targetProgress =
-        'targetProgress' in milestone
-          ? Number(milestone.targetProgress) || 0
-          : 'progress' in milestone
-            ? Number(milestone.progress) || 0
-            : 0
-      const dueDate =
-        'deadline' in milestone
-          ? milestone.deadline || null
-          : 'expectedDate' in milestone
-            ? milestone.expectedDate || null
-            : null
-
-      return {
-        ...(numericId ? { id: numericId } : {}),
-        milestoneName: String(milestone.name || '').trim() || `里程碑 ${index + 1}`,
-        targetProgress,
-        dueDate,
-        status: 'NOT_STARTED',
-        sortOrder: index + 1
-      }
-    })
-
-  const persistIndicatorMilestones = async (
-    indicatorId: number,
-    milestones: Array<
-      | { id?: string | number; name?: string; targetProgress?: number; deadline?: string }
-      | { id?: string | number; name?: string; progress?: number; expectedDate?: string }
-    >,
-    options: {
-      includeExistingIds?: boolean
-    } = {}
-  ) => {
-    if (!Number.isFinite(indicatorId) || indicatorId <= 0 || milestones.length === 0) {
-      return
-    }
-
-    logger.info(
-      `[IndicatorDistributeView] Batch saving ${milestones.length} milestones for indicator ${indicatorId}`
-    )
-
-    await milestoneApi.saveMilestonesForIndicator(
-      String(indicatorId),
-      toMilestoneBatchPayload(milestones, options)
-    )
   }
 
   // 保存新增指标（状态为草稿）- 立即调用后端API创建
@@ -2790,15 +2608,9 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         remark: newIndicatorForm.value.remark,
         canWithdraw: false,
         taskContent: newIndicatorForm.value.taskContent,
-        milestones: buildDraftMilestonesFromForm(newIndicatorForm.value.milestones),
-        targetValue:
-          newIndicatorForm.value.type1 === '定量'
-            ? resolveTargetValueFromMilestones(
-                newIndicatorForm.value.milestones,
-                newIndicatorForm.value.targetProgress
-              )
-            : newIndicatorForm.value.milestones.length,
-        unit: newIndicatorForm.value.type1 === '定量' ? '%' : '个里程碑',
+        // 里程碑移除后目标值默认 100
+        targetValue: 100,
+        unit: newIndicatorForm.value.type1 === '定量' ? '%' : '项',
         responsibleDept: selectedCollege.value!,
         responsiblePerson: '',
         status: 'draft',
@@ -2813,32 +2625,10 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       // 添加到前端store
       strategicStore.addDraftIndicator(newIndicator)
 
-      let milestonesPersisted = true
-      if (newIndicatorForm.value.milestones.length > 0) {
-        try {
-          await persistIndicatorMilestones(
-            Number(newBackendId),
-            newIndicatorForm.value.milestones,
-            {
-              includeExistingIds: false
-            }
-          )
-        } catch (milestoneError) {
-          milestonesPersisted = false
-          logger.error(
-            '[IndicatorDistributeView] persist new indicator milestones failed:',
-            milestoneError
-          )
-        }
-      }
-
-      if (milestonesPersisted) {
-        ElMessage.success('已添加指标（草稿状态）')
-      } else {
-        ElMessage.warning('指标已创建，但里程碑保存失败，请重新编辑里程碑')
-      }
+      ElMessage.success('已添加指标（草稿状态）')
       cancelAddIndicator()
       await refreshDistributionData()
+      broadcastDistributionMutation()
     } catch (error: any) {
       logger.error('[IndicatorDistributeView] saveNewIndicator failed:', error)
       ElMessage.error(getApiErrorMessage(error, '保存指标失败，请重试'))
@@ -2856,22 +2646,6 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       }
       newChildIndicators[parentId] = remainingChildren
     })
-  }
-
-  const cloneSourceMilestonesForCopy = (
-    milestones: StrategicIndicator['milestones'] | undefined,
-    fallbackName: string
-  ): FormMilestone[] => {
-    if (!Array.isArray(milestones) || milestones.length === 0) {
-      return []
-    }
-
-    return milestones.map((milestone, index) => ({
-      id: `copy-ms-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
-      name: String(milestone.name || fallbackName || `里程碑 ${index + 1}`),
-      targetProgress: Number(milestone.targetProgress ?? 0) || 0,
-      deadline: String(milestone.deadline || '')
-    }))
   }
 
   const copyIndicatorsFromCollege = async () => {
@@ -2960,10 +2734,6 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         const type1 = getIndicatorTypeLabel(sourceIndicator)
         const weight = Number(sourceIndicator.weight ?? 0)
         const targetProgress = resolveParentTargetProgress(sourceIndicator)
-        const copiedMilestones = cloneSourceMilestonesForCopy(
-          sourceIndicator.milestones,
-          sourceIndicator.name || '复制指标'
-        )
 
         const createResp = await indicatorApi.createIndicator({
           taskId: indicatorTaskId,
@@ -2985,16 +2755,11 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
           throw new Error(createResp.message || `复制指标 ${sourceIndicator.name} 失败`)
         }
 
-        if (copiedMilestones.length > 0) {
-          await persistIndicatorMilestones(Number(createResp.data.id), copiedMilestones, {
-            includeExistingIds: false
-          })
-        }
-
         copiedCount += 1
       }
 
       await refreshDistributionData()
+      broadcastDistributionMutation()
       closeCopyIndicatorsDialog()
       ElMessage.success(
         copyClearExisting.value
@@ -3021,35 +2786,6 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
   // ================== 子指标新增相关 ==================
 
-  // 里程碑接口
-  // 本地里程碑接口（用于编辑）
-  interface LocalMilestone {
-    id: string
-    name: string
-    expectedDate: string
-    progress: number // 0-100
-  }
-
-  const sortLocalMilestonesByDate = (milestones: LocalMilestone[]): LocalMilestone[] => {
-    const toTime = (value: string) => {
-      if (!value) {
-        return Number.POSITIVE_INFINITY
-      }
-
-      const time = new Date(value).getTime()
-      return Number.isFinite(time) ? time : Number.POSITIVE_INFINITY
-    }
-
-    return [...milestones].sort((a, b) => {
-      const dateDiff = toTime(a.expectedDate) - toTime(b.expectedDate)
-      if (dateDiff !== 0) {
-        return dateDiff
-      }
-
-      return Number(a.progress ?? 0) - Number(b.progress ?? 0)
-    })
-  }
-
   // 新增子指标的临时存储（按父指标ID分组）
   interface NewChildIndicator {
     id: string
@@ -3061,7 +2797,6 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     remark: string
     type1: '定量' | '定性' // 指标类型
     targetProgress: number // 定量指标目标进度 0-100
-    milestones: LocalMilestone[] // 定性指标里程碑列表
     isNew: boolean // 标记是否为新增的未保存行
   }
 
@@ -3129,7 +2864,6 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     const parentIndicator = collegeIndicators.value.find(i => i.id.toString() === parentIndicatorId)
     const resolvedType =
       parentIndicator?.type1 || (parentIndicator?.isQualitative ? '定性' : '定量') || '定性'
-    const copiedMilestones = parentIndicator ? cloneParentMilestonesForForm(parentIndicator) : []
 
     if (!newChildIndicators[parentIndicatorId]) {
       newChildIndicators[parentIndicatorId] = []
@@ -3144,25 +2878,13 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       id: newChildId,
       name: parentIndicator?.name || '', // 继承父指标名称
       college: defaultCollege,
-      targetValue:
-        resolvedType === '定量'
-          ? resolveTargetValueFromMilestones(
-              copiedMilestones,
-              parentIndicator ? resolveParentTargetProgress(parentIndicator) : 100
-            )
-          : copiedMilestones.length,
-      unit: resolvedType === '定量' ? '%' : '个里程碑',
+      // 里程碑移除后目标值默认 100
+      targetValue: resolvedType === '定量' ? 100 : 0,
+      unit: resolvedType === '定量' ? '%' : '项',
       weight: Number(parentIndicator?.weight ?? 10) || 10,
       remark: parentIndicator?.remark || '', // 继承父指标备注
       type1: resolvedType,
-      targetProgress:
-        resolvedType === '定量'
-          ? resolveTargetValueFromMilestones(
-              copiedMilestones,
-              parentIndicator ? resolveParentTargetProgress(parentIndicator) : 100
-            )
-          : 0,
-      milestones: buildLocalMilestonesFromForm(copiedMilestones),
+      targetProgress: resolvedType === '定量' ? 100 : 0,
       isNew: true
     })
 
@@ -3207,6 +2929,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       await strategicStore.deleteIndicator(String(child.id))
 
       await refreshDistributionData()
+      broadcastDistributionMutation()
       const stillExists = strategicStore.indicators.some(
         indicator => String(indicator.id) === String(child.id)
       )
@@ -3289,18 +3012,9 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
           remark: child.remark,
           canWithdraw: false,
           taskContent: parentIndicator.taskContent,
-          milestones: child.milestones.map(m => ({
-            id: m.id,
-            name: m.name,
-            targetProgress: m.progress,
-            deadline: m.expectedDate,
-            status: 'pending' as const
-          })),
-          targetValue:
-            child.type1 === '定量'
-              ? resolveTargetValueFromMilestones(child.milestones, child.targetProgress)
-              : child.milestones.length,
-          unit: child.type1 === '定量' ? '%' : '个里程碑',
+          // 里程碑移除后目标值默认 100
+          targetValue: child.type1 === '定量' ? 100 : 0,
+          unit: child.type1 === '定量' ? '%' : '项',
           responsibleDept: Array.isArray(child.college) ? child.college.join(',') : child.college,
           responsiblePerson: '',
           status: 'draft',
@@ -3398,12 +3112,32 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     }
   })
 
+  // 2026-10-07 心跳/聚焦等轻源节流：与战略任务页同口径，45s 内不重复重刷下发数据
+  const LIGHT_REFRESH_SOURCES: string[] = ['heartbeat', 'window-focus', 'visibility-return']
+  let lastLightRefreshAt = 0
+
   const handleGlobalDataRefreshRequest = (event: Event) => {
     if (globalDataRefreshPromise) {
       return
     }
 
     const detail = (event as CustomEvent<GlobalDataRefreshDetail>).detail
+    // 2026-09-27 细粒度异步刷新：仅指标/计划/审批域变更才刷本视图
+    if (!shouldRefreshForDomains(detail, ['indicator', 'plan', 'workflow'])) {
+      return
+    }
+    if (detail?.source && LIGHT_REFRESH_SOURCES.includes(detail.source)) {
+      const now = Date.now()
+      if (now - lastLightRefreshAt < 45 * 1000) {
+        return
+      }
+      lastLightRefreshAt = now
+    }
+    // 本视图自己发出的变更广播（indicator-distribution-mutation）：变更点已完成
+    // refreshDistributionData 真实刷新，这里跳过，避免同一份数据短时间重复重刷
+    if (detail?.source === 'indicator-distribution-mutation') {
+      return
+    }
     globalDataRefreshPromise = (async () => {
       logger.info('[IndicatorDistributeView] handling global data refresh request', detail)
       await waitForPageBootstrap()
@@ -3556,6 +3290,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     try {
       await strategicStore.updateIndicator(child.id.toString(), updates)
       await refreshDistributionData()
+      broadcastDistributionMutation()
     } catch (error) {
       logger.error('[IndicatorDistributeView] 保存子指标编辑失败:', {
         indicatorId: child.id,
@@ -3769,16 +3504,8 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     }
 
     await refreshDistributionData()
+    broadcastDistributionMutation({ todosChanged: true })
   }
-
-  const toBatchDistributionMilestones = (indicator: StrategicIndicator) =>
-    sortMilestonesByProgress(indicator.milestones || []).map((milestone, index) => ({
-      milestoneName: milestone.name,
-      description: undefined,
-      dueDate: milestone.deadline || undefined,
-      targetProgress: Number(milestone.targetProgress || 0),
-      sortOrder: index + 1
-    }))
 
   // 下发：针对学院下所有草稿状态的子指标
   const handleBatchDistribute = async (college: string) => {
@@ -3819,6 +3546,11 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         return
       }
 
+      if (!Number.isFinite(planId) || planId <= 0) {
+        ElMessage.error('无法识别当前学院计划，不能发起下发审批')
+        return
+      }
+
       try {
         isBatchDistributing.value = true
         await planStore.submitPlanForApproval(planId, {
@@ -3832,6 +3564,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         })
         applyLocalCollegePlanReportSummaryPatch('submitted')
         await refreshDistributionData()
+        broadcastDistributionMutation({ todosChanged: true })
         ElMessage.success('已发起下发审批')
       } catch (error) {
         logger.error('[IndicatorDistributeView] submit distribution approval failed:', error)
@@ -3844,7 +3577,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
     try {
       await ElMessageBox.confirm(
-        `确认发起下发审批，将【${college}】的 ${draftIndicators.length} 个子指标下发？`,
+        `确认发起下发审批，将【${college}】的 ${draftIndicators.length} 个子指标提交三级审批？审批通过后正式下发。`,
         '发起下发审批确认',
         {
           confirmButtonText: '确认发起',
@@ -3856,13 +3589,6 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       return
     }
 
-    const ownerOrgId = getOrgIdByDeptName(currentDept.value)
-    const targetOrgId = getOrgIdByDeptName(college)
-
-    if (!ownerOrgId || !targetOrgId) {
-      ElMessage.error(`无法解析组织ID，owner=${currentDept.value}, target=${college}`)
-      return
-    }
     if (!Number.isFinite(planId) || planId <= 0) {
       ElMessage.error('无法识别当前学院计划，不能发起下发审批')
       return
@@ -3874,72 +3600,12 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       isBatchDistributing.value = true
       loadingInstance = ElLoading.service({
         lock: true,
-        text: '正在下发指标并刷新状态，请稍候...',
+        text: '正在发起下发审批，请稍候...',
         background: 'rgba(0, 0, 0, 0.45)'
       })
 
-      const response = await indicatorApi.batchDistributePageIndicators({
-        indicators: draftIndicators.map((indicator, index) => {
-          const indicatorId = indicator.id.toString()
-          const isRealBackendId = /^\d+$/.test(indicatorId)
-          const indicatorTaskId = Number(getIndicatorTaskId(indicator as StrategicIndicator))
-
-          if (!isRealBackendId && (!Number.isFinite(indicatorTaskId) || indicatorTaskId <= 0)) {
-            throw new Error(`指标缺少有效 taskId，无法挂载到同一计划: ${indicator.name}`)
-          }
-
-          return {
-            clientRequestId: indicatorId,
-            indicatorId: isRealBackendId ? Number(indicatorId) : undefined,
-            indicatorDesc: isRealBackendId ? undefined : indicator.name,
-            type: getIndicatorTypeLabel(indicator),
-            indicatorType: getIndicatorTypeLabel(indicator),
-            type1: getIndicatorTypeLabel(indicator),
-            taskId: isRealBackendId ? undefined : indicatorTaskId,
-            parentIndicatorId:
-              !isRealBackendId && indicator.parentIndicatorId
-                ? Number(indicator.parentIndicatorId)
-                : undefined,
-            ownerOrgId: isRealBackendId ? undefined : ownerOrgId,
-            targetOrgId,
-            weightPercent: isRealBackendId ? undefined : Number(indicator.weight || 0),
-            sortOrder: index + 1,
-            remark: isRealBackendId ? undefined : indicator.remark || '',
-            progress: isRealBackendId ? undefined : Number(indicator.progress || 0),
-            customDesc: indicator.name,
-            milestones: isRealBackendId ? [] : toBatchDistributionMilestones(indicator)
-          }
-        })
-      })
-
-      if (!response.success || !response.data) {
-        throw new Error(response.message || '下发失败')
-      }
-
-      response.data.items.forEach(item => {
-        const clientRequestId = String(item.clientRequestId || '')
-        const backendId = String(item.indicatorId || '')
-        if (!clientRequestId || !backendId) {
-          return
-        }
-
-        if (clientRequestId !== backendId) {
-          strategicStore.replaceIndicatorId(clientRequestId, backendId)
-        }
-
-        strategicStore.addStatusAuditEntry(backendId, {
-          operator: authStore.user?.userId || 'admin',
-          operatorName: authStore.user?.name || '管理员',
-          operatorDept: currentDept.value,
-          action: 'distribute',
-          comment: '下发'
-        })
-        strategicStore.patchIndicator(backendId, {
-          status: 'distributed',
-          canWithdraw: false
-        })
-      })
-
+      // 下发只允许经 submit-dispatch 走三级审批；指标状态由后端在终审通过后统一置为 DISTRIBUTED。
+      // 不得在此处调用直发接口（batch-distribute 会绕过审批直接改状态）。
       await planStore.submitPlanForApproval(planId, {
         workflowCode: currentDispatchWorkflowCode.value
       })
@@ -3951,10 +3617,11 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       })
       applyLocalCollegePlanReportSummaryPatch('submitted')
       await refreshDistributionData()
-      ElMessage.success(`已成功下发并发起审批 ${response.data.totalCount} 个指标`)
+      broadcastDistributionMutation({ todosChanged: true })
+      ElMessage.success('已发起下发审批，审批通过后指标将正式下发')
     } catch (error) {
-      logger.error('[IndicatorDistributeView] batch distribute failed:', error)
-      ElMessage.error(error instanceof Error ? error.message : '下发失败，请重试')
+      logger.error('[IndicatorDistributeView] submit distribution approval failed:', error)
+      ElMessage.error(error instanceof Error ? error.message : '发起下发审批失败，请重试')
     } finally {
       loadingInstance?.close()
       isBatchDistributing.value = false
@@ -4083,28 +3750,6 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
   // 单条指标进度审批也统一由工作流待办处理。
 
-  const getSortedMilestones = (milestones?: StrategicIndicator['milestones']) =>
-    sortMilestonesByProgress(milestones || [])
-
-  const normalizeMilestonesForDetail = (
-    milestones: Array<Record<string, unknown>>
-  ): StrategicIndicator['milestones'] =>
-    milestones.map((milestone, index) => {
-      const rawTargetProgress = Number(
-        milestone.targetProgress ?? milestone.progress ?? milestone.weightPercent ?? 0
-      )
-
-      return {
-        id: String(
-          milestone.id ?? milestone.milestoneId ?? milestone.indicatorId ?? `milestone-${index + 1}`
-        ),
-        name: String(milestone.name ?? milestone.milestoneName ?? `里程碑 ${index + 1}`),
-        targetProgress: Number.isFinite(rawTargetProgress) ? rawTargetProgress : 0,
-        deadline: String(milestone.deadline ?? milestone.dueDate ?? milestone.expectedDate ?? ''),
-        status: 'pending' as const
-      }
-    })
-
   // 查看详情
   const handleViewDetail = async (indicator: StrategicIndicator) => {
     const indicatorId = String(indicator.id ?? '').trim()
@@ -4114,39 +3759,11 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
     const detailIndicator: StrategicIndicator = {
       ...(persistedIndicator || indicator),
-      ...indicator,
-      milestones: indicator.milestones?.length
-        ? indicator.milestones
-        : (persistedIndicator?.milestones ?? [])
+      ...indicator
     }
 
     currentDetailIndicator.value = detailIndicator
     detailDrawerVisible.value = true
-
-    if (!indicatorId || !/^\d+$/.test(indicatorId) || detailIndicator.milestones?.length) {
-      return
-    }
-
-    try {
-      const response = await milestoneApi.getMilestonesByIndicator(indicatorId)
-      if (!response?.success || !Array.isArray(response.data) || response.data.length === 0) {
-        return
-      }
-
-      const normalizedMilestones = normalizeMilestonesForDetail(
-        response.data as Array<Record<string, unknown>>
-      )
-
-      currentDetailIndicator.value = {
-        ...detailIndicator,
-        milestones: normalizedMilestones
-      }
-    } catch (error) {
-      logger.warn('[IndicatorDistributeView] 加载指标详情里程碑失败:', {
-        indicatorId,
-        error
-      })
-    }
   }
 
   const resolveSelectedCollegePlanDrivenChildStatus = (
@@ -4390,123 +4007,6 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       : 'var(--color-quantitative, #0891b2)'
   }
 
-  // 为已有子指标生成12个月里程碑（Milestone类型）
-  const generateMonthlyMilestonesForExisting = (
-    childName: string
-  ): {
-    id: string
-    name: string
-    targetProgress: number
-    deadline: string
-    status: 'pending'
-  }[] => {
-    const currentYear = timeContext.currentYear
-    const indicatorName = childName || '指标完成'
-    const milestones: {
-      id: string
-      name: string
-      targetProgress: number
-      deadline: string
-      status: 'pending'
-    }[] = []
-
-    for (let month = 1; month <= 12; month++) {
-      const lastDay = new Date(currentYear, month, 0).getDate()
-      const deadline = `${currentYear}-${String(month).padStart(2, '0')}-${lastDay}`
-      const progress = Math.round((month / 12) * 100)
-
-      milestones.push({
-        id: `ms-${Date.now()}-${month}`,
-        name: `${indicatorName} - ${month}月`,
-        targetProgress: progress,
-        deadline: deadline,
-        status: 'pending'
-      })
-    }
-    return milestones
-  }
-
-  // 为新增子指标生成12个月里程碑（LocalMilestone类型）
-  const generateMonthlyMilestonesLocal = (childName: string): LocalMilestone[] => {
-    const currentYear = timeContext.currentYear
-    const indicatorName = childName || '指标完成'
-    const milestones: LocalMilestone[] = []
-
-    for (let month = 1; month <= 12; month++) {
-      const lastDay = new Date(currentYear, month, 0).getDate()
-      const expectedDate = `${currentYear}-${String(month).padStart(2, '0')}-${lastDay}`
-      const progress = Math.round((month / 12) * 100)
-
-      milestones.push({
-        id: `ms-${Date.now()}-${month}`,
-        name: `${indicatorName} - ${month}月`,
-        expectedDate: expectedDate,
-        progress: progress
-      })
-    }
-    return milestones
-  }
-
-  // 计算定量指标当月的目标进度
-  const _getCurrentMonthTargetProgress = (
-    child: StrategicIndicator | NewChildIndicator
-  ): number => {
-    const milestones = child.milestones || []
-    if (milestones.length === 0) {
-      return 100
-    }
-
-    const currentMonth = new Date().getMonth() + 1 // 1-12
-    const currentYear = timeContext.currentYear
-
-    // 查找当月的里程碑
-    for (const ms of milestones) {
-      // 兼容两种里程碑类型：Milestone (deadline, targetProgress) 和 LocalMilestone (expectedDate, progress)
-      const dateStr =
-        'deadline' in ms && ms.deadline ? ms.deadline : 'expectedDate' in ms ? ms.expectedDate : ''
-      const progressVal =
-        'targetProgress' in ms && ms.targetProgress !== undefined
-          ? ms.targetProgress
-          : 'progress' in ms
-            ? ms.progress
-            : 0
-
-      if (dateStr) {
-        const deadline = new Date(dateStr)
-        if (deadline.getFullYear() === currentYear && deadline.getMonth() + 1 === currentMonth) {
-          return progressVal
-        }
-      }
-    }
-
-    // 如果没找到当月里程碑，返回最近的一个里程碑进度
-    const now = new Date()
-    let closestProgress = 100
-    let minDiff = Infinity
-
-    for (const ms of milestones) {
-      const dateStr =
-        'deadline' in ms && ms.deadline ? ms.deadline : 'expectedDate' in ms ? ms.expectedDate : ''
-      const progressVal =
-        'targetProgress' in ms && ms.targetProgress !== undefined
-          ? ms.targetProgress
-          : 'progress' in ms
-            ? ms.progress
-            : 0
-
-      if (dateStr) {
-        const deadline = new Date(dateStr)
-        const diff = Math.abs(deadline.getTime() - now.getTime())
-        if (diff < minDiff) {
-          minDiff = diff
-          closestProgress = progressVal
-        }
-      }
-    }
-
-    return closestProgress
-  }
-
   // 处理子指标类型变更
   const _handleChildTypeChange = async (
     child: NewChildIndicator | StrategicIndicator,
@@ -4522,253 +4022,20 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     }
 
     if ('isNew' in child && child.isNew) {
-      // 新增的子指标 - 使用 LocalMilestone 类型
       child.type1 = newType
-      if (newType === '定量') {
-        child.targetProgress = 100
-        // 自动生成12个月里程碑（LocalMilestone类型）
-        child.milestones = generateMonthlyMilestonesLocal(child.name)
-      } else {
-        child.targetProgress = 0
-        child.milestones = []
-      }
+      child.targetProgress = newType === '定量' ? 100 : 0
     } else {
-      // 已有的子指标 - 使用 Milestone 类型
       const indicator = child as StrategicIndicator
-      const newMilestones =
-        newType === '定量' ? generateMonthlyMilestonesForExisting(indicator.name) : []
-
       const updates: Partial<StrategicIndicator> = {
         type1: newType,
         isQualitative: newType === '定性',
-        targetValue: newType === '定量' ? 100 : 0,
-        milestones: newMilestones
+        targetValue: newType === '定量' ? 100 : 0
       }
       await strategicStore.updateIndicator(indicator.id.toString(), updates)
       await refreshDistributionData()
     }
 
     ElMessage.success(`已切换为${newType}指标`)
-  }
-
-  // 里程碑弹窗相关
-  const milestonesDialogVisible = ref(false)
-  const editingMilestonesChild = ref<NewChildIndicator | StrategicIndicator | null>(null)
-  const editingMilestones = ref<LocalMilestone[]>([])
-  const isSavingMilestones = ref(false)
-
-  // 打开里程碑编辑弹窗
-  const openMilestonesDialog = (child: NewChildIndicator | StrategicIndicator) => {
-    editingMilestonesChild.value = child
-    if ('isNew' in child && child.isNew) {
-      editingMilestones.value = sortLocalMilestonesByDate(
-        JSON.parse(JSON.stringify(child.milestones || []))
-      )
-    } else {
-      // 从已有子指标的milestones转换
-      const existing = (child as StrategicIndicator).milestones || []
-      editingMilestones.value = sortLocalMilestonesByDate(
-        existing.map(m => ({
-          id: m.id || `ms-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          name: m.name,
-          expectedDate: m.deadline || '',
-          progress: m.targetProgress || 0
-        }))
-      )
-    }
-    milestonesDialogVisible.value = true
-  }
-
-  // 获取正在编辑的子指标名称
-  const getEditingChildName = (): string => {
-    if (!editingMilestonesChild.value) {
-      return ''
-    }
-    if ('isNew' in editingMilestonesChild.value && editingMilestonesChild.value.isNew) {
-      return editingMilestonesChild.value.name || '新增指标'
-    }
-    return (editingMilestonesChild.value as StrategicIndicator).name || ''
-  }
-
-  // 获取正在编辑的子指标类型
-  const getEditingChildType = (): string => {
-    if (!editingMilestonesChild.value) {
-      return '定性'
-    }
-    if ('isNew' in editingMilestonesChild.value && editingMilestonesChild.value.isNew) {
-      return editingMilestonesChild.value.type1 || '定性'
-    }
-    const indicator = editingMilestonesChild.value as StrategicIndicator
-    return indicator.type1 || (indicator.isQualitative ? '定性' : '定量')
-  }
-
-  // 添加里程碑
-  const addMilestone = () => {
-    const autoName = getEditingChildType() === '定量' ? getEditingChildName() : ''
-    const lastProgress =
-      editingMilestones.value.length > 0
-        ? (editingMilestones.value[editingMilestones.value.length - 1]?.progress ?? 0)
-        : 0
-    editingMilestones.value.push({
-      id: `ms-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      name: autoName,
-      expectedDate: '',
-      progress: lastProgress
-    })
-    editingMilestones.value = sortLocalMilestonesByDate(editingMilestones.value)
-  }
-
-  // 生成12个月里程碑
-  const generateMonthlyMilestones = () => {
-    const currentYear = new Date().getFullYear()
-    const indicatorName = getEditingChildName() || '指标完成'
-    editingMilestones.value = []
-
-    for (let month = 1; month <= 12; month++) {
-      const lastDay = new Date(currentYear, month, 0).getDate()
-      const deadline = `${currentYear}-${String(month).padStart(2, '0')}-${lastDay}`
-      const progress = Math.round((month / 12) * 100)
-
-      editingMilestones.value.push({
-        id: `-${month}`, // 使用负数字符串作为临时 ID，后端会识别为新里程碑
-        name: `${indicatorName} - ${month}月`,
-        expectedDate: deadline,
-        progress: progress
-      })
-    }
-
-    editingMilestones.value = sortLocalMilestonesByDate(editingMilestones.value)
-  }
-
-  // 删除里程碑
-  const removeMilestone = (index: number) => {
-    editingMilestones.value.splice(index, 1)
-  }
-
-  // 验证里程碑进度（后面的不能小于前面的）
-  const validateMilestoneProgress = (index: number) => {
-    const current = editingMilestones.value[index]
-    if (!current) {
-      return
-    }
-
-    // 检查是否小于前一个里程碑的进度
-    if (index > 0) {
-      const prev = editingMilestones.value[index - 1]
-      if (prev && current.progress < prev.progress) {
-        ElMessage.warning(
-          `第 ${index + 1} 个里程碑的进度不能小于第 ${index} 个里程碑的进度 (${prev.progress}%)`
-        )
-        current.progress = prev.progress
-        return
-      }
-    }
-
-    // 检查是否大于后一个里程碑的进度
-    if (index < editingMilestones.value.length - 1) {
-      const next = editingMilestones.value[index + 1]
-      if (next && current.progress > next.progress) {
-        ElMessage.warning(
-          `第 ${index + 1} 个里程碑的进度不能大于第 ${index + 2} 个里程碑的进度 (${next.progress}%)`
-        )
-        current.progress = next.progress
-        return
-      }
-    }
-  }
-
-  const handleMilestoneDateChange = () => {
-    editingMilestones.value = sortLocalMilestonesByDate(editingMilestones.value)
-  }
-
-  // 保存里程碑
-  const saveMilestones = async () => {
-    if (!editingMilestonesChild.value || isSavingMilestones.value) {
-      return
-    }
-
-    const child = editingMilestonesChild.value
-    if ('isNew' in child && child.isNew) {
-      child.milestones = JSON.parse(
-        JSON.stringify(sortLocalMilestonesByDate(editingMilestones.value))
-      )
-      milestonesDialogVisible.value = false
-      editingMilestonesChild.value = null
-      editingMilestones.value = []
-    } else {
-      isSavingMilestones.value = true
-      try {
-        const sortedMilestones = sortLocalMilestonesByDate(editingMilestones.value)
-        const indicator = child as StrategicIndicator
-
-        logger.info(
-          `[IndicatorDistributionView] Saving ${sortedMilestones.length} milestones for indicator ${indicator.id}`
-        )
-
-        await persistIndicatorMilestones(Number(indicator.id), sortedMilestones)
-        milestonesDialogVisible.value = false
-        editingMilestonesChild.value = null
-        editingMilestones.value = []
-        ElMessage.success('里程碑已更新')
-
-        logger.info(`[IndicatorDistributionView] Reloading indicators after milestone update...`)
-        try {
-          await refreshDistributionData()
-          const reloadedIndicator = strategicStore.indicators.find(i => i.id === indicator.id)
-          if (reloadedIndicator) {
-            logger.info(
-              `[IndicatorDistributionView] After reload, indicator ${reloadedIndicator.id} has ${reloadedIndicator.milestones?.length || 0} milestones`
-            )
-          }
-        } catch (error) {
-          logger.warn('[IndicatorDistributionView] Refresh after milestone update failed:', error)
-        }
-      } catch (error) {
-        console.error('Failed to save milestones:', error)
-        ElMessage.error('里程碑更新失败')
-      } finally {
-        isSavingMilestones.value = false
-      }
-    }
-  }
-
-  // 格式化里程碑显示
-  const _formatMilestones = (child: StrategicIndicator | NewChildIndicator): string => {
-    if ('isNew' in child && child.isNew) {
-      return `${child.milestones?.length || 0} 个里程碑`
-    }
-    const indicator = child as StrategicIndicator
-    return `${indicator.milestones?.length || 0} 个里程碑`
-  }
-
-  // 获取里程碑列表用于tooltip显示
-  const getMilestonesTooltip = (
-    child: StrategicIndicator | NewChildIndicator
-  ): LocalMilestone[] => {
-    if ('isNew' in child && child.isNew) {
-      return sortLocalMilestonesByDate(child.milestones || [])
-    }
-    const indicator = child as StrategicIndicator
-    return sortLocalMilestonesByDate(
-      (indicator.milestones || []).map(m => ({
-        id: m.id || '',
-        name: m.name,
-        expectedDate: m.deadline || '',
-        progress: m.targetProgress || 0
-      }))
-    )
-  }
-
-  // 判断里程碑是否已完成（指标当前进度 >= 里程碑目标进度）
-  const isMilestoneCompleted = (
-    child: StrategicIndicator | NewChildIndicator,
-    milestoneProgress: number
-  ): boolean => {
-    if ('isNew' in child && child.isNew) {
-      return false // 新增的子指标还没有进度
-    }
-    const indicator = child as StrategicIndicator
-    return (indicator.progress || 0) >= milestoneProgress
   }
 
   // ================== 表格数据类型 ==================
@@ -4844,6 +4111,153 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     return data
   })
 
+  // ==================== 子指标进度等级（与战略任务管理页共用后端能力） ====================
+  // 业务口径与战略任务管理页一致：计划正式下发后才能调整进度等级；
+  // 写权限当前仅战略部负责人/分管校领导/系统管理员（后端校验），职能部门后续放开时只需调整 canEditChildManualAlert。
+  const MANUAL_ALERT_WRITE_ROLES = [
+    'ROLE_STRATEGY_DEPT_HEAD',
+    'ROLE_VICE_PRESIDENT',
+    'ROLE_SYSTEM_ADMIN'
+  ]
+  const childManualAlertLevels = ref<Record<string, ManualAlertSeverity>>({})
+  const savingChildManualAlertId = ref<string | null>(null)
+  const isLoadingChildManualAlerts = ref(false)
+
+  const canEditChildManualAlert = computed(() => {
+    const roles = (authStore.user as { roles?: unknown } | null)?.roles
+    if (!Array.isArray(roles)) {
+      return false
+    }
+    const normalized = roles.map(role =>
+      String(role ?? '')
+        .trim()
+        .toUpperCase()
+    )
+    return normalized.some(role => MANUAL_ALERT_WRITE_ROLES.includes(role))
+  })
+
+  const childManualAlertEditable = computed(
+    () =>
+      canEditChildManualAlert.value && normalizedSelectedCollegePlanStatus.value === 'DISTRIBUTED'
+  )
+
+  const getChildManualAlertSeverity = (
+    child: StrategicIndicator | NewChildIndicator | null | undefined
+  ): ManualAlertSeverity => {
+    if (!child) {
+      return null
+    }
+    const key = String(child.id)
+    return childManualAlertLevels.value[key] ?? null
+  }
+
+  const loadChildManualAlertLevels = async () => {
+    const ids = collegeTableData.value
+      .map(row => (row.type === 'child' ? row.child?.id : undefined))
+      .filter((id): id is number => typeof id === 'number' && Number.isFinite(id) && id > 0)
+    if (ids.length === 0 || isLoadingChildManualAlerts.value) {
+      return
+    }
+
+    isLoadingChildManualAlerts.value = true
+    try {
+      const levels = await alertApi.getManualAlertLevels(ids)
+      const next: Record<string, ManualAlertSeverity> = {}
+      ids.forEach(id => {
+        const severity = levels[String(id)] ?? levels[id] ?? null
+        next[String(id)] = severity
+      })
+      childManualAlertLevels.value = next
+    } catch (error) {
+      logger.warn('[IndicatorDistributeView] 加载子指标进度等级失败（不影响其它功能）:', error)
+    } finally {
+      isLoadingChildManualAlerts.value = false
+    }
+  }
+
+  watch(
+    () => collegeTableData.value.map(row => (row.type === 'child' ? row.child?.id : '')).join(','),
+    () => {
+      void loadChildManualAlertLevels()
+    },
+    { immediate: true }
+  )
+
+  const handleChildManualAlertChange = async (
+    child: StrategicIndicator,
+    selectedSeverity: Exclude<ManualAlertSeverity, null> | ''
+  ) => {
+    // '' 表示未评定，存储时落库为 null（与战略任务管理页同一套口径）
+    const severity: ManualAlertSeverity = selectedSeverity === '' ? null : selectedSeverity
+    const previousSeverity = childManualAlertLevels.value[String(child.id)] ?? null
+    if (previousSeverity === severity) {
+      return
+    }
+
+    const label = getChildManualAlertLabel(severity)
+
+    try {
+      await ElMessageBox.confirm(
+        `确认将「${child.name || '该子指标'}」的进度等级调整为「${label}」？确认后会通知对应下级部门。`,
+        '调整进度等级',
+        {
+          confirmButtonText: '确认调整',
+          cancelButtonText: '取消',
+          type: severity ? 'warning' : 'info'
+        }
+      )
+
+      savingChildManualAlertId.value = String(child.id)
+      await alertApi.setManualAlertLevel(String(child.id), severity)
+      childManualAlertLevels.value = {
+        ...childManualAlertLevels.value,
+        [String(child.id)]: severity
+      }
+      ElMessage.success(severity ? '进度等级已调整，并已通知对应下级部门' : '进度等级已恢复未评定')
+      // 2026-10-07 实际回源：同步共享指标仓库并广播（含看板域），任务页鉴定
+      // 等级列与看板告警统计立即收敛，不再等下一次全量刷新
+      strategicStore.patchIndicator(String(child.id), { manualAlertSeverity: severity })
+      requestGlobalDataRefresh({
+        source: 'indicator-distribution-mutation',
+        silent: true,
+        domains: ['indicator', 'dashboard']
+      })
+    } catch (error) {
+      if (error !== 'cancel' && error !== 'close') {
+        ElMessage.error(
+          error instanceof Error && error.message ? error.message : '进度等级调整失败'
+        )
+      }
+    } finally {
+      savingChildManualAlertId.value = null
+    }
+  }
+
+  const getChildManualAlertLabel = (severity: ManualAlertSeverity): string => {
+    if (severity === 'AHEAD') {
+      return '超前完成'
+    }
+    if (severity === 'NORMAL') {
+      return '正常'
+    }
+    if (severity === 'WARNING') {
+      return '延期'
+    }
+    return '未评定'
+  }
+
+  const getChildManualAlertTagType = (
+    severity: ManualAlertSeverity
+  ): 'success' | 'info' | 'warning' | 'danger' => {
+    if (severity === 'AHEAD' || severity === 'NORMAL') {
+      return 'success'
+    }
+    if (severity === 'WARNING') {
+      return 'warning'
+    }
+    return 'info'
+  }
+
   // 获取行的 class 名称（用于标识新增子指标行）
   const getRowClassName = ({ row }: { row: TableRowData }) => {
     if (row.type === 'child' && isDeletingChild(row.child as StrategicIndicator | undefined)) {
@@ -4856,15 +4270,15 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     return ''
   }
 
+  const currentDetailId = computed(() => currentDetailIndicator.value?.id ?? null)
+
   return {
     _addNewChildRow,
     _canAddIndicator,
     _distributeNewChildren,
     _formatColleges,
     _formatCollegesShort,
-    _formatMilestones,
     _getChildIndicators,
-    _getCurrentMonthTargetProgress,
     _getIndicatorTypeColor,
     _getPendingChildCount,
     _getStatusTagType,
@@ -4878,8 +4292,6 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     _newIndicatorList,
     _selectParentSpanMethod,
     _selectingParentForIndex,
-    addFormMilestone,
-    addMilestone,
     addRowFormRef,
     addingParentId,
     applyLocalCollegePlanPatch,
@@ -4896,8 +4308,6 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     approvalWorkflowReportSummary,
     authStore,
     availableParentIndicators,
-    buildDraftMilestonesFromForm,
-    buildLocalMilestonesFromForm,
     buildTaskTypeMap,
     canCurrentUserApproveCurrentPlan,
     canCurrentUserSubmitCurrentDepartmentDistribution,
@@ -4908,12 +4318,20 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     canWithdrawCurrentCollegePlan,
     cancelAddIndicator,
     cancelChildEdit,
-    cloneParentMilestonesForForm,
     collegeDropdownVisible,
     collegeIndicators,
     collegeOverallStatus,
     collegeTableData,
     collegeTotalWeight,
+    // ===== 子指标进度等级（与战略任务管理页同一后端能力；写权限后续按角色放开）=====
+    canEditChildManualAlert,
+    childManualAlertEditable,
+    childManualAlertLevels,
+    getChildManualAlertLabel,
+    getChildManualAlertSeverity,
+    getChildManualAlertTagType,
+    handleChildManualAlertChange,
+    savingChildManualAlertId,
     colleges,
     closeCopyIndicatorsDialog,
     confirmDepartmentPlanApprovalSubmission,
@@ -4945,6 +4363,8 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     currentDepartmentPlanIndicators,
     currentDept,
     currentDetailIndicator,
+    reportHistoryOpen,
+    currentDetailId,
     currentDispatchWorkflowCode,
     currentPlanTaskTypeMap,
     currentSelectedCollegePlan,
@@ -4965,41 +4385,29 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     editingChildField,
     editingChildId,
     editingChildValue,
-    editingMilestones,
-    editingMilestonesChild,
     editingNewChildId,
     filteredColleges,
     formatDetailDate,
-    generateMonthlyMilestones,
-    generateMonthlyMilestonesForExisting,
-    generateMonthlyMilestonesForForm,
-    generateMonthlyMilestonesLocal,
     getChildLifecycleStatus,
     getChildStatus,
     getCollegeChildCount,
     getCollegeStatus,
     getDeptNameByOrgId,
     getDisplayedReportedProgress,
-    getEditingChildName,
-    getEditingChildType,
     getIndicatorTaskId,
     getIndicatorTypeLabel,
-    getMilestonesTooltip,
     getMyCollegeIndicators,
     getOrgIdByDeptName,
     getPlanIndicatorNumber,
     getPlanIndicatorText,
     getRowClassName,
-    getSortedMilestones,
     handleApprovalRefresh,
     handleApprovalStatusPopoverShow,
     handleBatchDistribute,
     handleBatchWithdraw,
     handleChildDblClick,
     handleCloseApprovalSetupDialog,
-    handleFormIndicatorTypeChange,
     handleGlobalMousedown,
-    handleMilestoneDateChange,
     handleNewChildRowClick,
     handleOpenApproval,
     handleParentIndicatorChange,
@@ -5013,12 +4421,10 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     isDeletingChild,
     isFunctionalDept,
     isInteractingWithCollegeSelect,
-    isMilestoneCompleted,
     isQualitativeIndicator,
     isSameDepartment,
     isSavingChildCell,
     isSavingIndicator,
-    isSavingMilestones,
     isStrategicDept,
     lastEditTime,
     latestCollegePlanReportSummary,
@@ -5029,7 +4435,6 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     matchesCurrentDepartmentPlanContext,
     matchesCurrentSelectedCollegePlanContext,
     matchesDepartment,
-    milestonesDialogVisible,
     newChildIndicators,
     newIndicatorForm,
     normalizeDepartmentName,
@@ -5043,13 +4448,11 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     openAddIndicatorForm,
     openCopyIndicatorsDialog,
     openDistributionApprovalSetupDialog,
-    openMilestonesDialog,
     orgStore,
     pageBootstrapPromise,
     parseColleges,
     pendingApprovalCount,
     pendingCollegePlanUiState,
-    persistIndicatorMilestones,
     planStore,
     plansWithIndicators,
     preloadCurrentCollegeWorkflowDetail,
@@ -5057,8 +4460,6 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     refreshDistributionData,
     refreshDistributionPromise,
     removeChildIndicator,
-    removeFormMilestone,
-    removeMilestone,
     removeNewChildRow,
     resetApprovalSetupDialog,
     resolveCurrentStepExpectedRoleCodes,
@@ -5067,7 +4468,6 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     resolvePlanYear,
     routeApprovalPlan,
     saveChildEdit,
-    saveMilestones,
     saveNewIndicator,
     savingChildField,
     savingChildId,
@@ -5079,16 +4479,12 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     selectParentTableData,
     selectedCollege,
     selectedCollegePlanUiStatus,
-    sortLocalMilestonesByDate,
     strategicStore,
     shouldShowReportedProgress,
     syncSelectedCollegeFromApprovalRoute,
     taskApprovalVisible,
     timeContext,
-    toBatchDistributionMilestones,
-    toMilestoneBatchPayload,
     validateAndSaveNewChild,
-    validateMilestoneProgress,
     waitForPageBootstrap,
     withdrawButtonDisabled,
     withdrawButtonDisabledReason,

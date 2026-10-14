@@ -14,7 +14,6 @@
 export type {
   StrategicTask,
   Indicator,
-  Milestone,
   User,
   AssessmentCycle,
   ProgressReport,
@@ -26,36 +25,17 @@ export type {
   CreateIndicatorRequest,
   UpdateIndicatorRequest,
   SubmitProgressApprovalRequest,
-  ApproveProgressRequest,
-  CreateMilestoneRequest,
-  UpdateMilestoneRequest
+  ApproveProgressRequest
 } from './entities'
 /* eslint-enable no-restricted-syntax */
 
-export {
-  MilestoneStatus,
-  ProgressApprovalStatus,
-  AuditAction,
-  IndicatorStatus,
-  UserRole
-} from './entities'
-
-// UI-only milestone type (frontend-friendly) to unify milestone display data
-export interface MilestoneUI {
-  id: string | number
-  name: string
-  deadline?: string
-  targetProgress: number
-  status?: string
-  completed?: boolean
-}
+export { ProgressApprovalStatus, AuditAction, IndicatorStatus, UserRole } from './entities'
 
 // ============================================================================
 // Backend-Aligned VO Types (统一后端对齐类型)
 // ============================================================================
 export type {
   IndicatorVO,
-  MilestoneVO,
   IndicatorCreateRequest,
   IndicatorDistributionRequest,
   BatchDistributionRequest,
@@ -89,33 +69,19 @@ export interface Permission {
 
 // ============================================================================
 // 以下是 UI 特有的类型定义
-// 实体类型(StrategicTask, Indicator, Milestone 等)已移至 entities.ts
-// 请使用: import { StrategicTask, Indicator, Milestone } from '@/shared/types'
+// 实体类型(StrategicTask, Indicator 等)已移至 entities.ts
+// 请使用: import { StrategicTask, Indicator } from '@/shared/types'
 // ============================================================================
 
-// 里程碑配对状态摘要
-export interface MilestonePairingStatus {
-  totalMilestones: number
-  pairedCount: number
-  unpairedCount: number
-  nextMilestoneToReport: any | null
-  isAllPaired: boolean
-  pairingProgress: number // 配对进度百分比
-}
-
-// 里程碑填报验证结果
-export interface MilestoneReportValidation {
-  milestoneId: string
-  canReport: boolean
-  message: string
-  nextMilestoneToReport: any | null
-}
-
 // 仪表盘数据类型 (Enhanced)
+// P4 A2 定案：取消「总评分/基础性得分/发展性得分」，改为等级分布
 export interface DashboardData {
-  totalScore: number
-  basicScore: number
-  developmentScore: number
+  /** 进度等级分布（必填,A2 口径下唯一进度口径） */
+  levelDistribution: {
+    ahead: number
+    normal: number
+    delayed: number
+  }
   completionRate: number
   warningCount: number
   totalIndicators: number
@@ -632,10 +598,6 @@ export interface IndicatorFill {
   currentStepName?: string
   currentApproverId?: number
   currentApproverName?: string
-
-  // 关联的里程碑（如果有）
-  milestone_id?: string | number
-  milestone_name?: string
 }
 
 /**
@@ -710,13 +672,16 @@ export interface IndicatorFillForm {
   progress: number
   content: string
   attachments?: File[]
-  milestone_id?: string | number
+  /** 自评等级（P1）：AHEAD=超前 / NORMAL=正常 / DELAYED=延期 */
+  selfRating?: string
+  /** 手工指定归属月份（P1）：YYYYMM；仅可选最早未填报月，后端强校验 */
+  reportMonth?: string
   batch_items?: Array<{
     indicator_id: string | number
     indicator_name?: string
     progress: number
     content: string
-    milestone_id?: string | number
+    selfRating?: string
     attachment_ids?: number[]
   }>
 }

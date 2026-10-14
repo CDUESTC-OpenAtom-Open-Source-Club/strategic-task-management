@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { IndicatorFill } from '@/shared/types'
+import type { Attachment } from '@/shared/types'
+import { apiClient } from '@/shared/api/client'
 import { usePlanStore } from '@/features/plan/model/store'
 import { logger } from '@/shared/lib/utils/logger'
 
@@ -12,6 +14,24 @@ const emit = defineEmits<{
   (e: 'select', fill: IndicatorFill): void
   (e: 'close'): void
 }>()
+
+const downloadingAttachment = ref<string | null>(null)
+
+// 会议定案「上报资料可下载」：填报明细自带附件（后端 plan_report_indicator_attachment），
+// 通过带认证的 blob 下载，浏览器直接另存
+const downloadAttachment = async (attachment: Attachment) => {
+  if (downloadingAttachment.value) {
+    return
+  }
+  downloadingAttachment.value = attachment.id
+  try {
+    await apiClient.download(`/attachments/${attachment.id}/download`, attachment.fileName)
+  } catch (error) {
+    logger.warn('[IndicatorFillHistory] 附件下载失败:', error)
+  } finally {
+    downloadingAttachment.value = null
+  }
+}
 
 const planStore = usePlanStore()
 const loading = ref(false)
@@ -144,13 +164,27 @@ void loadHistory()
 
         <p v-if="fill.content" class="history-content">{{ fill.content }}</p>
 
-        <div v-if="fill.milestone_name" class="history-extra">
-          <span class="pill">里程碑: {{ fill.milestone_name }}</span>
-        </div>
-
         <div v-if="fill.audit_comment" class="history-extra">
           <span class="muted-label">审核意见</span>
           <p class="history-comment">{{ fill.audit_comment }}</p>
+        </div>
+
+        <div v-if="fill.attachments?.length" class="history-extra">
+          <span class="muted-label">上报资料（{{ fill.attachments.length }}）</span>
+          <ul class="attachment-list">
+            <li v-for="attachment in fill.attachments" :key="attachment.id" class="attachment-item">
+              <button
+                type="button"
+                class="attachment-download"
+                :disabled="downloadingAttachment === attachment.id"
+                :title="`下载 ${attachment.fileName}`"
+                @click.stop="downloadAttachment(attachment)"
+              >
+                {{ downloadingAttachment === attachment.id ? '下载中...' : '下载' }}
+              </button>
+              <span class="attachment-name">{{ attachment.fileName }}</span>
+            </li>
+          </ul>
         </div>
 
         <div class="history-footer">
@@ -278,6 +312,48 @@ void loadHistory()
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.attachment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.attachment-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.attachment-download {
+  flex-shrink: 0;
+  padding: 2px 10px;
+  border: 1px solid #409eff;
+  border-radius: 6px;
+  background: #ecf5ff;
+  color: #409eff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.attachment-download:hover:not(:disabled) {
+  background: #409eff;
+  color: #fff;
+}
+
+.attachment-download:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.attachment-name {
+  color: #374151;
+  font-size: 13px;
+  word-break: break-all;
 }
 
 .pill {

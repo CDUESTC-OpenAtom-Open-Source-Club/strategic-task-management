@@ -26,7 +26,6 @@ function invalidateTaskCaches(taskId?: number): void {
     targets.push('task.detail', `task.detail.${taskId}`)
     targets.push(buildQueryKey('task', 'detail', { taskId }))
     targets.push(buildQueryKey('task', 'indicators', { taskId }))
-    targets.push(buildQueryKey('task', 'milestones', { taskId }))
   }
 
   invalidateQueries(targets)

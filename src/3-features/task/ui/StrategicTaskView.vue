@@ -1,21 +1,26 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import TaskIndicatorTree from './TaskIndicatorTree.vue'
+import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
+import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
+import ReportHistoryBadge from '@/features/indicator/ui/ReportHistoryBadge.vue'
+import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
+import ReportStatusCell from '@/features/indicator/ui/ReportStatusCell.vue'
 import {
   Plus,
   View,
   Download,
   Delete,
   ArrowDown,
+  ArrowLeftBold,
   Check,
   Loading,
   Upload
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import AppAvatar from '@/shared/ui/avatar/AppAvatar.vue'
-import IndicatorMilestoneTimeline from '@/features/indicator/ui/IndicatorMilestoneTimeline.vue'
 import { DistributionApprovalProgressDrawer } from '@/features/approval'
 import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
-import { resolveMilestoneDisplayState } from '@/shared/lib/utils/milestoneDisplay'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
 import type { StrategicIndicator } from '@/shared/types'
 import {
@@ -23,7 +28,6 @@ import {
   buildExportFileName,
   exportRowsToExcel,
   exportSheetsToExcel,
-  formatProgress,
   type ExcelExportColumn,
   type ExcelExportSheet,
   type ExcelRowTone
@@ -35,6 +39,11 @@ import {
 } from '@/features/task/model/useStrategicTaskView'
 import { strategicApi } from '@/features/task/api/strategicApi'
 import { useStrategicStore } from '@/features/task/model/strategic'
+import {
+  MANUAL_ALERT_LOCKED_HINT,
+  MANUAL_ALERT_READONLY_HINT,
+  canEditManualAlertLevel
+} from '@/features/task/lib/warning-level'
 import type { ImportCommitResponse } from '@/features/import/api/businessImport'
 
 const props = defineProps<StrategicTaskViewProps>()
@@ -44,12 +53,10 @@ const {
   PLAN_APPROVAL_HISTORY_WORKFLOW_CODES,
   PLAN_APPROVAL_SUBMIT_WORKFLOW_CODE,
   _addIndicatorToCategory,
-  _calculateMilestoneStatus,
   _currentDate,
   _currentTask,
   _deleteIndicator,
   _formatUpdateTime,
-  _getMilestoneProgressText,
   _getProgressClass,
   _goToIndicator,
   _groupedBasicIndicators,
@@ -59,7 +66,6 @@ const {
   _handleBatchWithdrawByTask,
   _handleDoubleClick,
   _handleTableScroll,
-  _handleViewMilestones,
   _handleWithdraw,
   _handleWithdrawTask,
   _hasPendingApprovalForDept,
@@ -68,8 +74,6 @@ const {
   _selectTask,
   _tableScrollRef,
   _toggleViewMode,
-  addMilestone,
-  addMilestoneInDialog,
   addNewRow,
   addRowFormRef,
   approvalEntryButtonText,
@@ -101,12 +105,10 @@ const {
   cancelAdd,
   cancelEdit,
   cancelIndicatorEdit,
-  cancelMilestoneEdit,
   closeDistributeDialog,
   confirmAssignment,
   confirmDistribute,
   confirmPlanApprovalSubmission,
-  createTempMilestoneId,
   currentApprovalApproverName,
   currentApprovalCandidateNames,
   currentApprovalFlowName,
@@ -121,7 +123,6 @@ const {
   currentIndicatorIndex,
   currentIndicatorWorkflow,
   currentIndicatorWorkflowLoading,
-  currentMilestoneIndicator,
   currentPlan,
   currentPlanReportSummary,
   currentPlanScopeLoading,
@@ -153,28 +154,34 @@ const {
   editingIndicatorField,
   editingIndicatorId,
   editingIndicatorValue,
-  editingMilestoneIndicator,
-  editingMilestones,
   editingValue,
   ensurePersistedTaskIdForIndicator,
   ensurePlanCanDistribute,
   existingTaskNames,
-  extractMilestones,
+  querySearchTask,
+  onTaskOptionSelect,
+  onTaskInputBlur,
   findCurrentPlanByDepartment,
   findCurrentPlanByOrgId,
   findExistingTaskIdByName,
   formatDetailDate,
   functionalDepartments,
-  generateMonthlyMilestones,
-  generateMonthlyMilestonesInDialog,
+  collegeDepartments,
+  selectedCollege,
+  selectCollege,
+  collegeTableIndicators,
+  collegeDepartmentsScoped,
+  indicatorById,
+  collegeSpanMethod,
   getCategoryColor,
   getCategoryText,
   getDisplayedReportedProgress,
   getCurrentActorUserId,
-  getCurrentScopeIndicatorsForMilestones,
   getIndicatorCategoryLabel,
   getIndicatorMappedTaskType,
   getIndicatorTaskId,
+  getIndicatorWorkflowStatusLabel,
+  getIndicatorWorkflowTagType,
   getPersistedWithdrawableRows,
   getProgressColor,
   getProgressStatus,
@@ -199,12 +206,8 @@ const {
   handleDeleteIndicator,
   handleDistributeAll,
   handleDistributeOrWithdraw,
-  handleEditMilestones,
-  handleEditingMilestoneProgressChange,
   handleGlobalClick,
   handleIndicatorDblClick,
-  handleMilestoneDeadlineChange,
-  handleNewRowMilestoneProgressChange,
   handleOpenApproval,
   handleRejectCurrentIndicatorWorkflow,
   handleSelectionChange,
@@ -236,7 +239,6 @@ const {
   isReadOnly,
   isSavingIndicatorCell,
   isSavingIndicatorEdit,
-  isSavingMilestoneEdit,
   isStrategicDept,
   isTableScrolling,
   lastEditTime,
@@ -244,26 +246,14 @@ const {
   loadBackendTaskTypeMap,
   loadCurrentPlanTaskScope,
   loadIndicatorWorkflowSnapshot,
-  loadMilestonePayloads,
-  loadMilestonePayloadsIndividually,
-  loadMilestonesForCurrentScope,
   loadPendingPlanApprovalCount,
-  loadedMilestoneIds,
-  loadingMilestoneIds,
-  milestoneCache,
-  milestoneDrawerVisible,
-  milestoneEditDialogVisible,
-  milestoneFallbackConcurrency,
-  milestoneLoadRequestId,
-  milestoneMap,
   newRow,
+  normalizedIndicators,
   normalizeDepartmentName,
   normalizeEditableText,
-  normalizeMilestone,
   normalizePreviewCandidateDisplayName,
   normalizeTaskId,
   normalizeWorkflowStepName,
-  normalizedIndicators,
   openApprovalSetupDialog,
   openNewRowDialog,
   orgStore,
@@ -272,7 +262,6 @@ const {
   pendingApprovalCount,
   pendingPlanApprovalCount,
   permissionUtil,
-  persistNewIndicatorMilestones,
   persistTaskContentEdit,
   planStore,
   planUiPhase,
@@ -287,11 +276,12 @@ const {
   refreshCurrentDepartmentView,
   refreshIndicatorWorkflowContext,
   refreshTaskPageAfterIndicatorMutation,
+  hasMutationDraft,
+  mutationDraftLabels,
+  submitMutationDraft,
+  cancelMutationDraft,
   registerTaskLocally,
   rejectIndicatorReview,
-  reloadMilestonesForIndicator,
-  removeMilestone,
-  removeMilestoneInDialog,
   resetApprovalSetupDialog,
   resetApprovalWorkflowStateCache,
   resetNewRow,
@@ -302,7 +292,6 @@ const {
   route,
   router,
   saveIndicatorEdit,
-  saveMilestoneEdit,
   saveNewRow,
   savingIndicatorField,
   savingIndicatorId,
@@ -321,19 +310,112 @@ const {
   taskTypeMap,
   taskTypeMapLoading,
   timeContext,
-  toMilestoneDueDate,
-  toMilestoneRequestStatus,
-  toMilestoneStatus,
   triggerApprovalForDistribution,
   updateEditTime,
-  viewMode
+  viewMode,
+  reportHistoryOpen,
+  currentDetailId
 } = useStrategicTaskView(props)
+
+const activeTaskTabName = ref<'functional' | 'college'>('functional')
+
+// 2026-10-13 用户定案：二级学院 tab 未选学院时的左侧入口引导（呼吸高亮 + 指向气泡），选中后消失
+// 仅当当前职能部门确实有下发学院时才引导（列表为空时引导会指向空列表，反而更困惑）
+const showCollegeGuide = computed(
+  () =>
+    activeTaskTabName.value === 'college' &&
+    !selectedCollege.value &&
+    collegeDepartmentsScoped.value.length > 0
+)
+
+// 二级学院页签（P2）：筛出下发到学院的任务与指标，复用 TaskIndicatorTree 树状下钻
+// 2026-10-11 修复：原过滤只看 department 字段（二级学院子指标的 owner 是职能部门，
+// 该字段为空）导致链路「职能部门→学院」下发后学院 tab 显示 No Data。
+// 改为按目标部门（targetDepartment/targetOrgName）识别学院归属。
+const collegeIndicators = computed(() =>
+  // 2026-10-11 修复：改用全量指标源（normalizedIndicators）——
+  // indicators 被"当前选中部门 + isStrategic + 当前计划范围"三重过滤，
+  // 学院子指标（owner=职能部门、有 parentIndicatorId）会被全部排除，导致学院 tab 恒为空。
+  (normalizedIndicators.value || []).filter(item => {
+    const candidate = item as {
+      department?: string
+      targetDepartment?: string
+      targetOrgName?: string
+      targetOrgId?: string | number
+      responsibleDept?: string
+    }
+    const targetName = String(
+      candidate.targetDepartment ??
+        candidate.targetOrgName ??
+        candidate.responsibleDept ??
+        candidate.department ??
+        ''
+    )
+    if (targetName.includes('学院')) {
+      return true
+    }
+    const targetOrgId = Number(candidate.targetOrgId ?? NaN)
+    return Number.isFinite(targetOrgId) && targetOrgId >= 55 && targetOrgId <= 62
+  })
+)
+const collegeTasks = computed(() => {
+  // 2026-10-11 修复：store 的 tasks 以 taskContent 作为 id（非数字 taskId），
+  // 原按 taskId 匹配恒为空。改为按 任务名（taskContent）匹配，
+  // 同时保留数字 taskId 兜底匹配。
+  const collegeTaskNames = new Set(
+    collegeIndicators.value.map(item => String(item.taskContent ?? '')).filter(Boolean)
+  )
+  const collegeTaskIds = new Set(
+    collegeIndicators.value.map(item => String(item.taskId ?? '')).filter(Boolean)
+  )
+  return (taskList.value || []).filter(task => {
+    const byName = collegeTaskNames.has(String(task.title ?? ''))
+    const byId = collegeTaskIds.has(String(task.id ?? ''))
+    return byName || byId
+  })
+})
 
 type StrategicExportRow = StrategicIndicator & {
   exportDepartment: string
 }
 
 const strategicExporting = ref(false)
+
+/**
+ * 2026-10-14 用户定案（P8 表单式异动）：
+ * 已下发指标双击字段就地编辑 → 改动攒入异动草稿（内存态，刷新即丢）→
+ * 顶部「发起异动」按钮一次性提交全部攒改，走 PLAN_MUTATION_STRATEGY 审批链；
+ * 驳回后后端自动清除 mutation_status，可再次发起。
+ */
+const mutationApiLoading = ref(false)
+
+// 2026-10-10：异动审批实例 → 审批中心「审批历史」卡片（P1 修复：异动链不缺失前端）
+const departmentMutationWorkflowEntities = ref<Array<{ entityId: number }>>([])
+const loadDepartmentMutationWorkflowEntities = async () => {
+  try {
+    const orgId = resolveDepartmentIdByName(selectedDepartment.value)
+    if (!orgId) {
+      departmentMutationWorkflowEntities.value = []
+      return
+    }
+    const { mutationApi } = await import('@/features/indicator/api/mutationApi')
+    const response = await mutationApi.approvals(orgId)
+    const items = Array.isArray(response.data) ? response.data : []
+    departmentMutationWorkflowEntities.value = items
+      .filter(item => Number(item.indicator_id) > 0)
+      .map(item => ({ entityId: Number(item.indicator_id) }))
+  } catch (error) {
+    logger.warn('[StrategicTaskView] 加载异动审批实例失败:', error)
+  }
+}
+// 部门切换即预载（抽屉打开时数据已就绪，避免晚于历史卡片加载的时序问题）
+watch(
+  () => selectedDepartment.value,
+  () => {
+    void loadDepartmentMutationWorkflowEntities()
+  },
+  { immediate: true }
+)
 const strategicBatchExportDialogVisible = ref(false)
 const selectedStrategicExportDepartments = ref<string[]>([])
 const strategicImportDialogVisible = ref(false)
@@ -345,10 +427,11 @@ const manualAlertOptions: Array<{
   value: ManualAlertSelectValue
   type: 'success' | 'info' | 'warning' | 'danger'
 }> = [
-  { label: '无预警', value: '', type: 'success' },
-  { label: '一般滞后', value: 'INFO', type: 'info' },
-  { label: '严重滞后', value: 'WARNING', type: 'warning' },
-  { label: '重大滞后', value: 'CRITICAL', type: 'danger' }
+  // 进度等级三档（2026-09-17 定案）：存储码沿用 alert severity，新增 AHEAD/NORMAL
+  { label: '未评定', value: '', type: 'info' },
+  { label: '超前完成', value: 'AHEAD', type: 'success' },
+  { label: '正常', value: 'NORMAL', type: 'success' },
+  { label: '延期', value: 'DELAYED', type: 'warning' }
 ]
 
 const getManualAlertOption = (severity?: ManualAlertSeverity) =>
@@ -372,8 +455,8 @@ const handleManualAlertChange = async (
   const label = getManualAlertLabel(severity)
   try {
     await ElMessageBox.confirm(
-      `确认将「${row.name || '该指标'}」的预警等级调整为「${label}」？确认后会通知对应下级部门。`,
-      '调整预警等级',
+      `确认将「${row.name || '该指标'}」的进度等级调整为「${label}」？确认后会通知对应下级部门。`,
+      '调整进度等级',
       {
         confirmButtonText: '确认调整',
         cancelButtonText: '取消',
@@ -383,10 +466,10 @@ const handleManualAlertChange = async (
 
     savingManualAlertIndicatorId.value = row.id
     await strategicStore.updateManualAlertLevel(String(row.id), severity)
-    ElMessage.success(severity ? '预警等级已调整，并已通知下级部门' : '预警已取消')
+    ElMessage.success(severity ? '进度等级已调整，并已通知下级部门' : '进度等级已恢复未评定')
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
-      ElMessage.error(error instanceof Error && error.message ? error.message : '预警等级调整失败')
+      ElMessage.error(error instanceof Error && error.message ? error.message : '进度等级调整失败')
     }
   } finally {
     savingManualAlertIndicatorId.value = null
@@ -408,44 +491,76 @@ const strategicExportDepartmentsIndeterminate = computed(
     selectedStrategicExportDepartments.value.length < functionalDepartments.value.length
 )
 
-const strategicExportColumns: ExcelExportColumn<StrategicExportRow>[] = [
-  { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
-  { header: '部门', width: 18, getValue: row => row.exportDepartment },
-  { header: '战略任务', width: 28, getValue: row => row.taskContent || '-' },
-  { header: '核心指标', width: 32, getValue: row => row.name || '-' },
-  { header: '指标类型', width: 12, align: 'center', getValue: row => row.type1 || '-' },
-  {
-    header: '任务类别',
-    width: 12,
-    align: 'center',
-    getValue: row => getCategoryText(row.type2)
-  },
-  { header: '备注', width: 24, getValue: row => row.remark || '-' },
-  { header: '权重', width: 10, align: 'center', getValue: row => Number(row.weight || 0) },
-  {
-    header: '进度',
-    width: 24,
-    getValue: row => formatProgress(row.progress, getDisplayedReportedProgress(row))
-  },
-  {
-    header: '预警等级判定',
-    width: 18,
-    align: 'center',
-    getValue: row => getManualAlertLabel(row.manualAlertSeverity)
-  },
-  {
-    header: '附件',
-    width: 42,
-    getValue: row =>
-      buildAttachmentCell(
-        (row as StrategicIndicator & { pendingAttachmentDetails?: unknown[] })
-          .pendingAttachmentDetails?.length
-          ? (row as StrategicIndicator & { pendingAttachmentDetails?: unknown[] })
-              .pendingAttachmentDetails
-          : row.pendingAttachments
-      )
-  }
-]
+// 2026-10-14 用户定案：导出与界面同构——同一战略任务的多行在「战略任务」列合并为一个单元格；
+// 「内部ID」列移除（导入按名称匹配，导出面向领导阅读，无需内部主键）。
+const buildStrategicExportColumns = (
+  rows: StrategicExportRow[]
+): ExcelExportColumn<StrategicExportRow>[] => {
+  // 计算「战略任务」连续分组的合并行数：仅组首行携带 rowSpan，其余行为被合并的从属行
+  const taskSpanByIndex = new Map<number, number>()
+  rows.forEach((row, index) => {
+    const key = row.taskContent || '-'
+    const prevKey = index > 0 ? rows[index - 1].taskContent || '-' : null
+    if (prevKey === key) {
+      taskSpanByIndex.set(index, 0)
+      return
+    }
+    let end = index + 1
+    while (end < rows.length && (rows[end].taskContent || '-') === key) {
+      end += 1
+    }
+    taskSpanByIndex.set(index, end - index)
+  })
+
+  return [
+    { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
+    { header: '部门', width: 18, getValue: row => row.exportDepartment },
+    {
+      header: '战略任务',
+      width: 28,
+      getValue: (row, index) => {
+        const text = row.taskContent || '-'
+        const span = taskSpanByIndex.get(index) ?? 1
+        if (span > 1) {
+          return { value: text, rowSpan: span, alignVertical: 'center' }
+        }
+        // 被上方合并覆盖的从属行：write-excel-file 要求传 null
+        if (span === 0) {
+          return null
+        }
+        return text
+      }
+    },
+    { header: '核心指标', width: 32, getValue: row => row.name || '-' },
+    { header: '指标类型', width: 12, align: 'center', getValue: row => row.type1 || '-' },
+    {
+      header: '任务类别',
+      width: 12,
+      align: 'center',
+      getValue: row => getCategoryText(row.type2)
+    },
+    { header: '备注', width: 24, getValue: row => row.remark || '-' },
+    { header: '权重', width: 10, align: 'center', getValue: row => Number(row.weight || 0) },
+    {
+      header: '鉴定进度等级',
+      width: 18,
+      align: 'center',
+      getValue: row => getManualAlertLabel(row.manualAlertSeverity)
+    },
+    {
+      header: '附件',
+      width: 42,
+      getValue: row =>
+        buildAttachmentCell(
+          (row as StrategicIndicator & { pendingAttachmentDetails?: unknown[] })
+            .pendingAttachmentDetails?.length
+            ? (row as StrategicIndicator & { pendingAttachmentDetails?: unknown[] })
+                .pendingAttachmentDetails
+            : row.pendingAttachments
+        )
+    }
+  ]
+}
 
 const findStrategicExportPlanByDepartment = (department: string) => {
   const normalizedDepartment = normalizeDepartmentName(department)
@@ -578,7 +693,7 @@ const buildStrategicExportSheet = (
 ): ExcelExportSheet<StrategicExportRow> => ({
   sheetName: department || '当前部门',
   rows,
-  columns: strategicExportColumns,
+  columns: buildStrategicExportColumns(rows),
   emptyMessage: '当前部门暂无可导出的战略任务指标',
   getRowTone: getStrategicExportRowTone,
   getRowTextColor: getStrategicExportRowTextColor
@@ -706,22 +821,42 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
     <!-- 左侧任务列表 - 动态隐藏 -->
     <aside class="task-sidebar">
       <div class="sidebar-header">
-        <div class="task-list-title">部门列表</div>
+        <div class="task-list-title">
+          {{ activeTaskTabName === 'functional' ? '部门列表' : '学院列表' }}
+        </div>
       </div>
 
       <ul class="task-list">
-        <li
-          v-for="dept in functionalDepartments"
-          :key="dept"
-          :class="['task-item', { active: selectedDepartment === dept }]"
-          @click="selectDepartment(dept)"
-        >
-          {{ dept }}
-        </li>
+        <!-- 2026-10-11 用户定案：职能部门 tab 列职能部门；二级学院 tab 列学院 -->
+        <template v-if="activeTaskTabName === 'functional'">
+          <li
+            v-for="dept in functionalDepartments"
+            :key="dept"
+            :class="['task-item', { active: selectedDepartment === dept }]"
+            @click="selectDepartment(dept)"
+          >
+            {{ dept }}
+          </li>
+        </template>
+        <template v-else>
+          <!-- 2026-10-13 用户定案：学院列表按左侧已选职能部门下钻，只列该部门下发的目标学院 -->
+          <li
+            v-for="college in collegeDepartmentsScoped"
+            :key="college"
+            :class="['task-item', { active: selectedCollege === college }]"
+            @click="selectCollege(college)"
+          >
+            {{ college }}
+          </li>
+          <li v-if="collegeDepartmentsScoped.length === 0" class="task-item college-scope-empty">
+            当前职能部门暂无下发给学院的指标
+          </li>
+        </template>
       </ul>
     </aside>
     <!-- 展开箭头独立于侧边栏 - 使用SVG图标 -->
-    <div class="sidebar-toggle">
+    <!-- 2026-10-13 用户定案：二级学院 tab 未选学院时，左侧入口加呼吸高亮引导（3 次后转静态） -->
+    <div class="sidebar-toggle" :class="{ 'sidebar-toggle--guide': showCollegeGuide }">
       <svg class="toggle-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
         <path
           d="M9 6L15 12L9 18"
@@ -734,6 +869,13 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
       </svg>
       <span class="toggle-hint">{{ selectedDepartment || functionalDepartments[0] || '' }}</span>
     </div>
+    <!-- 左侧入口引导气泡（指向真实交互入口，点击学院后消失） -->
+    <transition name="el-fade-in">
+      <div v-if="showCollegeGuide" class="college-guide-bubble">
+        <span class="college-guide-bubble__arrow">←</span>
+        请选择学院
+      </div>
+    </transition>
 
     <!-- 右侧详情区域 - Excel风格 -->
     <section
@@ -822,6 +964,20 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <el-button size="small" :icon="Upload" @click="openStrategicImportDialog">
             导入
           </el-button>
+          <!-- 2026-10-14 用户定案（P8）：就地编辑攒改后，顶部出现「发起异动」一键提交 -->
+          <template v-if="hasMutationDraft">
+            <el-button
+              size="small"
+              type="warning"
+              :loading="mutationApiLoading"
+              @click="submitMutationDraft"
+            >
+              发起异动（{{ mutationDraftLabels.join('、') }}）
+            </el-button>
+            <el-button size="small" :disabled="mutationApiLoading" @click="cancelMutationDraft">
+              取消异动
+            </el-button>
+          </template>
           <!-- 视图切换按钮 -->
           <el-button-group style="margin-left: 16px">
             <el-button
@@ -928,696 +1084,777 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
         <template #title> 当前计划已进入审批流程，请先完成整体计划审批后再继续下发或编辑 </template>
       </el-alert>
 
-      <!-- Excel表格 -->
-      <div class="excel-table-wrapper">
-        <div v-if="isInitialDataLoading" class="page-loading-state">
-          <div class="loading-header">
-            <el-icon class="is-loading"><Loading /></el-icon>
-            <span>正在加载指标数据，请稍候...</span>
-          </div>
-          <el-skeleton :rows="8" animated />
-        </div>
+      <!-- 任务管理页签：职能部门 / 二级学院（2026-09-17 定案 tabpage 方案） -->
+      <el-tabs v-model="activeTaskTabName" class="task-tabs">
+        <el-tab-pane label="职能部门战略任务管理" name="functional">
+          <!-- Excel表格 -->
+          <div class="excel-table-wrapper">
+            <div v-if="isInitialDataLoading" class="page-loading-state">
+              <div class="loading-header">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                <span>正在加载指标数据，请稍候...</span>
+              </div>
+              <el-skeleton :rows="8" animated />
+            </div>
 
-        <template v-else>
-          <!-- 表格视图 -->
-          <div v-if="viewMode === 'table'" class="table-container">
-            <el-table
-              ref="tableRef"
-              :data="indicators"
-              :span-method="getSpanMethod"
-              border
-              highlight-current-row
-              class="unified-table"
-              @selection-change="handleSelectionChange"
-            >
-              <el-table-column prop="taskContent" label="战略任务" width="180">
-                <template #default="{ row }">
-                  <div class="task-cell-wrapper">
-                    <div
-                      class="indicator-name-cell"
-                      @dblclick="handleIndicatorDblClick(row, 'taskContent')"
-                    >
-                      <el-input
-                        v-if="
-                          editingIndicatorId === row.id && editingIndicatorField === 'taskContent'
-                        "
-                        v-model="editingIndicatorValue"
-                        v-focus
-                        type="textarea"
-                        :autosize="{ minRows: 2, maxRows: 6 }"
-                        @blur="saveIndicatorEdit(row, 'taskContent')"
-                        @keyup.esc="cancelIndicatorEdit"
-                      />
-                      <span
-                        v-else-if="isSavingIndicatorCell(row, 'taskContent')"
-                        class="cell-saving-text"
+            <template v-else>
+              <!-- 表格视图 -->
+              <div v-if="viewMode === 'table'" class="table-container">
+                <el-table
+                  ref="tableRef"
+                  :data="indicators"
+                  :span-method="getSpanMethod"
+                  border
+                  highlight-current-row
+                  class="unified-table"
+                >
+                  <el-table-column prop="taskContent" label="战略任务" width="200">
+                    <template #default="{ row }">
+                      <div class="task-cell-wrapper">
+                        <div
+                          class="indicator-name-cell"
+                          @dblclick="handleIndicatorDblClick(row, 'taskContent')"
+                        >
+                          <el-input
+                            v-if="
+                              editingIndicatorId === row.id &&
+                              editingIndicatorField === 'taskContent'
+                            "
+                            v-model="editingIndicatorValue"
+                            v-focus
+                            type="textarea"
+                            :autosize="{ minRows: 2, maxRows: 6 }"
+                            @blur="saveIndicatorEdit(row, 'taskContent')"
+                            @keyup.esc="cancelIndicatorEdit"
+                          />
+                          <span
+                            v-else-if="isSavingIndicatorCell(row, 'taskContent')"
+                            class="cell-saving-text"
+                          >
+                            保存中...
+                          </span>
+                          <el-tooltip
+                            v-else
+                            :content="`${getCategoryText(row.type2)}任务`"
+                            placement="top"
+                          >
+                            <span
+                              class="indicator-name-text task-content-colored"
+                              :style="{ color: getCategoryColor(row.type2) }"
+                              >{{ row.taskContent || '未关联任务' }}</span
+                            >
+                          </el-tooltip>
+                          <!-- 战略任务改名同样计入「已更改 N 次」（悬停查看历史） -->
+                          <div v-if="!isReadOnly" class="indicator-cell-footer">
+                            <MutationBadgePopover :task-id="getIndicatorTaskId(row) || null" />
+                          </div>
+                        </div>
+
+                        <!-- 右下角新增指标三角形按钮 -->
+                        <div
+                          v-if="!isReadOnly && getTaskStatus(row).canWithdraw"
+                          class="add-indicator-trigger"
+                          @click="handleAddIndicatorToTask(row)"
+                        >
+                          <span class="trigger-icon">+</span>
+                        </div>
+                      </div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="name" label="核心指标" min-width="300">
+                    <template #default="{ row }">
+                      <div
+                        class="indicator-name-cell"
+                        @dblclick="handleIndicatorDblClick(row, 'name')"
                       >
-                        保存中...
+                        <el-input
+                          v-if="editingIndicatorId === row.id && editingIndicatorField === 'name'"
+                          v-model="editingIndicatorValue"
+                          v-focus
+                          type="textarea"
+                          :autosize="{ minRows: 2, maxRows: 6 }"
+                          @blur="saveIndicatorEdit(row, 'name')"
+                        />
+                        <span
+                          v-else-if="isSavingIndicatorCell(row, 'name')"
+                          class="cell-saving-text"
+                        >
+                          保存中...
+                        </span>
+                        <template v-else>
+                          <template v-if="row.name">
+                            <el-tooltip
+                              :content="
+                                row.type1 === '定性'
+                                  ? '定性指标'
+                                  : row.type1 === '定量'
+                                    ? '定量指标'
+                                    : '未设置类型'
+                              "
+                              placement="top"
+                            >
+                              <span
+                                class="indicator-name-text"
+                                :class="
+                                  row.type1 === '定性'
+                                    ? 'indicator-qualitative'
+                                    : row.type1 === '定量'
+                                      ? 'indicator-quantitative'
+                                      : ''
+                                "
+                                >{{ row.name }}</span
+                              >
+                            </el-tooltip>
+                            <!-- D2 孤立指标标记：父指标已被删除时提示，信息不丢 -->
+                            <el-tag
+                              v-if="
+                                row.parentIndicatorId &&
+                                !indicatorByIdMap.get(String(row.parentIndicatorId))
+                              "
+                              size="small"
+                              type="warning"
+                              class="orphan-parent-tag"
+                              >父级已删除</el-tag
+                            >
+                            <div class="indicator-cell-footer">
+                              <MutationBadgePopover v-if="row.id" :indicator-id="row.id" />
+                            </div>
+                          </template>
+                          <span v-else class="indicator-name-text placeholder-text"
+                            >双击编辑指标</span
+                          >
+                        </template>
+                      </div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="weight" label="权重" width="72" align="center">
+                    <template #default="{ row }">
+                      <div class="weight-cell" @dblclick="handleIndicatorDblClick(row, 'weight')">
+                        <el-input
+                          v-if="editingIndicatorId === row.id && editingIndicatorField === 'weight'"
+                          v-model="editingIndicatorValue"
+                          v-focus
+                          size="small"
+                          style="width: 50px"
+                          @blur="saveIndicatorEdit(row, 'weight')"
+                          @keyup.enter="saveIndicatorEdit(row, 'weight')"
+                        />
+                        <span
+                          v-else-if="isSavingIndicatorCell(row, 'weight')"
+                          class="cell-saving-text"
+                        >
+                          保存中...
+                        </span>
+                        <span v-else class="weight-text">{{ row.weight }}</span>
+                      </div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="自评等级" width="132" align="center">
+                    <template #default="{ row }">
+                      <el-tag v-if="row.selfRating" size="small" type="info">
+                        {{
+                          { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' }[row.selfRating] ||
+                          row.selfRating
+                        }}
+                      </el-tag>
+                      <span v-else style="color: #909399">—</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="鉴定进度等级" width="140" align="center">
+                    <template #default="{ row }">
+                      <div class="manual-alert-cell">
+                        <el-tooltip
+                          v-if="isStrategicDept || row.responsibleDept === selectedDepartment"
+                          :disabled="!isReadOnly"
+                          :content="MANUAL_ALERT_READONLY_HINT"
+                          placement="top"
+                        >
+                          <div class="manual-alert-select-wrapper">
+                            <el-select
+                              :model-value="row.manualAlertSeverity ?? ''"
+                              size="small"
+                              class="manual-alert-select"
+                              :disabled="isReadOnly || savingManualAlertIndicatorId === row.id"
+                              :loading="savingManualAlertIndicatorId === row.id"
+                              @change="
+                                value =>
+                                  handleManualAlertChange(row, value as ManualAlertSelectValue)
+                              "
+                            >
+                              <el-option
+                                v-for="option in manualAlertOptions"
+                                :key="option.value || 'NONE'"
+                                :label="option.label"
+                                :value="option.value"
+                              />
+                            </el-select>
+                          </div>
+                        </el-tooltip>
+                        <el-tag
+                          v-else
+                          :type="getManualAlertTagType(row.manualAlertSeverity)"
+                          size="small"
+                        >
+                          {{ getManualAlertLabel(row.manualAlertSeverity) }}
+                        </el-tag>
+                      </div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="上报资料" width="100" align="center">
+                    <template #default="{ row }">
+                      <span
+                        v-if="
+                          (row.attachments?.length || row.pendingAttachmentDetails?.length || 0) > 0
+                        "
+                      >
+                        <el-button
+                          link
+                          type="primary"
+                          size="small"
+                          @click="viewIndicatorDetail(row as StrategicIndicator)"
+                        >
+                          {{ row.attachments?.length || row.pendingAttachmentDetails?.length || 0 }}
+                          个附件
+                        </el-button>
                       </span>
+                      <span v-else style="color: #909399">—</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="remark" label="备注" width="160">
+                    <template #default="{ row }">
+                      <div
+                        class="indicator-name-cell"
+                        @dblclick="handleIndicatorDblClick(row, 'remark')"
+                      >
+                        <el-input
+                          v-if="editingIndicatorId === row.id && editingIndicatorField === 'remark'"
+                          v-model="editingIndicatorValue"
+                          v-focus
+                          type="textarea"
+                          :autosize="{ minRows: 2, maxRows: 6 }"
+                          @blur="saveIndicatorEdit(row, 'remark')"
+                          @keyup.esc="cancelIndicatorEdit"
+                        />
+                        <span
+                          v-else-if="isSavingIndicatorCell(row, 'remark')"
+                          class="cell-saving-text"
+                        >
+                          保存中...
+                        </span>
+                        <span v-else class="indicator-name-text remark-text-wrap">{{
+                          row.remark || '样例：双击编辑说明'
+                        }}</span>
+                      </div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="128" align="center">
+                    <template #default="{ row }">
+                      <div class="action-buttons-inline">
+                        <!-- 查看按钮 - 始终显示 -->
+                        <el-button link type="primary" size="small" @click="handleViewDetail(row)"
+                          >查看</el-button
+                        >
+
+                        <!-- 删除按钮 - 仅草稿状态可删除 -->
+                        <el-button
+                          v-if="canDeleteIndicator(row)"
+                          link
+                          type="danger"
+                          size="small"
+                          @click="handleDeleteIndicator(row)"
+                          >删除</el-button
+                        >
+                      </div>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </div>
+
+              <!-- 卡片视图 -->
+              <div v-else-if="viewMode === 'card'" class="card-container">
+                <!-- 卡片导航栏 -->
+                <div v-if="indicators.length > 0" class="card-navigation">
+                  <div class="nav-left">
+                    <el-button
+                      :disabled="currentIndicatorIndex === 0"
+                      size="small"
+                      @click="goToPrevIndicator"
+                    >
+                      <el-icon><ArrowDown style="transform: rotate(90deg)" /></el-icon>
+                      上一个
+                    </el-button>
+                    <span class="nav-info">
+                      {{ currentIndicatorIndex + 1 }} / {{ indicators.length }}
+                    </span>
+                    <el-button
+                      :disabled="currentIndicatorIndex === indicators.length - 1"
+                      size="small"
+                      @click="goToNextIndicator"
+                    >
+                      下一个
+                      <el-icon><ArrowDown style="transform: rotate(-90deg)" /></el-icon>
+                    </el-button>
+                  </div>
+                  <div class="nav-right">
+                    <el-select
+                      v-model="currentIndicatorIndex"
+                      placeholder="快速跳转"
+                      size="small"
+                      style="width: 200px"
+                    >
+                      <el-option
+                        v-for="(indicator, index) in indicators"
+                        :key="indicator.id"
+                        :label="`${index + 1}. ${indicator.name || '未命名指标'}`"
+                        :value="index"
+                      />
+                    </el-select>
+                  </div>
+                </div>
+
+                <!-- 指标卡片 -->
+                <div v-if="currentIndicator" class="indicator-card">
+                  <!-- 卡片头部 -->
+                  <div class="card-header">
+                    <div class="card-title-section">
+                      <h3 class="card-title">{{ currentIndicator.name || '未命名指标' }}</h3>
+                      <div class="card-tags">
+                        <el-tag
+                          size="small"
+                          :class="
+                            currentIndicator.type1 === '定性'
+                              ? 'tag-qualitative'
+                              : 'tag-quantitative'
+                          "
+                        >
+                          {{ currentIndicator.type1 }}
+                        </el-tag>
+                        <el-tag
+                          size="small"
+                          :style="{
+                            backgroundColor: getCategoryColor(currentIndicator.type2),
+                            color: '#fff',
+                            border: 'none'
+                          }"
+                        >
+                          {{ getCategoryText(currentIndicator.type2) }}任务
+                        </el-tag>
+                        <el-tag v-if="currentPlanStatus === 'PENDING'" type="warning" size="small">
+                          计划审批中
+                        </el-tag>
+                      </div>
+                    </div>
+                    <div class="card-actions">
+                      <el-button
+                        type="primary"
+                        size="small"
+                        @click="handleViewDetail(currentIndicator)"
+                      >
+                        <el-icon><View /></el-icon>
+                        详情
+                      </el-button>
+                      <el-button
+                        v-if="canDeleteIndicator(currentIndicator)"
+                        type="danger"
+                        size="small"
+                        @click="handleDeleteIndicator(currentIndicator)"
+                      >
+                        <el-icon><Delete /></el-icon>
+                        删除
+                      </el-button>
+                    </div>
+                  </div>
+
+                  <!-- 卡片内容 -->
+                  <div class="card-content">
+                    <!-- 基础信息 -->
+                    <div class="info-section">
+                      <h4 class="section-title">基础信息</h4>
+                      <div class="info-grid">
+                        <div class="info-item">
+                          <span class="info-label">战略任务：</span>
+                          <span class="info-value">{{
+                            currentIndicator.taskContent || '未关联任务'
+                          }}</span>
+                        </div>
+                        <div class="info-item">
+                          <span class="info-label">权重：</span>
+                          <span class="info-value">{{ currentIndicator.weight }}</span>
+                        </div>
+                        <div class="info-item">
+                          <span class="info-label">责任部门：</span>
+                          <span class="info-value">{{ currentIndicator.responsibleDept }}</span>
+                        </div>
+                        <div class="info-item">
+                          <span class="info-label">责任人：</span>
+                          <span class="info-value">{{ currentIndicator.responsiblePerson }}</span>
+                        </div>
+                        <div class="info-item full-width">
+                          <span class="info-label">备注：</span>
+                          <span class="info-value">{{ currentIndicator.remark || '无备注' }}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 进度信息 -->
+                    <div class="progress-section">
+                      <h4 class="section-title">进度信息</h4>
+                      <div class="progress-display">
+                        <div class="progress-main">
+                          <div class="progress-text">
+                            <span class="current-progress"
+                              >{{ currentIndicator.progress || 0 }}%</span
+                            >
+                            <span class="progress-label">当前进度</span>
+                          </div>
+                          <el-progress
+                            :percentage="currentIndicator.progress || 0"
+                            :stroke-width="12"
+                            :color="getProgressColor(currentIndicator)"
+                            class="progress-bar"
+                          />
+                        </div>
+                        <!-- 待审批进度显示 -->
+                        <div
+                          v-if="hasPendingProgressContent(currentIndicator)"
+                          class="pending-progress"
+                        >
+                          <div
+                            v-if="hasPendingProgressValue(currentIndicator)"
+                            class="pending-info"
+                          >
+                            <span class="pending-label">申请进度：</span>
+                            <span class="pending-value"
+                              >{{ currentIndicator.pendingProgress }}%</span
+                            >
+                            <span class="progress-change">
+                              ({{ getPendingProgressDelta(currentIndicator) > 0 ? '+' : ''
+                              }}{{ getPendingProgressDelta(currentIndicator) }}%)
+                            </span>
+                          </div>
+                          <div v-if="currentIndicator.pendingRemark" class="pending-remark">
+                            <span class="remark-label">填报备注：</span>
+                            <span class="remark-text">{{ currentIndicator.pendingRemark }}</span>
+                          </div>
+                        </div>
+
+                        <div
+                          v-if="currentIndicatorWorkflowLoading"
+                          class="workflow-progress-card is-loading"
+                        >
+                          <span class="workflow-progress-hint">正在加载该指标的审批流信息...</span>
+                        </div>
+
+                        <div v-else-if="currentIndicatorWorkflow" class="workflow-progress-card">
+                          <div class="workflow-progress-header">
+                            <span class="workflow-progress-title">报告审批流</span>
+                            <el-tag
+                              size="small"
+                              :type="getIndicatorWorkflowTagType(currentIndicatorWorkflow)"
+                            >
+                              {{ getIndicatorWorkflowStatusLabel(currentIndicatorWorkflow) }}
+                            </el-tag>
+                          </div>
+                          <div class="workflow-progress-grid">
+                            <div class="workflow-progress-item">
+                              <span class="workflow-progress-label">当前节点</span>
+                              <span class="workflow-progress-value">{{
+                                currentIndicatorWorkflow.currentStepName || '审批'
+                              }}</span>
+                            </div>
+                            <div class="workflow-progress-item">
+                              <span class="workflow-progress-label">当前审批人</span>
+                              <span class="workflow-progress-value">{{
+                                currentIndicatorWorkflow.currentApproverName || '待分配'
+                              }}</span>
+                            </div>
+                          </div>
+                          <div
+                            v-if="canCurrentUserHandleCurrentIndicatorWorkflow"
+                            class="workflow-progress-actions"
+                          >
+                            <el-button
+                              size="small"
+                              type="success"
+                              @click="handleApproveCurrentIndicatorWorkflow"
+                            >
+                              审批通过
+                            </el-button>
+                            <el-button
+                              size="small"
+                              type="danger"
+                              plain
+                              @click="handleRejectCurrentIndicatorWorkflow"
+                            >
+                              审批驳回
+                            </el-button>
+                          </div>
+                          <div
+                            v-else-if="currentIndicatorWorkflow.currentApproverName"
+                            class="workflow-progress-hint"
+                          >
+                            当前节点审批人为
+                            {{ currentIndicatorWorkflow.currentApproverName }}，你当前仅可查看。
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 空状态 -->
+                <div v-else class="empty-state">
+                  <el-empty description="当前部门暂无指标数据" :image-size="120">
+                    <el-button v-if="!isReadOnly" type="primary" @click="addNewRow">
+                      <el-icon><Plus /></el-icon>
+                      新增指标
+                    </el-button>
+                  </el-empty>
+                </div>
+              </div>
+            </template>
+
+            <!-- 新增行表单 -->
+            <div v-if="isAddingOrEditing" ref="addRowFormRef" class="add-row-form">
+              <h3 class="form-title">新增任务指标</h3>
+              <div class="add-form-content">
+                <el-form label-width="80px">
+                  <el-row :gutter="16">
+                    <el-col :span="4">
+                      <el-form-item class="required-form-item">
+                        <template #label><span class="required-asterisk">*</span>任务类型</template>
+                        <el-select
+                          v-model="newRow.type2"
+                          style="width: 100%"
+                          :disabled="!!taskTypeMap[newRow.taskContent]"
+                        >
+                          <el-option label="发展性" value="发展性" />
+                          <el-option label="基础性" value="基础性" />
+                        </el-select>
+                      </el-form-item>
+                    </el-col>
+                    <el-col :span="12">
+                      <el-form-item class="required-form-item">
+                        <template #label><span class="required-asterisk">*</span>战略任务</template>
+                        <el-autocomplete
+                          v-model="newRow.taskContent"
+                          :fetch-suggestions="querySearchTask"
+                          placeholder="选择或输入战略任务名称（输入后点击其他位置即保留）"
+                          style="width: 100%"
+                          :teleported="false"
+                          clearable
+                          @select="onTaskOptionSelect"
+                          @blur="onTaskInputBlur"
+                        />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+                  <el-row :gutter="16">
+                    <el-col :span="4">
+                      <el-form-item class="required-form-item">
+                        <template #label><span class="required-asterisk">*</span>指标类型</template>
+                        <el-select v-model="newRow.type1" style="width: 100%">
+                          <el-option label="定性" value="定性" />
+                          <el-option label="定量" value="定量" />
+                        </el-select>
+                      </el-form-item>
+                    </el-col>
+                    <el-col :span="4">
+                      <el-form-item class="required-form-item">
+                        <template #label><span class="required-asterisk">*</span>权重</template>
+                        <el-input-number
+                          v-model="newRow.weight"
+                          :min="0"
+                          placeholder="权重"
+                          :controls="false"
+                          style="width: 100%"
+                        />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+                  <el-row :gutter="16">
+                    <el-col :span="24">
+                      <el-form-item class="required-form-item">
+                        <template #label><span class="required-asterisk">*</span>核心指标</template>
+                        <el-input
+                          v-model="newRow.name"
+                          type="textarea"
+                          :autosize="{ minRows: 2, maxRows: 10 }"
+                          placeholder="设置核心指标内容"
+                        />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+                  <el-row :gutter="16">
+                    <el-col :span="24">
+                      <el-form-item label="备注">
+                        <el-input
+                          v-model="newRow.remark"
+                          type="textarea"
+                          :autosize="{ minRows: 3, maxRows: 15 }"
+                          placeholder="输入指标备注"
+                        />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+                </el-form>
+              </div>
+              <div class="add-form-actions">
+                <el-button type="primary" @click="saveNewRow">保存</el-button>
+                <el-button @click="cancelAdd">取消</el-button>
+              </div>
+            </div>
+          </div>
+        </el-tab-pane>
+
+        <el-tab-pane label="二级学院战略任务管理" name="college">
+          <!-- 2026-10-11 用户定案：与职能部门同构的表格视图——左侧选学院，表格展示该学院收到的全部指标，双击异动 -->
+          <div class="excel-table-wrapper">
+            <div v-if="!selectedCollege" class="college-empty-tip">
+              <!-- 2026-10-13 用户定案：中央提示增强（深色大字 + 图标 + 辅助说明），作为左侧入口引导的辅助 -->
+              <template v-if="collegeDepartmentsScoped.length > 0">
+                <el-icon class="college-empty-icon"><ArrowLeftBold /></el-icon>
+                <div class="college-empty-main">请先在左侧选择对应学院</div>
+                <div class="college-empty-sub">
+                  点击左侧「学院列表」中的学院名称，这里将展示该学院收到的战略任务指标
+                </div>
+              </template>
+              <!-- 当前职能部门未下发学院：引导切换部门而不是选学院 -->
+              <template v-else>
+                <div class="college-empty-main">当前职能部门暂未向学院下发指标</div>
+                <div class="college-empty-sub">
+                  请在上方「职能部门战略任务管理」中切换其他职能部门，或先完成指标下发
+                </div>
+              </template>
+            </div>
+            <template v-else>
+              <div class="table-container">
+                <el-table
+                  :data="collegeTableIndicators"
+                  :span-method="collegeSpanMethod"
+                  border
+                  highlight-current-row
+                  class="unified-table"
+                >
+                  <el-table-column label="核心指标" min-width="200">
+                    <template #default="{ row }">
+                      <!-- 2026-10-13 用户定案：与职能部门 tab 核心指标列同构——同核心指标合并单元格、定性/定量配色、悬停类型提示 -->
                       <el-tooltip
-                        v-else
-                        :content="`${getCategoryText(row.type2)}任务`"
+                        :content="
+                          row.parentIndicatorId &&
+                          indicatorById.get(row.parentIndicatorId)?.type1 === '定性'
+                            ? '定性指标'
+                            : row.parentIndicatorId &&
+                                indicatorById.get(row.parentIndicatorId)?.type1 === '定量'
+                              ? '定量指标'
+                              : '未设置类型'
+                        "
                         placement="top"
                       >
                         <span
-                          class="indicator-name-text task-content-colored"
-                          :style="{ color: getCategoryColor(row.type2) }"
-                          >{{ row.taskContent || '未关联任务' }}</span
-                        >
-                      </el-tooltip>
-                    </div>
-
-                    <!-- 右下角新增指标三角形按钮 -->
-                    <div
-                      v-if="!isReadOnly && getTaskStatus(row).canWithdraw"
-                      class="add-indicator-trigger"
-                      @click="handleAddIndicatorToTask(row)"
-                    >
-                      <span class="trigger-icon">+</span>
-                    </div>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column prop="name" label="核心指标" min-width="150">
-                <template #default="{ row }">
-                  <div class="indicator-name-cell" @dblclick="handleIndicatorDblClick(row, 'name')">
-                    <el-input
-                      v-if="editingIndicatorId === row.id && editingIndicatorField === 'name'"
-                      v-model="editingIndicatorValue"
-                      v-focus
-                      type="textarea"
-                      :autosize="{ minRows: 2, maxRows: 6 }"
-                      @blur="saveIndicatorEdit(row, 'name')"
-                    />
-                    <span v-else-if="isSavingIndicatorCell(row, 'name')" class="cell-saving-text">
-                      保存中...
-                    </span>
-                    <template v-else>
-                      <template v-if="row.name">
-                        <el-tooltip
-                          :content="
-                            row.type1 === '定性'
-                              ? '定性指标'
-                              : row.type1 === '定量'
-                                ? '定量指标'
-                                : '未设置类型'
+                          class="indicator-name-text"
+                          :class="
+                            row.parentIndicatorId &&
+                            indicatorById.get(row.parentIndicatorId)?.type1 === '定性'
+                              ? 'indicator-qualitative'
+                              : row.parentIndicatorId &&
+                                  indicatorById.get(row.parentIndicatorId)?.type1 === '定量'
+                                ? 'indicator-quantitative'
+                                : ''
                           "
-                          placement="top"
-                        >
-                          <span
-                            class="indicator-name-text"
-                            :class="
-                              row.type1 === '定性'
-                                ? 'indicator-qualitative'
-                                : row.type1 === '定量'
-                                  ? 'indicator-quantitative'
-                                  : ''
-                            "
-                            >{{ row.name }}</span
-                          >
-                        </el-tooltip>
-                      </template>
-                      <span v-else class="indicator-name-text placeholder-text">双击编辑指标</span>
-                    </template>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column prop="remark" label="备注" width="130">
-                <template #default="{ row }">
-                  <div
-                    class="indicator-name-cell"
-                    @dblclick="handleIndicatorDblClick(row, 'remark')"
-                  >
-                    <el-input
-                      v-if="editingIndicatorId === row.id && editingIndicatorField === 'remark'"
-                      v-model="editingIndicatorValue"
-                      v-focus
-                      type="textarea"
-                      :autosize="{ minRows: 2, maxRows: 6 }"
-                      @blur="saveIndicatorEdit(row, 'remark')"
-                      @keyup.esc="cancelIndicatorEdit"
-                    />
-                    <span v-else-if="isSavingIndicatorCell(row, 'remark')" class="cell-saving-text">
-                      保存中...
-                    </span>
-                    <span v-else class="indicator-name-text remark-text-wrap">{{
-                      row.remark || '样例：双击编辑说明'
-                    }}</span>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column prop="weight" label="权重" width="100" align="center">
-                <template #default="{ row }">
-                  <div class="weight-cell" @dblclick="handleIndicatorDblClick(row, 'weight')">
-                    <el-input
-                      v-if="editingIndicatorId === row.id && editingIndicatorField === 'weight'"
-                      v-model="editingIndicatorValue"
-                      v-focus
-                      size="small"
-                      style="width: 50px"
-                      @blur="saveIndicatorEdit(row, 'weight')"
-                      @keyup.enter="saveIndicatorEdit(row, 'weight')"
-                    />
-                    <span v-else-if="isSavingIndicatorCell(row, 'weight')" class="cell-saving-text">
-                      保存中...
-                    </span>
-                    <span v-else class="weight-text">{{ row.weight }}</span>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column prop="progress" label="进度" width="120" align="center">
-                <template #default="{ row }">
-                  <div class="progress-cell" @dblclick="handleIndicatorDblClick(row, 'progress')">
-                    <div
-                      v-if="editingIndicatorId === row.id && editingIndicatorField === 'progress'"
-                      class="progress-edit-field"
-                    >
-                      <el-input
-                        v-model="editingIndicatorValue"
-                        v-focus
-                        size="small"
-                        style="width: 54px"
-                        @blur="saveIndicatorEdit(row, 'progress')"
-                        @keyup.enter="saveIndicatorEdit(row, 'progress')"
-                      />
-                      <span class="progress-suffix">%</span>
-                    </div>
-                    <span
-                      v-else-if="isSavingIndicatorCell(row, 'progress')"
-                      class="cell-saving-text"
-                    >
-                      保存中...
-                    </span>
-                    <!-- 始终显示已审批通过的进度（progress），不显示待审批进度 -->
-                    <template v-else>
-                      <span class="progress-number">{{ row.progress || 0 }}%</span>
-                      <el-tooltip
-                        v-if="shouldShowReportedProgress(row)"
-                        content="填报进度"
-                        placement="top"
-                      >
-                        <span class="reported-progress"
-                          >({{ getDisplayedReportedProgress(row) }}%)</span
+                          >{{
+                            (row.parentIndicatorId &&
+                              indicatorById.get(row.parentIndicatorId)?.name) ||
+                            '—'
+                          }}</span
                         >
                       </el-tooltip>
                     </template>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column label="预警等级判定" width="150" align="center">
-                <template #default="{ row }">
-                  <div class="manual-alert-cell">
-                    <el-select
-                      v-if="isStrategicDept"
-                      :model-value="row.manualAlertSeverity ?? ''"
-                      size="small"
-                      class="manual-alert-select"
-                      :disabled="savingManualAlertIndicatorId === row.id"
-                      :loading="savingManualAlertIndicatorId === row.id"
-                      @change="
-                        value => handleManualAlertChange(row, value as ManualAlertSelectValue)
-                      "
-                    >
-                      <el-option
-                        v-for="option in manualAlertOptions"
-                        :key="option.value || 'NONE'"
-                        :label="option.label"
-                        :value="option.value"
-                      />
-                    </el-select>
-                    <el-tag
-                      v-else
-                      :type="getManualAlertTagType(row.manualAlertSeverity)"
-                      size="small"
-                    >
-                      {{ getManualAlertLabel(row.manualAlertSeverity) }}
-                    </el-tag>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="180" align="center">
-                <template #default="{ row }">
-                  <div class="action-buttons-inline">
-                    <!-- 查看按钮 - 始终显示 -->
-                    <el-button link type="primary" size="small" @click="handleViewDetail(row)"
-                      >查看</el-button
-                    >
-
-                    <!-- 删除按钮 - 仅草稿状态可删除 -->
-                    <el-button
-                      v-if="canDeleteIndicator(row)"
-                      link
-                      type="danger"
-                      size="small"
-                      @click="handleDeleteIndicator(row)"
-                      >删除</el-button
-                    >
-                  </div>
-                </template>
-              </el-table-column>
-            </el-table>
-          </div>
-
-          <!-- 卡片视图 -->
-          <div v-else-if="viewMode === 'card'" class="card-container">
-            <!-- 卡片导航栏 -->
-            <div v-if="indicators.length > 0" class="card-navigation">
-              <div class="nav-left">
-                <el-button
-                  :disabled="currentIndicatorIndex === 0"
-                  size="small"
-                  @click="goToPrevIndicator"
-                >
-                  <el-icon><ArrowDown style="transform: rotate(90deg)" /></el-icon>
-                  上一个
-                </el-button>
-                <span class="nav-info">
-                  {{ currentIndicatorIndex + 1 }} / {{ indicators.length }}
-                </span>
-                <el-button
-                  :disabled="currentIndicatorIndex === indicators.length - 1"
-                  size="small"
-                  @click="goToNextIndicator"
-                >
-                  下一个
-                  <el-icon><ArrowDown style="transform: rotate(-90deg)" /></el-icon>
-                </el-button>
-              </div>
-              <div class="nav-right">
-                <el-select
-                  v-model="currentIndicatorIndex"
-                  placeholder="快速跳转"
-                  size="small"
-                  style="width: 200px"
-                >
-                  <el-option
-                    v-for="(indicator, index) in indicators"
-                    :key="indicator.id"
-                    :label="`${index + 1}. ${indicator.name || '未命名指标'}`"
-                    :value="index"
-                  />
-                </el-select>
-              </div>
-            </div>
-
-            <!-- 指标卡片 -->
-            <div v-if="currentIndicator" class="indicator-card">
-              <!-- 卡片头部 -->
-              <div class="card-header">
-                <div class="card-title-section">
-                  <h3 class="card-title">{{ currentIndicator.name || '未命名指标' }}</h3>
-                  <div class="card-tags">
-                    <el-tag
-                      size="small"
-                      :class="
-                        currentIndicator.type1 === '定性' ? 'tag-qualitative' : 'tag-quantitative'
-                      "
-                    >
-                      {{ currentIndicator.type1 }}
-                    </el-tag>
-                    <el-tag
-                      size="small"
-                      :style="{
-                        backgroundColor: getCategoryColor(currentIndicator.type2),
-                        color: '#fff',
-                        border: 'none'
-                      }"
-                    >
-                      {{ getCategoryText(currentIndicator.type2) }}任务
-                    </el-tag>
-                    <el-tag v-if="currentPlanStatus === 'PENDING'" type="warning" size="small">
-                      计划审批中
-                    </el-tag>
-                  </div>
-                </div>
-                <div class="card-actions">
-                  <el-button
-                    type="primary"
-                    size="small"
-                    @click="handleViewDetail(currentIndicator)"
-                  >
-                    <el-icon><View /></el-icon>
-                    详情
-                  </el-button>
-                  <el-button
-                    v-if="currentIndicator.canWithdraw && !isReadOnly"
-                    type="danger"
-                    size="small"
-                    @click="handleDeleteIndicator(currentIndicator)"
-                  >
-                    <el-icon><Delete /></el-icon>
-                    删除
-                  </el-button>
-                </div>
-              </div>
-
-              <!-- 卡片内容 -->
-              <div class="card-content">
-                <!-- 基础信息 -->
-                <div class="info-section">
-                  <h4 class="section-title">基础信息</h4>
-                  <div class="info-grid">
-                    <div class="info-item">
-                      <span class="info-label">战略任务：</span>
-                      <span class="info-value">{{
-                        currentIndicator.taskContent || '未关联任务'
+                  </el-table-column>
+                  <el-table-column prop="name" label="子指标名称" min-width="320">
+                    <template #default="{ row }">
+                      <div
+                        class="indicator-name-cell"
+                        @dblclick="handleIndicatorDblClick(row, 'name')"
+                      >
+                        <template v-if="row.name">
+                          <span class="indicator-name-text">{{ row.name }}</span>
+                        </template>
+                        <span v-else class="placeholder-text">未命名指标</span>
+                        <!-- 异动历史徽章（有变更时显示，悬停看历史） -->
+                        <div v-if="row.id" class="indicator-cell-footer">
+                          <MutationBadgePopover :indicator-id="row.id" />
+                          <!-- 上报历史小标（每次上报更新，不走异动链，悬停看历次上报+资料） -->
+                          <ReportHistoryBadge :indicator-id="row.id" />
+                        </div>
+                      </div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="weight" label="权重" width="72" align="center">
+                    <template #default="{ row }">
+                      <div @dblclick="handleIndicatorDblClick(row, 'weight')">
+                        <span>{{ row.weight }}</span>
+                      </div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="自评等级" width="132" align="center">
+                    <template #default="{ row }">
+                      <el-tag v-if="row.selfRating" size="small" type="info">
+                        {{
+                          { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' }[row.selfRating] ||
+                          row.selfRating
+                        }}
+                      </el-tag>
+                      <span v-else>—</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="鉴定进度等级" width="140" align="center">
+                    <template #default="{ row }">
+                      <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
+                        {{ getManualAlertLabel(row.manualAlertSeverity) }}
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="上报资料" min-width="150">
+                    <template #default="{ row }">
+                      <!-- 只展示当前最新一次上报提交的资料；历次经右下角上报小标查看 -->
+                      <ReportMaterialsCell :indicator-id="row.id" />
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="上报状态" width="110" align="center">
+                    <template #default="{ row }">
+                      <!-- 取最新一次非草稿上报的真实审批状态（hasCurrentMonthFill 是"能否继续填报"字段，不反映上报历史） -->
+                      <ReportStatusCell :indicator-id="row.id" />
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="进度说明" min-width="160">
+                    <template #default="{ row }">
+                      <span>{{ row.pendingRemark || '—' }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="remark" label="备注" width="160">
+                    <template #default="{ row }">
+                      <span class="indicator-name-text remark-text-wrap">{{
+                        row.remark || '—'
                       }}</span>
-                    </div>
-                    <div class="info-item">
-                      <span class="info-label">权重：</span>
-                      <span class="info-value">{{ currentIndicator.weight }}</span>
-                    </div>
-                    <div class="info-item">
-                      <span class="info-label">责任部门：</span>
-                      <span class="info-value">{{ currentIndicator.responsibleDept }}</span>
-                    </div>
-                    <div class="info-item">
-                      <span class="info-label">责任人：</span>
-                      <span class="info-value">{{ currentIndicator.responsiblePerson }}</span>
-                    </div>
-                    <div class="info-item full-width">
-                      <span class="info-label">备注：</span>
-                      <span class="info-value">{{ currentIndicator.remark || '无备注' }}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- 进度信息 -->
-                <div class="progress-section">
-                  <h4 class="section-title">进度信息</h4>
-                  <div class="progress-display">
-                    <div class="progress-main">
-                      <div class="progress-text">
-                        <span class="current-progress">{{ currentIndicator.progress || 0 }}%</span>
-                        <span class="progress-label">当前进度</span>
-                      </div>
-                      <el-progress
-                        :percentage="currentIndicator.progress || 0"
-                        :stroke-width="12"
-                        :color="getProgressColor(currentIndicator)"
-                        class="progress-bar"
-                      />
-                    </div>
-                    <!-- 待审批进度显示 -->
-                    <div
-                      v-if="hasPendingProgressContent(currentIndicator)"
-                      class="pending-progress"
-                    >
-                      <div v-if="hasPendingProgressValue(currentIndicator)" class="pending-info">
-                        <span class="pending-label">申请进度：</span>
-                        <span class="pending-value">{{ currentIndicator.pendingProgress }}%</span>
-                        <span class="progress-change">
-                          ({{ getPendingProgressDelta(currentIndicator) > 0 ? '+' : ''
-                          }}{{ getPendingProgressDelta(currentIndicator) }}%)
-                        </span>
-                      </div>
-                      <div v-if="currentIndicator.pendingRemark" class="pending-remark">
-                        <span class="remark-label">填报备注：</span>
-                        <span class="remark-text">{{ currentIndicator.pendingRemark }}</span>
-                      </div>
-                    </div>
-
-                    <div
-                      v-if="currentIndicatorWorkflowLoading"
-                      class="workflow-progress-card is-loading"
-                    >
-                      <span class="workflow-progress-hint">正在加载该指标的审批流信息...</span>
-                    </div>
-
-                    <div v-else-if="currentIndicatorWorkflow" class="workflow-progress-card">
-                      <div class="workflow-progress-header">
-                        <span class="workflow-progress-title">报告审批流</span>
-                        <el-tag
-                          size="small"
-                          :type="getIndicatorWorkflowTagType(currentIndicatorWorkflow)"
-                        >
-                          {{ getIndicatorWorkflowStatusLabel(currentIndicatorWorkflow) }}
-                        </el-tag>
-                      </div>
-                      <div class="workflow-progress-grid">
-                        <div class="workflow-progress-item">
-                          <span class="workflow-progress-label">当前节点</span>
-                          <span class="workflow-progress-value">{{
-                            currentIndicatorWorkflow.currentStepName || '审批'
-                          }}</span>
-                        </div>
-                        <div class="workflow-progress-item">
-                          <span class="workflow-progress-label">当前审批人</span>
-                          <span class="workflow-progress-value">{{
-                            currentIndicatorWorkflow.currentApproverName || '待分配'
-                          }}</span>
-                        </div>
-                      </div>
-                      <div
-                        v-if="canCurrentUserHandleCurrentIndicatorWorkflow"
-                        class="workflow-progress-actions"
-                      >
-                        <el-button
-                          size="small"
-                          type="success"
-                          @click="handleApproveCurrentIndicatorWorkflow"
-                        >
-                          审批通过
-                        </el-button>
-                        <el-button
-                          size="small"
-                          type="danger"
-                          plain
-                          @click="handleRejectCurrentIndicatorWorkflow"
-                        >
-                          审批驳回
-                        </el-button>
-                      </div>
-                      <div
-                        v-else-if="currentIndicatorWorkflow.currentApproverName"
-                        class="workflow-progress-hint"
-                      >
-                        当前节点审批人为
-                        {{ currentIndicatorWorkflow.currentApproverName }}，你当前仅可查看。
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- 里程碑信息 -->
-                <div
-                  v-if="currentIndicator.milestones && currentIndicator.milestones.length > 0"
-                  class="milestone-section"
-                >
-                  <h4 class="section-title">里程碑节点</h4>
-                  <div class="milestone-list">
-                    <div
-                      v-for="(milestone, index) in currentIndicator.milestones"
-                      :key="milestone.id"
-                      class="milestone-item-card"
-                    >
-                      <div class="milestone-header">
-                        <span class="milestone-index">{{ index + 1 }}.</span>
-                        <span class="milestone-name">{{ milestone.name }}</span>
-                        <el-tag
-                          size="small"
-                          :type="
-                            resolveMilestoneDisplayState(milestone, currentIndicator.progress)
-                              .tagType
-                          "
-                        >
-                          {{
-                            resolveMilestoneDisplayState(milestone, currentIndicator.progress).label
-                          }}
-                        </el-tag>
-                      </div>
-                      <div class="milestone-details">
-                        <span class="milestone-progress"
-                          >目标进度: {{ milestone.targetProgress }}%</span
-                        >
-                        <span class="milestone-deadline">截止日期: {{ milestone.deadline }}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- 空状态 -->
-            <div v-else class="empty-state">
-              <el-empty description="当前部门暂无指标数据" :image-size="120">
-                <el-button v-if="!isReadOnly" type="primary" @click="addNewRow">
-                  <el-icon><Plus /></el-icon>
-                  新增指标
-                </el-button>
-              </el-empty>
-            </div>
-          </div>
-        </template>
-
-        <!-- 新增行表单 -->
-        <div v-if="isAddingOrEditing" ref="addRowFormRef" class="add-row-form">
-          <h3 class="form-title">新增任务指标</h3>
-          <div class="add-form-content">
-            <el-form label-width="80px">
-              <el-row :gutter="16">
-                <el-col :span="4">
-                  <el-form-item class="required-form-item">
-                    <template #label><span class="required-asterisk">*</span>任务类型</template>
-                    <el-select
-                      v-model="newRow.type2"
-                      style="width: 100%"
-                      :disabled="!!taskTypeMap[newRow.taskContent]"
-                    >
-                      <el-option label="发展性" value="发展性" />
-                      <el-option label="基础性" value="基础性" />
-                    </el-select>
-                  </el-form-item>
-                </el-col>
-                <el-col :span="12">
-                  <el-form-item class="required-form-item">
-                    <template #label><span class="required-asterisk">*</span>战略任务</template>
-                    <el-select
-                      ref="taskSelectRef"
-                      v-model="newRow.taskContent"
-                      filterable
-                      allow-create
-                      default-first-option
-                      placeholder="选择或输入战略任务名称"
-                      style="width: 100%"
-                      :teleported="false"
-                      @change="handleTaskSelect"
-                      @visible-change="handleTaskVisibleChange"
-                    >
-                      <el-option
-                        v-for="task in existingTaskNames"
-                        :key="task"
-                        :label="task"
-                        :value="task"
-                      />
-                    </el-select>
-                  </el-form-item>
-                </el-col>
-              </el-row>
-              <el-row :gutter="16">
-                <el-col :span="4">
-                  <el-form-item class="required-form-item">
-                    <template #label><span class="required-asterisk">*</span>指标类型</template>
-                    <el-select
-                      v-model="newRow.type1"
-                      style="width: 100%"
-                      @change="
-                        (val: string) => {
-                          if (val === '定量') generateMonthlyMilestones()
-                        }
-                      "
-                    >
-                      <el-option label="定性" value="定性" />
-                      <el-option label="定量" value="定量" />
-                    </el-select>
-                  </el-form-item>
-                </el-col>
-                <el-col :span="4">
-                  <el-form-item class="required-form-item">
-                    <template #label><span class="required-asterisk">*</span>权重</template>
-                    <el-input-number
-                      v-model="newRow.weight"
-                      :min="0"
-                      placeholder="权重"
-                      :controls="false"
-                      style="width: 100%"
-                    />
-                  </el-form-item>
-                </el-col>
-              </el-row>
-              <el-row :gutter="16">
-                <el-col :span="24">
-                  <el-form-item class="required-form-item">
-                    <template #label><span class="required-asterisk">*</span>核心指标</template>
-                    <el-input
-                      v-model="newRow.name"
-                      type="textarea"
-                      :autosize="{ minRows: 2, maxRows: 10 }"
-                      placeholder="设置核心指标内容"
-                    />
-                  </el-form-item>
-                </el-col>
-              </el-row>
-              <el-row :gutter="16">
-                <el-col :span="24">
-                  <el-form-item label="备注">
-                    <el-input
-                      v-model="newRow.remark"
-                      type="textarea"
-                      :autosize="{ minRows: 3, maxRows: 15 }"
-                      placeholder="输入指标备注"
-                    />
-                  </el-form-item>
-                </el-col>
-              </el-row>
-              <el-row :gutter="16">
-                <el-col :span="24">
-                  <el-form-item class="required-form-item">
-                    <template #label><span class="required-asterisk">*</span>里程碑</template>
-                    <div class="milestone-form-area">
-                      <el-button
-                        v-if="newRow.type1 === '定性'"
-                        size="small"
-                        type="primary"
-                        plain
-                        @click="addMilestone"
-                      >
-                        <el-icon><Plus /></el-icon> 添加里程碑
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="90" align="center" fixed="right">
+                    <template #default="{ row }">
+                      <el-button link type="primary" size="small" @click="handleViewDetail(row)">
+                        详情
                       </el-button>
-                      <div v-if="newRow.milestones.length > 0" class="milestone-list">
-                        <div
-                          v-for="(ms, idx) in newRow.milestones"
-                          :key="ms.id"
-                          class="milestone-form-item"
-                        >
-                          <span class="milestone-index">{{ idx + 1 }}.</span>
-                          <el-input
-                            v-model="ms.name"
-                            placeholder="里程碑名称"
-                            style="width: 160px"
-                            size="small"
-                          />
-                          <el-input-number
-                            :model-value="ms.targetProgress"
-                            :min="0"
-                            :max="100"
-                            placeholder="目标进度%"
-                            size="small"
-                            style="width: 110px"
-                            @update:model-value="
-                              value => handleNewRowMilestoneProgressChange(ms, value)
-                            "
-                          />
-                          <el-date-picker
-                            v-model="ms.deadline"
-                            type="date"
-                            placeholder="截止日期"
-                            size="small"
-                            style="width: 130px"
-                            value-format="YYYY-MM-DD"
-                          />
-                          <el-button type="danger" size="small" text @click="removeMilestone(idx)">
-                            <el-icon><Delete /></el-icon>
-                          </el-button>
-                        </div>
-                      </div>
-                      <span v-else class="milestone-hint">{{
-                        newRow.type1 === '定量'
-                          ? '选择定量后自动生成12月里程碑'
-                          : '暂无里程碑，点击添加'
-                      }}</span>
-                    </div>
-                  </el-form-item>
-                </el-col>
-              </el-row>
-            </el-form>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </div>
+              <div class="excel-status-bar">
+                <div class="status-left">共 {{ collegeTableIndicators.length }} 条记录</div>
+              </div>
+            </template>
           </div>
-          <div class="add-form-actions">
-            <el-button type="primary" @click="saveNewRow">保存</el-button>
-            <el-button @click="cancelAdd">取消</el-button>
-          </div>
-        </div>
-      </div>
+        </el-tab-pane>
+      </el-tabs>
 
       <!-- Excel状态栏 -->
       <div class="excel-status-bar">
@@ -1732,20 +1969,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           >
           <el-descriptions-item label="指标类型">{{ currentDetail.type1 }}</el-descriptions-item>
           <el-descriptions-item label="权重">{{ currentDetail.weight }}</el-descriptions-item>
-          <el-descriptions-item label="当前进度"
-            >{{ currentDetail.progress }}%</el-descriptions-item
-          >
-          <el-descriptions-item label="填报进度">
-            <template v-if="shouldShowReportedProgress(currentDetail)">
-              <el-tooltip content="已提交但尚未审批通过的填报进度" placement="top">
-                <span style="color: #e6a23c; font-weight: 600"
-                  >{{ getDisplayedReportedProgress(currentDetail) }}%</span
-                >
-              </el-tooltip>
-            </template>
-            <span v-else style="color: #909399">暂无填报</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="预警等级判定">
+          <el-descriptions-item label="鉴定等级">
             <el-tag :type="getManualAlertTagType(currentDetail.manualAlertSeverity)" size="small">
               {{ getManualAlertLabel(currentDetail.manualAlertSeverity) }}
             </el-tag>
@@ -1764,17 +1988,10 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           }}</el-descriptions-item>
         </el-descriptions>
 
-        <!-- 里程碑信息 -->
-        <div
-          v-if="currentDetail.milestones && currentDetail.milestones.length > 0"
-          class="milestone-section"
-        >
-          <div class="divider"></div>
-          <h4>里程碑节点</h4>
-          <IndicatorMilestoneTimeline
-            :milestones="currentDetail.milestones"
-            :current-progress="currentDetail.progress"
-          />
+        <!-- 上报记录：固定展开展示，不做折叠交互（2026-10-07 用户拍板） -->
+        <div class="report-history-section">
+          <div class="report-history-title">上报记录（历次填报 / 含被驳回）</div>
+          <IndicatorFillHistory v-if="currentDetailId" :indicator-id="currentDetailId" />
         </div>
       </div>
     </el-drawer>
@@ -1991,114 +2208,19 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
       :workflow-entity-id="primaryApprovalWorkflowEntityId"
       :secondary-workflow-entity-type="secondaryApprovalWorkflowEntityType"
       :secondary-workflow-entity-id="secondaryApprovalWorkflowEntityId"
+      :mutation-workflow-entities="departmentMutationWorkflowEntities"
       approval-type="submission"
       @close="taskApprovalVisible = false"
       @refresh="handleApprovalRefresh"
     />
-
-    <!-- 里程碑编辑弹窗 -->
-    <el-dialog
-      v-model="milestoneEditDialogVisible"
-      title="编辑里程碑"
-      width="700px"
-      :close-on-click-modal="false"
-      :close-on-press-escape="!isSavingMilestoneEdit"
-      :show-close="!isSavingMilestoneEdit"
-      @close="cancelMilestoneEdit"
-    >
-      <div v-if="editingMilestoneIndicator" class="milestone-edit-dialog">
-        <!-- 指标信息 -->
-        <div class="indicator-info-header">
-          <div class="info-item">
-            <span class="label">指标名称：</span>
-            <span class="value">{{ editingMilestoneIndicator.name }}</span>
-          </div>
-          <div class="info-item">
-            <span class="label">指标类型：</span>
-            <el-tag
-              size="small"
-              :type="editingMilestoneIndicator.type1 === '定量' ? 'primary' : 'warning'"
-            >
-              {{ editingMilestoneIndicator.type1 }}
-            </el-tag>
-          </div>
-        </div>
-
-        <el-divider />
-
-        <!-- 操作按钮 -->
-        <div class="milestone-actions">
-          <el-button size="small" type="primary" :icon="Plus" @click="addMilestoneInDialog">
-            添加里程碑
-          </el-button>
-          <el-button
-            v-if="editingMilestoneIndicator.type1 === '定量'"
-            size="small"
-            type="success"
-            :icon="Timer"
-            @click="generateMonthlyMilestonesInDialog"
-          >
-            生成12个月里程碑
-          </el-button>
-          <span class="milestone-count-hint"> 当前共 {{ editingMilestones.length }} 个里程碑 </span>
-        </div>
-
-        <!-- 里程碑列表 -->
-        <div class="milestone-edit-list">
-          <el-empty
-            v-if="editingMilestones.length === 0"
-            description="暂无里程碑，点击上方按钮添加"
-            :image-size="80"
-          />
-
-          <!-- 里程碑编辑表单 -->
-          <div v-for="(ms, idx) in editingMilestones" :key="ms.id" class="milestone-edit-item">
-            <div class="milestone-index">{{ idx + 1 }}.</div>
-            <div class="milestone-fields">
-              <el-input
-                v-model="ms.name"
-                placeholder="里程碑名称"
-                size="small"
-                class="field-name"
-              />
-              <el-input-number
-                :model-value="ms.targetProgress"
-                :min="0"
-                :max="100"
-                placeholder="目标进度%"
-                size="small"
-                class="field-progress"
-                @update:model-value="value => handleEditingMilestoneProgressChange(ms, value)"
-              />
-              <el-date-picker
-                v-model="ms.deadline"
-                type="date"
-                placeholder="截止日期"
-                size="small"
-                value-format="YYYY-MM-DD"
-                class="field-date"
-                @change="handleMilestoneDeadlineChange"
-              />
-              <el-button
-                type="danger"
-                size="small"
-                :icon="Delete"
-                circle
-                @click="removeMilestoneInDialog(idx)"
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <template #footer>
-        <el-button :disabled="isSavingMilestoneEdit" @click="cancelMilestoneEdit">取消</el-button>
-        <el-button type="primary" :loading="isSavingMilestoneEdit" @click="saveMilestoneEdit">
-          保存
-        </el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
 <style scoped src="./StrategicTaskView.css"></style>
+
+<style scoped>
+/* 计划未正式下发时锁定鉴定等级 */
+.manual-alert-select-wrapper--locked {
+  cursor: not-allowed;
+}
+</style>

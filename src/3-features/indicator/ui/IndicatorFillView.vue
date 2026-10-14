@@ -62,30 +62,10 @@ const handleSelectHistory = (fill: unknown) => {
   showHistory.value = false
 }
 
-const normalizeMilestoneStatus = (status?: string) => {
-  const normalized = String(status || '').toLowerCase()
-
-  switch (normalized) {
-    case 'completed':
-      return 'completed'
-    case 'in_progress':
-    case 'in-progress':
-    case 'inprogress':
-      return 'in_progress'
-    case 'delayed':
-    case 'overdue':
-      return 'overdue'
-    default:
-      return 'pending'
-  }
-}
-
 const mapIndicatorDetailToFillIndicator = (payload: Record<string, any>): Indicator => {
   const rawId = payload.indicatorId ?? payload.id
   const rawName = payload.indicatorName ?? payload.name ?? payload.indicatorDesc ?? '未命名指标'
   const rawDefinition = payload.indicatorDesc ?? payload.definition ?? rawName
-  const rawProgress = Number(payload.progress ?? payload.latestProgress ?? 0)
-  const rawMilestones = Array.isArray(payload.milestones) ? payload.milestones : []
 
   return {
     id: String(rawId),
@@ -94,19 +74,6 @@ const mapIndicatorDetailToFillIndicator = (payload: Record<string, any>): Indica
     definition: rawDefinition,
     latest_progress: Number.isFinite(rawProgress) ? rawProgress : 0,
     latest_fill_date: payload.updatedAt ?? payload.latestFillDate ?? '',
-    milestones: rawMilestones.map((milestone: Record<string, any>) => ({
-      id: String(milestone.milestoneId ?? milestone.id ?? ''),
-      indicator_id: String(milestone.indicatorId ?? rawId ?? ''),
-      name: milestone.milestoneName ?? milestone.name ?? '未命名里程碑',
-      description: milestone.milestoneDesc ?? milestone.description ?? '',
-      deadline: milestone.dueDate ?? milestone.deadline ?? '',
-      targetProgress: Number(milestone.targetProgress ?? 0),
-      weight_percent: Number(milestone.weightPercent ?? milestone.weight ?? 0),
-      status: normalizeMilestoneStatus(milestone.status),
-      sort_order: Number(milestone.sortOrder ?? 0),
-      created_at: milestone.createdAt ?? '',
-      updated_at: milestone.updatedAt ?? ''
-    })),
     createdAt: payload.createdAt ?? '',
     updatedAt: payload.updatedAt ?? ''
   } as Indicator

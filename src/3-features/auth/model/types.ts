@@ -25,7 +25,6 @@ export interface LoginFormState {
   account: string
   password: string
   rememberMe: boolean
-  termsAccepted: boolean
   captcha?: string
   captchaKey?: string
 }

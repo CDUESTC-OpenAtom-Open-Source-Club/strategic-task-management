@@ -17,12 +17,13 @@
   border: 1px solid rgba(147, 51, 234, 0.3) !important;
 }
 
-/* 页面主容器 */
+/* 页面主容器：高度取视口减去页头/页签导航/主区留白/页脚的合计开销，
+   让卡片正好铺满首屏，整页不出现滚动条 */
 .strategic-task-container {
   display: flex;
   gap: 0;
-  height: calc(100vh - 200px);
-  min-height: 500px;
+  height: calc(100vh - 264px);
+  min-height: 0;
   position: relative;
   overflow: hidden;
 }
@@ -414,6 +415,17 @@
   gap: var(--spacing-lg);
 }
 
+/* 信息区块 */
+.info-section,
+.progress-section {
+  margin-bottom: var(--spacing-2xl);
+}
+
+.info-section:last-child,
+.progress-section:last-child {
+  margin-bottom: 0;
+}
+
 .section-title {
   font-weight: 600;
   font-size: 16px;
@@ -500,15 +512,6 @@
   gap: var(--spacing-sm);
   align-items: center;
 }
-
-/* 里程碑输入行样式 */
-.milestone-input-row {
-  display: flex;
-  align-items: center;
-  margin-bottom: var(--spacing-sm);
-  gap: var(--spacing-sm);
-}
-
 /* ========================================
      任务下发相关样式
      ======================================== */
@@ -650,32 +653,88 @@
 /* Excel表格容器 */
 .excel-table-wrapper {
   flex: 1;
+  min-height: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  /* 左右留白：表格与卡片边框之间留出呼吸空间 */
+  padding: 0 var(--spacing-lg);
+  box-sizing: border-box;
+}
+
+/* 任务页签撑满剩余高度，让表格区贴住状态栏 */
+.task-tabs {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
+.task-tabs :deep(.el-tabs__content) {
+  flex: 1;
+  min-height: 0;
+}
+
+.task-tabs :deep(.el-tab-pane) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 任务管理页签：左侧与表格对齐，并留出顶部间距（原先贴到卡片左上角） */
+.task-tabs :deep(.el-tabs__header) {
+  margin-bottom: var(--spacing-md);
+  padding: var(--spacing-md) var(--spacing-lg) 0;
+  box-sizing: border-box;
+}
+
+/* 去掉贯穿整行的下划线：它只在页签区左侧有意义，
+   横贯卡片右侧时会形成一条多余的“底边” */
+.task-tabs :deep(.el-tabs__nav-wrap::after) {
+  display: none;
+}
+
+/* 「已更改 N 次」标注：单元格右下角对齐 */
+.indicator-cell-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--spacing-xs);
+}
+
 .table-container {
   flex: 1;
-  overflow: auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: auto;
 }
 
-/* 确保表格有最小宽度，防止列被压缩 */
 .excel-table-wrapper .unified-table {
-  min-width: 1200px;
+  width: 100%;
+  table-layout: fixed;
 }
 
-/* 确保表头不换行 */
 .excel-table-wrapper .unified-table :deep(.el-table__header) th .cell {
-  white-space: nowrap;
+  /* 默认列宽下表头单行；列宽不够时自动换行，禁止出现省略号 */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+  word-break: normal;
+  /* 收窄 Element Plus 默认 12px 内边距，保证六字表头默认单行完整显示 */
+  padding: 0 8px;
+}
+
+.excel-table-wrapper .unified-table :deep(.el-table__body) .cell {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* 说明列文字换行 */
 .remark-text-wrap {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  display: block;
+  overflow: visible;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   word-break: break-word;
 }
 
@@ -761,11 +820,11 @@
   background: var(--bg-light) !important;
   color: var(--text-main);
   font-weight: 600;
-  padding: var(--spacing-md) var(--spacing-lg);
+  padding: 6px 8px;
 }
 
 .unified-table :deep(.el-table__body td) {
-  padding: var(--spacing-md) var(--spacing-lg);
+  padding: 4px 8px;
   color: var(--text-regular);
 }
 
@@ -991,58 +1050,6 @@
   resize: none;
   line-height: 1.5;
 }
-
-/* 里程碑表单区域 */
-.milestone-form-area {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.milestone-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 4px;
-  max-height: 300px;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-
-.milestone-list::-webkit-scrollbar {
-  width: 4px;
-}
-
-.milestone-list::-webkit-scrollbar-thumb {
-  background: var(--border-color);
-  border-radius: 2px;
-}
-
-.milestone-index {
-  font-size: 12px;
-  color: var(--text-secondary);
-  min-width: 20px;
-}
-
-.milestone-form-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: var(--bg-white);
-  border-radius: var(--radius-sm);
-  border-bottom: 1px dashed var(--border-light, #e2e8f0);
-}
-
-.milestone-form-item:last-child {
-  border-bottom: none;
-}
-
-.milestone-hint {
-  font-size: 12px;
-  color: var(--text-placeholder);
-}
-
 /* 新增行内联表单 */
 .add-row-inline {
   display: flex;
@@ -1115,12 +1122,17 @@
   margin: var(--spacing-2xl) 0;
 }
 
-.milestone-section h4 {
-  font-size: 16px;
-  color: var(--text-main);
-  margin: 0 0 var(--spacing-lg) 0;
+/* 上报记录：固定展开区块，无折叠交互 */
+.report-history-section {
+  margin-top: var(--spacing-lg);
 }
 
+.report-history-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-main);
+  margin-bottom: var(--spacing-sm);
+}
 .timeline-card {
   padding: var(--spacing-md);
   background: var(--bg-page);
@@ -1391,7 +1403,7 @@
 }
 
 .indicator-name-text {
-  line-height: 1.6;
+  line-height: 1.35;
   white-space: pre-wrap;
   word-break: break-word;
   display: block;
@@ -1423,7 +1435,7 @@
      任务单元格新增指标三角形按钮
      ======================================== */
 /* 让战略任务列的td支持绝对定位 */
-:deep(.unified-table .el-table__body td:nth-child(2)) {
+:deep(.unified-table .el-table__body td:first-child) {
   position: relative;
 }
 
@@ -1582,111 +1594,6 @@
   justify-content: center;
   width: 100%;
 }
-
-/* ========================================
-     目标进度列 - 里程碑样式
-     ======================================== */
-.milestone-cell {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 4px 8px;
-  border-radius: 4px;
-  transition: background 0.2s ease;
-}
-
-.milestone-cell:hover {
-  background: rgba(44, 82, 130, 0.05);
-}
-
-.milestone-count {
-  font-size: 12px;
-  color: var(--color-qualitative, #9333ea);
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-/* 里程碑弹出层 */
-.milestone-popover {
-  padding: 4px 0;
-}
-
-.milestone-popover-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-main, #1e293b);
-  margin-bottom: 8px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border-light, #f1f5f9);
-}
-
-.milestone-item {
-  padding: 8px 10px;
-  border-radius: 6px;
-  margin-bottom: 6px;
-  background: var(--bg-white, #fff);
-  border: 1px solid transparent;
-  transition: all 0.2s;
-}
-
-.milestone-item:last-child {
-  margin-bottom: 0;
-}
-
-/* 里程碑完成状态样式 */
-.milestone-item.milestone-completed {
-  background: linear-gradient(135deg, rgba(34, 197, 94, 0.08) 0%, rgba(34, 197, 94, 0.15) 100%);
-  border-color: rgba(34, 197, 94, 0.2);
-}
-
-.milestone-item.milestone-completed .milestone-index {
-  color: var(--el-color-success, #67c23a);
-}
-
-.milestone-item.milestone-completed .milestone-name {
-  color: var(--el-color-success-dark-2, #529b2e);
-}
-
-.milestone-check-icon {
-  color: var(--el-color-success, #67c23a);
-  font-size: 16px;
-  margin-left: auto;
-}
-
-.milestone-item-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
-}
-
-.milestone-index {
-  font-size: 12px;
-  color: var(--text-placeholder, #94a3b8);
-  font-weight: 500;
-}
-
-.milestone-name {
-  font-size: 13px;
-  color: var(--text-main, #1e293b);
-  font-weight: 500;
-}
-
-.milestone-item-info {
-  display: flex;
-  gap: 16px;
-  font-size: 12px;
-  color: var(--text-secondary, #64748b);
-  padding-left: 18px;
-}
-
-.milestone-empty {
-  font-size: 12px;
-  color: var(--text-placeholder, #94a3b8);
-  text-align: center;
-  padding: 12px 0;
-}
-
 /* ========================================
      卡片视图样式
      ======================================== */
@@ -1778,20 +1685,6 @@
   padding: var(--spacing-xl);
   overflow-y: auto;
 }
-
-/* 信息区块 */
-.info-section,
-.progress-section,
-.milestone-section {
-  margin-bottom: var(--spacing-2xl);
-}
-
-.info-section:last-child,
-.progress-section:last-child,
-.milestone-section:last-child {
-  margin-bottom: 0;
-}
-
 .section-title {
   font-size: 16px;
   font-weight: 600;
@@ -2169,61 +2062,6 @@
     box-shadow: 0 0 0 0 rgba(245, 108, 108, 0);
   }
 }
-
-/* 里程碑列表 */
-.milestone-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-md);
-}
-
-.milestone-item-card {
-  padding: var(--spacing-lg);
-  background: var(--bg-page);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-color);
-  transition: box-shadow var(--transition-fast);
-}
-
-.milestone-item-card:hover {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.milestone-header {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  margin-bottom: var(--spacing-sm);
-}
-
-.milestone-index {
-  font-size: 14px;
-  color: var(--text-placeholder);
-  font-weight: 600;
-  min-width: 24px;
-}
-
-.milestone-name {
-  font-size: 15px;
-  color: var(--text-main);
-  font-weight: 500;
-  flex: 1;
-}
-
-.milestone-details {
-  display: flex;
-  gap: var(--spacing-xl);
-  font-size: 13px;
-  color: var(--text-secondary);
-  padding-left: 32px;
-}
-
-.milestone-progress,
-.milestone-deadline {
-  display: flex;
-  align-items: center;
-}
-
 /* 空状态 */
 .empty-state {
   flex: 1;
@@ -2232,14 +2070,6 @@
   justify-content: center;
   padding: var(--spacing-2xl);
 }
-
-/* ========================================
-     里程碑编辑弹窗样式
-     ======================================== */
-.milestone-edit-dialog {
-  padding: 0;
-}
-
 .indicator-info-header {
   display: flex;
   gap: 24px;
@@ -2265,63 +2095,6 @@
   font-weight: 500;
   color: var(--text-main, #1e293b);
 }
-
-.milestone-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 20px;
-}
-
-.milestone-count-hint {
-  margin-left: auto;
-  font-size: 13px;
-  color: var(--text-secondary, #64748b);
-}
-
-.milestone-edit-list {
-  max-height: 500px;
-  overflow-y: auto;
-  padding: 4px;
-}
-
-.milestone-edit-item {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  padding: 12px;
-  background: var(--bg-white, #fff);
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 8px;
-  margin-bottom: 12px;
-  transition: all 0.3s;
-}
-
-.milestone-edit-item:hover {
-  border-color: var(--color-primary, #2c5282);
-  box-shadow: 0 2px 8px rgba(44, 82, 130, 0.1);
-}
-
-.milestone-index {
-  width: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text-secondary, #64748b);
-  flex-shrink: 0;
-  margin-top: 4px;
-}
-
-.milestone-fields {
-  flex: 1;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
 .field-name {
   flex: 1;
   min-width: 160px;
@@ -2334,24 +2107,6 @@
 .field-date {
   width: 150px;
 }
-
-.milestone-edit-list::-webkit-scrollbar {
-  width: 6px;
-}
-
-.milestone-edit-list::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.milestone-edit-list::-webkit-scrollbar-thumb {
-  background: var(--border-color, #e2e8f0);
-  border-radius: 3px;
-}
-
-.milestone-edit-list::-webkit-scrollbar-thumb:hover {
-  background: var(--border-light, #cbd5e1);
-}
-
 :global(.sism-select-popper--visible-scrollbar .el-select-dropdown__wrap) {
   scrollbar-width: auto;
   scrollbar-color: rgba(37, 99, 235, 0.95) rgba(191, 219, 254, 0.72);
@@ -2390,18 +2145,6 @@
   background: linear-gradient(180deg, rgba(59, 130, 246, 0.96), rgba(37, 99, 235, 0.96));
   border-radius: 999px;
 }
-
-/* 里程碑单元格可编辑提示 */
-.milestone-cell.editable {
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.milestone-cell.editable:hover {
-  background: var(--bg-page, #f8fafc);
-  border-radius: 4px;
-}
-
 .approval-setup-dialog {
   min-height: 120px;
 }
@@ -2560,10 +2303,123 @@
   .progress-main {
     flex-direction: column;
     text-align: center;
-  }
+  }}
 
-  .milestone-details {
-    flex-direction: column;
-    gap: var(--spacing-sm);
+/* D2 孤立指标标记：父级已删除 */
+.orphan-parent-tag {
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+
+
+/* 2026-10-11 二级学院表格化：未选学院时的空态提示
+   （2026-10-13 增强版样式见文件末尾的中央空态引导区块） */
+
+/* 2026-10-13 二级学院 tab：当前职能部门无学院下发时的空态提示 */
+.task-item.college-scope-empty {
+  color: #909399;
+  font-size: 13px;
+  cursor: default;
+  justify-content: center;
+  text-align: center;
+  padding: 16px 12px;
+  white-space: normal;
+  line-height: 1.6;
+}
+.task-item.college-scope-empty::before {
+  display: none;
+}
+.task-item.college-scope-empty:hover {
+  background: transparent;
+}
+
+/* ================================================================
+   2026-10-13 二级学院 tab：左侧入口引导（呼吸高亮 3 次后转静态 + 指向气泡）
+   与中央空态增强配套，颜色规范：#1677ff 主色 / #e8f2ff 辅助背景 / #344054 正文
+   ================================================================ */
+@keyframes college-guide-pulse {
+  0%,
+  100% {
+    box-shadow:
+      2px 4px 12px rgba(64, 158, 255, 0.3),
+      0 2px 4px rgba(0, 0, 0, 0.1);
   }
+  50% {
+    box-shadow:
+      0 0 0 7px rgba(22, 119, 255, 0.16),
+      3px 6px 20px rgba(22, 119, 255, 0.5);
+  }
+}
+
+@keyframes college-guide-nudge {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(-3px);
+  }
+}
+
+.sidebar-toggle--guide {
+  background: linear-gradient(135deg, #1677ff 0%, #2c5282 100%);
+  animation: college-guide-pulse 0.8s ease-in-out 3;
+}
+
+.sidebar-toggle--guide .toggle-icon {
+  animation: college-guide-nudge 0.8s ease-in-out 3;
+}
+
+/* 指向左侧入口的引导气泡（不拦截点击，选中学学院后由模板 v-if 移除） */
+.college-guide-bubble {
+  position: absolute;
+  left: 42px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  background: #e8f2ff;
+  color: #1677ff;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 999px;
+  box-shadow: 0 2px 10px rgba(22, 119, 255, 0.22);
+  z-index: 31;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.college-guide-bubble__arrow {
+  font-weight: 700;
+}
+
+/* 中央空态增强：深色大字 + 指引图标 + 辅助说明 */
+.college-empty-tip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 320px;
+  background: #fff;
+  border-radius: 8px;
+}
+
+.college-empty-icon {
+  font-size: 30px;
+  color: #1677ff;
+  margin-bottom: 2px;
+}
+
+.college-empty-main {
+  font-size: 16px;
+  font-weight: 600;
+  color: #344054;
+}
+
+.college-empty-sub {
+  font-size: 13px;
+  color: #667085;
 }

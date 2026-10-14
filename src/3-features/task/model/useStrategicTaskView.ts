@@ -29,9 +29,8 @@ import { usePermission } from '@/5-shared/lib/permissions'
 import AppAvatar from '@/shared/ui/avatar/AppAvatar.vue'
 import { logger } from '@/shared/lib/utils/logger'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
-import { sortMilestonesByProgress } from '@/shared/lib/utils/milestoneSort'
+import { formatPendingApprovalLabel } from '@/shared/lib/utils/workflowStepLabel'
 import { buildQueryKey, fetchWithCache, invalidateQueries } from '@/shared/lib/utils/cache'
-import { resolveMilestoneDisplayState } from '@/shared/lib/utils/milestoneDisplay'
 import strategicApi, { approvalApi as taskApprovalApi } from '@/features/task/api/strategicApi'
 import {
   getWorkflowDefinitionPreviewByCode,
@@ -41,7 +40,6 @@ import {
   approveTask,
   rejectTask
 } from '@/features/workflow/api'
-import { milestoneApi } from '@/entities/milestone/api/milestoneApi'
 import {
   getStatusText as _getStatusText,
   getStatusType as _getStatusType,
@@ -55,7 +53,6 @@ import {
 } from '@/features/approval/lib'
 import { useApprovalRouteAutopen } from '@/features/approval/lib'
 import { useApprovalStore } from '@/features/approval/model/store'
-import _MilestoneList from '@/features/milestone/ui/MilestoneList.vue'
 import { indicatorApi } from '@/features/indicator/api'
 import { usePlanStore } from '@/features/plan/model/store'
 import { indicatorFillApi } from '@/features/plan/api/planApi'
@@ -63,6 +60,7 @@ import { getUsersByOrgId } from '@/features/user/api/query'
 import { sleep } from '@/5-shared/api/retry'
 import {
   GLOBAL_DATA_REFRESH_REQUEST_EVENT,
+  shouldRefreshForDomains,
   type GlobalDataRefreshDetail
 } from '@/5-shared/lib/dataFreshness'
 import {
@@ -403,8 +401,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     Array.from(currentPlanTaskIdSet.value).sort().join(',')
   )
 
-  const milestoneCache = ref<Record<string, Record<string, Array<Record<string, unknown>>>>>({}) // key: "部门名_指标ID"
-
   const normalizeTaskId = (value: unknown): string => {
     const normalized = String(value ?? '').trim()
     return normalized
@@ -742,300 +738,18 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     { immediate: true }
   )
 
-  const milestoneMap = ref<Record<string, Array<Record<string, unknown>>>>({})
-  const loadedMilestoneIds = ref(new Set<string>())
-  const loadingMilestoneIds = ref(new Set<string>())
-  const milestoneLoadRequestId = ref(0)
-  const milestoneFallbackConcurrency = 4
-
-  const toMilestoneStatus = (status?: string): 'pending' | 'completed' | 'overdue' => {
-    const normalized = String(status || '').toUpperCase()
-    if (normalized === 'COMPLETED') {
-      return 'completed'
-    }
-    if (normalized === 'DELAYED' || normalized === 'CANCELED' || normalized === 'OVERDUE') {
-      return 'overdue'
-    }
-    return 'pending'
-  }
-
-  const normalizeMilestone = (raw: Record<string, unknown>, index: number) => ({
-    id: String(raw.id ?? raw.milestoneId ?? `milestone-${index}`),
-    name: String(raw.name ?? raw.milestoneName ?? `里程碑${index + 1}`),
-    targetProgress: Number(raw.targetProgress ?? raw.weightPercent ?? 0),
-    deadline: String(raw.deadline ?? raw.dueDate ?? ''),
-    status: toMilestoneStatus(String(raw.status ?? '')),
-    isPaired: Boolean(raw.isPaired ?? false),
-    weightPercent: Number(raw.weightPercent ?? 0),
-    sortOrder: Number(raw.sortOrder ?? index)
-  })
-
-  const toMilestoneRequestStatus = (status: unknown): string => {
-    const normalized = String(status || '')
-      .trim()
-      .toUpperCase()
-    if (
-      normalized === 'COMPLETED' ||
-      normalized === 'IN_PROGRESS' ||
-      normalized === 'NOT_STARTED'
-    ) {
-      return normalized
-    }
-    if (normalized === 'OVERDUE' || normalized === 'DELAYED') {
-      return 'DELAYED'
-    }
-    return 'NOT_STARTED'
-  }
-
-  const toMilestoneDueDate = (deadline: unknown): string | null => {
-    const text = String(deadline || '').trim()
-    if (!text) {
-      return null
-    }
-
-    if (text.includes('T')) {
-      return text
-    }
-
-    return `${text}T23:59:59`
-  }
-
-  const extractMilestones = (payload: unknown): Array<Record<string, unknown>> => {
-    if (Array.isArray(payload)) {
-      return payload as Array<Record<string, unknown>>
-    }
-    if (payload && typeof payload === 'object') {
-      const record = payload as Record<string, unknown>
-      if (Array.isArray(record.items)) {
-        return record.items as Array<Record<string, unknown>>
-      }
-    }
-    return []
-  }
-
   const normalizedIndicators = computed(() =>
-    strategicStore.indicators.map(i => {
-      const indicatorId = String(i.id)
-      const mappedMilestones = milestoneMap.value[indicatorId]
-      return {
-        ...i,
-        ownerDept: normalizeDepartmentName(i.ownerDept),
-        responsibleDept: normalizeDepartmentName(i.responsibleDept),
-        milestones: mappedMilestones ?? i.milestones ?? []
-      }
-    })
-  )
-
-  const getCurrentScopeIndicatorsForMilestones = () => indicators.value
-
-  const loadMilestonePayloadsIndividually = async (indicatorIds: string[]) => {
-    const payloadMap: Record<string, unknown> = {}
-    const concurrency = Math.min(milestoneFallbackConcurrency, indicatorIds.length)
-    let currentIndex = 0
-
-    await Promise.all(
-      Array.from({ length: concurrency }, async () => {
-        while (currentIndex < indicatorIds.length) {
-          const indicatorId = indicatorIds[currentIndex]
-          currentIndex += 1
-
-          try {
-            const response = await milestoneApi.getMilestonesByIndicator(indicatorId)
-            payloadMap[indicatorId] = response.success ? response.data : []
-          } catch (error) {
-            logger.warn(`[StrategicTaskView] 加载指标 ${indicatorId} 里程碑失败`, error)
-            payloadMap[indicatorId] = []
-          }
-        }
-      })
-    )
-
-    return payloadMap
-  }
-
-  const loadMilestonePayloads = async (indicatorIds: string[]) => {
-    const payloadMap: Record<string, unknown> = {}
-    const persistedIndicatorIds = indicatorIds
-      .filter(id => /^\d+$/.test(id))
-      .map(id => Number(id))
-      .sort((a, b) => a - b)
-    const transientIndicatorIds = indicatorIds.filter(id => !/^\d+$/.test(id))
-
-    transientIndicatorIds.forEach(id => {
-      payloadMap[id] = []
-    })
-
-    if (persistedIndicatorIds.length === 0) {
-      return payloadMap
-    }
-
-    if (persistedIndicatorIds.length === 1) {
-      const indicatorId = String(persistedIndicatorIds[0])
-      const response = await milestoneApi.getMilestonesByIndicator(indicatorId)
-      payloadMap[indicatorId] = response.success ? response.data : []
-      return payloadMap
-    }
-
-    try {
-      const response = await milestoneApi.getMilestonesByIndicatorIds(persistedIndicatorIds)
-      if (!response.success || !response.data || typeof response.data !== 'object') {
-        throw new Error(response.message || '批量加载里程碑返回异常')
-      }
-
-      const batchPayload = response.data as Record<string, unknown>
-      persistedIndicatorIds.forEach(indicatorId => {
-        payloadMap[String(indicatorId)] = batchPayload[String(indicatorId)] ?? []
-      })
-
-      return payloadMap
-    } catch (error) {
-      logger.warn('[StrategicTaskView] 批量加载里程碑失败，回退逐个加载', error)
-      const fallbackPayloadMap = await loadMilestonePayloadsIndividually(
-        persistedIndicatorIds.map(indicatorId => String(indicatorId))
-      )
-      return {
-        ...payloadMap,
-        ...fallbackPayloadMap
-      }
-    }
-  }
-
-  const loadMilestonesForCurrentScope = async () => {
-    const dept = selectedDepartment.value
-    if (!dept) {
-      return
-    }
-
-    const requestId = milestoneLoadRequestId.value + 1
-    milestoneLoadRequestId.value = requestId
-
-    const indicatorsToLoad = getCurrentScopeIndicatorsForMilestones()
-
-    // 当前部门的里程碑缓存
-    const deptMilestoneCache = milestoneCache.value[dept] || {}
-
-    // 分离需要请求的指标和可以直接从缓存读取的指标
-    const needRequestIds: string[] = []
-
-    indicatorsToLoad.forEach(i => {
-      const id = String(i.id ?? '').trim()
-      if (!id) return
-
-      if (deptMilestoneCache[id]) {
-        // 从缓存读取
-        milestoneMap.value[id] = deptMilestoneCache[id]
-        loadedMilestoneIds.value.add(id)
-      } else if (!loadedMilestoneIds.value.has(id) && !loadingMilestoneIds.value.has(id)) {
-        needRequestIds.push(id)
-      }
-    })
-
-    // 处理需要请求的指标
-    if (needRequestIds.length === 0) {
-      return
-    }
-
-    needRequestIds.forEach(indicatorId => {
-      loadingMilestoneIds.value.add(indicatorId)
-    })
-
-    try {
-      const payloadMap = await loadMilestonePayloads(needRequestIds)
-      const nextMilestoneMap = { ...milestoneMap.value }
-      const nextDeptMilestoneCache = {
-        ...(milestoneCache.value[dept] || {})
-      }
-
-      needRequestIds.forEach(indicatorId => {
-        const rawMilestones = extractMilestones(payloadMap[indicatorId] ?? [])
-        const normalizedMilestones = rawMilestones.map((m, idx) => normalizeMilestone(m, idx))
-        nextMilestoneMap[indicatorId] = normalizedMilestones
-        nextDeptMilestoneCache[indicatorId] = normalizedMilestones
-      })
-
-      milestoneCache.value = {
-        ...milestoneCache.value,
-        [dept]: nextDeptMilestoneCache
-      }
-
-      if (milestoneLoadRequestId.value === requestId && selectedDepartment.value === dept) {
-        milestoneMap.value = nextMilestoneMap
-      }
-    } catch (error) {
-      logger.warn('[StrategicTaskView] 加载当前范围里程碑失败', error)
-
-      const nextMilestoneMap = { ...milestoneMap.value }
-      const nextDeptMilestoneCache = {
-        ...(milestoneCache.value[dept] || {})
-      }
-
-      needRequestIds.forEach(indicatorId => {
-        nextMilestoneMap[indicatorId] = []
-        nextDeptMilestoneCache[indicatorId] = []
-      })
-
-      milestoneCache.value = {
-        ...milestoneCache.value,
-        [dept]: nextDeptMilestoneCache
-      }
-
-      if (milestoneLoadRequestId.value === requestId && selectedDepartment.value === dept) {
-        milestoneMap.value = nextMilestoneMap
-      }
-    } finally {
-      needRequestIds.forEach(indicatorId => {
-        loadingMilestoneIds.value.delete(indicatorId)
-        loadedMilestoneIds.value.add(indicatorId)
-      })
-    }
-  }
-
-  const reloadMilestonesForIndicator = async (indicatorId: string, dept: string) => {
-    const response = await milestoneApi.getMilestonesByIndicator(indicatorId)
-    const rawMilestones = response.success ? extractMilestones(response.data) : []
-    const normalizedMilestones = rawMilestones.map((m, idx) => normalizeMilestone(m, idx))
-
-    milestoneMap.value[indicatorId] = normalizedMilestones
-    milestoneCache.value[dept] = milestoneCache.value[dept] || {}
-    milestoneCache.value[dept][indicatorId] = normalizedMilestones
-    loadedMilestoneIds.value.add(indicatorId)
-
-    return normalizedMilestones
-  }
-
-  const isMilestoneLoading = (indicatorId: string | number): boolean =>
-    loadingMilestoneIds.value.has(String(indicatorId))
-
-  watch(
-    [
-      selectedDepartment,
-      () => strategicStore.indicators.length,
-      () => orgStore.departments.length,
-      () => timeContext.currentYear,
-      currentPlanTaskIdSetSignature
-    ],
-    () => {
-      if (isBootstrappingPage.value) {
-        return
-      }
-      void loadMilestonesForCurrentScope()
-    }
-    // 移除 immediate: true，因为初始执行时 selectedDepartment 为空会导致加载错误的指标范围
-    // 里程碑加载改为在 onMounted 中显式调用，确保与主数据同时加载
+    strategicStore.indicators.map(i => ({
+      ...i,
+      ownerDept: normalizeDepartmentName(i.ownerDept),
+      responsibleDept: normalizeDepartmentName(i.responsibleDept)
+    }))
   )
 
   watch(
     () => timeContext.currentYear,
     () => {
-      milestoneMap.value = {}
-      loadedMilestoneIds.value = new Set<string>()
-      loadingMilestoneIds.value = new Set<string>()
-      milestoneCache.value = {}
       invalidateQueries(['task.scope'])
-      if (isBootstrappingPage.value) {
-        return
-      }
-      void loadMilestonesForCurrentScope()
     }
   )
 
@@ -1398,7 +1112,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       workflowStatus === 'PENDING' ||
       workflowStatus === 'IN_REVIEW'
     ) {
-      const label = stepName ? `待${stepName}审批` : '审批中'
+      const label = formatPendingApprovalLabel(stepName)
 
       return {
         label,
@@ -1559,7 +1273,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
 
     const status = currentPlanStatus.value
-    if (status !== 'PENDING' && status !== 'DISTRIBUTED') {
+    // 2026-10-10 跨窗口实时修复：状态守卫读的是本地（可能过期的）计划状态。
+    // 他窗"重新发起审批"时本窗状态是 DRAFT/已退回，若守卫拦下 force 刷新，
+    // 详情永远拉不回来。force 是明确的"有变更要收敛"信号，必须放行。
+    if (!options.force && status !== 'PENDING' && status !== 'DISTRIBUTED') {
       return
     }
 
@@ -1639,7 +1356,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     'PLAN_DISPATCH_STRATEGY',
     'PLAN_DISPATCH_FUNCDEPT',
     'PLAN_APPROVAL_FUNCDEPT',
-    'PLAN_APPROVAL_COLLEGE'
+    'PLAN_APPROVAL_COLLEGE',
+    'PLAN_MUTATION_STRATEGY'
   ] as const
 
   const approvalSetupDialogVisible = ref(false)
@@ -2460,7 +2178,17 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const applyLocalPlanWorkflowUiPatch = (target: 'submitted' | 'withdrawn') => {
     const nextStatus = target === 'withdrawn' ? 'WITHDRAWN' : 'IN_REVIEW'
     const nextBusinessStatus = target === 'withdrawn' ? 'DRAFT' : 'SUBMITTED'
+    const nextPlanStatus = target === 'withdrawn' ? 'DRAFT' : 'PENDING'
     const nextCanWithdraw = target === 'submitted'
+
+    // 2026-10-10 计划状态即时修复：乐观补丁此前只盖了审批状态摘要，
+    // 没更新"计划状态"标签的数据源（planStore 中 plan.status），且提交后
+    // 20s UI 挂起会拦截一切能修正它的刷新——计划状态只能等心跳/手动刷新。
+    // 这里同步更新计划状态，两个标签与按钮瞬时一致。
+    const plan = currentPlan.value as { status?: unknown } | null
+    if (plan) {
+      plan.status = nextPlanStatus
+    }
 
     currentPlanReportSummary.value = {
       ...(currentPlanReportSummary.value || {}),
@@ -2501,22 +2229,37 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
 
     approvalSubmitting.value = true
+    planSubmitUiHoldUntil = Date.now() + PLAN_SUBMIT_UI_HOLD_MS
     try {
       await planStore.submitPlanForApproval(planId, {
         workflowCode: preview.workflowCode || PLAN_APPROVAL_SUBMIT_WORKFLOW_CODE,
         comment: approvalSubmitComment.value.trim() || undefined
       })
       applyLocalPlanWorkflowUiPatch('submitted')
-      notifyApprovalStateRefresh({ source: 'strategic-task-plan-submit-start' })
-      await waitForPlanWorkflowReady()
-      await refreshCurrentDepartmentView({ force: true })
-      await refreshApprovalCenterLiveView()
-      await preloadApprovalWorkflowDetail()
-      await loadPendingPlanApprovalCount()
-      notifyApprovalStateRefresh({ source: 'strategic-task-plan-submit' })
+      // 2026-09-27 用户反馈：提交成功立即关闭弹窗，重刷新链后台异步执行，
+      // 不让用户对着确认框等全量刷新跑完。
       handleCloseApprovalSetupDialog()
       ElMessage.success('已发起整体计划审批')
+      // 只刷新消息铃铛（message 域）；不做全量广播——提交瞬间回源只会拉回
+      // 尚未回写的旧审批状态，把乐观补丁冲回「已退回」。
+      requestGlobalDataRefresh({
+        source: 'message-mutation',
+        silent: true,
+        domains: ['message']
+      })
+      void (async () => {
+        await waitForPlanWorkflowReady()
+        planSubmitUiHoldUntil = 0
+        await refreshCurrentDepartmentView({ force: true })
+        await refreshApprovalCenterLiveView()
+        await preloadApprovalWorkflowDetail()
+        await loadPendingPlanApprovalCount()
+        notifyApprovalStateRefresh({ source: 'strategic-task-plan-submit' })
+      })().catch(error => {
+        logger.warn('[StrategicTaskView] post-submit background refresh failed', error)
+      })
     } catch (error) {
+      planSubmitUiHoldUntil = 0
       logger.error('[StrategicTaskView] Failed to submit plan approval:', error)
     } finally {
       approvalSubmitting.value = false
@@ -2805,6 +2548,17 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         ) {
           await preloadApprovalWorkflowDetail()
         }
+      } else if (isLightGlobalRefreshSource(source)) {
+        // 2026-10-10 跨窗口实时修复③：WS 推送断线时的心跳/聚焦兜底——
+        // 强制刷新计划审批详情与待办任务，避免他窗状态流转后本窗状态/按钮卡死。
+        // light 源在入口处已有 45s 节流，这里不会造成请求风暴。
+        await Promise.allSettled([
+          approvalStore.loadPendingApprovals(),
+          hydrateCurrentPlanWorkflowState({ force: true })
+        ])
+        if (currentPlanStatus.value === 'PENDING' || currentPlanStatus.value === 'DISTRIBUTED') {
+          await preloadApprovalWorkflowDetail()
+        }
       }
 
       if (isLightGlobalRefreshSource(source)) {
@@ -3071,8 +2825,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     rowIndex: number
     columnIndex: number
   }) => {
-    // 战略任务列（第0列）需要合并
-    // 列顺序: 0战略任务, 1核心指标, 2说明, 3权重, 4里程碑, 5进度, 6状态, 7操作
+    // 战略任务列需要合并
     if (columnIndex === 0) {
       return taskSpanMetaMap.value.get(rowIndex) ?? { rowspan: 1, colspan: 1 }
     }
@@ -3157,248 +2910,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       .catch(() => {
         // 用户取消操作
       })
-  }
-
-  // 查看里程碑
-  const milestoneDrawerVisible = ref(false)
-  const currentMilestoneIndicator = ref<StrategicIndicator | null>(null)
-
-  const _handleViewMilestones = (row: StrategicIndicator) => {
-    currentMilestoneIndicator.value = row
-    milestoneDrawerVisible.value = true
-  }
-
-  // 里程碑编辑弹窗
-  const milestoneEditDialogVisible = ref(false)
-  const editingMilestoneIndicator = ref<StrategicIndicator | null>(null)
-  const editingMilestones = ref<Milestone[]>([])
-  const isSavingMilestoneEdit = ref(false)
-  const createTempMilestoneId = () => -Date.now() - Math.floor(Math.random() * 1000)
-
-  const sortMilestoneListByProgress = (milestones: Milestone[]): Milestone[] =>
-    sortMilestonesByProgress(milestones).map((milestone, index) => {
-      milestone.sortOrder = index + 1
-      return milestone
-    })
-
-  const sortNewRowMilestonesByProgress = () => {
-    newRow.value.milestones = sortMilestoneListByProgress(newRow.value.milestones)
-  }
-
-  const sortEditingMilestonesByProgress = () => {
-    editingMilestones.value = sortMilestoneListByProgress(editingMilestones.value)
-  }
-
-  const toEditableMilestoneProgress = (value: number | null | undefined): number => {
-    const numericValue = Number(value ?? 0)
-    if (!Number.isFinite(numericValue)) {
-      return 0
-    }
-    return Math.min(100, Math.max(0, numericValue))
-  }
-
-  const handleNewRowMilestoneProgressChange = (
-    milestone: Milestone,
-    value: number | null | undefined
-  ) => {
-    milestone.targetProgress = toEditableMilestoneProgress(value)
-    void nextTick(sortNewRowMilestonesByProgress)
-  }
-
-  const handleEditingMilestoneProgressChange = (
-    milestone: Milestone,
-    value: number | null | undefined
-  ) => {
-    milestone.targetProgress = toEditableMilestoneProgress(value)
-    void nextTick(sortEditingMilestonesByProgress)
-  }
-
-  // 打开里程碑编辑弹窗
-  const handleEditMilestones = (row: StrategicIndicator) => {
-    // 只有未下发状态且有编辑权限时才能编辑
-    if (!canEditIndicators.value) {
-      ElMessage.warning('已下发的指标不可编辑里程碑')
-      return
-    }
-
-    logger.info(`[StrategicTaskView] Opening milestone editor for indicator:`, {
-      id: row.id,
-      name: row.name,
-      indicator_desc: row.indicator_desc,
-      responsibleDept: row.responsibleDept,
-      milestonesCount: row.milestones?.length || 0
-    })
-
-    editingMilestoneIndicator.value = row
-    // 深拷贝里程碑数据
-    editingMilestones.value = sortMilestoneListByProgress(
-      JSON.parse(JSON.stringify(row.milestones || []))
-    )
-    milestoneEditDialogVisible.value = true
-  }
-
-  // 通过索引编辑里程碑（避免表格合并导致的行数据错位）
-  const handleEditMilestonesByIndex = (index: number) => {
-    const row = indicators.value[index]
-    if (!row) {
-      logger.error(`[StrategicTaskView] Cannot find indicator at index ${index}`)
-      return
-    }
-    handleEditMilestones(row)
-  }
-
-  // 添加里程碑（编辑弹窗内）
-  const addMilestoneInDialog = () => {
-    const autoName =
-      editingMilestoneIndicator.value?.type1 === '定量' ? editingMilestoneIndicator.value?.name : ''
-    editingMilestones.value.push({
-      id: createTempMilestoneId(),
-      name: autoName,
-      targetProgress: 0,
-      deadline: '',
-      status: 'pending'
-    })
-    sortEditingMilestonesByProgress()
-  }
-
-  // 生成12个月里程碑（编辑弹窗内）
-  const generateMonthlyMilestonesInDialog = () => {
-    const _currentYear = timeContext.currentYear
-    // 获取指标名称并清理空白字符
-    const rawName =
-      editingMilestoneIndicator.value?.name ||
-      editingMilestoneIndicator.value?.indicator_desc ||
-      '指标完成'
-    const indicatorName = rawName.trim() // 清理首尾空白
-
-    logger.info(
-      `[generateMonthlyMilestonesInDialog] Generating milestones for indicator: ${indicatorName}`,
-      {
-        indicator: editingMilestoneIndicator.value,
-        name: editingMilestoneIndicator.value?.name,
-        indicator_desc: editingMilestoneIndicator.value?.indicator_desc,
-        rawNameLength: rawName.length,
-        trimmedNameLength: indicatorName.length
-      }
-    )
-    editingMilestones.value = []
-
-    for (let month = 1; month <= 12; month++) {
-      const lastDay = new Date(_currentYear, month, 0).getDate()
-      const deadline = `${_currentYear}-${String(month).padStart(2, '0')}-${lastDay}`
-      const progress = Math.round((month / 12) * 100)
-
-      editingMilestones.value.push({
-        id: -month, // 使用负数作为临时 ID，避免 Vue key 重复，后端会识别为新里程碑
-        name: `${indicatorName} - ${month}月`,
-        targetProgress: progress,
-        deadline: deadline,
-        status: 'NOT_STARTED' // 使用后端枚举值
-      })
-    }
-    sortEditingMilestonesByProgress()
-    logger.info(
-      `[generateMonthlyMilestonesInDialog] Generated ${editingMilestones.value.length} milestones`
-    )
-  }
-
-  // 删除里程碑（编辑弹窗内）
-  const removeMilestoneInDialog = (index: number) => {
-    editingMilestones.value.splice(index, 1)
-  }
-
-  const handleMilestoneDeadlineChange = () => {
-    sortEditingMilestonesByProgress()
-  }
-
-  // 保存里程碑编辑
-  const saveMilestoneEdit = async () => {
-    if (!editingMilestoneIndicator.value || isSavingMilestoneEdit.value) {
-      return
-    }
-
-    // 验证里程碑数据
-    for (const ms of editingMilestones.value) {
-      if (!ms.name || !ms.name.trim()) {
-        ElMessage.warning('请填写里程碑名称')
-        return
-      }
-      if (!ms.deadline) {
-        ElMessage.warning('请设置里程碑截止日期')
-        return
-      }
-      if (ms.targetProgress < 0 || ms.targetProgress > 100) {
-        ElMessage.warning('目标进度必须在0-100之间')
-        return
-      }
-    }
-
-    isSavingMilestoneEdit.value = true
-
-    try {
-      // 从当前指标列表中查找最新的指标对象（使用 id 匹配）
-      const currentIndicator = indicators.value.find(
-        i => i.id === editingMilestoneIndicator.value?.id
-      )
-
-      if (!currentIndicator) {
-        ElMessage.error('找不到对应的指标，请刷新页面后重试')
-        return
-      }
-
-      const indicatorId = currentIndicator.id.toString()
-      const deptKey = selectedDepartment.value || ''
-      const sortedMilestones = sortMilestoneListByProgress(editingMilestones.value)
-      editingMilestones.value = sortedMilestones
-
-      logger.info(
-        `[StrategicTaskView] Saving ${sortedMilestones.length} milestones for indicator ${indicatorId}`
-      )
-
-      await milestoneApi.saveMilestonesForIndicator(
-        indicatorId,
-        sortedMilestones.map((milestone, index) => {
-          const milestoneId = Number(milestone.id)
-          return {
-            id: Number.isFinite(milestoneId) && milestoneId > 0 ? milestoneId : undefined,
-            milestoneName: String(milestone.name || '').trim(),
-            description: '',
-            dueDate: toMilestoneDueDate(milestone.deadline),
-            targetProgress: Number(milestone.targetProgress || 0),
-            status: toMilestoneRequestStatus(milestone.status),
-            sortOrder: index + 1,
-            isPaired: Boolean((milestone as { isPaired?: boolean }).isPaired ?? false),
-            inheritedFrom: null as number | null
-          }
-        })
-      )
-
-      const refreshedMilestones = await reloadMilestonesForIndicator(indicatorId, deptKey)
-      logger.info(
-        `[StrategicTaskView] Milestones synced for indicator ${indicatorId}, count=${refreshedMilestones.length}`
-      )
-
-      ElMessage.success('里程碑已更新')
-      milestoneEditDialogVisible.value = false
-      editingMilestoneIndicator.value = null
-      editingMilestones.value = []
-      updateEditTime()
-    } catch (error) {
-      logger.error('Failed to save milestones:', error)
-      ElMessage.error('里程碑更新失败')
-    } finally {
-      isSavingMilestoneEdit.value = false
-    }
-  }
-
-  // 取消里程碑编辑
-  const cancelMilestoneEdit = () => {
-    if (isSavingMilestoneEdit.value) {
-      return
-    }
-    milestoneEditDialogVisible.value = false
-    editingMilestoneIndicator.value = null
-    editingMilestones.value = []
   }
 
   // 格式化更新时间
@@ -3539,6 +3050,29 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
   }
 
+  // 2026-10-10：新增行战略任务改用 el-autocomplete——
+  // 手输内容失焦即保留在 v-model（原 el-select allow-create 不按回车会回退丢字），
+  // 失焦时若与已有任务精确匹配则自动绑定任务类型与任务 ID。
+  const querySearchTask = (queryString: string, cb: (results: { value: string }[]) => void) => {
+    const q = queryString.trim().toLowerCase()
+    const results = existingTaskNames.value
+      .filter(name => !q || name.toLowerCase().includes(q))
+      .map(name => ({ value: name }))
+    cb(results)
+  }
+
+  const onTaskOptionSelect = (item: { value: string }) => {
+    newRow.value.taskContent = item.value
+    handleTaskSelect(item.value)
+  }
+
+  const onTaskInputBlur = (event: FocusEvent) => {
+    const text = String((event.target as HTMLInputElement)?.value || '').trim()
+    if (text && existingTaskNames.value.includes(text)) {
+      handleTaskSelect(text)
+    }
+  }
+
   // 新增行数据
   const newRow = ref({
     taskId: '',
@@ -3547,55 +3081,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     type1: '定量' as '定性' | '定量',
     type2: '基础性' as '发展性' | '基础性',
     weight: 0,
-    remark: '',
-    milestones: [] as Milestone[]
+    remark: ''
   })
 
   // 任务下发相关状态
   const showAssignmentDialog = ref(false)
   const assignmentTarget = ref('')
   const assignmentMethod = ref<'self' | 'college'>('self')
-
-  // 添加新里程碑（单个）
-  const addMilestone = () => {
-    // 定量指标时，里程碑名称自动填充为核心指标内容
-    const autoName = newRow.value.type1 === '定量' ? newRow.value.name : ''
-    newRow.value.milestones.push({
-      id: Date.now(),
-      name: autoName,
-      targetProgress: 0,
-      deadline: '',
-      status: 'pending'
-    })
-    sortNewRowMilestonesByProgress()
-  }
-
-  // 生成12个月里程碑（定量指标默认）
-  const generateMonthlyMilestones = () => {
-    const _currentYear = timeContext.currentYear
-    const indicatorName = newRow.value.name || '指标完成'
-    newRow.value.milestones = []
-
-    for (let month = 1; month <= 12; month++) {
-      const lastDay = new Date(_currentYear, month, 0).getDate()
-      const deadline = `${_currentYear}-${String(month).padStart(2, '0')}-${lastDay}`
-      const progress = Math.round((month / 12) * 100)
-
-      newRow.value.milestones.push({
-        id: 0, // 使用 0 表示新里程碑，后端会创建新记录
-        name: `${indicatorName} - ${month}月`,
-        targetProgress: progress,
-        deadline: deadline,
-        status: 'pending'
-      })
-    }
-    sortNewRowMilestonesByProgress()
-  }
-
-  // 删除里程碑
-  const removeMilestone = (index: number) => {
-    newRow.value.milestones.splice(index, 1)
-  }
 
   // 当前日期
   const _currentDate = '2025年12月5日'
@@ -3649,13 +3141,155 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     editingValue.value = ''
   }
 
+  // ===== 2026-10-14 用户定案：P8 异动改为「表单式就地编辑 + 顶部一键发起」=====
+  // 已下发指标双击进入就地编辑：改动只写内存草稿（不落库、刷新即丢），
+  // 顶部出现「发起异动」按钮，点击后把整条指标的全部攒改一次性提交走 PLAN_MUTATION_STRATEGY 审批。
+  const mutationDraft = ref<{
+    indicatorId: string | number
+    changes: { indicator_desc?: string; weight_percent?: number; remark?: string }
+    labels: string[]
+  } | null>(null)
+
+  const mutationApiLoading = ref(false)
+
+  const hasMutationDraft = computed(() => Boolean(mutationDraft.value))
+  const mutationDraftLabels = computed(() => mutationDraft.value?.labels ?? [])
+
+  const MUTATION_FIELD_MAP: Record<
+    string,
+    { payloadKey: 'indicator_desc' | 'weight_percent' | 'remark'; label: string }
+  > = {
+    name: { payloadKey: 'indicator_desc', label: '指标内容' },
+    weight: { payloadKey: 'weight_percent', label: '权重' },
+    remark: { payloadKey: 'remark', label: '备注' }
+  }
+
+  // 就地编辑保存 → 已下发时写入草稿而不是落库
+  const applyMutationDraftChange = (row: StrategicIndicator, field: string, rawValue: unknown) => {
+    const mapping = MUTATION_FIELD_MAP[field]
+    if (!mapping) {
+      return false
+    }
+    const currentDraft = mutationDraft.value
+    // 一次异动只能针对同一条指标（表单即整条指标）
+    if (currentDraft && String(currentDraft.indicatorId) !== String(row.id)) {
+      ElMessage.warning('一次异动只能调整同一条指标，请先提交或取消当前异动')
+      return false
+    }
+
+    let nextValue: string | number
+    if (mapping.payloadKey === 'weight_percent') {
+      const num = Number(rawValue)
+      if (!Number.isFinite(num) || num < 0 || num > 100) {
+        ElMessage.warning('权重需为 0-100 之间的数字')
+        return false
+      }
+      nextValue = num
+    } else {
+      const text = String(rawValue ?? '').trim()
+      if (!text) {
+        ElMessage.warning(`${mapping.label}不能为空`)
+        return false
+      }
+      nextValue = text
+    }
+
+    const originalValue =
+      mapping.payloadKey === 'weight_percent'
+        ? Number(row.weight ?? 0)
+        : String((row[field as keyof StrategicIndicator] as string | number | undefined) ?? '')
+    const unchanged =
+      mapping.payloadKey === 'weight_percent'
+        ? Number(originalValue) === nextValue
+        : String(originalValue).trim() === String(nextValue)
+
+    const changes = { ...(currentDraft?.changes ?? {}) }
+    const labels = new Set(currentDraft?.labels ?? [])
+    if (unchanged) {
+      delete changes[mapping.payloadKey]
+      labels.delete(mapping.label)
+    } else {
+      changes[mapping.payloadKey] = nextValue
+      labels.add(mapping.label)
+    }
+
+    mutationDraft.value = Object.keys(changes).length
+      ? { indicatorId: row.id, changes, labels: [...labels] }
+      : null
+
+    // 同步内存显示（表格立即反映编辑结果，刷新后还原）
+    const target = strategicStore.indicators.find(item => String(item.id) === String(row.id))
+    if (target) {
+      if (mapping.payloadKey === 'weight_percent') {
+        ;(target as { weight?: number }).weight = Number(nextValue)
+      } else if (mapping.payloadKey === 'indicator_desc') {
+        ;(target as { name?: string }).name = String(nextValue)
+      } else {
+        ;(target as { remark?: string }).remark = String(nextValue)
+      }
+    }
+    return true
+  }
+
+  const cancelMutationDraft = () => {
+    mutationDraft.value = null
+    ElMessage.info('已取消本次异动编辑')
+    void refreshTaskPageAfterIndicatorMutation()
+  }
+
+  // 顶部「发起异动」：一次性提交全部攒改，走异动审批链
+  const submitMutationDraft = async () => {
+    const draft = mutationDraft.value
+    if (!draft) {
+      return
+    }
+    const summary = draft.labels.join('、')
+    try {
+      await ElMessageBox.confirm(
+        `将提交以下异动调整：${summary}。\n确认后启动异动审批（战略发展部负责人 → 分管校领导），` +
+          '审批期间目标部门与全部二级学院将被锁死；驳回后可重新发起。',
+        '发起指标异动',
+        { confirmButtonText: '确认发起', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch {
+      return
+    }
+    try {
+      mutationApiLoading.value = true
+      const { mutationApi } = await import('@/features/indicator/api/mutationApi')
+      const response = await mutationApi.initiate(draft.indicatorId as number, draft.changes)
+      if (response.success) {
+        mutationDraft.value = null
+        ElMessage.success('异动已提交审批；审批期间该部门填报已锁死')
+        void refreshTaskPageAfterIndicatorMutation()
+      } else {
+        ElMessage.error(response.message || '发起异动失败')
+      }
+    } catch (error) {
+      ElMessage.error(error instanceof Error ? error.message : '发起异动失败')
+    } finally {
+      mutationApiLoading.value = false
+    }
+  }
+
   // 指标双击编辑
   const handleIndicatorDblClick = (row: StrategicIndicator, field: string) => {
     if (!canEdit.value) {
       return
     }
-    // 已下发状态下不允许编辑
+    // 2026-10-14 用户定案：已下发指标双击进入就地编辑，改动攒入异动草稿，
+    // 由顶部「发起异动」按钮统一提交；未下发指标维持原有直接落库编辑。
     if (hasDistributedIndicators.value) {
+      const mapping = MUTATION_FIELD_MAP[field]
+      if (!mapping) {
+        return
+      }
+      if (savingIndicatorId.value === row.id) {
+        return
+      }
+      editingIndicatorId.value = row.id
+      editingIndicatorField.value = field
+      editingIndicatorValue.value = row[field as keyof StrategicIndicator]
       return
     }
     if (savingIndicatorId.value === row.id) {
@@ -3664,6 +3298,85 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     editingIndicatorId.value = row.id
     editingIndicatorField.value = field
     editingIndicatorValue.value = row[field as keyof StrategicIndicator]
+  }
+
+  /**
+   * 已下发指标的异动入口：仅战略发展部可发起；支持 指标内容/权重/备注 三类字段。
+   * 提交后走异动审批链，审批期间目标组织与全部学院锁死（后端硬校验）。
+   */
+  const openMutationDialogForField = async (row: StrategicIndicator, field: string) => {
+    const role = String(props.selectedRole || authStore.userRole || '').trim()
+    if (role !== 'strategic_dept') {
+      ElMessage.warning('已下发的指标只能由战略发展部发起异动调整')
+      return
+    }
+
+    const fieldMap: Record<
+      string,
+      { payloadKey: 'indicator_desc' | 'weight_percent' | 'remark'; label: string }
+    > = {
+      name: { payloadKey: 'indicator_desc', label: '指标内容' },
+      weight: { payloadKey: 'weight_percent', label: '权重' },
+      remark: { payloadKey: 'remark', label: '备注' }
+    }
+    const mapping = fieldMap[field]
+    if (!mapping) {
+      return
+    }
+
+    const currentValue =
+      mapping.payloadKey === 'weight_percent'
+        ? String(Number(row.weight ?? 0))
+        : String((row[field as keyof StrategicIndicator] as string | number | undefined) ?? '')
+
+    try {
+      const { value } = await ElMessageBox.prompt(
+        `该指标已下发，直接修改会被系统拒绝。是否发起「指标异动」调整${mapping.label}？` +
+          '确认后将启动异动审批（战略发展部负责人 → 分管校领导），审批期间目标部门与全部二级学院将被锁死。',
+        `发起指标异动 · ${mapping.label}`,
+        {
+          confirmButtonText: '发起异动',
+          cancelButtonText: '取消',
+          inputType: mapping.payloadKey === 'weight_percent' ? 'number' : 'textarea',
+          inputPlaceholder: `请输入新的${mapping.label}`,
+          inputValue: currentValue,
+          inputValidator: val => {
+            const trimmed = String(val ?? '').trim()
+            if (!trimmed) {
+              return `${mapping.label}不能为空`
+            }
+            if (mapping.payloadKey === 'weight_percent') {
+              const num = Number(trimmed)
+              if (!Number.isFinite(num) || num < 0 || num > 100) {
+                return '权重需为 0-100 之间的数字'
+              }
+            }
+            if (trimmed === currentValue.trim()) {
+              return `新${mapping.label}与当前值相同，无需异动`
+            }
+            return true
+          }
+        }
+      )
+
+      const payload =
+        mapping.payloadKey === 'weight_percent'
+          ? { weight_percent: Number(String(value).trim()) }
+          : { [mapping.payloadKey]: String(value).trim() }
+
+      const { mutationApi } = await import('@/features/indicator/api/mutationApi')
+      const response = await mutationApi.initiate(row.id as number, payload)
+      if (response.success) {
+        ElMessage.success('异动已提交审批；审批期间该部门与相关学院已锁死')
+        void refreshTaskPageAfterIndicatorMutation()
+      } else {
+        ElMessage.error(response.message || '发起异动失败')
+      }
+    } catch (error) {
+      if (error !== 'cancel' && error !== 'close') {
+        ElMessage.error(error instanceof Error ? error.message : '发起异动失败')
+      }
+    }
   }
 
   const isSavingIndicatorCell = (row: StrategicIndicator, field: string) =>
@@ -3692,6 +3405,15 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       progress: 'progress',
       remark: 'remark',
       sortOrder: 'sortOrder'
+    }
+
+    // 2026-10-14 用户定案：已下发指标的就地编辑只攒入异动草稿（内存态，不落库），
+    // 由顶部「发起异动」按钮一次性提交走审批；刷新页面即丢弃未发起的改动。
+    if (hasDistributedIndicators.value && MUTATION_FIELD_MAP[field]) {
+      const value = editingIndicatorValue.value
+      cancelIndicatorEdit()
+      applyMutationDraftChange(row, field, value)
+      return
     }
 
     try {
@@ -3853,8 +3575,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     await refreshCurrentDepartmentView({ force: true })
     isBootstrappingPage.value = false
 
-    void loadMilestonesForCurrentScope()
-
     document.addEventListener('click', handleGlobalClick, true)
     if (typeof window !== 'undefined') {
       window.addEventListener(
@@ -3878,12 +3598,48 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
   })
 
+  // 2026-10-07 重新发起审批：提交成功后后端工作流回写是异步的，窗口期内全局刷新
+  // 拉回的可能是旧的「已退回」状态，会冲掉乐观补丁，导致必须手动刷新才更新。
+  // 提交后 20s 内挂起外部触发的视图刷新，由提交链路的等待+强刷负责收敛。
+  // 2026-10-10 跨窗口实时修复④：挂起期内到达的审批推送不再直接丢弃——
+  // 记录挂起并在到期后补一次定向刷新，否则他人恰在挂起窗口内审批时
+  // 本窗会一直停在旧状态直到下一次心跳。
+  let planSubmitUiHoldUntil = 0
+  let planSubmitHoldFlushTimer: ReturnType<typeof setTimeout> | null = null
+  const PLAN_SUBMIT_UI_HOLD_MS = 20 * 1000
+
+  const scheduleHoldFlush = () => {
+    if (planSubmitHoldFlushTimer) {
+      return
+    }
+    const waitMs = Math.max(500, planSubmitUiHoldUntil - Date.now() + 500)
+    planSubmitHoldFlushTimer = setTimeout(() => {
+      planSubmitHoldFlushTimer = null
+      if (Date.now() >= planSubmitUiHoldUntil) {
+        void requestGlobalDataRefresh({
+          source: 'approval-state-refresh',
+          silent: true,
+          domains: ['plan', 'workflow']
+        })
+      }
+    }, waitMs)
+  }
+
   const handleGlobalDataRefreshRequest = (event: Event) => {
     if (isBootstrappingPage.value || globalDataRefreshPromise) {
       return
     }
 
+    if (Date.now() < planSubmitUiHoldUntil) {
+      scheduleHoldFlush()
+      return
+    }
+
     const detail = (event as CustomEvent<GlobalDataRefreshDetail>).detail
+    // 2026-09-27 细粒度异步刷新：仅计划/审批/指标域变更才刷本视图
+    if (!shouldRefreshForDomains(detail, ['plan', 'workflow', 'indicator'])) {
+      return
+    }
     globalDataRefreshPromise = (async () => {
       logger.info('[StrategicTaskView] handling global data refresh request', detail)
       if (
@@ -3964,8 +3720,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       type1: overrides.type1 ?? '定量',
       type2: overrides.type2 ?? '基础性',
       weight: 0,
-      remark: '',
-      milestones: []
+      remark: ''
     }
   }
 
@@ -3982,10 +3737,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       newRow.value.taskId = overrides.taskId
     }
     isAddingOrEditing.value = true
-
-    if (newRow.value.type1 === '定量') {
-      generateMonthlyMilestones()
-    }
   }
 
   const addNewRow = () => {
@@ -4018,30 +3769,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     const userRecord = authStore.user as { id?: string | number; userId?: string | number } | null
     const candidateId = Number(userRecord?.userId ?? userRecord?.id ?? NaN)
     return Number.isFinite(candidateId) && candidateId > 0 ? candidateId : null
-  }
-
-  const persistNewIndicatorMilestones = async (indicatorId: number, milestones: Milestone[]) => {
-    if (!Number.isFinite(indicatorId) || indicatorId <= 0 || milestones.length === 0) {
-      return
-    }
-
-    const orderedMilestones = sortMilestoneListByProgress(milestones)
-
-    await milestoneApi.saveMilestonesForIndicator(
-      String(indicatorId),
-      orderedMilestones.map((milestone, index) => ({
-        milestoneName: String(milestone.name || '').trim() || `里程碑 ${index + 1}`,
-        targetProgress: Number(milestone.targetProgress) || 0,
-        dueDate: milestone.deadline || null,
-        status: milestone.status === 'completed' ? 'COMPLETED' : 'NOT_STARTED',
-        sortOrder: index + 1
-      }))
-    )
-
-    await reloadMilestonesForIndicator(
-      String(indicatorId),
-      selectedDepartment.value || '战略发展部'
-    )
   }
 
   // 保存新行
@@ -4084,9 +3811,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         `[StrategicTaskView] Saving indicator with taskContent: "${newRow.value.taskContent}"`
       )
 
-      const orderedMilestones = sortMilestoneListByProgress(newRow.value.milestones)
-      newRow.value.milestones = orderedMilestones
-
       // 调用 Store 添加指标（现在是异步的，会调用后端 API）
       const createdIndicatorResponse = await strategicStore.addIndicator({
         id: Date.now().toString(),
@@ -4101,7 +3825,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         weight,
         remark: newRow.value.remark || '无备注',
         canWithdraw: true,
-        milestones: [...orderedMilestones],
         targetValue: 100,
         unit: '%',
         responsibleDept: selectedDepartment.value || '战略发展部', // 责任部门是选中的部门
@@ -4116,10 +3839,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       const createdIndicatorId = Number(
         createdIndicatorResponse?.data?.indicatorId ?? createdIndicatorResponse?.data?.id ?? NaN
       )
-      if (Number.isFinite(createdIndicatorId) && orderedMilestones.length > 0) {
-        await persistNewIndicatorMilestones(createdIndicatorId, orderedMilestones)
-      }
-
       // 统一走“变更后刷新”链路，避免新增后被旧缓存覆盖，导致主页仍显示上一版状态。
       logger.info('[StrategicTaskView] Refreshing task page after successful indicator creation...')
       await refreshTaskPageAfterIndicatorMutation()
@@ -4181,94 +3900,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     lastEditTime.value = new Date().toLocaleString()
   }
 
-  // 里程碑状态计算
-  const _calculateMilestoneStatus = (
-    indicator: StrategicIndicator
-  ): 'success' | 'warning' | 'exception' => {
-    if (!indicator.milestones || indicator.milestones.length === 0) {
-      return getProgressStatus(indicator.progress)
-    }
-
-    const _currentDate = new Date()
-    const _currentYear = _currentDate.getFullYear()
-
-    // 检查是否有逾期未完成的里程碑
-    const hasOverdueMilestone = indicator.milestones.some(milestone => {
-      const deadlineDate = new Date(milestone.deadline)
-      return milestone.status === 'pending' && deadlineDate < _currentDate
-    })
-
-    // 检查是否有即将到期的里程碑（30天内）
-    const hasUpcomingMilestone = indicator.milestones.some(milestone => {
-      if (milestone.status === 'completed') {
-        return false
-      }
-      const deadlineDate = new Date(milestone.deadline)
-      const daysUntilDeadline = Math.ceil(
-        (deadlineDate.getTime() - _currentDate.getTime()) / (1000 * 60 * 60 * 24)
-      )
-      return daysUntilDeadline > 0 && daysUntilDeadline <= 30
-    })
-
-    // 判断状态逻辑
-    if (hasOverdueMilestone) {
-      return 'exception' // 红色：逾期未完成
-    } else if (hasUpcomingMilestone) {
-      return 'warning' // 黄色：即将到期
-    } else {
-      return 'success' // 绿色：按计划进行
-    }
-  }
-
-  // 获取里程碑进度文本
-  const _getMilestoneProgressText = (indicator: StrategicIndicator): string => {
-    if (!indicator.milestones || indicator.milestones.length === 0) {
-      return `当前进度: ${indicator.progress}%`
-    }
-
-    const _totalMilestones = indicator.milestones.length
-    const _completedMilestones = indicator.milestones.filter(m => m.status === 'completed').length
-    const _overdueMilestones = indicator.milestones.filter(m => m.status === 'overdue').length
-    const pendingMilestones = indicator.milestones.filter(m => m.status === 'pending').length
-
-    const _currentDate = new Date()
-    const overdueMilestonesCount = indicator.milestones.filter(m => {
-      if (m.status !== 'pending') {
-        return false
-      }
-      const deadlineDate = new Date(m.deadline)
-      return deadlineDate < _currentDate
-    }).length
-
-    if (overdueMilestonesCount > 0) {
-      return `逾期: ${overdueMilestonesCount} 个里程碑`
-    } else if (pendingMilestones > 0) {
-      return `待完成: ${pendingMilestones} 个里程碑`
-    } else {
-      return '所有里程碑已完成'
-    }
-  }
-
-  // 获取里程碑列表用于tooltip显示
-  interface MilestoneTooltipItem {
-    id: string | number
-    name: string
-    expectedDate: string
-    progress: number
-  }
-
-  const getMilestonesTooltip = (indicator: StrategicIndicator): MilestoneTooltipItem[] => {
-    return sortMilestonesByProgress(indicator.milestones || []).map(m => ({
-      id: m.id || '',
-      name: m.name,
-      expectedDate: m.deadline || '',
-      progress: m.targetProgress || 0
-    }))
-  }
-
-  const getSortedMilestones = (milestones?: StrategicIndicator['milestones']) =>
-    sortMilestonesByProgress(milestones || [])
-
   const selectDepartment = (dept: string) => {
     if (selectedDepartment.value === dept) {
       return
@@ -4285,6 +3916,141 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
     selectedDepartment.value = dept
     persistSelectedDepartment(dept)
+  }
+
+  // ===== 2026-10-11 二级学院表格化（用户定案）：左侧选学院 → 表格展示该学院收到的指标 → 双击异动 =====
+  // ===== 2026-10-13 用户定案：二级学院 tab 按左侧已选职能部门下钻——学院列表与表格都只呈现
+  // "当前职能部门 → 二级学院"这条下发链上的数据，不混入其他职能部门下发的指标 =====
+  const collegeDepartments = computed(() => orgStore.getAllCollegeNames())
+  const selectedCollege = ref('')
+
+  // 当前职能部门（职能部门 tab 左侧选中项）下发给学院的全部目标学院
+  const collegeDepartmentsScoped = computed(() => {
+    const allColleges = collegeDepartments.value
+    const ownerDept = normalizeDepartmentName(selectedDepartment.value || '')
+    if (!ownerDept) {
+      return allColleges
+    }
+    const scoped = new Set<string>()
+    for (const item of normalizedIndicators.value) {
+      if (item.ownerDept !== ownerDept) {
+        continue
+      }
+      const candidate = item as {
+        targetOrgName?: string
+        targetDepartment?: string
+        responsibleDept?: string
+      }
+      const target = normalizeDepartmentName(
+        String(
+          candidate.targetOrgName ?? candidate.targetDepartment ?? candidate.responsibleDept ?? ''
+        )
+      )
+      const matched = allColleges.find(college => normalizeDepartmentName(college) === target)
+      if (matched) {
+        scoped.add(matched)
+      }
+    }
+    return [...scoped].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+  })
+
+  const selectCollege = (college: string) => {
+    if (selectedCollege.value === college) {
+      return
+    }
+    selectedCollege.value = college
+  }
+
+  // 切换职能部门时，原选中学院可能不在新部门的下发范围——自动清空选中
+  watch(collegeDepartmentsScoped, scoped => {
+    if (selectedCollege.value && !scoped.includes(selectedCollege.value)) {
+      selectedCollege.value = ''
+    }
+  })
+
+  // 该学院收到的指标：只取"当前职能部门 → 该学院"链路（ownerDept 过滤）
+  // 二级学院 tab：指标 id→完整指标映射，用于子指标行显示所属核心指标（名称+定性定量配色）
+  const indicatorById = computed(() => {
+    const map = new Map<string | number, (typeof normalizedIndicators.value)[number]>()
+    for (const item of normalizedIndicators.value) {
+      map.set(item.id, item)
+    }
+    return map
+  })
+
+  const collegeTableIndicators = computed(() => {
+    if (!selectedCollege.value) {
+      return []
+    }
+    const target = normalizeDepartmentName(selectedCollege.value)
+    const ownerDept = normalizeDepartmentName(selectedDepartment.value || '')
+    return normalizedIndicators.value
+      .filter(item => {
+        if (ownerDept && item.ownerDept !== ownerDept) {
+          return false
+        }
+        const candidate = item as {
+          responsibleDept?: string
+          targetDepartment?: string
+          targetOrgName?: string
+        }
+        const deptName = normalizeDepartmentName(
+          String(
+            candidate.targetDepartment ?? candidate.targetOrgName ?? candidate.responsibleDept ?? ''
+          )
+        )
+        return deptName === target || deptName.includes(target)
+      })
+      .sort((a, b) => {
+        // 按所属核心指标分组相邻（同组同序），与职能部门 tab 的任务分组展示同构
+        const parentA = indicatorById.value.get(a.parentIndicatorId ?? '')?.name ?? ''
+        const parentB = indicatorById.value.get(b.parentIndicatorId ?? '')?.name ?? ''
+        if (parentA !== parentB) {
+          return parentA.localeCompare(parentB)
+        }
+        return Number(a.sortOrder ?? 0) - Number(b.sortOrder ?? 0)
+      })
+  })
+
+  // 二级学院 tab：核心指标列合并单元格元数据（同属一个核心指标的行首行 rowspan=组内行数）
+  const collegeSpanMetaMap = computed(() => {
+    const meta = new Map<number, { rowspan: number; colspan: number }>()
+    const rows = collegeTableIndicators.value
+    let index = 0
+    while (index < rows.length) {
+      const head = rows[index]
+      const parentKey = String(head?.parentIndicatorId ?? head?.id ?? '')
+      let end = index + 1
+      while (end < rows.length) {
+        const candidate = rows[end]
+        if (!candidate || String(candidate.parentIndicatorId ?? candidate.id ?? '') !== parentKey) {
+          break
+        }
+        end += 1
+      }
+      meta.set(index, { rowspan: end - index, colspan: 1 })
+      for (let i = index + 1; i < end; i += 1) {
+        meta.set(i, { rowspan: 0, colspan: 0 })
+      }
+      index = end
+    }
+    return meta
+  })
+
+  const collegeSpanMethod = ({
+    rowIndex,
+    columnIndex
+  }: {
+    row: Record<string, unknown>
+    column: unknown
+    rowIndex: number
+    columnIndex: number
+  }) => {
+    // 仅核心指标列（第 0 列）合并
+    if (columnIndex === 0) {
+      return collegeSpanMetaMap.value.get(rowIndex) ?? { rowspan: 1, colspan: 1 }
+    }
+    return { rowspan: 1, colspan: 1 }
   }
 
   const _selectTask = (index: number) => {
@@ -4337,6 +4103,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 详情抽屉状态
   const detailDrawerVisible = ref(false)
   const currentDetail = ref<StrategicIndicator | null>(null)
+  // P3 上报记录分区
+  const reportHistoryOpen = ref<string[]>([])
 
   // 专门用于审批抽屉的指标列表（显示当前选中部门的所有指标，一个部门的所有指标状态应该统一）
   const approvalIndicators = computed(() => {
@@ -4442,10 +4210,19 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     )
     if (shouldPreferCurrentReportWorkflow.value && Number.isFinite(reportId) && reportId > 0) {
       try {
-        const response = await getWorkflowInstanceDetailByBusiness('PLAN_REPORT', reportId)
+        // 2026-10-10 跨窗口实时修复：审批详情预加载必须拿最新实例状态，
+        // 绕过 30s WORKFLOW_DETAIL 内存缓存，否则撤回/重发的推送会被旧缓存吃掉。
+        const response = await getWorkflowInstanceDetailByBusiness('PLAN_REPORT', reportId, {
+          force: true
+        })
         if (response.success && response.data) {
           preloadedPlanWorkflowDetail.value = response.data
-          return
+          // 2026-10-07：偏好的上报实例若已终态（撤回/退回），不能就此返回——
+          // 重新发起审批后新实例挂在 PLAN 业务上，必须回落继续查，
+          // 否则 waitForPlanWorkflowReady 每轮都拿旧实例、必然超时。
+          if (isActiveApprovalWorkflowDetail(response.data)) {
+            return
+          }
         }
       } catch (error) {
         logger.warn('[StrategicTaskView] 优先预加载 PlanReport 审批详情失败，回退 PLAN:', {
@@ -4459,7 +4236,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     if (planId === undefined || planId === null || planId === '') {
       if (Number.isFinite(reportId) && reportId > 0) {
         try {
-          const response = await getWorkflowInstanceDetailByBusiness('PLAN_REPORT', reportId)
+          const response = await getWorkflowInstanceDetailByBusiness('PLAN_REPORT', reportId, {
+            force: true
+          })
           if (response.success && response.data) {
             preloadedPlanWorkflowDetail.value = response.data
           }
@@ -4483,7 +4262,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     try {
       const businessEntityId = Number(latestPlan.id ?? 0)
       if (Number.isFinite(businessEntityId) && businessEntityId > 0) {
-        const response = await getWorkflowInstanceDetailByBusiness('PLAN', businessEntityId)
+        const response = await getWorkflowInstanceDetailByBusiness('PLAN', businessEntityId, {
+          force: true
+        })
         if (response.success && response.data) {
           preloadedPlanWorkflowDetail.value = response.data
         }
@@ -5311,6 +5092,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   // 删除单个指标
   const handleDeleteIndicator = (row: StrategicIndicator) => {
+    if (!canDeleteIndicator(row)) {
+      ElMessage.warning('只有未下发的草稿计划才能删除指标')
+      return
+    }
+
     const indicatorId = row?.id
     if (indicatorId === null || indicatorId === undefined || indicatorId === '') {
       ElMessage.warning('当前行不是可删除的指标数据')
@@ -5424,23 +5210,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     const targetValue = row.targetValue || 100
     const isAchieved = progress >= targetValue
 
-    // 检查是否有里程碑及其截止日期
-    const _currentDate = new Date()
-    let isOverdue = false
-
-    if (row.milestones && row.milestones.length > 0) {
-      // 检查最后一个里程碑的截止日期
-      const lastMilestone = row.milestones[row.milestones.length - 1]
-      if (lastMilestone.deadline) {
-        const deadlineDate = new Date(lastMilestone.deadline)
-        isOverdue = _currentDate > deadlineDate
-      }
-    }
-
+    // 里程碑移除后无法依据里程碑截止日期判断是否超期，未达标统一显示黄色
     if (isAchieved) {
       return 'var(--color-success)' // 绿色：已达标
-    } else if (isOverdue) {
-      return 'var(--color-danger)' // 红色：超过任务周期未达标
     } else {
       return 'var(--color-warning)' // 黄色：任务周期内未达标
     }
@@ -5500,16 +5272,16 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     return reportedProgress !== Number(indicator.progress || 0)
   }
 
+  const currentDetailId = computed(() => currentDetail.value?.id ?? null)
+
   return {
     PLAN_APPROVAL_HISTORY_WORKFLOW_CODES,
     PLAN_APPROVAL_SUBMIT_WORKFLOW_CODE,
     _addIndicatorToCategory,
-    _calculateMilestoneStatus,
     _currentDate,
     _currentTask,
     _deleteIndicator,
     _formatUpdateTime,
-    _getMilestoneProgressText,
     _getProgressClass,
     _goToIndicator,
     _groupedBasicIndicators,
@@ -5519,7 +5291,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     _handleBatchWithdrawByTask,
     _handleDoubleClick,
     _handleTableScroll,
-    _handleViewMilestones,
     _handleWithdraw,
     _handleWithdrawTask,
     _hasPendingApprovalForDept,
@@ -5528,8 +5299,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     _selectTask,
     _tableScrollRef,
     _toggleViewMode,
-    addMilestone,
-    addMilestoneInDialog,
     addNewRow,
     addRowFormRef,
     approvalEntryButtonText,
@@ -5561,12 +5330,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     cancelAdd,
     cancelEdit,
     cancelIndicatorEdit,
-    cancelMilestoneEdit,
     closeDistributeDialog,
     confirmAssignment,
     confirmDistribute,
     confirmPlanApprovalSubmission,
-    createTempMilestoneId,
     currentApprovalApproverName,
     currentApprovalCandidateNames,
     currentApprovalFlowName,
@@ -5575,13 +5342,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     currentApprovalWorkflowStatus,
     currentDepartmentOrgId,
     currentDetail,
+    reportHistoryOpen,
+    currentDetailId,
     currentDistributeGroup,
     currentDistributeItem,
     currentIndicator,
     currentIndicatorIndex,
     currentIndicatorWorkflow,
     currentIndicatorWorkflowLoading,
-    currentMilestoneIndicator,
     currentPlan,
     currentPlanReportSummary,
     currentPlanScopeLoading,
@@ -5613,36 +5381,40 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     editingIndicatorField,
     editingIndicatorId,
     editingIndicatorValue,
-    editingMilestoneIndicator,
-    editingMilestones,
     editingValue,
     ensurePersistedTaskIdForIndicator,
     ensurePlanCanDistribute,
     existingTaskNames,
-    extractMilestones,
+    querySearchTask,
+    onTaskOptionSelect,
+    onTaskInputBlur,
     findCurrentPlanByDepartment,
     findCurrentPlanByOrgId,
     findExistingTaskIdByName,
     formatDetailDate,
     functionalDepartments,
-    generateMonthlyMilestones,
-    generateMonthlyMilestonesInDialog,
+    collegeDepartments,
+    selectedCollege,
+    selectCollege,
+    collegeTableIndicators,
+    collegeDepartmentsScoped,
+    indicatorById,
+    collegeSpanMethod,
     getCategoryColor,
     getCategoryText,
     getCurrentActorUserId,
     getCurrentCycleId,
-    getCurrentScopeIndicatorsForMilestones,
     getIndicatorCategoryLabel,
     getIndicatorMappedTaskType,
     getIndicatorTaskId,
-    getMilestonesTooltip,
+    getIndicatorWorkflowStatusLabel,
+    getIndicatorWorkflowTagType,
     getPersistedWithdrawableRows,
     getProgressColor,
     getProgressStatus,
     getDisplayedReportedProgress,
     getPendingProgressDelta,
     getRouteQueryText,
-    getSortedMilestones,
     getSpanMethod,
     getTaskCategoryLabel,
     getTaskGroup,
@@ -5663,13 +5435,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     handleDeleteIndicator,
     handleDistributeAll,
     handleDistributeOrWithdraw,
-    handleEditMilestones,
-    handleEditMilestonesByIndex,
-    handleEditingMilestoneProgressChange,
     handleGlobalClick,
     handleIndicatorDblClick,
-    handleMilestoneDeadlineChange,
-    handleNewRowMilestoneProgressChange,
+    openMutationDialogForField,
+    hasMutationDraft,
+    mutationDraftLabels,
+    submitMutationDraft,
+    cancelMutationDraft,
     handleOpenApproval,
     handleRejectCurrentIndicatorWorkflow,
     handleSelectionChange,
@@ -5697,12 +5469,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     isIndicatorInCurrentPlanScope,
     isIndicatorInFlowStage,
     isInitialDataLoading,
-    isMilestoneLoading,
     isPlanDistributed,
     isReadOnly,
     isSavingIndicatorCell,
     isSavingIndicatorEdit,
-    isSavingMilestoneEdit,
     isStrategicDept,
     isTableScrolling,
     lastEditTime,
@@ -5710,22 +5480,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     loadBackendTaskTypeMap,
     loadCurrentPlanTaskScope,
     loadIndicatorWorkflowSnapshot,
-    loadMilestonePayloads,
-    loadMilestonePayloadsIndividually,
-    loadMilestonesForCurrentScope,
     loadPendingPlanApprovalCount,
-    loadedMilestoneIds,
-    loadingMilestoneIds,
-    milestoneCache,
-    milestoneDrawerVisible,
-    milestoneEditDialogVisible,
-    milestoneFallbackConcurrency,
-    milestoneLoadRequestId,
-    milestoneMap,
     newRow,
     normalizeDepartmentName,
     normalizeEditableText,
-    normalizeMilestone,
     normalizePreviewCandidateDisplayName,
     normalizeTaskId,
     normalizeWorkflowStepName,
@@ -5738,7 +5496,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     pendingApprovalCount,
     pendingPlanApprovalCount,
     permissionUtil,
-    persistNewIndicatorMilestones,
     persistTaskContentEdit,
     planStore,
     planUiPhase,
@@ -5755,9 +5512,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     refreshTaskPageAfterIndicatorMutation,
     registerTaskLocally,
     rejectIndicatorReview,
-    reloadMilestonesForIndicator,
-    removeMilestone,
-    removeMilestoneInDialog,
     resetApprovalSetupDialog,
     resetApprovalWorkflowStateCache,
     resetNewRow,
@@ -5768,7 +5522,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     route,
     router,
     saveIndicatorEdit,
-    saveMilestoneEdit,
     saveNewRow,
     savingIndicatorField,
     savingIndicatorId,
@@ -5786,9 +5539,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     taskTypeMap,
     taskTypeMapLoading,
     timeContext,
-    toMilestoneDueDate,
-    toMilestoneRequestStatus,
-    toMilestoneStatus,
     triggerApprovalForDistribution,
     updateEditTime,
     viewMode

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
+import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
 import { ref } from 'vue'
 import {
   Plus,
@@ -18,7 +20,6 @@ import {
   buildAttachmentCell,
   buildExportFileName,
   exportRowsToExcel,
-  formatProgress,
   type ExcelExportColumn,
   type ExcelRowTone
 } from '@/shared/lib/export/excel'
@@ -40,14 +41,11 @@ const {
   PLAN_REPORT_UI_STATE_KEY,
   PROGRESS_WARNING_DAYS,
   _addIndicatorToCategory,
-  _addMilestone,
   _basicIndicators,
   _batchDistributeToDepartments,
-  _calculateMilestoneStatus,
   _confirmAssignment,
   _currentTask,
   _developmentIndicators,
-  _getMilestoneProgressText,
   _getTaskGroup,
   _handleBatchDistributeByTask,
   _handleBatchFillByTask,
@@ -56,11 +54,9 @@ const {
   _handleDoubleClick,
   _handleTableScroll,
   _pendingApprovalCount,
-  _removeMilestone,
   _saveEdit,
   _selectDepartment,
   _selectTask,
-  _showMilestoneInput,
   _tableScrollRef,
   addNewRow,
   allIndicatorsFilled,
@@ -115,7 +111,7 @@ const {
   currentPlanReportSummary,
   currentPlanReportUiStatus,
   currentPlanStatus,
-  currentPlanStatusMeta,
+  currentMonthlyReportStatusMeta,
   currentPlanWorkflowDetail,
   currentReportIndicator,
   currentTaskIndex,
@@ -128,6 +124,8 @@ const {
   currentViewingOrgId,
   delay,
   detailDrawerVisible,
+  reportHistoryOpen,
+  currentDetailId,
   editingField,
   editingIndicatorField,
   editingIndicatorId,
@@ -141,16 +139,13 @@ const {
   filterType1,
   filterType2,
   formatDetailDate,
-  formatMilestoneDate,
   functionalDepartments,
   getAttachmentExtension,
   getCurrentPlanId,
-  getDisplayProgress,
   getDisplayedReportedProgress,
   getIndicatorDraftStorageKey,
   getIndicatorProgressStatus,
   getIndicatorWorkflowSnapshot,
-  getMilestonesTooltip,
   getPlanIndicatorAttachments,
   getPlanIndicatorIds,
   getPlanIndicatorNumber,
@@ -158,7 +153,6 @@ const {
   getPlanIndicatorText,
   getProgressStatusClass,
   getSafeApprovalStatus,
-  getSortedMilestones,
   getSpanMethod,
   getTaskTypeColor,
   handleApprovalStatusPopoverShow,
@@ -211,10 +205,7 @@ const {
   loadCurrentPlanReportSummary,
   loadCurrentPlanWorkflowDetail,
   loadIndicatorWorkflowSnapshot,
-  nearestMilestone,
   newRow,
-  normalizePlanMilestoneStatus,
-  normalizePlanMilestones,
   normalizePreviewCandidateDisplayName,
   normalizedCurrentPlanReportStatus,
   normalizedCurrentPlanStatus,
@@ -247,7 +238,6 @@ const {
   reportForm,
   reportUploadFiles,
   resetFilters,
-  resolveMilestoneDisplayState,
   resolveDialogAttachments,
   resolveExpectedApproverOrgIdForPage,
   resolveExpectedApproverRoleCodesForPage,
@@ -294,34 +284,64 @@ const {
 
 const indicatorListExporting = ref(false)
 
-const indicatorListExportColumns: ExcelExportColumn<StrategicIndicator>[] = [
-  { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
-  { header: '来源部门', width: 18, getValue: row => row.ownerDept || '-' },
-  { header: '责任部门', width: 18, getValue: row => row.responsibleDept || '-' },
-  { header: '战略任务', width: 28, getValue: row => row.taskContent || '-' },
-  { header: '核心指标', width: 32, getValue: row => row.name || '-' },
-  { header: '指标类型', width: 12, align: 'center', getValue: row => row.type1 || '-' },
-  { header: '任务类别', width: 12, align: 'center', getValue: row => row.type2 || '-' },
-  { header: '备注', width: 24, getValue: row => row.remark || '-' },
-  { header: '权重', width: 10, align: 'center', getValue: row => Number(row.weight || 0) },
-  {
-    header: '进度',
-    width: 24,
-    getValue: row => formatProgress(getDisplayProgress(row), getDisplayedReportedProgress(row))
-  },
-  {
-    header: '预警等级判定',
-    width: 18,
-    align: 'center',
-    getValue: row => getManualAlertLabel(row.manualAlertSeverity)
-  },
-  { header: '填报说明', width: 28, getValue: row => row.pendingRemark || '-' },
-  {
-    header: '附件',
-    width: 42,
-    getValue: row => buildAttachmentCell(resolveIndicatorAttachmentItems(row))
-  }
-]
+// 2026-10-14 用户定案：与战略任务管理/下发界面同构——同一战略任务多行在「战略任务」列合并；移除「内部ID」列
+const buildIndicatorListExportColumns = (
+  rows: StrategicIndicator[]
+): ExcelExportColumn<StrategicIndicator>[] => {
+  const taskSpanByIndex = new Map<number, number>()
+  rows.forEach((row, index) => {
+    const key = row.taskContent || '-'
+    const prevKey = index > 0 ? rows[index - 1].taskContent || '-' : null
+    if (prevKey === key) {
+      taskSpanByIndex.set(index, 0)
+      return
+    }
+    let end = index + 1
+    while (end < rows.length && (rows[end].taskContent || '-') === key) {
+      end += 1
+    }
+    taskSpanByIndex.set(index, end - index)
+  })
+
+  return [
+    { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
+    { header: '来源部门', width: 18, getValue: row => row.ownerDept || '-' },
+    { header: '责任部门', width: 18, getValue: row => row.responsibleDept || '-' },
+    {
+      header: '战略任务',
+      width: 28,
+      getValue: (row, index) => {
+        const text = row.taskContent || '-'
+        const span = taskSpanByIndex.get(index) ?? 1
+        if (span > 1) {
+          return { value: text, rowSpan: span, alignVertical: 'center' }
+        }
+        // 被上方合并覆盖的从属行：write-excel-file 要求传 null
+        if (span === 0) {
+          return null
+        }
+        return text
+      }
+    },
+    { header: '核心指标', width: 32, getValue: row => row.name || '-' },
+    { header: '指标类型', width: 12, align: 'center', getValue: row => row.type1 || '-' },
+    { header: '任务类别', width: 12, align: 'center', getValue: row => row.type2 || '-' },
+    { header: '备注', width: 24, getValue: row => row.remark || '-' },
+    { header: '权重', width: 10, align: 'center', getValue: row => Number(row.weight || 0) },
+    {
+      header: '鉴定进度等级',
+      width: 18,
+      align: 'center',
+      getValue: row => getManualAlertLabel(row.manualAlertSeverity)
+    },
+    { header: '填报说明', width: 28, getValue: row => row.pendingRemark || '-' },
+    {
+      header: '附件',
+      width: 42,
+      getValue: row => buildAttachmentCell(resolveIndicatorAttachmentItems(row))
+    }
+  ]
+}
 
 const getIndicatorListExportRows = (): StrategicIndicator[] => {
   const source =
@@ -351,10 +371,11 @@ const manualAlertOptions: Array<{
   value: ManualAlertSeverity
   type: 'success' | 'info' | 'warning' | 'danger'
 }> = [
-  { label: '无预警', value: null, type: 'success' },
-  { label: '一般滞后', value: 'INFO', type: 'info' },
-  { label: '严重滞后', value: 'WARNING', type: 'warning' },
-  { label: '重大滞后', value: 'CRITICAL', type: 'danger' }
+  // 进度等级三档（与战略任务管理页 manualAlertOptions 一致）：存储码沿用 alert severity
+  { label: '未评定', value: null, type: 'info' },
+  { label: '超前完成', value: 'AHEAD', type: 'success' },
+  { label: '正常', value: 'NORMAL', type: 'success' },
+  { label: '延期', value: 'DELAYED', type: 'warning' }
 ]
 
 const getManualAlertOption = (severity?: ManualAlertSeverity) =>
@@ -384,7 +405,7 @@ const handleExportIndicatorList = async () => {
       {
         sheetName: scopeName,
         rows,
-        columns: indicatorListExportColumns,
+        columns: buildIndicatorListExportColumns(rows),
         getRowTone: getIndicatorListExportRowTone
       },
       buildExportFileName('指标填报与管理', scopeName)
@@ -467,8 +488,12 @@ const handleExportIndicatorList = async () => {
         <div class="card-header">
           <span class="card-title">指标列表</span>
           <div class="header-actions">
-            <el-tag size="small" class="overall-status-tag" :type="currentPlanStatusMeta.type">
-              计划状态: {{ currentPlanStatusMeta.label }}
+            <el-tag
+              size="small"
+              class="overall-status-tag"
+              :type="currentMonthlyReportStatusMeta.type"
+            >
+              本月上报状态: {{ currentMonthlyReportStatusMeta.label }}
             </el-tag>
             <el-popover
               placement="top-start"
@@ -655,24 +680,13 @@ const handleExportIndicatorList = async () => {
                         >{{ row.name }}</span
                       >
                     </el-tooltip>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column prop="remark" label="备注" width="130">
-                <template #default="{ row }">
-                  <div
-                    class="indicator-name-cell"
-                    @dblclick="handleIndicatorDblClick(row, 'remark')"
-                  >
-                    <el-input
-                      v-if="editingIndicatorId === row.id && editingIndicatorField === 'remark'"
-                      v-model="editingIndicatorValue"
-                      v-focus
-                      type="textarea"
-                      :autosize="{ minRows: 2, maxRows: 6 }"
-                      @blur="saveIndicatorEdit(row, 'remark')"
+
+                    <!-- D10：异动/改名历史徽标（悬停看历史，无变更自动隐藏） -->
+                    <MutationBadgePopover
+                      v-if="row.id"
+                      class="indicator-row-badge"
+                      :indicator-id="row.id"
                     />
-                    <span v-else class="remark-text">{{ row.remark || '' }}</span>
                   </div>
                 </template>
               </el-table-column>
@@ -691,29 +705,65 @@ const handleExportIndicatorList = async () => {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column prop="progress" label="进度" width="150" align="center">
+              <el-table-column label="自评等级" width="120" align="center">
                 <template #default="{ row }">
-                  <div class="progress-cell">
-                    <span class="progress-number" :class="getProgressStatusClass(row)">
-                      {{ getDisplayProgress(row) }}%
-                    </span>
-                    <el-tooltip
-                      v-if="shouldShowReportedProgress(row)"
-                      content="填报进度"
-                      placement="top"
-                    >
-                      <span class="reported-progress"
-                        >({{ getDisplayedReportedProgress(row) }}%)</span
-                      >
-                    </el-tooltip>
-                  </div>
+                  <el-tag
+                    v-if="row.selfRating"
+                    :type="row.selfRating === 'DELAYED' ? 'warning' : 'success'"
+                    size="small"
+                  >
+                    {{
+                      { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' }[row.selfRating] ||
+                      row.selfRating
+                    }}
+                  </el-tag>
+                  <span v-else style="color: #909399">—</span>
                 </template>
               </el-table-column>
-              <el-table-column label="预警等级判定" width="150" align="center">
+              <el-table-column label="鉴定等级" width="150" align="center">
                 <template #default="{ row }">
                   <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
                     {{ getManualAlertLabel(row.manualAlertSeverity) }}
                   </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="进度说明" min-width="160">
+                <template #default="{ row }">
+                  <span class="pending-remark-text" :title="row.pendingRemark || ''">{{
+                    row.pendingRemark || '—'
+                  }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="附件" width="90" align="center">
+                <template #default="{ row }">
+                  <span
+                    v-if="
+                      (row.attachments?.length || row.pendingAttachmentDetails?.length || 0) > 0
+                    "
+                  >
+                    <el-button link type="primary" size="small" @click="handleViewDetail(row)">
+                      {{ row.attachments?.length || row.pendingAttachmentDetails?.length || 0 }} 个
+                    </el-button>
+                  </span>
+                  <span v-else style="color: #909399">—</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="remark" label="备注" width="130">
+                <template #default="{ row }">
+                  <div
+                    class="indicator-name-cell"
+                    @dblclick="handleIndicatorDblClick(row, 'remark')"
+                  >
+                    <el-input
+                      v-if="editingIndicatorId === row.id && editingIndicatorField === 'remark'"
+                      v-model="editingIndicatorValue"
+                      v-focus
+                      type="textarea"
+                      :autosize="{ minRows: 2, maxRows: 6 }"
+                      @blur="saveIndicatorEdit(row, 'remark')"
+                    />
+                    <span v-else class="remark-text">{{ row.remark || '' }}</span>
+                  </div>
                 </template>
               </el-table-column>
               <el-table-column
@@ -891,20 +941,7 @@ const handleExportIndicatorList = async () => {
           >
           <el-descriptions-item label="指标类型">{{ currentDetail.type1 }}</el-descriptions-item>
           <el-descriptions-item label="权重">{{ currentDetail.weight }}</el-descriptions-item>
-          <el-descriptions-item label="当前进度"
-            >{{ currentDetail.progress || 0 }}%</el-descriptions-item
-          >
-          <el-descriptions-item label="填报进度">
-            <template v-if="shouldShowReportedProgress(currentDetail)">
-              <el-tooltip content="已提交但尚未审批通过的填报进度" placement="top">
-                <span style="color: #e6a23c; font-weight: 600"
-                  >{{ getDisplayedReportedProgress(currentDetail) }}%</span
-                >
-              </el-tooltip>
-            </template>
-            <span v-else style="color: #909399">暂无填报</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="预警等级判定">
+          <el-descriptions-item label="鉴定等级">
             <el-tag :type="getManualAlertTagType(currentDetail.manualAlertSeverity)" size="small">
               {{ getManualAlertLabel(currentDetail.manualAlertSeverity) }}
             </el-tag>
@@ -940,12 +977,21 @@ const handleExportIndicatorList = async () => {
           </div>
         </div>
       </div>
+
+      <el-collapse v-model="reportHistoryOpen" class="report-history-collapse">
+        <el-collapse-item title="上报记录（历次填报 / 含被驳回）" name="history">
+          <IndicatorFillHistory
+            v-if="reportHistoryOpen?.includes('history') && currentDetailId"
+            :indicator-id="currentDetailId"
+          />
+        </el-collapse-item>
+      </el-collapse>
     </el-drawer>
 
     <!-- 进度填报弹窗 -->
     <el-dialog
       v-model="reportDialogVisible"
-      title="进度填报"
+      title="指标填报"
       width="500px"
       :close-on-click-modal="false"
       @close="closeReportDialog"
@@ -958,14 +1004,12 @@ const handleExportIndicatorList = async () => {
             <span class="info-value">{{ currentReportIndicator.name }}</span>
           </div>
           <div class="info-row">
-            <span class="info-label">当前进度：</span>
-            <span class="info-value highlight">{{ currentReportIndicator.progress || 0 }}%</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">月度参考：</span>
-            <span class="info-value monthly-target"
-              >本月建议进度 {{ getMonthlyExpectedProgress() }}%</span
-            >
+            <span class="info-label">自评等级：</span>
+            <span class="info-value highlight">{{
+              { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' }[
+                currentReportIndicator.selfRating
+              ] || '未自评'
+            }}</span>
           </div>
         </div>
 
@@ -973,22 +1017,36 @@ const handleExportIndicatorList = async () => {
 
         <!-- 填报表单 -->
         <el-form label-width="100px" class="report-form">
-          <el-form-item label="填报进度" required>
-            <el-input-number
-              v-model="reportForm.newProgress"
-              :min="0"
-              :max="100"
-              :step="5"
-              style="width: 200px"
-            />
-            <span class="form-hint">%（按本月实际完成情况填写）</span>
+          <el-form-item label="归属月份" required>
+            <el-select v-model="reportForm.reportMonth" placeholder="归属月份" style="width: 240px">
+              <el-option
+                v-for="m in reportMonthOptions"
+                :key="m.value"
+                :label="m.label"
+                :value="m.value"
+                :disabled="m.disabled"
+              />
+            </el-select>
+            <span class="form-hint">仅可填报最早未填报月份；该月审批通过后自动顺延至下月</span>
           </el-form-item>
-          <el-form-item label="进度备注" required>
+          <el-form-item label="自评等级" required>
+            <el-select
+              v-model="reportForm.selfRating"
+              placeholder="请自评进度"
+              style="width: 200px"
+            >
+              <el-option label="超前完成" value="AHEAD" />
+              <el-option label="正常" value="NORMAL" />
+              <el-option label="延期" value="DELAYED" />
+            </el-select>
+            <span class="form-hint">进度按等级定性评价，不再填写百分比</span>
+          </el-form-item>
+          <el-form-item label="进度说明" required>
             <el-input
               v-model="reportForm.remark"
               type="textarea"
               :rows="4"
-              placeholder="请详细备注本次进度更新的工作内容和完成情况..."
+              placeholder="请详细说明本次进度更新的工作内容和完成情况..."
               maxlength="500"
               show-word-limit
             />
@@ -998,6 +1056,7 @@ const handleExportIndicatorList = async () => {
               v-model:file-list="reportUploadFiles"
               action="#"
               :auto-upload="false"
+              multiple
               :limit="5"
               :disabled="isUploadingReportFiles || isSavingReport"
               accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"

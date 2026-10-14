@@ -1,20 +1,18 @@
 /**
  * 数据验证组合式函数
  *
- * 提供统一的数据验证能力，用于验证指标、里程碑、用户等实体数据的完整性和格式
+ * 提供统一的数据验证能力，用于验证指标、用户等实体数据的完整性和格式
  *
- * @requirements 2.4 - Milestone data validation with complete fields
+ * @requirements 2.4 - Indicator data validation with complete fields
  * @requirements 3.4 - statusAudit audit log field validation
  * @requirements 9.4 - Null value handling with default values
  */
 
 import {
   indicatorValidationRules,
-  milestoneValidationRules,
   userValidationRules,
   statusAuditEntryValidationRules,
   indicatorDefaultValues,
-  milestoneDefaultValues,
   userDefaultValues,
   statusAuditEntryDefaultValues,
   type ValidationRule,
@@ -437,14 +435,14 @@ function validateEntity(
 /**
  * 数据验证组合式函数
  *
- * 提供统一的数据验证能力，用于验证指标、里程碑、用户等实体数据
+ * 提供统一的数据验证能力，用于验证指标、用户等实体数据
  *
  * @param options - 验证器选项
  * @returns 验证方法集合
  *
  * @example
  * ```typescript
- * const { validateIndicator, validateMilestone, safeGet } = useDataValidator()
+ * const { validateIndicator, safeGet } = useDataValidator()
  *
  * const result = validateIndicator(indicatorData)
  * if (!result.isValid) {
@@ -475,25 +473,10 @@ export function useDataValidator(options: DataValidatorOptions = {}) {
    * @param indicator - 待验证的指标数据
    * @returns 验证结果
    *
-   * @requirement 2.4 - Milestone data validation
    */
   function validateIndicator(indicator: unknown): ValidationResult {
     const result = validateEntity(indicator, indicatorValidationRules, strict)
     logValidationErrors('Indicator', result)
-    return result
-  }
-
-  /**
-   * 验证里程碑数据
-   *
-   * @param milestone - 待验证的里程碑数据
-   * @returns 验证结果
-   *
-   * @requirement 2.4 - Milestone data validation with complete fields
-   */
-  function validateMilestone(milestone: unknown): ValidationResult {
-    const result = validateEntity(milestone, milestoneValidationRules, strict)
-    logValidationErrors('Milestone', result)
     return result
   }
 
@@ -597,7 +580,6 @@ export function useDataValidator(options: DataValidatorOptions = {}) {
    * ```typescript
    * const name = safeGet(data, 'user.name', '未知用户')
    * const progress = safeGet(indicator, 'progress', 0)
-   * const milestones = safeGet(indicator, 'milestones', [])
    * ```
    */
   function safeGet<T>(obj: unknown, path: string, defaultValue: T): T {
@@ -640,7 +622,7 @@ export function useDataValidator(options: DataValidatorOptions = {}) {
    *
    * @example
    * ```typescript
-   * const results = validateArray(milestones, validateMilestone)
+   * const results = validateArray(items, validateIndicator)
    * const allValid = results.every(r => r.isValid)
    * ```
    */
@@ -685,18 +667,17 @@ export function useDataValidator(options: DataValidatorOptions = {}) {
    * 使用默认值填充对象的空字段
    *
    * @param obj - 源对象
-   * @param entityType - 实体类型 ('indicator' | 'milestone' | 'user' | 'statusAuditEntry')
+   * @param entityType - 实体类型 ('indicator' | 'user' | 'statusAuditEntry')
    * @returns 填充后的对象
    *
    * @requirement 9.4 - Null value handling with default values
    */
   function fillDefaults<T extends Record<string, unknown>>(
     obj: T,
-    entityType: 'indicator' | 'milestone' | 'user' | 'statusAuditEntry'
+    entityType: 'indicator' | 'user' | 'statusAuditEntry'
   ): T {
     const entityDefaults: Record<string, Record<string, unknown>> = {
       indicator: indicatorDefaultValues,
-      milestone: milestoneDefaultValues,
       user: userDefaultValues,
       statusAuditEntry: statusAuditEntryDefaultValues
     }
@@ -752,7 +733,6 @@ export function useDataValidator(options: DataValidatorOptions = {}) {
   return {
     // 实体验证方法
     validateIndicator,
-    validateMilestone,
     validateUser,
     validateStatusAuditEntry,
 
@@ -791,7 +771,6 @@ export type {
 const defaultValidator = useDataValidator()
 
 export const validateIndicator = defaultValidator.validateIndicator
-export const validateMilestone = defaultValidator.validateMilestone
 export const validateUser = defaultValidator.validateUser
 export const validateStatusAuditEntry = defaultValidator.validateStatusAuditEntry
 export const validateDateFormat = defaultValidator.validateDateFormat
