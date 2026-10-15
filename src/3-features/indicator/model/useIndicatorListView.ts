@@ -3459,41 +3459,16 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   // 当年 1~12 月里第一个不存在的月份。数据不可得时降级为当前月（仅一项可选）。
   const lockedReportMonth = ref('')
 
-  function formatReportMonthOption(value: string): { value: string; label: string } {
+  // 2026-10-15 用户定案：归属月份由系统锁定（最早未填报月），填报界面不再提供选择——
+  // 按月顺序依次填报、不可跳月（旧下拉在部分计划下展开为空，反而造成「No data」渲染异常
+  // 与保存失败）。月份改在弹窗顶部作醒目提示，此处只产出纯月份文案，不带「填报」字样。
+  const currentReportMonthLabel = computed(() => {
+    const now = new Date()
+    const fallback = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
+    const value = lockedReportMonth.value || reportForm.value.reportMonth || fallback
     const year = value.slice(0, 4)
     const month = Number(value.slice(4, 6))
-    // 2026-09-27 用户反馈：填报月份按《xx月填报》形式展示，完成后自动顺延到下一月
-    return { value, label: `《${year} 年 ${month} 月填报》` }
-  }
-
-  // 2026-10-10 用户裁决：后端防跳月强校验下，除首项（最早未填报月）外任何月份保存必 409，
-  // 故仅首项可选、其余月份置灰——保留完整月份序列作展示，但视觉上不再误导可选。
-  const reportMonthOptions = computed(() => {
-    const now = new Date()
-    const current = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
-    const start = lockedReportMonth.value || current
-    const options: { value: string; label: string; disabled: boolean }[] = []
-    let year = Number(start.slice(0, 4))
-    let month = Number(start.slice(4, 6))
-    const endYear = Number(current.slice(0, 4))
-    const endMonth = Number(current.slice(4, 6))
-    let guard = 0
-    while ((year < endYear || (year === endYear && month <= endMonth)) && guard < 24) {
-      options.push({
-        ...formatReportMonthOption(`${year}${String(month).padStart(2, '0')}`),
-        disabled: options.length > 0
-      })
-      month += 1
-      if (month > 12) {
-        month = 1
-        year += 1
-      }
-      guard += 1
-    }
-    if (options.length === 0) {
-      options.push({ ...formatReportMonthOption(start), disabled: false })
-    }
-    return options
+    return `${year} 年 ${month} 月`
   })
 
   async function resolveEarliestUnfilledReportMonth(
@@ -4996,7 +4971,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     reportAttachmentObjectUrls,
     reportDialogVisible,
     reportForm,
-    reportMonthOptions,
+    currentReportMonthLabel,
     reportUploadFiles,
     resetFilters,
     resolveDialogAttachments,

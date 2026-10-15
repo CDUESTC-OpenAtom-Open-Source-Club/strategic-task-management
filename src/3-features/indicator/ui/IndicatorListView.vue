@@ -12,7 +12,8 @@ import {
   Close,
   Upload,
   Edit,
-  Refresh
+  Refresh,
+  Calendar
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import type { StrategicIndicator } from '@/shared/types'
@@ -236,6 +237,7 @@ const {
   reportAttachmentObjectUrls,
   reportDialogVisible,
   reportForm,
+  currentReportMonthLabel,
   reportUploadFiles,
   resetFilters,
   resolveDialogAttachments,
@@ -1015,20 +1017,19 @@ const handleExportIndicatorList = async () => {
 
         <el-divider />
 
+        <!-- 2026-10-15 用户定案：归属月份由系统锁定（最早未填报月），不可选择——
+             按月顺序依次填报、不能跳月，故不再提供下拉，改为顶部醒目提示。 -->
+        <div class="report-month-banner">
+          <el-icon class="report-month-banner__icon"><Calendar /></el-icon>
+          <div class="report-month-banner__body">
+            <span class="report-month-banner__label">本次填报归属月份</span>
+            <span class="report-month-banner__value">{{ currentReportMonthLabel }}</span>
+          </div>
+          <span class="report-month-banner__hint">按月顺序填报，不可跳月</span>
+        </div>
+
         <!-- 填报表单 -->
         <el-form label-width="100px" class="report-form">
-          <el-form-item label="归属月份" required>
-            <el-select v-model="reportForm.reportMonth" placeholder="归属月份" style="width: 240px">
-              <el-option
-                v-for="m in reportMonthOptions"
-                :key="m.value"
-                :label="m.label"
-                :value="m.value"
-                :disabled="m.disabled"
-              />
-            </el-select>
-            <span class="form-hint">仅可填报最早未填报月份；该月审批通过后自动顺延至下月</span>
-          </el-form-item>
           <el-form-item label="自评等级" required>
             <el-select
               v-model="reportForm.selfRating"
