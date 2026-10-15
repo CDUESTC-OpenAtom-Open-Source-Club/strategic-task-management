@@ -1002,10 +1002,15 @@ async function resolveIndicatorReportContext(
         ? 'functional_dept'
         : authStore.effectiveRole
 
+  // 2026-10-15 修复「无法定位关联计划，无法保存填报」（职能部门填报全链路不可用）：
+  // 原第三个条件（本人 orgId==目标 && owner!=目标）会把「职能部门收到战略部下发指标」这一
+  // 普通场景误判为学院上下文，进而只按 FUNC_TO_COLLEGE 精确匹配，STRAT_TO_FUNC 计划匹配失败
+  // 直接 return null。补充「目标部门确实是学院」限定，职能部门走通用 target+year 匹配。
   const isCollegeReportContext =
     inferredRole === 'secondary_college' ||
     String(targetDepartmentName).includes('学院') ||
-    (Number(authStore.user?.orgId ?? NaN) > 0 &&
+    (matchedDepartment?.type === 'secondary_college' &&
+      Number(authStore.user?.orgId ?? NaN) > 0 &&
       Number(authStore.user?.orgId ?? NaN) === reportOrgId &&
       Number(indicatorData.ownerOrgId ?? NaN) > 0 &&
       Number(indicatorData.ownerOrgId ?? NaN) !== reportOrgId)
@@ -1086,12 +1091,18 @@ async function resolveIndicatorReportContext(
           })
 
         if (taskResponse.status >= 200 && taskResponse.status < 300) {
-          const taskPayload =
-            taskResponse.data &&
-            typeof taskResponse.data === 'object' &&
-            'data' in taskResponse.data
-              ? ((taskResponse.data as { data?: Record<string, unknown> }).data ?? null)
-              : (taskResponse.data as Record<string, unknown> | null)
+          // 2026-10-15 修复「无法定位关联计划，无法保存填报」：
+          // apiClient 拦截器已解包 ApiResponse，r.data 就是任务对象本身；
+          // 原判定 `'data' in r.data` 在任务对象恰含 data 字段或结构不符时取到 null，
+          // 导致 planId 丢失。改为兼容两种结构：优先取嵌套 data，缺失时回退顶层对象。
+          const rawTaskData = taskResponse.data as
+            | (Record<string, unknown> & { data?: Record<string, unknown> })
+            | null
+          const nestedTaskData =
+            rawTaskData && typeof rawTaskData === 'object' && rawTaskData.data
+              ? rawTaskData.data
+              : null
+          const taskPayload = nestedTaskData ?? rawTaskData
 
           if (taskPayload) {
             const taskPlanId = Number(taskPayload.planId ?? taskPayload.plan_id)
