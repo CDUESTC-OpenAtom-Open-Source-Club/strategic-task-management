@@ -2591,7 +2591,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return { label: '已审批', type: 'success' as StatusTagType }
     }
     if (uiStatus === 'REJECTED') {
-      return { label: '已驳回', type: 'danger' as StatusTagType }
+      return { label: '已回退', type: 'danger' as StatusTagType }
     }
     if (['SUBMITTED', 'IN_REVIEW', 'PENDING'].includes(uiStatus)) {
       return { label: '审批中', type: 'warning' as StatusTagType }
@@ -2760,9 +2760,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       workflowStatus === 'CANCELLED'
     ) {
       return {
-        label: '已退回',
+        label: '已回退',
         type: 'danger' as const,
-        description: stepName ? `当前流程已在“${stepName}”环节退回。` : '当前计划审批流程已退回。'
+        description: stepName ? `当前流程已在“${stepName}”环节退回。` : '当前计划审批流程已回退。'
       }
     }
 

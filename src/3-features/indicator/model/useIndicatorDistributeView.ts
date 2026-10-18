@@ -31,6 +31,10 @@ import { alertApi, type ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import type { Plan } from '@/shared/types'
 import { canUseAsFunctionalParentIndicator } from '@/features/indicator/lib/scope'
 import { getPlanStatusDisplay, normalizePlanStatus } from '@/features/task/lib/planStatus'
+import {
+  MANUAL_ALERT_LOCKED_HINT,
+  MANUAL_ALERT_WORKFLOW_LOCKED_HINT
+} from '@/features/task/lib/warning-level'
 import { strategicApi } from '@/features/task/api/strategicApi'
 import { getWorkflowDefinitionPreviewByCode } from '@/features/workflow/api'
 import type {
@@ -1225,9 +1229,9 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       workflowStatus === 'CANCELLED'
     ) {
       return {
-        label: '已退回',
+        label: '已回退',
         tagType: 'danger' as const,
-        description: stepName ? `当前流程已在“${stepName}”环节退回。` : '当前计划审批流程已退回。'
+        description: stepName ? `当前流程已在“${stepName}”环节退回。` : '当前计划审批流程已回退。'
       }
     }
 
@@ -4136,10 +4140,27 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     return normalized.some(role => MANUAL_ALERT_WRITE_ROLES.includes(role))
   })
 
+  // 2026-10-18 用户定案：鉴定进度等级是上报审批过程中的状态——
+  // 仅「计划已下发 + 上报审批流程进行中」可调整；平时（流程未发起/已结束/已回退）锁死。
+  const childManualAlertWorkflowInFlight = computed(() =>
+    ['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(
+      normalizedCurrentActiveCollegeWorkflowStatus.value
+    )
+  )
+
   const childManualAlertEditable = computed(
     () =>
-      canEditChildManualAlert.value && normalizedSelectedCollegePlanStatus.value === 'DISTRIBUTED'
+      canEditChildManualAlert.value &&
+      normalizedSelectedCollegePlanStatus.value === 'DISTRIBUTED' &&
+      childManualAlertWorkflowInFlight.value
   )
+
+  const childManualAlertLockHint = computed(() => {
+    if (normalizedSelectedCollegePlanStatus.value !== 'DISTRIBUTED') {
+      return MANUAL_ALERT_LOCKED_HINT
+    }
+    return MANUAL_ALERT_WORKFLOW_LOCKED_HINT
+  })
 
   const getChildManualAlertSeverity = (
     child: StrategicIndicator | NewChildIndicator | null | undefined
@@ -4326,6 +4347,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     // ===== 子指标进度等级（与战略任务管理页同一后端能力；写权限后续按角色放开）=====
     canEditChildManualAlert,
     childManualAlertEditable,
+    childManualAlertLockHint,
     childManualAlertLevels,
     getChildManualAlertLabel,
     getChildManualAlertSeverity,

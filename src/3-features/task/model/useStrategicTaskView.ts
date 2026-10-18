@@ -1100,9 +1100,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       workflowStatus === 'CANCELLED'
     ) {
       return {
-        label: '已退回',
+        label: '已回退',
         tagType: 'danger' as const,
-        description: stepName ? `当前流程已在“${stepName}”环节退回。` : '当前计划审批流程已退回。'
+        description: stepName ? `当前流程已在“${stepName}”环节退回。` : '当前计划审批流程已回退。'
       }
     }
 
@@ -1274,7 +1274,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
     const status = currentPlanStatus.value
     // 2026-10-10 跨窗口实时修复：状态守卫读的是本地（可能过期的）计划状态。
-    // 他窗"重新发起审批"时本窗状态是 DRAFT/已退回，若守卫拦下 force 刷新，
+    // 他窗"重新发起审批"时本窗状态是 DRAFT/已回退，若守卫拦下 force 刷新，
     // 详情永远拉不回来。force 是明确的"有变更要收敛"信号，必须放行。
     if (!options.force && status !== 'PENDING' && status !== 'DISTRIBUTED') {
       return
@@ -2241,7 +2241,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       handleCloseApprovalSetupDialog()
       ElMessage.success('已发起整体计划审批')
       // 只刷新消息铃铛（message 域）；不做全量广播——提交瞬间回源只会拉回
-      // 尚未回写的旧审批状态，把乐观补丁冲回「已退回」。
+      // 尚未回写的旧审批状态，把乐观补丁冲回「已回退」。
       requestGlobalDataRefresh({
         source: 'message-mutation',
         silent: true,
@@ -3599,7 +3599,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   })
 
   // 2026-10-07 重新发起审批：提交成功后后端工作流回写是异步的，窗口期内全局刷新
-  // 拉回的可能是旧的「已退回」状态，会冲掉乐观补丁，导致必须手动刷新才更新。
+  // 拉回的可能是旧的「已回退」状态，会冲掉乐观补丁，导致必须手动刷新才更新。
   // 提交后 20s 内挂起外部触发的视图刷新，由提交链路的等待+强刷负责收敛。
   // 2026-10-10 跨窗口实时修复④：挂起期内到达的审批推送不再直接丢弃——
   // 记录挂起并在到期后补一次定向刷新，否则他人恰在挂起窗口内审批时

@@ -19,42 +19,59 @@ export interface ImportTemplateGuide {
   rules: string[]
 }
 
+// 2026-10-18 用户定案：导入模板表头与「战略任务指标总表」导出表完全一致（内部ID/序号/部门/
+// 战略任务/核心指标/指标类型/任务类别/备注/权重/鉴定进度等级/附件），不再使用独立定死的表头。
+// 系统按列名识别（别名兼容），「序号」「鉴定进度等级」「附件」为阅读列，导入时自动忽略。
 const strategicImportGuide: ImportTemplateGuide = {
   title: '职能部门指标表示例',
   targetName: '职能部门',
   columns: [
-    { key: 'department', label: '职能部门' },
-    { key: 'taskType', label: '任务类型', required: true },
+    { key: 'indicatorId', label: '内部ID' },
+    { key: 'serial', label: '序号' },
+    { key: 'department', label: '部门' },
     { key: 'strategicTask', label: '战略任务', required: true },
     { key: 'indicatorName', label: '核心指标', required: true },
     { key: 'indicatorType', label: '指标类型', required: true },
+    { key: 'taskCategory', label: '任务类别', required: true },
+    { key: 'remark', label: '备注' },
     { key: 'weight', label: '权重' },
-    { key: 'remark', label: '备注' }
+    { key: 'manualLevel', label: '鉴定进度等级' },
+    { key: 'attachment', label: '附件' }
   ],
   rows: [
     {
+      indicatorId: '2001',
+      serial: '1',
       department: '教务处',
-      taskType: '发展性',
       strategicTask: '推进本科教育教学改革',
       indicatorName: '建设智慧教学质量监测体系',
       indicatorType: '定量',
+      taskCategory: '基础性',
+      remark: '带内部ID：按ID精确更新原指标',
       weight: '20%',
-      remark: '可填写说明'
+      manualLevel: '',
+      attachment: ''
     },
     {
+      indicatorId: '',
+      serial: '2',
       department: '教务处',
-      taskType: '基础性',
       strategicTask: '完善专业建设质量保障机制',
       indicatorName: '完成重点专业年度质量报告',
       indicatorType: '定性',
+      taskCategory: '发展性',
+      remark: '内部ID留空：按任务名+指标名匹配，匹配不到自动新增',
       weight: '15',
-      remark: ''
+      manualLevel: '',
+      attachment: ''
     }
   ],
   rules: [
-    '表头建议放在第一行，列顺序可以调整，系统会按列名识别。',
-    '必填列：任务类型、战略任务、核心指标、指标类型；如果填写职能部门，必须和当前选择的职能部门一致。',
-    '权重支持 10、10%、0.1 三种写法，系统会统一换算为百分制。'
+    '表头与「战略任务指标总表」导出表完全一致，列顺序可调整，系统按列名识别；推荐直接在导出表上修改后回导。',
+    '「内部ID」选填：填写导出表中的内部ID即按 ID 精确更新原指标（ID 不变不会删除重建）；留空则按「战略任务+核心指标」名称匹配，匹配不到自动新增。',
+    '必填列：任务类别、战略任务、核心指标、指标类型；「部门」如填写必须与当前选择的职能部门一致（留空则默认导入当前部门）。',
+    '权重支持 10、10%、0.1 三种写法，系统会统一换算为百分制；同一任务下基础性权重合计需为 100。',
+    '「序号」「鉴定进度等级」「附件」为导出表阅读列，导入时自动忽略，无需填写。'
   ]
 }
 
