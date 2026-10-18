@@ -1827,6 +1827,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       <ReportStatusCell :indicator-id="row.id" />
                     </template>
                   </el-table-column>
+                  <el-table-column label="进度说明" min-width="160">
+                    <template #default="{ row }">
+                      <span>{{ row.pendingRemark || '—' }}</span>
+                    </template>
+                  </el-table-column>
                   <el-table-column prop="remark" label="备注" width="160">
                     <template #default="{ row }">
                       <span class="indicator-name-text remark-text-wrap">{{
