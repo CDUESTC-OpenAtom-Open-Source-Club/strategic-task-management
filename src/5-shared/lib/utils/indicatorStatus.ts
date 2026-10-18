@@ -45,7 +45,7 @@ export const APPROVAL_STATUS_TEXT_MAP: Record<ProgressApprovalStatus, string> = 
   NONE: '无',
   PENDING: '审批中',
   APPROVED: '已批准',
-  REJECTED: '已驳回'
+  REJECTED: '已回退'
 }
 
 /**

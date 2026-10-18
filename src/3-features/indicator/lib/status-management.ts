@@ -88,7 +88,7 @@ export function getApprovalStatusText(status: string): string {
     [ProgressApprovalStatus.DRAFT]: '草稿',
     [ProgressApprovalStatus.PENDING]: '审批中',
     [ProgressApprovalStatus.APPROVED]: '已通过',
-    [ProgressApprovalStatus.REJECTED]: '已驳回'
+    [ProgressApprovalStatus.REJECTED]: '已回退'
   }
 
   return config[status] || '未知状态'
@@ -118,7 +118,7 @@ export function getWorkflowStatusText(status: string): string {
     [WorkflowStatus.PENDING_DISTRIBUTION]: '待确认接收',
     [WorkflowStatus.DISTRIBUTED]: '已下发',
     [WorkflowStatus.PENDING_APPROVAL]: '审批中',
-    [WorkflowStatus.REJECTED]: '已驳回',
+    [WorkflowStatus.REJECTED]: '已回退',
     [WorkflowStatus.COMPLETED]: '已完成'
   }
 

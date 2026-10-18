@@ -106,7 +106,7 @@ describe('Advanced Status Management', () => {
       expect(getApprovalStatusText(ProgressApprovalStatus.NONE)).toBe('无待审批')
       expect(getApprovalStatusText(ProgressApprovalStatus.PENDING)).toBe('审批中')
       expect(getApprovalStatusText(ProgressApprovalStatus.APPROVED)).toBe('已通过')
-      expect(getApprovalStatusText(ProgressApprovalStatus.REJECTED)).toBe('已驳回')
+      expect(getApprovalStatusText(ProgressApprovalStatus.REJECTED)).toBe('已回退')
     })
 
     it('should get correct approval tag type', () => {
@@ -123,7 +123,7 @@ describe('Advanced Status Management', () => {
       expect(getWorkflowStatusText(WorkflowStatus.PENDING_DISTRIBUTION)).toBe('待确认接收')
       expect(getWorkflowStatusText(WorkflowStatus.DISTRIBUTED)).toBe('已下发')
       expect(getWorkflowStatusText(WorkflowStatus.PENDING_APPROVAL)).toBe('审批中')
-      expect(getWorkflowStatusText(WorkflowStatus.REJECTED)).toBe('已驳回')
+      expect(getWorkflowStatusText(WorkflowStatus.REJECTED)).toBe('已回退')
       expect(getWorkflowStatusText(WorkflowStatus.COMPLETED)).toBe('已完成')
     })
 

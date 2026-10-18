@@ -227,7 +227,7 @@ const getCandidateSummary = (node: WorkflowNode) => {
                   size="small"
                 >
                   <el-icon><Close /></el-icon>
-                  已驳回
+                  已回退
                 </ElTag>
                 <ElTag
                   v-else-if="node.status === 'withdrawn'"
@@ -237,7 +237,7 @@ const getCandidateSummary = (node: WorkflowNode) => {
                   size="small"
                 >
                   <el-icon><Close /></el-icon>
-                  已撤回
+                  已回退
                 </ElTag>
                 <ElTag
                   v-else-if="node.status === 'waiting'"

@@ -67,7 +67,7 @@ const getStatusConfig = (status: PlanFillStatus) => {
   const configs: Record<PlanFillStatus, { label: string; type: string; icon: unknown }> = {
     submitted: { label: '待审核', type: 'warning', icon: Clock },
     approved: { label: '已通过', type: 'success', icon: Check },
-    rejected: { label: '已驳回', type: 'danger', icon: Close }
+    rejected: { label: '已回退', type: 'danger', icon: Close }
   }
   return configs[status]
 }
@@ -317,7 +317,7 @@ defineExpose({
 
             <!-- 附件 -->
             <div v-if="fill.attachments && fill.attachments.length > 0" class="fill-attachments">
-              <span class="attachments-label">附件: </span>
+              <span class="attachments-label">上报资料: </span>
               <span class="attachments-count">{{ fill.attachments.length }} 个文件</span>
             </div>
 

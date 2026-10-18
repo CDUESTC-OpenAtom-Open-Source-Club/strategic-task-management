@@ -220,7 +220,7 @@ watch(
         />
       </ElFormItem>
 
-      <ElFormItem label="附件">
+      <ElFormItem label="上报资料">
         <ElUpload
           v-model:file-list="fileList"
           action="#"

@@ -53,7 +53,7 @@ export const WORKFLOW_STATUS_CONFIG = {
     type: 'warning'
   },
   [WorkflowStatus.REJECTED]: {
-    label: '已驳回',
+    label: '已回退',
     type: 'danger'
   },
   [WorkflowStatus.COMPLETED]: {

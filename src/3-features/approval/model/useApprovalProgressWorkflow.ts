@@ -650,14 +650,14 @@ export function useApprovalProgressWorkflow({
             workflowStatus: 'REJECTED',
             canWithdraw: false,
             currentTaskId: null,
-            currentStepName: '已驳回'
+            currentStepName: '已回退'
           })
           emit('refresh', {
             status: 'DRAFT',
             workflowStatus: 'REJECTED',
             canWithdraw: false,
             currentTaskId: null,
-            currentStepName: '已驳回'
+            currentStepName: '已回退'
           })
           await refreshPlanApprovalAfterMutation()
           ElMessage.success('审批已驳回')
@@ -712,14 +712,14 @@ export function useApprovalProgressWorkflow({
           workflowStatus: 'REJECTED',
           canWithdraw: false,
           currentTaskId: null,
-          currentStepName: '已驳回'
+          currentStepName: '已回退'
         })
         emit('refresh', {
           status: 'DRAFT',
           workflowStatus: 'REJECTED',
           canWithdraw: false,
           currentTaskId: null,
-          currentStepName: '已驳回'
+          currentStepName: '已回退'
         })
         await refreshPlanApprovalAfterMutation()
         ElMessage.success(`已一键驳回 ${state.scopedPlanApprovals.value.length} 条审批实例`)
@@ -737,8 +737,17 @@ export function useApprovalProgressWorkflow({
       return '--'
     }
 
-    const date = new Date(timestamp)
+    // 2026-10-18：与 formatStayDuration 统一口径——无时区标记的裸串按北京时间解析并渲染
+    const trimmed = String(timestamp).trim()
+    const normalized = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(trimmed)
+      ? `${trimmed.replace(' ', 'T')}+08:00`
+      : trimmed
+    const date = new Date(normalized)
+    if (Number.isNaN(date.getTime())) {
+      return '--'
+    }
     return date.toLocaleString('zh-CN', {
+      timeZone: 'Asia/Shanghai',
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',

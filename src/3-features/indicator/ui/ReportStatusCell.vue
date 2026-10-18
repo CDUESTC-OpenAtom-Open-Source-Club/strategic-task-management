@@ -20,7 +20,7 @@ const label = () => {
     case 'submitted':
       return '审批中'
     case 'rejected':
-      return '已驳回'
+      return '已回退'
     default:
       return '未填报'
   }

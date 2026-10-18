@@ -498,7 +498,7 @@ export class MockApiHandler {
             ...mockWorkflowInstanceDetail,
             status: 'REJECTED',
             currentTaskId: undefined,
-            currentStepName: '已驳回'
+            currentStepName: '已回退'
           },
           '审批驳回成功'
         )
