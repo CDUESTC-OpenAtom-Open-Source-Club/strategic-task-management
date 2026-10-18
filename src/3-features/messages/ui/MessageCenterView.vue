@@ -208,7 +208,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import MessageList from '@/shared/ui/message/MessageList.vue'
@@ -266,7 +266,7 @@ const typeFilterOptions = [
 const processedFilterOptions = [
   { label: '全部结果', value: 'all' },
   { label: '已通过', value: 'approved' },
-  { label: '已驳回', value: 'rejected' }
+  { label: '已回退', value: 'rejected' }
 ] as const
 
 const currentPrimaryMessages = computed(() => {
@@ -334,7 +334,7 @@ function getEmptyDescription(): string {
       ? processedFilter.value === 'approved'
         ? '中的已通过审批'
         : processedFilter.value === 'rejected'
-          ? '中的已驳回审批'
+          ? '中的已回退审批'
           : ''
       : ''
   const typeLabel =
@@ -433,7 +433,7 @@ function isRejectedMessage(message: Message): boolean {
   return (
     message.bizType === 'APPROVAL_RESULT' &&
     (normalized.includes('驳回') ||
-      normalized.includes('已驳回') ||
+      normalized.includes('已回退') ||
       normalized.includes('REJECTED') ||
       normalized.includes('REJECT'))
   )
@@ -871,7 +871,66 @@ const DINGTALK_SOURCE_ID_RE = /^sism-approval-([A-Z_]+)-(\d+)-(\d+)(?:-(\d+))?$/
  * - approvalInstanceId：铃铛悬浮单条消息跳转（2026-10-07）
  * 用户无需在列表中手动查找。
  */
+/**
+ * 消费工作台式审批参数（openApproval=1 & approvalEntityType & approvalEntityId）。
+ * 落在 /messages 时按审批实例找到对应待办并打开审批中心。
+ */
+async function tryOpenApprovalFromWorkbenchQuery(): Promise<boolean> {
+  const rawOpen = String(route.query.openApproval ?? '')
+    .trim()
+    .toLowerCase()
+  const entityType = String(route.query.approvalEntityType ?? '')
+    .trim()
+    .toUpperCase()
+  const entityId = String(route.query.approvalEntityId ?? '').trim()
+  const instanceId = String(route.query.approvalInstanceId ?? '').trim()
+
+  if (rawOpen !== '1' && rawOpen !== 'true' && rawOpen !== 'yes') {
+    return false
+  }
+  if (!entityType && !instanceId) {
+    return false
+  }
+
+  const nextQuery = { ...route.query }
+  for (const key of [
+    'openApproval',
+    'approvalEntityType',
+    'approvalEntityId',
+    'approvalInstanceId',
+    'approvalDepartment'
+  ]) {
+    delete nextQuery[key]
+  }
+  await router.replace({ query: nextQuery })
+
+  const candidates = messageStore.todoMessages
+  const target =
+    (instanceId
+      ? candidates.find(m => String(m.approvalInstanceId ?? '') === instanceId)
+      : undefined) ||
+    (entityType && entityId
+      ? candidates.find(
+          m =>
+            String(m.entityType ?? '').toUpperCase() === entityType &&
+            String(m.entityId ?? '') === entityId
+        )
+      : undefined)
+
+  if (target) {
+    handleMessageView(target)
+    return true
+  }
+  return false
+}
+
 async function autoOpenApprovalFromRoute() {
+  // 2026-10-18 用户反馈：铃铛卡片跳转可能带 openApproval=1 + approvalEntityType/Id 组合
+  // （工作台路由形式），落地在消息中心页时同样要能打开对应审批，不能静默失败。
+  if (await tryOpenApprovalFromWorkbenchQuery()) {
+    return
+  }
+
   const rawSourceId = route.query.sourceId
   const rawApprovalInstanceId = route.query.approvalInstanceId
   const hasSourceId = typeof rawSourceId === 'string' && rawSourceId.length > 0
@@ -909,6 +968,15 @@ onMounted(async () => {
   await refreshData()
   await autoOpenApprovalFromRoute()
 })
+
+// 2026-10-18 用户反馈：已停留在消息中心页时再点铃铛审批卡片，
+// 组件不会重新挂载，必须 watch 路由参数才能自动打开对应审批。
+watch(
+  () => [route.query.approvalInstanceId, route.query.sourceId],
+  () => {
+    void autoOpenApprovalFromRoute()
+  }
+)
 </script>
 
 <style scoped>
