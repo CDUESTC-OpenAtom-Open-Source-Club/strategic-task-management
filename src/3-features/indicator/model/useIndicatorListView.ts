@@ -2206,7 +2206,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   const reportDetailOverlay = ref<Record<string, any>>({})
 
   // 2026-10-07 裁决：等级制列数据回显——用「未提交草稿明细（优先）+ 当月报告摘要」
-  // 覆盖自评等级/进度说明/附件，全部填报角色（职能部门+二级学院）生效。
+  // 覆盖自评等级/附件（说明字段已下线，仅历史数据保留），全部填报角色（职能部门+二级学院）生效。
   const applyReportDetailOverlay = (list: StrategicIndicator[]): StrategicIndicator[] => {
     if (
       !Array.isArray(currentPlanReportSummary.value?.indicatorDetails) &&
@@ -4064,12 +4064,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     // 2026-10-07 裁决：进度改为等级制（自评等级），不再采集百分比数值
     if (!reportForm.value.selfRating) {
       ElMessage.warning('请选择自评等级')
-      return
-    }
-
-    // 验证：必须填写说明
-    if (!reportForm.value.remark.trim()) {
-      ElMessage.warning('请填写进度说明')
       return
     }
 

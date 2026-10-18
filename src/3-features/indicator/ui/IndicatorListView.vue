@@ -336,7 +336,6 @@ const buildIndicatorListExportColumns = (
       align: 'center',
       getValue: row => getManualAlertLabel(row.manualAlertSeverity)
     },
-    { header: '填报说明', width: 28, getValue: row => row.pendingRemark || '-' },
     {
       header: '附件',
       width: 42,
@@ -729,13 +728,6 @@ const handleExportIndicatorList = async () => {
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="进度说明" min-width="160">
-                <template #default="{ row }">
-                  <span class="pending-remark-text" :title="row.pendingRemark || ''">{{
-                    row.pendingRemark || '—'
-                  }}</span>
-                </template>
-              </el-table-column>
               <el-table-column label="附件" width="90" align="center">
                 <template #default="{ row }">
                   <span
@@ -1041,16 +1033,6 @@ const handleExportIndicatorList = async () => {
               <el-option label="延期" value="DELAYED" />
             </el-select>
             <span class="form-hint">进度按等级定性评价，不再填写百分比</span>
-          </el-form-item>
-          <el-form-item label="进度说明" required>
-            <el-input
-              v-model="reportForm.remark"
-              type="textarea"
-              :rows="4"
-              placeholder="请详细说明本次进度更新的工作内容和完成情况..."
-              maxlength="500"
-              show-word-limit
-            />
           </el-form-item>
           <el-form-item label="附件（可选）">
             <el-upload
