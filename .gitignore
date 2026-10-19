@@ -18,6 +18,9 @@ dist-ssr
 server/.env
 .env.local
 .env.*.local
+# 2026-10-20：生产环境变量文件含密钥，禁止入库（由 CI Secrets / 部署侧注入）
+.env.production
+.env.production.*
 # 保留模板（不含真实密钥）
 !.env.example
 

@@ -112,6 +112,9 @@ jobs:
             VITE_ENABLE_DEVTOOLS=false
             VITE_LOG_LEVEL=warn
             VITE_APP_COMMIT_HASH=${{ github.sha }}
+            # 2026-10-20：生产密钥从仓库 Secrets 注入（.env.production 已不入库）
+            VITE_API_SECRET=${{ secrets.VITE_API_SECRET }}
+            VITE_STORAGE_KEY=${{ secrets.VITE_STORAGE_KEY }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
