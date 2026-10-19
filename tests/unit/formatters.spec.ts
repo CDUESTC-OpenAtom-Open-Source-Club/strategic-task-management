@@ -190,7 +190,7 @@ describe('Formatters - Label Functions', () => {
     })
 
     it('should return correct label for rejected', () => {
-      expect(getStatusLabel('rejected')).toBe('已驳回')
+      expect(getStatusLabel('rejected')).toBe('已回退')
     })
 
     it('should return correct label for draft', () => {
