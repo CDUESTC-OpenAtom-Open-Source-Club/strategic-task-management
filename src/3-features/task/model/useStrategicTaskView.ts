@@ -1920,7 +1920,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   })
 
   const { routeApprovalEntityType, routeApprovalEntityId } = useApprovalRouteAutopen({
-    supportedEntityTypes: ['PLAN', 'PLAN_REPORT'] as const,
+    supportedEntityTypes: ['PLAN', 'PLAN_REPORT', 'INDICATOR'] as const,
     onAutoOpen: async () => {
       retainedRouteApprovalEntityType.value = routeApprovalEntityType.value
       retainedRouteApprovalEntityId.value = routeApprovalEntityId.value

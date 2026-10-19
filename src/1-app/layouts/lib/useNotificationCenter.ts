@@ -66,23 +66,15 @@ export function useNotificationCenter() {
     }
 
     if (message) {
-      // 2026-10-18 用户反馈：铃铛「待审批」卡片应像其他入口一样，
-      // 跳到「对应的看板界面」并自动打开审批中心，而不是永远落在消息中心页。
-      // 已处理的通知（通过/驳回）仍落在消息中心查看详情，避免跳去没有待办的工作台。
-      const isApprovalTodo =
-        message.bizType === 'APPROVAL_TODO' ||
-        message.actionState === 'ACTION_REQUIRED' ||
-        message.canProcess === true
+      // 2026-10-19 用户定案：铃铛里「待审批」与「普通通知」都要能跳到对应看板并
+      // 自动打开审批中心——通知类（通过/回退/流程推进）同样携带审批实例，
+      // 用户点开就能看到该实例的完整审批看板，而不是只落在消息中心列表。
+      const hasApprovalContext =
+        (message.approvalInstanceId !== undefined && message.approvalInstanceId !== null) ||
+        Boolean(message.entityType && message.entityId)
 
-      if (!isApprovalTodo) {
-        const approvalInstanceId = message.approvalInstanceId
-        if (approvalInstanceId !== undefined && approvalInstanceId !== null) {
-          router.push({
-            path: '/messages',
-            query: { approvalInstanceId: String(approvalInstanceId) }
-          })
-          return
-        }
+      if (!hasApprovalContext) {
+        // 无审批上下文的纯系统/催办通知：仍进消息中心
         router.push('/messages')
         return
       }

@@ -973,7 +973,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     routeApprovalDepartment,
     shouldAutoOpenApprovalFromRoute
   } = useApprovalRouteAutopen({
-    supportedEntityTypes: ['PLAN', 'PLAN_REPORT'] as const,
+    supportedEntityTypes: ['PLAN', 'PLAN_REPORT', 'INDICATOR'] as const,
     onAutoOpen: () => Promise.resolve().then(() => handleOpenApproval()),
     onClearFailure: error => {
       logger.warn('[IndicatorDistributeView] 清理审批自动打开参数失败:', error)

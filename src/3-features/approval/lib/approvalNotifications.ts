@@ -245,21 +245,21 @@ export function resolveApprovalRoute(payload: ApprovalRoutePayload): string | nu
     .trim()
     .toUpperCase()
 
-  if (entityType === 'PLAN' || entityType === 'PLAN_REPORT') {
-    const baseRoute = preferredWorkbenchRoute
-      ? explicitRoute
-        ? replaceRoutePath(explicitRoute, preferredWorkbenchRoute)
-        : preferredWorkbenchRoute
-      : explicitRoute
-
-    return baseRoute ? appendApprovalContext(baseRoute, payload) : null
+  // 2026-10-19 用户定案：只要解析得出工作台路由，就优先落到工作台并自动打开审批中心。
+  // 此前 INDICATOR（异动）走 explicitRoute 分支，通知里的 actionUrl 是
+  // /messages?approvalInstanceId=N，结果被拉回消息中心，打不开审批看板。
+  if (preferredWorkbenchRoute) {
+    const baseRoute = explicitRoute
+      ? replaceRoutePath(explicitRoute, preferredWorkbenchRoute)
+      : preferredWorkbenchRoute
+    return appendApprovalContext(baseRoute, payload)
   }
 
   if (explicitRoute) {
     return appendApprovalContext(explicitRoute, payload)
   }
 
-  return preferredWorkbenchRoute ? appendApprovalContext(preferredWorkbenchRoute, payload) : null
+  return null
 }
 
 export function notifyApprovalStateRefresh(detail: ApprovalStateRefreshDetail = {}): void {
