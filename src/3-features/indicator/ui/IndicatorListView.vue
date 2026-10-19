@@ -114,6 +114,7 @@ const {
   currentPlanReportUiStatus,
   currentPlanStatus,
   currentMonthlyReportStatusMeta,
+  monthlySequenceStatusMeta,
   currentPlanWorkflowDetail,
   currentReportIndicator,
   currentTaskIndex,
@@ -479,12 +480,8 @@ const handleExportIndicatorList = async () => {
         <div class="card-header">
           <span class="card-title">指标列表</span>
           <div class="header-actions">
-            <el-tag
-              size="small"
-              class="overall-status-tag"
-              :type="currentMonthlyReportStatusMeta.type"
-            >
-              本月上报状态: {{ currentMonthlyReportStatusMeta.label }}
+            <el-tag size="small" class="overall-status-tag" :type="monthlySequenceStatusMeta.type">
+              {{ monthlySequenceStatusMeta.label }}
             </el-tag>
             <el-popover
               placement="top-start"
@@ -1018,17 +1015,8 @@ const handleExportIndicatorList = async () => {
 
         <el-divider />
 
-        <!-- 2026-10-15 用户定案：归属月份由系统锁定（最早未填报月），不可选择——
-             按月顺序依次填报、不能跳月，故不再提供下拉，改为顶部醒目提示。 -->
-        <div class="report-month-banner">
-          <el-icon class="report-month-banner__icon"><Calendar /></el-icon>
-          <div class="report-month-banner__body">
-            <span class="report-month-banner__label">本次填报归属月份</span>
-            <span class="report-month-banner__value">{{ currentReportMonthLabel }}</span>
-          </div>
-          <span class="report-month-banner__hint">按月顺序填报，不可跳月</span>
-        </div>
-
+        <!-- 2026-10-19 用户定案：归属月份属整体计划上报口径（列表层展示），
+             单个指标的填报弹窗不再重复展示月份横幅。 -->
         <!-- 填报表单 -->
         <el-form label-width="100px" class="report-form">
           <el-form-item label="自评等级" required>
