@@ -660,7 +660,7 @@ const handleExportIndicatorList = async () => {
                   </el-tooltip>
                 </template>
               </el-table-column>
-              <el-table-column prop="name" label="核心指标" min-width="228">
+              <el-table-column prop="name" label="核心指标" min-width="196">
                 <template #default="{ row }">
                   <div class="indicator-name-cell" @dblclick="handleIndicatorDblClick(row, 'name')">
                     <el-input
@@ -695,7 +695,7 @@ const handleExportIndicatorList = async () => {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column prop="weight" label="权重" width="82" align="center">
+              <el-table-column prop="weight" label="权重" width="76" align="center">
                 <template #default="{ row }">
                   <div class="weight-cell" @dblclick="handleIndicatorDblClick(row, 'weight')">
                     <el-input
@@ -732,7 +732,7 @@ const handleExportIndicatorList = async () => {
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="进度说明" min-width="120">
+              <el-table-column label="进度说明" min-width="100">
                 <template #default="{ row }">
                   <el-tooltip
                     :content="row.pendingRemark || ''"
@@ -745,7 +745,7 @@ const handleExportIndicatorList = async () => {
                   </el-tooltip>
                 </template>
               </el-table-column>
-              <el-table-column label="上报资料" width="68" align="center">
+              <el-table-column label="上报资料" width="104" align="center">
                 <template #default="{ row }">
                   <div
                     v-if="
@@ -759,7 +759,7 @@ const handleExportIndicatorList = async () => {
                   <div v-else style="color: #909399">—</div>
                 </template>
               </el-table-column>
-              <el-table-column prop="remark" label="下发备注" width="104">
+              <el-table-column prop="remark" label="下发备注" width="96">
                 <template #default="{ row }">
                   <div
                     class="indicator-name-cell"
@@ -790,14 +790,14 @@ const handleExportIndicatorList = async () => {
                 v-if="showResponsibleDeptColumn"
                 prop="responsibleDept"
                 label="责任部门"
-                min-width="140"
+                min-width="112"
               >
                 <template #default="{ row }">
                   <span class="dept-text">{{ row.responsibleDept || '未分配' }}</span>
                 </template>
               </el-table-column>
 
-              <el-table-column label="操作" width="188" align="center">
+              <el-table-column label="操作" width="132" align="center">
                 <template #default="{ row }">
                   <div class="action-cell">
                     <div class="action-buttons">
