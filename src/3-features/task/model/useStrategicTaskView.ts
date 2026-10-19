@@ -1228,18 +1228,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     // FUNC_TO_COLLEGE 计划下（如 纪委办→计算机学院 403757），与左侧职能部门自身的
     // STRAT_TO_FUNC 计划不同。此前恒按部门 plan+org 查询，学院链路的自评/说明永远为空。
     const collegeScope = options.collegeScope === true ? resolveSelectedCollegeReportScope() : null
-    // TEMP-DEBUG(根因一验证，验证后移除)
-    console.log(
-      '[TEMP-DEBUG syncSummary]',
-      JSON.stringify({
-        collegeScopeOption: options.collegeScope === true,
-        collegeScope,
-        selectedCollege: selectedCollege.value,
-        selectedDepartment: selectedDepartment.value,
-        currentPlanId: currentPlan.value?.id ?? null,
-        plansLen: planStore.plans.length
-      })
-    )
     const planId =
       options.collegeScope === true
         ? Number(collegeScope?.planId ?? NaN)
@@ -1266,17 +1254,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       const summaries = await currentPlanReportSummaryPromise
       currentPlanReportSummary.value = summaries.currentReport
       latestPlanReportSummary.value = summaries.latestReport
-      // TEMP-DEBUG
-      console.log(
-        '[TEMP-DEBUG cache-hit]',
-        JSON.stringify({
-          cacheKey,
-          id: summaries.currentReport?.id ?? null,
-          details: Array.isArray(summaries.currentReport?.indicatorDetails)
-            ? summaries.currentReport.indicatorDetails.length
-            : -1
-        })
-      )
       return
     }
 
@@ -1296,19 +1273,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       const summaries = await currentPlanReportSummaryPromise
       currentPlanReportSummary.value = summaries.currentReport
       latestPlanReportSummary.value = summaries.latestReport
-      // TEMP-DEBUG
-      console.log(
-        '[TEMP-DEBUG fetched]',
-        JSON.stringify({
-          cacheKey,
-          id: summaries.currentReport?.id ?? null,
-          month: summaries.currentReport?.reportMonth ?? null,
-          org: summaries.currentReport?.reportOrgId ?? null,
-          details: Array.isArray(summaries.currentReport?.indicatorDetails)
-            ? summaries.currentReport.indicatorDetails.length
-            : -1
-        })
-      )
     } finally {
       currentPlanReportSummaryPromise = null
     }
