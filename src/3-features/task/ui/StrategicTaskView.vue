@@ -46,6 +46,7 @@ import {
   canEditManualAlertLevel
 } from '@/features/task/lib/warning-level'
 import { truncateText } from '@/shared/lib/utils/formatters'
+import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
 import type { ImportCommitResponse } from '@/features/import/api/businessImport'
 
 const props = defineProps<StrategicTaskViewProps>()
@@ -1167,18 +1168,20 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                           >
                             保存中...
                           </span>
-                          <!-- 2026-10-18 用户定案：文本超 50 字截断显示，悬停看全文 -->
+                          <!-- 2026-10-19 用户定案：两个独立显示框互不干扰——
+                               上方悬停显示任务属性（基础性/发展性），右侧竖排看板显示被截断的全文 -->
                           <el-tooltip
                             v-else
-                            :content="row.taskContent || '未关联任务'"
-                            :disabled="(row.taskContent || '').length <= 50"
+                            :content="`${getCategoryText(row.type2)}任务`"
                             placement="top"
                           >
-                            <span
-                              class="indicator-name-text task-content-colored"
-                              :style="{ color: getCategoryColor(row.type2) }"
-                              >{{ truncateText(row.taskContent || '未关联任务', 50) }}</span
-                            >
+                            <FullTextPanel :text="row.taskContent || '未关联任务'">
+                              <span
+                                class="indicator-name-text task-content-colored"
+                                :style="{ color: getCategoryColor(row.type2) }"
+                                >{{ truncateText(row.taskContent || '未关联任务', 50) }}</span
+                              >
+                            </FullTextPanel>
                           </el-tooltip>
                           <!-- 战略任务改名同样计入「已更改 N 次」（悬停查看历史） -->
                           <div v-if="!isReadOnly" class="indicator-cell-footer">
@@ -1220,21 +1223,28 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         <template v-else>
                           <template v-if="row.name">
                             <el-tooltip
-                              :content="row.name"
-                              :disabled="row.name.length <= 50"
+                              :content="
+                                row.type1 === '定性'
+                                  ? '定性指标'
+                                  : row.type1 === '定量'
+                                    ? '定量指标'
+                                    : '未设置类型'
+                              "
                               placement="top"
                             >
-                              <span
-                                class="indicator-name-text"
-                                :class="
-                                  row.type1 === '定性'
-                                    ? 'indicator-qualitative'
-                                    : row.type1 === '定量'
-                                      ? 'indicator-quantitative'
-                                      : ''
-                                "
-                                >{{ truncateText(row.name, 50) }}</span
-                              >
+                              <FullTextPanel :text="row.name">
+                                <span
+                                  class="indicator-name-text"
+                                  :class="
+                                    row.type1 === '定性'
+                                      ? 'indicator-qualitative'
+                                      : row.type1 === '定量'
+                                        ? 'indicator-quantitative'
+                                        : ''
+                                  "
+                                  >{{ truncateText(row.name, 50) }}</span
+                                >
+                              </FullTextPanel>
                             </el-tooltip>
                             <!-- D2 孤立指标标记：父指标已被删除时提示，信息不丢 -->
                             <el-tag
@@ -1794,46 +1804,47 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       <!-- 2026-10-13 用户定案：与职能部门 tab 核心指标列同构——同核心指标合并单元格、定性/定量配色；悬停看全文 -->
                       <el-tooltip
                         :content="
-                          (row.parentIndicatorId &&
-                            indicatorById.get(row.parentIndicatorId)?.name) ||
-                          ''
-                        "
-                        :disabled="
-                          !(
-                            (row.parentIndicatorId &&
-                              indicatorById.get(row.parentIndicatorId)?.name) ||
-                            ''
-                          ).length ||
-                          (
-                            (row.parentIndicatorId &&
-                              indicatorById.get(row.parentIndicatorId)?.name) ||
-                            ''
-                          ).length <= 50
+                          row.parentIndicatorId &&
+                          indicatorById.get(row.parentIndicatorId)?.type1 === '定性'
+                            ? '定性指标'
+                            : row.parentIndicatorId &&
+                                indicatorById.get(row.parentIndicatorId)?.type1 === '定量'
+                              ? '定量指标'
+                              : '未设置类型'
                         "
                         placement="top"
                       >
-                        <span
-                          class="indicator-name-text"
-                          :class="
-                            row.parentIndicatorId &&
-                            indicatorById.get(row.parentIndicatorId)?.type1 === '定性'
-                              ? 'indicator-qualitative'
-                              : row.parentIndicatorId &&
-                                  indicatorById.get(row.parentIndicatorId)?.type1 === '定量'
-                                ? 'indicator-quantitative'
-                                : ''
+                        <FullTextPanel
+                          :text="
+                            (row.parentIndicatorId &&
+                              indicatorById.get(row.parentIndicatorId)?.name) ||
+                            ''
                           "
-                          >{{
-                            row.parentIndicatorId && indicatorById.get(row.parentIndicatorId)?.name
-                              ? truncateText(
-                                  (row.parentIndicatorId &&
-                                    indicatorById.get(row.parentIndicatorId)?.name) ||
-                                    '',
-                                  50
-                                )
-                              : '—'
-                          }}</span
                         >
+                          <span
+                            class="indicator-name-text"
+                            :class="
+                              row.parentIndicatorId &&
+                              indicatorById.get(row.parentIndicatorId)?.type1 === '定性'
+                                ? 'indicator-qualitative'
+                                : row.parentIndicatorId &&
+                                    indicatorById.get(row.parentIndicatorId)?.type1 === '定量'
+                                  ? 'indicator-quantitative'
+                                  : ''
+                            "
+                            >{{
+                              row.parentIndicatorId &&
+                              indicatorById.get(row.parentIndicatorId)?.name
+                                ? truncateText(
+                                    (row.parentIndicatorId &&
+                                      indicatorById.get(row.parentIndicatorId)?.name) ||
+                                      '',
+                                    50
+                                  )
+                                : '—'
+                            }}</span
+                          >
+                        </FullTextPanel>
                       </el-tooltip>
                     </template>
                   </el-table-column>
@@ -1861,13 +1872,20 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         <template v-else>
                           <template v-if="row.name">
                             <el-tooltip
-                              :content="row.name"
-                              :disabled="row.name.length <= 50"
+                              :content="
+                                row.type1 === '定性'
+                                  ? '定性指标'
+                                  : row.type1 === '定量'
+                                    ? '定量指标'
+                                    : '未设置类型'
+                              "
                               placement="top"
                             >
-                              <span class="indicator-name-text">{{
-                                truncateText(row.name, 50)
-                              }}</span>
+                              <FullTextPanel :text="row.name">
+                                <span class="indicator-name-text">{{
+                                  truncateText(row.name, 50)
+                                }}</span>
+                              </FullTextPanel>
                             </el-tooltip>
                           </template>
                           <span v-else class="placeholder-text">未命名指标</span>

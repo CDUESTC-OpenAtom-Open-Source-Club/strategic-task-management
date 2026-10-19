@@ -15,6 +15,7 @@ import { ElMessage } from 'element-plus'
 import type { StrategicIndicator } from '@/shared/types'
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import { truncateText } from '@/shared/lib/utils/formatters'
+import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
 import {
   buildAttachmentCell,
   buildExportFileName,
@@ -885,19 +886,20 @@ const handleDistributionImportCommitted = async () => {
                         </span>
                         <el-tooltip
                           v-else
-                          :content="row.child?.name || ''"
-                          :disabled="(row.child?.name || '').length <= 50"
+                          :content="`${getIndicatorTypeLabel(row.child)}指标`"
                           placement="top"
                         >
-                          <span
-                            class="child-text"
-                            :class="
-                              isQualitativeIndicator(row.child)
-                                ? 'indicator-qualitative'
-                                : 'indicator-quantitative'
-                            "
-                            >{{ truncateText(row.child?.name || '未命名', 50) }}</span
-                          >
+                          <FullTextPanel :text="row.child?.name || ''">
+                            <span
+                              class="child-text"
+                              :class="
+                                isQualitativeIndicator(row.child)
+                                  ? 'indicator-qualitative'
+                                  : 'indicator-quantitative'
+                              "
+                              >{{ truncateText(row.child?.name || '未命名', 50) }}</span
+                            >
+                          </FullTextPanel>
                         </el-tooltip>
                         <!-- 上报历史小标（每次上报更新，不走异动链，悬停看历次上报+资料） -->
                         <ReportHistoryBadge v-if="row.child?.id" :indicator-id="row.child.id" />
@@ -924,11 +926,13 @@ const handleDistributionImportCommitted = async () => {
                           :content="`${getIndicatorTypeLabel(row.child)}指标`"
                           placement="top"
                         >
-                          <span
-                            class="new-child-text"
-                            :class="{ 'placeholder-text': !row.child.name }"
-                            >{{ row.child.name || '点击输入名称' }}</span
-                          >
+                          <FullTextPanel :text="row.child.name || ''">
+                            <span
+                              class="new-child-text"
+                              :class="{ 'placeholder-text': !row.child.name }"
+                              >{{ truncateText(row.child.name || '点击输入名称', 50) }}</span
+                            >
+                          </FullTextPanel>
                         </el-tooltip>
                       </div>
                     </template>

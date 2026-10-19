@@ -27,6 +27,7 @@ import {
 import { ApprovalProgressDrawer } from '@/features/approval'
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import { truncateText } from '@/shared/lib/utils/formatters'
+import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
 import {
   useIndicatorListView,
   type IndicatorListViewProps
@@ -632,16 +633,18 @@ const handleExportIndicatorList = async () => {
                 width="100"
               >
                 <template #default="{ row }">
+                  <!-- 2026-10-19 用户定案：上方=任务属性，右侧竖排看板=截断全文，两框互不干扰 -->
                   <el-tooltip
-                    :content="row.taskContent || '未关联任务'"
-                    :disabled="(row.taskContent || '').length <= 50"
+                    :content="row.type2 === '发展性' ? '发展性任务' : '基础性任务'"
                     placement="top"
                   >
-                    <span
-                      class="task-content-colored"
-                      :style="{ color: getTaskTypeColor(row.type2) }"
-                      >{{ truncateText(row.taskContent || '未关联任务', 50) }}</span
-                    >
+                    <FullTextPanel :text="row.taskContent || '未关联任务'">
+                      <span
+                        class="task-content-colored"
+                        :style="{ color: getTaskTypeColor(row.type2) }"
+                        >{{ truncateText(row.taskContent || '未关联任务', 50) }}</span
+                      >
+                    </FullTextPanel>
                   </el-tooltip>
                 </template>
               </el-table-column>
@@ -658,17 +661,20 @@ const handleExportIndicatorList = async () => {
                     />
                     <el-tooltip
                       v-else
-                      :content="row.name || ''"
-                      :disabled="(row.name || '').length <= 50"
+                      :content="row.type1 === '定性' ? '定性指标' : '定量指标'"
                       placement="top"
                     >
-                      <span
-                        class="indicator-name-text"
-                        :class="
-                          row.type1 === '定性' ? 'indicator-qualitative' : 'indicator-quantitative'
-                        "
-                        >{{ truncateText(row.name || '', 50) }}</span
-                      >
+                      <FullTextPanel :text="row.name || ''">
+                        <span
+                          class="indicator-name-text"
+                          :class="
+                            row.type1 === '定性'
+                              ? 'indicator-qualitative'
+                              : 'indicator-quantitative'
+                          "
+                          >{{ truncateText(row.name || '', 50) }}</span
+                        >
+                      </FullTextPanel>
                     </el-tooltip>
 
                     <!-- D10：异动/改名历史徽标（悬停看历史，无变更自动隐藏） -->
