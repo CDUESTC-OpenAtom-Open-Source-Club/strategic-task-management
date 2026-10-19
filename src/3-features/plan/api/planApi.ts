@@ -939,11 +939,9 @@ async function resolveIndicatorFillSaveContext(
       report =>
         Number(report.reportOrgId) === context.reportOrgId && report.reportMonth === effectiveMonth
     )
-    .sort(
-      (a, b) =>
-        new Date(b.updatedAt || b.createdAt || 0).getTime() -
-        new Date(a.updatedAt || a.createdAt || 0).getTime()
-    )
+    // 轮次时间排序（2026-10-19）：与 resolveCurrentMonthPlanReportSummaries 同口径，
+    // 防旧轮次因 updatedAt 被刷新而误触发「审批中禁止保存」锁定。
+    .sort((a, b) => resolveReportRoundTimestamp(b) - resolveReportRoundTimestamp(a))
 
   const latestCurrentMonthReport = currentMonthReports[0]
   const editableExistingReport = currentMonthReports.find(report => {
@@ -1255,6 +1253,17 @@ function evictOldestPlanReportCacheEntryIfNeeded(): void {
   planReportsByPlanIdCacheTime.delete(oldestKey)
 }
 
+/**
+ * 2026-10-19 修复（"莫名弹出旧审批记录，刷新消失又出现"）：
+ * 轮次排序必须用「提交时间」而非 updatedAt——updatedAt 语义是"任何修改"，
+ * 旧轮次报告被任意写入（保存/审批意见刷新）后 updatedAt 会超过新轮次，
+ * 导致选中的"当前报告"在旧/新轮次间来回跳动，主卡时显时隐。
+ * submittedAt 是数据库固定字段（点击提交那刻写入），createdAt 兜底。
+ */
+function resolveReportRoundTimestamp(report: PlanReportSimpleResponse): number {
+  return new Date(report.submittedAt || report.createdAt || 0).getTime()
+}
+
 function resolveCurrentMonthPlanReportSummaries(
   reports: PlanReportSimpleResponse[],
   reportOrgId: number,
@@ -1274,11 +1283,7 @@ function resolveCurrentMonthPlanReportSummaries(
       report =>
         Number(report.reportOrgId) === Number(reportOrgId) && report.reportMonth === reportMonth
     )
-    .sort(
-      (a, b) =>
-        new Date(b.updatedAt || b.createdAt || 0).getTime() -
-        new Date(a.updatedAt || a.createdAt || 0).getTime()
-    )
+    .sort((a, b) => resolveReportRoundTimestamp(b) - resolveReportRoundTimestamp(a))
 
   if (currentMonthReports.length === 0 && options.fallbackToLatestMonth) {
     const latestMonth = reports
@@ -1293,11 +1298,7 @@ function resolveCurrentMonthPlanReportSummaries(
           report =>
             Number(report.reportOrgId) === Number(reportOrgId) && report.reportMonth === latestMonth
         )
-        .sort(
-          (a, b) =>
-            new Date(b.updatedAt || b.createdAt || 0).getTime() -
-            new Date(a.updatedAt || a.createdAt || 0).getTime()
-        )
+        .sort((a, b) => resolveReportRoundTimestamp(b) - resolveReportRoundTimestamp(a))
     }
   }
 
