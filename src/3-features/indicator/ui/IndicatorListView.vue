@@ -1009,14 +1009,6 @@ const handleExportIndicatorList = async () => {
             <span class="info-label">指标名称：</span>
             <span class="info-value">{{ currentReportIndicator.name }}</span>
           </div>
-          <div class="info-row">
-            <span class="info-label">自评等级：</span>
-            <span class="info-value highlight">{{
-              { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' }[
-                currentReportIndicator.selfRating
-              ] || '未自评'
-            }}</span>
-          </div>
         </div>
 
         <el-divider />
