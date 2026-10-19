@@ -33,6 +33,11 @@ const props = defineProps<{
     name?: string
     taskContent?: string
   }> | null
+  /**
+   * 2026-10-19 用户定案：序号→内部ID 映射（按导出同款排序生成，序号从 1 开始）。
+   * 上传预览时随请求传给后端，导入按序号还原内部ID做唯一性匹配（同名指标各按各的序号归属）。
+   */
+  sequenceEntries?: Array<{ seq: number; indicatorId: number | string }> | null
 }>()
 
 const emit = defineEmits<{
@@ -167,7 +172,11 @@ const downloadTemplate = async () => {
     }
 
     await exportSheetsToExcel(
-      [buildImportTemplateSheet(props.type, parentSeeds), rulesSheet],
+      // 2026-10-19：两个 guide 的 rows 键集不同，联合类型经协变检查无法直接赋给 unknown，显式断言
+      [
+        buildImportTemplateSheet(props.type, parentSeeds) as ExcelExportSheet<unknown>,
+        rulesSheet as ExcelExportSheet<unknown>
+      ],
       buildImportTemplateFileName(props.type)
     )
     ElMessage.success(
@@ -194,6 +203,22 @@ const handleFileRemove = (_uploadFile: UploadFile, uploadFiles: UploadFiles) => 
   previewResult.value = null
 }
 
+// 2026-10-19：把调用方传入的序号映射序列化为后端可解析的 JSON（{"1":2001,"2":2002,...}）
+const buildSequenceMapJson = (): string | undefined => {
+  const entries = props.sequenceEntries
+  if (!entries || entries.length === 0) {
+    return undefined
+  }
+  const map: Record<string, number> = {}
+  entries.forEach(entry => {
+    const id = Number(entry.indicatorId)
+    if (Number.isFinite(id) && id > 0 && Number.isFinite(entry.seq) && entry.seq > 0) {
+      map[String(entry.seq)] = id
+    }
+  })
+  return Object.keys(map).length > 0 ? JSON.stringify(map) : undefined
+}
+
 const handlePreview = async () => {
   if (!selectedFile.value?.raw) {
     ElMessage.warning('请先选择 Excel 文件')
@@ -206,15 +231,18 @@ const handlePreview = async () => {
 
   previewing.value = true
   try {
+    const sequenceMapJson = buildSequenceMapJson()
     previewResult.value = isStrategicImport.value
       ? await businessImportApi.previewStrategicTaskImport(selectedFile.value.raw, {
           cycleId: props.cycleId,
-          targetOrgId: props.targetOrgId
+          targetOrgId: props.targetOrgId,
+          sequenceMapJson
         })
       : await businessImportApi.previewDistributionImport(selectedFile.value.raw, {
           cycleId: props.cycleId,
           sourceOrgId: props.sourceOrgId || undefined,
-          targetCollegeOrgId: props.targetOrgId
+          targetCollegeOrgId: props.targetOrgId,
+          sequenceMapJson
         })
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '导入解析失败')
@@ -270,8 +298,10 @@ const handleCommit = async () => {
       ElMessage.warning(formatAutoDispatchBlockedMessage(result))
     } else {
       const workflowMessage = result.workflow?.message ? `，${result.workflow.message}` : ''
+      const deletedMessage =
+        (result.deletedCount ?? 0) > 0 ? `，删除 ${result.deletedCount} 条` : ''
       ElMessage.success(
-        `导入成功：新增 ${result.createdCount} 条，更新 ${result.updatedCount} 条${workflowMessage}`
+        `导入成功：新增 ${result.createdCount} 条，更新 ${result.updatedCount} 条${deletedMessage}${workflowMessage}`
       )
     }
     emit('committed', result)
@@ -452,7 +482,8 @@ watch(
         />
 
         <el-table :data="visibleRows" max-height="320" class="preview-table">
-          <el-table-column prop="rowNo" label="行号" width="70" />
+          <!-- 2026-10-19 用户定案：预览首列展示文件里的「序号」（1、2、3…），不再用 Excel 物理行号 -->
+          <el-table-column prop="rowNo" label="序号" width="70" />
           <el-table-column label="动作" width="80">
             <template #default="{ row }">
               <el-tag :type="actionTagType(row.action)" size="small">

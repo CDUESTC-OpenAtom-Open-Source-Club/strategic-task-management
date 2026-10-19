@@ -706,6 +706,18 @@ const getStrategicExportRowsByDepartment = (
   })
 }
 
+// 2026-10-19 用户定案：序号→内部ID 映射（导入时随预览请求传后端，序号与导出文件完全一致）
+const strategicSequenceEntries = computed(() => {
+  const department = selectedDepartment.value
+  if (!department) {
+    return []
+  }
+  return getStrategicExportRowsByDepartment(department).map((row, index) => ({
+    seq: index + 1,
+    indicatorId: row.id
+  }))
+})
+
 const getStrategicTaskTypeRank = (indicator: StrategicIndicator): number => {
   const taskType = getIndicatorMappedTaskType(indicator)
   if (isDevelopmentTaskType(taskType)) {
@@ -2270,6 +2282,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
       :target-org-id="currentStrategicImportOrgId"
       :target-org-name="selectedDepartment"
       :cycle-id="currentStrategicImportCycleId"
+      :sequence-entries="strategicSequenceEntries"
       @committed="handleStrategicImportCommitted"
     />
 

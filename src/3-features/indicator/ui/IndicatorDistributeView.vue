@@ -446,6 +446,25 @@ const getDistributionExportRowsByCollege = (college: string): DistributionExport
   return data
 }
 
+// 2026-10-19 用户定案：序号→内部ID 映射（导入时随预览请求传后端）。
+// 序号按导出行序编号（含草稿行占位）；草稿行尚无内部ID、不进映射，导入时按新行创建。
+const distributionSequenceEntries = computed(() => {
+  const college = selectedCollege.value
+  if (!college) {
+    return []
+  }
+  const entries: Array<{ seq: number; indicatorId: number | string }> = []
+  let seq = 0
+  getDistributionExportRowsByCollege(college).forEach(row => {
+    seq += 1
+    const childId = row.child?.id
+    if (row.type === 'child' && childId !== undefined && childId !== null) {
+      entries.push({ seq, indicatorId: childId })
+    }
+  })
+  return entries
+})
+
 const getDistributionExportRowTone = (row: DistributionExportRow): ExcelRowTone => {
   if (row.type === 'new-child') {
     return 'draft'
@@ -1476,6 +1495,7 @@ const handleDistributionImportCommitted = async () => {
       :source-org-name="currentDept"
       :cycle-id="currentDistributionImportCycleId"
       :parent-indicators="availableParentIndicators"
+      :sequence-entries="distributionSequenceEntries"
       @committed="handleDistributionImportCommitted"
     />
 

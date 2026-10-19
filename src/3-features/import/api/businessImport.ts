@@ -82,6 +82,8 @@ export interface ImportCommitResponse {
   createdCount: number
   updatedCount: number
   skippedCount: number
+  /** 2026-10-19：真覆盖模式软删除的旧指标数（不在文件覆盖集合中） */
+  deletedCount: number
   workflow: ImportWorkflowResult
 }
 
@@ -89,6 +91,8 @@ export interface StrategicImportPreviewParams {
   cycleId: number
   targetOrgId: number
   sheetName?: string
+  /** 2026-10-19：序号→内部ID 映射（JSON 字符串 {"1":2001,...}，前端按导出同款排序生成） */
+  sequenceMapJson?: string
 }
 
 export interface DistributionImportPreviewParams {
@@ -96,6 +100,8 @@ export interface DistributionImportPreviewParams {
   targetCollegeOrgId: number
   sourceOrgId?: number
   sheetName?: string
+  /** 2026-10-19：序号→内部ID 映射（JSON 字符串） */
+  sequenceMapJson?: string
 }
 
 function unwrap<T>(response: ApiResponse<T>): T {

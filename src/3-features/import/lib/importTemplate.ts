@@ -29,7 +29,8 @@ const strategicImportGuide: ImportTemplateGuide = {
   title: '职能部门指标表示例',
   targetName: '职能部门',
   columns: [
-    { key: 'serial', label: '序号' },
+    // 2026-10-19 用户定案：序号必填（1、2、3…短编号），导入时还原为内部ID做唯一性匹配
+    { key: 'serial', label: '序号', required: true },
     { key: 'department', label: '部门' },
     { key: 'strategicTask', label: '战略任务', required: true },
     { key: 'indicatorName', label: '核心指标', required: true },
@@ -61,10 +62,12 @@ const strategicImportGuide: ImportTemplateGuide = {
     }
   ],
   rules: [
-    '系统按「战略任务+核心指标」名称匹配：匹配到已存在的指标则更新原指标，匹配不到自动新增。',
-    '必填列：任务类别、战略任务、核心指标、指标类型；「部门」如填写必须与当前选择的职能部门一致（留空则默认导入当前部门）。',
+    // 2026-10-19 用户定案：序号即行身份——与导出表序号一致的行精确更新原指标，超出范围的行作为新增导入
+    '「序号」必填：按 1、2、3… 连续填写；与导出表序号一致的行按序号精确更新原指标，序号超出导出行数的行作为新增导入。',
+    '同一任务下允许出现同名指标，各自使用不同序号即可；系统按序号区分，不会相互覆盖。',
+    '必填列：序号、任务类别、战略任务、核心指标、指标类型；「部门」如填写必须与当前选择的职能部门一致（留空则默认导入当前部门）。',
     '权重支持 10、10%、0.1 三种写法，系统会统一换算为百分制；同一任务下基础性权重合计需为 100。',
-    '「序号」仅用于阅读对齐；「鉴定进度等级」「上报资料」由系统评定/填报产生，导入时无需填写（从导出表回导时相关列自动忽略）。'
+    '「鉴定进度等级」「上报资料」由系统评定/填报产生，导入时无需填写（从导出表回导时相关列自动忽略）。'
   ]
 }
 
@@ -72,6 +75,8 @@ const distributionImportGuide: ImportTemplateGuide = {
   title: '学院子指标表示例',
   targetName: '学院',
   columns: [
+    // 2026-10-19 用户定案：与战略导入同口径，序号必填
+    { key: 'serial', label: '序号', required: true },
     { key: 'college', label: '学院' },
     { key: 'parentStrategicTask', label: '父级战略任务' },
     { key: 'parentIndicator', label: '父级核心指标', required: true },
@@ -82,6 +87,7 @@ const distributionImportGuide: ImportTemplateGuide = {
   ],
   rows: [
     {
+      serial: '1',
       college: '计算机学院',
       parentStrategicTask: '推进本科教育教学改革',
       parentIndicator: '建设智慧教学质量监测体系',
@@ -91,6 +97,7 @@ const distributionImportGuide: ImportTemplateGuide = {
       remark: '按父级指标拆分'
     },
     {
+      serial: '2',
       college: '计算机学院',
       parentStrategicTask: '完善专业建设质量保障机制',
       parentIndicator: '完成重点专业年度质量报告',
@@ -101,8 +108,8 @@ const distributionImportGuide: ImportTemplateGuide = {
     }
   ],
   rules: [
-    '表头建议放在第一行，列顺序可以调整，系统会按列名识别。',
-    '必填列：父级核心指标、子指标名称、指标类型；如果填写学院，必须和当前选择的学院一致。',
+    '「序号」必填：按 1、2、3… 连续填写；与导出表序号一致的行按序号精确更新原指标，序号超出导出行数的行作为新增导入。',
+    '必填列：序号、父级核心指标、子指标名称、指标类型；如果填写学院，必须和当前选择的学院一致。',
     '模板已自动带出当前职能部门的父级核心指标行；请勿修改「父级核心指标」列的名称（系统按名称精确关联已有父级指标），在其右侧补写子指标名称/类型/权重即可；一个父级指标要拆多个子指标时，复制该行后修改子指标列。',
     '「父级战略任务」用于标明子指标的来源任务，请填写本部门已接收的战略任务名称（可在战略任务管理页查看），便于定位父级指标。',
     '权重按同一父级指标下的学院子指标合计检查，合计不是 100 会给出警告。'
@@ -133,7 +140,8 @@ export function buildImportTemplateSheet(
 
   const seedRows: Record<string, string>[] =
     type !== 'strategic-task' && parentSeeds?.length
-      ? parentSeeds.map(seed => ({
+      ? parentSeeds.map((seed, index) => ({
+          serial: String(index + 1),
           college: '',
           parentStrategicTask: seed.parentStrategicTask ?? '',
           parentIndicator: seed.parentIndicator,
