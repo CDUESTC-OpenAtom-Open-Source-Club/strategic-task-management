@@ -851,7 +851,7 @@ const handleDistributionImportCommitted = async () => {
                 class="unified-table distribution-table"
               >
                 <!-- 子指标名称列 -->
-                <el-table-column label="子指标名称" min-width="128">
+                <el-table-column label="子指标名称" min-width="188">
                   <template #default="{ row }">
                     <!-- 没有子指标的父指标 -->
                     <template v-if="row.type === 'indicator-only'">
@@ -1061,7 +1061,7 @@ const handleDistributionImportCommitted = async () => {
                 </el-table-column>
 
                 <!-- 上报资料列（2026-10-13 用户定案：展示当前最新一次上报提交的资料；历次经上报小标查看） -->
-                <el-table-column label="上报资料" min-width="128">
+                <el-table-column label="上报资料" min-width="96">
                   <template #default="{ row }">
                     <template v-if="row.type === 'child'">
                       <ReportMaterialsCell :indicator-id="row.child?.id" />
@@ -1073,7 +1073,7 @@ const handleDistributionImportCommitted = async () => {
                 </el-table-column>
 
                 <!-- 进度说明列（2026-10-18 用户定案：与其他界面同构，展示当次上报说明） -->
-                <el-table-column label="进度说明" min-width="100">
+                <el-table-column label="进度说明" min-width="92">
                   <template #default="{ row }">
                     <template v-if="row.type === 'child'">
                       <el-tooltip
@@ -1159,7 +1159,7 @@ const handleDistributionImportCommitted = async () => {
                 </el-table-column>
 
                 <!-- 操作列 - 学院模式：仅查看和删除（删除需先撤销） -->
-                <el-table-column label="操作" width="144" align="center">
+                <el-table-column label="操作" width="120" align="center">
                   <template #default="{ row }">
                     <!-- 没有子指标的父指标 - 无操作 -->
                     <template v-if="row.type === 'indicator-only'">
