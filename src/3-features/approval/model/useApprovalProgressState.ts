@@ -2902,14 +2902,13 @@ export function useApprovalProgressState(
     // 2026-10-18：与 formatStayDuration 统一口径——无时区标记的裸串按北京时间解析并渲染
     const trimmed = String(timestamp).trim()
     const normalized = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(trimmed)
-      ? `${trimmed.replace(' ', 'T')}+08:00`
+      ? trimmed.replace(' ', 'T')
       : trimmed
     const date = new Date(normalized)
     if (Number.isNaN(date.getTime())) {
       return '--'
     }
     return date.toLocaleString('zh-CN', {
-      timeZone: 'Asia/Shanghai',
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',

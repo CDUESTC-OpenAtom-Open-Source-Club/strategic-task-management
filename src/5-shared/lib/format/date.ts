@@ -3,10 +3,10 @@
  *
  * Date formatting and parsing functions using Day.js
  *
- * 时区口径：全系统统一按北京时间（Asia/Shanghai）展示。
- * 后端已把 JVM 时区锁定为 Asia/Shanghai，返回的 LocalDateTime 即北京时间；
- * 但历史数据或第三方接口可能返回带 Z 的 UTC 串，因此这里注册 utc/timezone
- * 插件，遇到明确带时区标记的时间先换算到北京时间再格式化，避免少 8 小时。
+ * 时区口径（2026-10-19 用户定案）：不硬编码时区——后端记录的是服务器本地时间，
+ * 前端按「浏览器所在时区」展示。部署到不同时区的服务器/用户时自动适配。
+ * 带明确时区标记的串（Z / ±HH:mm）按标记换算到浏览器时区；
+ * 无标记的朴素串（后端 LocalDateTime，即服务器本地时间）按浏览器本地解析。
  */
 
 import dayjs from 'dayjs'
@@ -16,7 +16,8 @@ import customParseFormat from 'dayjs/plugin/customParseFormat'
 import utc from 'dayjs/plugin/utc'
 import timezone from 'dayjs/plugin/timezone'
 
-export const APP_TIMEZONE = 'Asia/Shanghai'
+/** 浏览器本地时区（运行时解析，不做硬编码） */
+export const APP_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 
 // Configure dayjs
 dayjs.locale('zh-cn')
@@ -26,11 +27,10 @@ dayjs.extend(utc)
 dayjs.extend(timezone)
 
 /**
- * 归一化时间输入：仅当字符串带有明确时区标记（Z / ±HH:mm，如第三方接口的 UTC 串）
- * 时才换算为北京时间；无时区标记的朴素时间（后端 LocalDateTime，已是北京时间）
- * 与 Date 对象保持既有行为，不做二次偏移。
+ * 归一化时间输入：带明确时区标记（Z / ±HH:mm）的串换算到浏览器本地时区；
+ * 无标记的朴素时间（后端 LocalDateTime = 服务器本地时间）与 Date 对象按本地解析。
  */
-export function toBeijingTime(date: Date | string | number): dayjs.Dayjs {
+export function toLocalTime(date: Date | string | number): dayjs.Dayjs {
   if (typeof date === 'string') {
     const hasExplicitZone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(date.trim())
     if (hasExplicitZone) {
@@ -39,6 +39,9 @@ export function toBeijingTime(date: Date | string | number): dayjs.Dayjs {
   }
   return dayjs(date)
 }
+
+/** 兼容旧名（历史调用方仍引用 toBeijingTime） */
+export const toBeijingTime = toLocalTime
 
 /**
  * Format date to string with default format YYYY-MM-DD

@@ -32,11 +32,11 @@ const APPRAISAL_LEVEL_LABELS: Record<string, string> = {
 
 export function formatStayDuration(createdAt?: string | null): string {
   if (!createdAt) return ''
-  // 后端返回的是北京时间裸串（无时区标记）。显式按 +08:00 解析，
-  // 避免非北京时区的浏览器按本地时区解析导致停留时长为负数。
+  // 2026-10-19 用户定案：时区不硬编码。后端返回服务器本地时间裸串，
+  // 前端按浏览器本地时区解析；服务器与浏览器同区时停留时长即真实耗时。
   const trimmed = createdAt.trim()
   const normalized = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(trimmed)
-    ? `${trimmed.replace(' ', 'T')}+08:00`
+    ? trimmed.replace(' ', 'T')
     : trimmed
   const start = new Date(normalized).getTime()
   if (!Number.isFinite(start)) return ''
@@ -3721,14 +3721,13 @@ export function useApprovalProgressDrawer(
     // 保证提交时间与停留时长用同一只钟。
     const trimmed = String(timestamp).trim()
     const normalized = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(trimmed)
-      ? `${trimmed.replace(' ', 'T')}+08:00`
+      ? trimmed.replace(' ', 'T')
       : trimmed
     const date = new Date(normalized)
     if (Number.isNaN(date.getTime())) {
       return '--'
     }
     return date.toLocaleString('zh-CN', {
-      timeZone: 'Asia/Shanghai',
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
