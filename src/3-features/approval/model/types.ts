@@ -135,6 +135,12 @@ export interface PlanReportSnapshotSummary {
   currentTaskId?: number | string | null
   currentStepName?: string | null
   indicatorDetails?: PlanReportIndicatorDetailItem[] | null
+  /** 2026-10-19：上报审批卡片提交人/时间的数据来源（后端 PlanReportSimpleResponse 补齐） */
+  submittedBy?: number | string | null
+  submittedAt?: string | null
+  createdAt?: string | null
+  /** 工作流发起人姓名（enrichPlanReportWorkflow 合并工作流详情时写入） */
+  submitterName?: string | null
 }
 
 export interface DistributionApprovalProgressDrawerProps {

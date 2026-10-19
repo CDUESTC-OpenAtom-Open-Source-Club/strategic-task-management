@@ -725,6 +725,8 @@ interface PlanReportSimpleResponse {
   status?: string | null
   submittedBy?: number | null
   submittedAt?: string | null
+  /** 2026-10-19：enrichPlanReportWorkflow 合并工作流详情时写入——上报审批卡片提交人 */
+  submitterName?: string | null
   approvedBy?: number | null
   approvedAt?: string | null
   rejectionReason?: string | null
@@ -864,7 +866,11 @@ async function enrichPlanReportWorkflow(
         canWithdraw: Boolean(workflowResponse.data.canWithdraw),
         currentStepName: workflowResponse.data.currentStepName ?? undefined,
         currentApproverId: workflowResponse.data.currentApproverId ?? undefined,
-        currentApproverName: workflowResponse.data.currentApproverName ?? undefined
+        currentApproverName: workflowResponse.data.currentApproverName ?? undefined,
+        // 2026-10-19：上报审批卡片需要真实提交人/提交时刻——工作流发起人即点击上报的填报人，
+        // startTime 即提交时刻。之前只挑 7 个状态字段，这两个被丢弃导致卡片显示计划的创建人。
+        submitterName: workflowResponse.data.starterName ?? undefined,
+        submittedAt: report.submittedAt ?? workflowResponse.data.startTime ?? undefined
       }
     }
   } catch (error) {

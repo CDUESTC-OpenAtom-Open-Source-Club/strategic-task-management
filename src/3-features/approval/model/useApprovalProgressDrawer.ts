@@ -2685,12 +2685,20 @@ export function useApprovalProgressDrawer(
         {
           instanceId: Number(planWorkflowDetail.value.instanceId ?? 0) || 0,
           instanceNo: String(planWorkflowDetail.value.instanceId || '待回填'),
-          title: props.planName || `${props.departmentName || '当前部门'}上报审批`,
-          routeTitle: `上报审批 · ${normalizeDisplayName(planWorkflowDetail.value.targetOrgName) || props.departmentName || '当前部门'} -> ${normalizeDisplayName(planWorkflowDetail.value.sourceOrgName) || '上级部门'}`,
-          submitterName:
-            props.departmentName ||
-            normalizeDisplayName(planWorkflowDetail.value.targetOrgName) ||
-            '当前部门',
+          title: resolveApprovalRouteTitle({
+            flowCode: planWorkflowDetail.value.flowCode,
+            sourceOrgName: normalizeDisplayName(planWorkflowDetail.value.sourceOrgName),
+            targetOrgName:
+              normalizeDisplayName(planWorkflowDetail.value.targetOrgName) || props.departmentName
+          }),
+          routeTitle: resolveApprovalRouteTitle({
+            flowCode: planWorkflowDetail.value.flowCode,
+            sourceOrgName: normalizeDisplayName(planWorkflowDetail.value.sourceOrgName),
+            targetOrgName:
+              normalizeDisplayName(planWorkflowDetail.value.targetOrgName) || props.departmentName
+          }),
+          // 2026-10-19：提交人取工作流发起人（真实填报人），此前取的是部门名
+          submitterName: resolvePlanSubmitterDisplayName(planWorkflowDetail.value),
           currentStepName: String(currentPlanStepDisplay.value),
           createdAt: planWorkflowDetail.value.startTime,
           entityId: props.workflowEntityId,
@@ -2847,7 +2855,12 @@ export function useApprovalProgressDrawer(
     ) {
       return {
         key: `plan-report-${props.workflowEntityId || planWorkflowDetail.value.instanceId || 'current'}`,
-        planName: props.planName || `${props.departmentName || '当前部门'}上报审批`,
+        planName: resolveApprovalRouteTitle({
+          flowCode: planWorkflowDetail.value.flowCode,
+          sourceOrgName: normalizeDisplayName(planWorkflowDetail.value.sourceOrgName),
+          targetOrgName:
+            normalizeDisplayName(planWorkflowDetail.value.targetOrgName) || props.departmentName
+        }),
         currentStepName: currentPlanStepDisplay.value,
         submitterName: resolvePlanSubmitterDisplayName(planWorkflowDetail.value),
         createdAt: planWorkflowDetail.value.startTime,

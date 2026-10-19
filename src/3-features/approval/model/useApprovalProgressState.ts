@@ -1980,15 +1980,25 @@ export function useApprovalProgressState(
               relatedPlanReportSummary.value.id ||
               '待回填'
           ),
-          title: `${props.departmentName || '当前部门'}上报审批`,
-          routeTitle: `上报审批 · ${props.departmentName || '当前部门'} -> ${normalizeDisplayName(props.plan?.createdByOrgName) || '上级部门'}`,
-          flowCode: 'PLAN_APPROVAL_COLLEGE',
-          submitterName:
-            normalizeDisplayName(props.plan?.submittedByName) ||
-            normalizeDisplayName(props.plan?.createdByName) ||
-            '待确认',
+          title:
+            planReportApprovalContext.value?.title ||
+            `${props.departmentName || '当前部门'}上报审批`,
+          routeTitle:
+            planReportApprovalContext.value?.title ||
+            `上报审批 · ${props.departmentName || '当前部门'} -> ${normalizeDisplayName(props.plan?.createdByOrgName) || '上级部门'}`,
+          flowCode: planReportApprovalContext.value?.flowCode || 'PLAN_APPROVAL_COLLEGE',
+          submitterName: resolveSubmitterDisplayName(
+            planReportApprovalContext.value?.submitterName,
+            relatedPlanReportSummary.value?.submitterName,
+            props.plan?.submittedByName,
+            props.plan?.createdByName
+          ),
           currentStepName: relatedPlanReportStepDisplay.value,
-          createdAt: undefined,
+          createdAt:
+            planReportApprovalContext.value?.createdAt ||
+            relatedPlanReportSummary.value?.submittedAt ||
+            relatedPlanReportSummary.value?.createdAt ||
+            undefined,
           entityId: relatedPlanReportSummary.value.id,
           planName: resolvePlanDisplayName(props.planName, resolvePlanNameFallback())
         }
@@ -2081,17 +2091,62 @@ export function useApprovalProgressState(
       })
   })
 
+  /**
+   * 2026-10-19 用户定案：上报审批卡片的三个要素必须取工作流真实数据——
+   * 标题走标准「上报审批 · 部门 -> 上级」格式；提交人取工作流发起人（点击上报的填报人，
+   * 不是计划的创建人）；提交时间取工作流启动时刻（plan_report.submitted_at 同刻）。
+   * 工作流详情未加载完成时返回 null，由调用方回退旧写法，避免标题闪变。
+   */
+  const planReportApprovalContext = computed(() => {
+    const detail = planWorkflowDetail.value
+    if (!detail) {
+      return null
+    }
+
+    // 与本文件 resolvePlanApprovalDisplayName（323-328 行）同款取值口径：
+    // sourceOrg=上级（计划创建方），targetOrg=上报部门；resolveApprovalRouteTitle 内部处理流向
+    const sourceOrgName =
+      normalizeDisplayName(detail.sourceOrgName) ||
+      normalizeDisplayName(props.plan?.createdByOrgName) ||
+      '战略发展部'
+    const targetOrgName =
+      normalizeDisplayName(detail.targetOrgName) ||
+      normalizeDisplayName(props.departmentName) ||
+      '当前部门'
+    const flowCode =
+      normalizeWorkflowCode(detail.flowCode) ||
+      (Array.isArray(props.workflowCode) ? props.workflowCode[0] : props.workflowCode) ||
+      'PLAN_APPROVAL_COLLEGE'
+
+    return {
+      title: resolveApprovalRouteTitle({ flowCode, sourceOrgName, targetOrgName }),
+      flowCode,
+      submitterName:
+        normalizeDisplayName(detail.starterName) ||
+        normalizeDisplayName(props.plan?.submittedByName),
+      createdAt: detail.startTime
+    }
+  })
+
   const currentPlanApprovalSummary = computed(() => {
     if (hasRelatedPlanReportActiveWorkflow.value && relatedPlanReportSummary.value?.id) {
+      const reportContext = planReportApprovalContext.value
       return {
         key: `plan-report-${relatedPlanReportSummary.value.id}`,
-        planName: `${props.departmentName || '当前部门'}上报审批`,
+        planName: reportContext?.title || `${props.departmentName || '当前部门'}上报审批`,
         currentStepName: relatedPlanReportStepDisplay.value,
+        // 提交人：工作流发起人优先（真实填报人），回退报告/计划字段
         submitterName: resolveSubmitterDisplayName(
+          reportContext?.submitterName,
+          relatedPlanReportSummary.value?.submitterName,
           props.plan?.submittedByName,
           props.plan?.createdByName
         ),
-        createdAt: undefined,
+        // 提交时间：工作流启动时刻优先，回退报告提交时间
+        createdAt:
+          reportContext?.createdAt ||
+          relatedPlanReportSummary.value?.submittedAt ||
+          relatedPlanReportSummary.value?.createdAt,
         count: 1
       }
     }
