@@ -713,7 +713,13 @@ const handleExportIndicatorList = async () => {
                   <span v-else style="color: #909399">—</span>
                 </template>
               </el-table-column>
-              <el-table-column label="鉴定进度等级" width="118" align="center">
+              <el-table-column
+                label="鉴定进度等级"
+                width="136"
+                align="center"
+                header-align="center"
+                label-class-name="manual-level-header"
+              >
                 <template #default="{ row }">
                   <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
                     {{ getManualAlertLabel(row.manualAlertSeverity) }}
