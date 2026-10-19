@@ -4217,12 +4217,10 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           ? '进度已保存，可在批量操作中提交'
           : '进度已保存（未关联附件），可在批量操作中提交'
       )
-      // 保存草稿后「最早未填报月」可能前移，刷新填报入口锁定状态
-      void refreshPlanReportEntryLockState()
-      // 2026-10-07 实际回源：行数据此前只做了本地补丁，这里从服务端重拉
-      // 指标与计划状态，保证页面展示与后端一致；并广播并行视图刷新
-      void refreshIndicatorListAfterMutation()
-      void refreshReportDetailOverlay()
+      // 2026-10-19：保存后的全量回源改用去抖合并（见 schedulePostSaveRefresh），
+      // 行数据已由上方 syncBackendReportedProgress 本地补丁即时更新；
+      // 广播保留，让任务页/下发页等并行视图定向刷新
+      schedulePostSaveRefresh()
       broadcastIndicatorListMutation()
       closeReportDialog()
     } catch (error) {
@@ -4279,6 +4277,46 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
     // 使用内部刷新信号触发状态重算，避免污染地址栏 query。
     indicatorRefreshTick.value = Date.now()
+  }
+
+  // 2026-10-19 修复（填报保存延迟/显示滞后）：保存草稿后的三路全量刷新
+  // （入口锁状态 / 列表回源 / 明细覆盖层）去抖合并为一次——此前每保存一个指标就
+  // 发起一轮 6-8 个 force 请求，连续保存时多轮请求互相竞争，旧轮快照会覆盖刚写入的
+  // 本地补丁（表现为"填完好几个，第一个才显示出来"）。合并后：本地补丁即时显示，
+  // 服务端一致性由单轮去抖刷新兜底；忙时只补跑一次最新，不会堆积。
+  let postSaveRefreshTimer: ReturnType<typeof setTimeout> | null = null
+  let postSaveRefreshRunning = false
+  let postSaveRefreshQueued = false
+
+  const runPostSaveRefresh = async (): Promise<void> => {
+    if (postSaveRefreshRunning) {
+      postSaveRefreshQueued = true
+      return
+    }
+    postSaveRefreshRunning = true
+    try {
+      await Promise.allSettled([
+        refreshPlanReportEntryLockState(),
+        refreshIndicatorListAfterMutation()
+      ])
+      await refreshReportDetailOverlay()
+    } finally {
+      postSaveRefreshRunning = false
+      if (postSaveRefreshQueued) {
+        postSaveRefreshQueued = false
+        void runPostSaveRefresh()
+      }
+    }
+  }
+
+  const schedulePostSaveRefresh = (): void => {
+    if (postSaveRefreshTimer !== null) {
+      clearTimeout(postSaveRefreshTimer)
+    }
+    postSaveRefreshTimer = setTimeout(() => {
+      postSaveRefreshTimer = null
+      void runPostSaveRefresh()
+    }, 800)
   }
 
   function applyLocalPlanReportSummary(
