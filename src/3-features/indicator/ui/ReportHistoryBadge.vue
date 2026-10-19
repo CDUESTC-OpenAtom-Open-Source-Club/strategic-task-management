@@ -25,7 +25,7 @@ const statusLabel = (status?: string) => {
     case 'approved':
       return '已通过'
     case 'rejected':
-      return '已驳回'
+      return '已回退'
     case 'submitted':
       return '待审核'
     default:

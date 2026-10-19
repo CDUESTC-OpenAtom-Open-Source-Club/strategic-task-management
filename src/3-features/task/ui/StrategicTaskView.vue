@@ -42,8 +42,10 @@ import { useStrategicStore } from '@/features/task/model/strategic'
 import {
   MANUAL_ALERT_LOCKED_HINT,
   MANUAL_ALERT_READONLY_HINT,
+  MANUAL_ALERT_WORKFLOW_LOCKED_HINT,
   canEditManualAlertLevel
 } from '@/features/task/lib/warning-level'
+import { truncateText } from '@/shared/lib/utils/formatters'
 import type { ImportCommitResponse } from '@/features/import/api/businessImport'
 
 const props = defineProps<StrategicTaskViewProps>()
@@ -328,6 +330,37 @@ const showCollegeGuide = computed(
     collegeDepartmentsScoped.value.length > 0
 )
 
+// 2026-10-18 用户定案：鉴定进度等级是上报审批过程中的状态——
+// 仅「计划已下发 + 上报审批流程进行中」可调整；平时（流程未发起/已结束/已退回）锁死。
+const manualAlertWorkflowInFlight = computed(() =>
+  ['PENDING', 'IN_REVIEW'].includes(
+    String(currentApprovalWorkflowStatus.value ?? '')
+      .trim()
+      .toUpperCase()
+  )
+)
+
+const manualAlertEditable = computed(() =>
+  canEditManualAlertLevel(currentPlanStatus.value, {
+    readOnly: isReadOnly.value,
+    workflowInFlight: manualAlertWorkflowInFlight.value
+  })
+)
+
+const manualAlertLockHint = computed(() => {
+  if (isReadOnly.value) {
+    return MANUAL_ALERT_READONLY_HINT
+  }
+  if (
+    String(currentPlanStatus.value ?? '')
+      .trim()
+      .toUpperCase() !== 'DISTRIBUTED'
+  ) {
+    return MANUAL_ALERT_LOCKED_HINT
+  }
+  return MANUAL_ALERT_WORKFLOW_LOCKED_HINT
+})
+
 // 二级学院页签（P2）：筛出下发到学院的任务与指标，复用 TaskIndicatorTree 树状下钻
 // 2026-10-11 修复：原过滤只看 department 字段（二级学院子指标的 owner 是职能部门，
 // 该字段为空）导致链路「职能部门→学院」下发后学院 tab 显示 No Data。
@@ -491,8 +524,9 @@ const strategicExportDepartmentsIndeterminate = computed(
     selectedStrategicExportDepartments.value.length < functionalDepartments.value.length
 )
 
-// 2026-10-14 用户定案：导出与界面同构——同一战略任务的多行在「战略任务」列合并为一个单元格；
-// 「内部ID」列移除（导入按名称匹配，导出面向领导阅读，无需内部主键）。
+// 导出与界面同构：同一战略任务的多行在「战略任务」列合并为一个单元格。
+// 2026-10-18 用户定案（晚间修订）：导出不含「内部ID」——系统内部主键对导出读者无意义，
+// 行对齐由「序号」承担；回导匹配走「任务名+指标名」名称匹配。
 const buildStrategicExportColumns = (
   rows: StrategicExportRow[]
 ): ExcelExportColumn<StrategicExportRow>[] => {
@@ -539,7 +573,7 @@ const buildStrategicExportColumns = (
       align: 'center',
       getValue: row => getCategoryText(row.type2)
     },
-    { header: '备注', width: 24, getValue: row => row.remark || '-' },
+    { header: '下发备注', width: 24, getValue: row => row.remark || '-' },
     { header: '权重', width: 10, align: 'center', getValue: row => Number(row.weight || 0) },
     {
       header: '鉴定进度等级',
@@ -548,7 +582,7 @@ const buildStrategicExportColumns = (
       getValue: row => getManualAlertLabel(row.manualAlertSeverity)
     },
     {
-      header: '附件',
+      header: '上报资料',
       width: 42,
       getValue: row =>
         buildAttachmentCell(
@@ -1108,7 +1142,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   highlight-current-row
                   class="unified-table"
                 >
-                  <el-table-column prop="taskContent" label="战略任务" width="200">
+                  <el-table-column prop="taskContent" label="战略任务" width="140">
                     <template #default="{ row }">
                       <div class="task-cell-wrapper">
                         <div
@@ -1133,15 +1167,17 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                           >
                             保存中...
                           </span>
+                          <!-- 2026-10-18 用户定案：文本超 50 字截断显示，悬停看全文 -->
                           <el-tooltip
                             v-else
-                            :content="`${getCategoryText(row.type2)}任务`"
+                            :content="row.taskContent || '未关联任务'"
+                            :disabled="(row.taskContent || '').length <= 50"
                             placement="top"
                           >
                             <span
                               class="indicator-name-text task-content-colored"
                               :style="{ color: getCategoryColor(row.type2) }"
-                              >{{ row.taskContent || '未关联任务' }}</span
+                              >{{ truncateText(row.taskContent || '未关联任务', 50) }}</span
                             >
                           </el-tooltip>
                           <!-- 战略任务改名同样计入「已更改 N 次」（悬停查看历史） -->
@@ -1161,7 +1197,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="name" label="核心指标" min-width="300">
+                  <el-table-column prop="name" label="核心指标" min-width="210">
                     <template #default="{ row }">
                       <div
                         class="indicator-name-cell"
@@ -1184,13 +1220,8 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         <template v-else>
                           <template v-if="row.name">
                             <el-tooltip
-                              :content="
-                                row.type1 === '定性'
-                                  ? '定性指标'
-                                  : row.type1 === '定量'
-                                    ? '定量指标'
-                                    : '未设置类型'
-                              "
+                              :content="row.name"
+                              :disabled="row.name.length <= 50"
                               placement="top"
                             >
                               <span
@@ -1202,7 +1233,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                                       ? 'indicator-quantitative'
                                       : ''
                                 "
-                                >{{ row.name }}</span
+                                >{{ truncateText(row.name, 50) }}</span
                               >
                             </el-tooltip>
                             <!-- D2 孤立指标标记：父指标已被删除时提示，信息不丢 -->
@@ -1227,7 +1258,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="weight" label="权重" width="72" align="center">
+                  <el-table-column prop="weight" label="权重" width="80" align="center">
                     <template #default="{ row }">
                       <div class="weight-cell" @dblclick="handleIndicatorDblClick(row, 'weight')">
                         <el-input
@@ -1249,7 +1280,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column label="自评等级" width="132" align="center">
+                  <el-table-column label="自评等级" width="112" align="center">
                     <template #default="{ row }">
                       <el-tag v-if="row.selfRating" size="small" type="info">
                         {{
@@ -1260,13 +1291,13 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       <span v-else style="color: #909399">—</span>
                     </template>
                   </el-table-column>
-                  <el-table-column label="鉴定进度等级" width="140" align="center">
+                  <el-table-column label="鉴定进度等级" width="122" align="center">
                     <template #default="{ row }">
                       <div class="manual-alert-cell">
                         <el-tooltip
                           v-if="isStrategicDept || row.responsibleDept === selectedDepartment"
-                          :disabled="!isReadOnly"
-                          :content="MANUAL_ALERT_READONLY_HINT"
+                          :disabled="manualAlertEditable"
+                          :content="manualAlertLockHint"
                           placement="top"
                         >
                           <div class="manual-alert-select-wrapper">
@@ -1274,7 +1305,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                               :model-value="row.manualAlertSeverity ?? ''"
                               size="small"
                               class="manual-alert-select"
-                              :disabled="isReadOnly || savingManualAlertIndicatorId === row.id"
+                              :disabled="
+                                !manualAlertEditable || savingManualAlertIndicatorId === row.id
+                              "
                               :loading="savingManualAlertIndicatorId === row.id"
                               @change="
                                 value =>
@@ -1300,7 +1333,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column label="上报资料" width="100" align="center">
+                  <el-table-column label="上报资料" width="112" align="center">
                     <template #default="{ row }">
                       <span
                         v-if="
@@ -1320,7 +1353,20 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       <span v-else style="color: #909399">—</span>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="remark" label="备注" width="160">
+                  <el-table-column label="进度说明" min-width="130">
+                    <template #default="{ row }">
+                      <el-tooltip
+                        :content="row.pendingRemark || ''"
+                        :disabled="(row.pendingRemark || '').length <= 50"
+                        placement="top"
+                      >
+                        <span>{{
+                          row.pendingRemark ? truncateText(row.pendingRemark, 50) : '—'
+                        }}</span>
+                      </el-tooltip>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="remark" label="下发备注" width="130">
                     <template #default="{ row }">
                       <div
                         class="indicator-name-cell"
@@ -1341,13 +1387,20 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         >
                           保存中...
                         </span>
-                        <span v-else class="indicator-name-text remark-text-wrap">{{
-                          row.remark || '样例：双击编辑说明'
-                        }}</span>
+                        <el-tooltip
+                          v-else
+                          :content="row.remark || ''"
+                          :disabled="(row.remark || '').length <= 50"
+                          placement="top"
+                        >
+                          <span class="indicator-name-text remark-text-wrap">{{
+                            row.remark ? truncateText(row.remark, 50) : '样例：双击编辑说明'
+                          }}</span>
+                        </el-tooltip>
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column label="操作" width="128" align="center">
+                  <el-table-column label="操作" width="116" align="center">
                     <template #default="{ row }">
                       <div class="action-buttons-inline">
                         <!-- 查看按钮 - 始终显示 -->
@@ -1687,7 +1740,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   </el-row>
                   <el-row :gutter="16">
                     <el-col :span="24">
-                      <el-form-item label="备注">
+                      <el-form-item label="下发备注">
                         <el-input
                           v-model="newRow.remark"
                           type="textarea"
@@ -1736,18 +1789,26 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   highlight-current-row
                   class="unified-table"
                 >
-                  <el-table-column label="核心指标" min-width="200">
+                  <el-table-column label="核心指标" min-width="140">
                     <template #default="{ row }">
-                      <!-- 2026-10-13 用户定案：与职能部门 tab 核心指标列同构——同核心指标合并单元格、定性/定量配色、悬停类型提示 -->
+                      <!-- 2026-10-13 用户定案：与职能部门 tab 核心指标列同构——同核心指标合并单元格、定性/定量配色；悬停看全文 -->
                       <el-tooltip
                         :content="
-                          row.parentIndicatorId &&
-                          indicatorById.get(row.parentIndicatorId)?.type1 === '定性'
-                            ? '定性指标'
-                            : row.parentIndicatorId &&
-                                indicatorById.get(row.parentIndicatorId)?.type1 === '定量'
-                              ? '定量指标'
-                              : '未设置类型'
+                          (row.parentIndicatorId &&
+                            indicatorById.get(row.parentIndicatorId)?.name) ||
+                          ''
+                        "
+                        :disabled="
+                          !(
+                            (row.parentIndicatorId &&
+                              indicatorById.get(row.parentIndicatorId)?.name) ||
+                            ''
+                          ).length ||
+                          (
+                            (row.parentIndicatorId &&
+                              indicatorById.get(row.parentIndicatorId)?.name) ||
+                            ''
+                          ).length <= 50
                         "
                         placement="top"
                       >
@@ -1763,24 +1824,54 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                                 : ''
                           "
                           >{{
-                            (row.parentIndicatorId &&
-                              indicatorById.get(row.parentIndicatorId)?.name) ||
-                            '—'
+                            row.parentIndicatorId && indicatorById.get(row.parentIndicatorId)?.name
+                              ? truncateText(
+                                  (row.parentIndicatorId &&
+                                    indicatorById.get(row.parentIndicatorId)?.name) ||
+                                    '',
+                                  50
+                                )
+                              : '—'
                           }}</span
                         >
                       </el-tooltip>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="name" label="子指标名称" min-width="320">
+                  <el-table-column prop="name" label="子指标名称" min-width="192">
                     <template #default="{ row }">
                       <div
                         class="indicator-name-cell"
                         @dblclick="handleIndicatorDblClick(row, 'name')"
                       >
-                        <template v-if="row.name">
-                          <span class="indicator-name-text">{{ row.name }}</span>
+                        <el-input
+                          v-if="editingIndicatorId === row.id && editingIndicatorField === 'name'"
+                          v-model="editingIndicatorValue"
+                          v-focus
+                          type="textarea"
+                          :autosize="{ minRows: 2, maxRows: 6 }"
+                          @blur="saveIndicatorEdit(row, 'name')"
+                          @keyup.esc="cancelIndicatorEdit"
+                        />
+                        <span
+                          v-else-if="isSavingIndicatorCell(row, 'name')"
+                          class="cell-saving-text"
+                        >
+                          保存中...
+                        </span>
+                        <template v-else>
+                          <template v-if="row.name">
+                            <el-tooltip
+                              :content="row.name"
+                              :disabled="row.name.length <= 50"
+                              placement="top"
+                            >
+                              <span class="indicator-name-text">{{
+                                truncateText(row.name, 50)
+                              }}</span>
+                            </el-tooltip>
+                          </template>
+                          <span v-else class="placeholder-text">未命名指标</span>
                         </template>
-                        <span v-else class="placeholder-text">未命名指标</span>
                         <!-- 异动历史徽章（有变更时显示，悬停看历史） -->
                         <div v-if="row.id" class="indicator-cell-footer">
                           <MutationBadgePopover :indicator-id="row.id" />
@@ -1790,14 +1881,29 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="weight" label="权重" width="72" align="center">
+                  <el-table-column prop="weight" label="权重" width="80" align="center">
                     <template #default="{ row }">
-                      <div @dblclick="handleIndicatorDblClick(row, 'weight')">
-                        <span>{{ row.weight }}</span>
+                      <div class="weight-cell" @dblclick="handleIndicatorDblClick(row, 'weight')">
+                        <el-input
+                          v-if="editingIndicatorId === row.id && editingIndicatorField === 'weight'"
+                          v-model="editingIndicatorValue"
+                          v-focus
+                          size="small"
+                          style="width: 50px"
+                          @blur="saveIndicatorEdit(row, 'weight')"
+                          @keyup.enter="saveIndicatorEdit(row, 'weight')"
+                        />
+                        <span
+                          v-else-if="isSavingIndicatorCell(row, 'weight')"
+                          class="cell-saving-text"
+                        >
+                          保存中...
+                        </span>
+                        <span v-else class="weight-text">{{ row.weight }}</span>
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column label="自评等级" width="132" align="center">
+                  <el-table-column label="自评等级" width="110" align="center">
                     <template #default="{ row }">
                       <el-tag v-if="row.selfRating" size="small" type="info">
                         {{
@@ -1808,38 +1914,73 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       <span v-else>—</span>
                     </template>
                   </el-table-column>
-                  <el-table-column label="鉴定进度等级" width="140" align="center">
+                  <el-table-column label="鉴定进度等级" width="126" align="center">
                     <template #default="{ row }">
                       <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
                         {{ getManualAlertLabel(row.manualAlertSeverity) }}
                       </el-tag>
                     </template>
                   </el-table-column>
-                  <el-table-column label="上报资料" min-width="150">
+                  <el-table-column label="上报资料" width="96">
                     <template #default="{ row }">
                       <!-- 只展示当前最新一次上报提交的资料；历次经右下角上报小标查看 -->
                       <ReportMaterialsCell :indicator-id="row.id" />
                     </template>
                   </el-table-column>
-                  <el-table-column label="上报状态" width="110" align="center">
+                  <el-table-column label="上报状态" width="100" align="center">
                     <template #default="{ row }">
                       <!-- 取最新一次非草稿上报的真实审批状态（hasCurrentMonthFill 是"能否继续填报"字段，不反映上报历史） -->
                       <ReportStatusCell :indicator-id="row.id" />
                     </template>
                   </el-table-column>
-                  <el-table-column label="进度说明" min-width="160">
+                  <el-table-column label="进度说明" min-width="116">
                     <template #default="{ row }">
-                      <span>{{ row.pendingRemark || '—' }}</span>
+                      <el-tooltip
+                        :content="row.pendingRemark || ''"
+                        :disabled="(row.pendingRemark || '').length <= 50"
+                        placement="top"
+                      >
+                        <span>{{
+                          row.pendingRemark ? truncateText(row.pendingRemark, 50) : '—'
+                        }}</span>
+                      </el-tooltip>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="remark" label="备注" width="160">
+                  <el-table-column prop="remark" label="下发备注" width="106">
                     <template #default="{ row }">
-                      <span class="indicator-name-text remark-text-wrap">{{
-                        row.remark || '—'
-                      }}</span>
+                      <div
+                        class="indicator-name-cell"
+                        @dblclick="handleIndicatorDblClick(row, 'remark')"
+                      >
+                        <el-input
+                          v-if="editingIndicatorId === row.id && editingIndicatorField === 'remark'"
+                          v-model="editingIndicatorValue"
+                          v-focus
+                          type="textarea"
+                          :autosize="{ minRows: 2, maxRows: 6 }"
+                          @blur="saveIndicatorEdit(row, 'remark')"
+                          @keyup.esc="cancelIndicatorEdit"
+                        />
+                        <span
+                          v-else-if="isSavingIndicatorCell(row, 'remark')"
+                          class="cell-saving-text"
+                        >
+                          保存中...
+                        </span>
+                        <el-tooltip
+                          v-else
+                          :content="row.remark || ''"
+                          :disabled="(row.remark || '').length <= 50"
+                          placement="top"
+                        >
+                          <span class="indicator-name-text remark-text-wrap">{{
+                            row.remark ? truncateText(row.remark, 50) : '—'
+                          }}</span>
+                        </el-tooltip>
+                      </div>
                     </template>
                   </el-table-column>
-                  <el-table-column label="操作" width="90" align="center" fixed="right">
+                  <el-table-column label="操作" width="84" align="center" fixed="right">
                     <template #default="{ row }">
                       <el-button link type="primary" size="small" @click="handleViewDetail(row)">
                         详情
@@ -1969,7 +2110,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           >
           <el-descriptions-item label="指标类型">{{ currentDetail.type1 }}</el-descriptions-item>
           <el-descriptions-item label="权重">{{ currentDetail.weight }}</el-descriptions-item>
-          <el-descriptions-item label="鉴定等级">
+          <el-descriptions-item label="鉴定进度等级">
             <el-tag :type="getManualAlertTagType(currentDetail.manualAlertSeverity)" size="small">
               {{ getManualAlertLabel(currentDetail.manualAlertSeverity) }}
             </el-tag>
@@ -1983,7 +2124,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <el-descriptions-item label="创建时间" :span="2">{{
             formatDetailDate(currentDetail.createTime)
           }}</el-descriptions-item>
-          <el-descriptions-item label="备注" :span="2">{{
+          <el-descriptions-item label="下发备注" :span="2">{{
             currentDetail.remark
           }}</el-descriptions-item>
         </el-descriptions>

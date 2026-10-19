@@ -14,6 +14,7 @@ import {
 import { ElMessage } from 'element-plus'
 import type { StrategicIndicator } from '@/shared/types'
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
+import { truncateText } from '@/shared/lib/utils/formatters'
 import {
   buildAttachmentCell,
   buildExportFileName,
@@ -89,6 +90,7 @@ const {
   collegeTotalWeight,
   canEditChildManualAlert,
   childManualAlertEditable,
+  childManualAlertLockHint,
   getChildManualAlertLabel,
   getChildManualAlertSeverity,
   getChildManualAlertTagType,
@@ -363,7 +365,7 @@ const buildDistributionExportColumns = (
       align: 'center',
       getValue: row => getDistributionChildTypeText(row.child)
     },
-    { header: '备注', width: 24, getValue: row => row.child.remark || '-' },
+    { header: '下发备注', width: 24, getValue: row => row.child.remark || '-' },
     { header: '权重', width: 10, align: 'center', getValue: row => Number(row.child.weight || 0) },
     {
       header: '鉴定进度等级',
@@ -372,7 +374,7 @@ const buildDistributionExportColumns = (
       getValue: row => getChildManualAlertLabel(getChildManualAlertSeverity(row.child))
     },
     {
-      header: '附件',
+      header: '上报资料',
       width: 42,
       getValue: row =>
         buildAttachmentCell(
@@ -849,7 +851,7 @@ const handleDistributionImportCommitted = async () => {
                 class="unified-table distribution-table"
               >
                 <!-- 子指标名称列 -->
-                <el-table-column label="子指标名称" min-width="150">
+                <el-table-column label="子指标名称" min-width="188">
                   <template #default="{ row }">
                     <!-- 没有子指标的父指标 -->
                     <template v-if="row.type === 'indicator-only'">
@@ -883,7 +885,8 @@ const handleDistributionImportCommitted = async () => {
                         </span>
                         <el-tooltip
                           v-else
-                          :content="`${getIndicatorTypeLabel(row.child)}指标`"
+                          :content="row.child?.name || ''"
+                          :disabled="(row.child?.name || '').length <= 50"
                           placement="top"
                         >
                           <span
@@ -893,7 +896,7 @@ const handleDistributionImportCommitted = async () => {
                                 ? 'indicator-qualitative'
                                 : 'indicator-quantitative'
                             "
-                            >{{ row.child?.name || '未命名' }}</span
+                            >{{ truncateText(row.child?.name || '未命名', 50) }}</span
                           >
                         </el-tooltip>
                         <!-- 上报历史小标（每次上报更新，不走异动链，悬停看历次上报+资料） -->
@@ -933,7 +936,13 @@ const handleDistributionImportCommitted = async () => {
                 </el-table-column>
 
                 <!-- 权重列 -->
-                <el-table-column label="权重" width="80" align="center">
+                <el-table-column
+                  label="权重"
+                  width="58"
+                  align="center"
+                  class-name="weight-column-header"
+                  label-class-name="weight-column-header"
+                >
                   <template #default="{ row }">
                     <template v-if="row.type === 'indicator-only'">
                       <span class="weight-text">-</span>
@@ -972,7 +981,7 @@ const handleDistributionImportCommitted = async () => {
                 </el-table-column>
 
                 <!-- 自评等级列（与战略任务管理页命名一致） -->
-                <el-table-column label="自评等级" width="110" align="center">
+                <el-table-column label="自评等级" width="96" align="center">
                   <template #default="{ row }">
                     <template v-if="row.type === 'child'">
                       <el-tag v-if="row.child?.selfRating" size="small" type="info">
@@ -990,7 +999,7 @@ const handleDistributionImportCommitted = async () => {
                 </el-table-column>
 
                 <!-- 鉴定进度等级列（按业务要求替代原里程碑列；控件与战略任务管理页一致） -->
-                <el-table-column label="鉴定进度等级" width="140" align="center">
+                <el-table-column label="鉴定进度等级" width="120" align="center">
                   <template #default="{ row }">
                     <template v-if="row.type !== 'child'">
                       <span class="manual-alert-placeholder">-</span>
@@ -1000,7 +1009,7 @@ const handleDistributionImportCommitted = async () => {
                         <template v-if="canEditChildManualAlert">
                           <el-tooltip
                             :disabled="childManualAlertEditable"
-                            content="计划正式下发后才能调整进度等级"
+                            :content="childManualAlertLockHint"
                             placement="top"
                           >
                             <div
@@ -1052,7 +1061,7 @@ const handleDistributionImportCommitted = async () => {
                 </el-table-column>
 
                 <!-- 上报资料列（2026-10-13 用户定案：展示当前最新一次上报提交的资料；历次经上报小标查看） -->
-                <el-table-column label="上报资料" min-width="150">
+                <el-table-column label="上报资料" min-width="96">
                   <template #default="{ row }">
                     <template v-if="row.type === 'child'">
                       <ReportMaterialsCell :indicator-id="row.child?.id" />
@@ -1063,8 +1072,28 @@ const handleDistributionImportCommitted = async () => {
                   </template>
                 </el-table-column>
 
+                <!-- 进度说明列（2026-10-18 用户定案：与其他界面同构，展示当次上报说明） -->
+                <el-table-column label="进度说明" min-width="92">
+                  <template #default="{ row }">
+                    <template v-if="row.type === 'child'">
+                      <el-tooltip
+                        :content="row.child?.pendingRemark || ''"
+                        :disabled="(row.child?.pendingRemark || '').length <= 50"
+                        placement="top"
+                      >
+                        <span>{{
+                          row.child?.pendingRemark ? truncateText(row.child.pendingRemark, 50) : '—'
+                        }}</span>
+                      </el-tooltip>
+                    </template>
+                    <template v-else>
+                      <span class="remark-text">-</span>
+                    </template>
+                  </template>
+                </el-table-column>
+
                 <!-- 备注列（2026-10-13 用户定案：备注移到操作列前） -->
-                <el-table-column label="备注" width="140">
+                <el-table-column label="下发备注" width="98">
                   <template #default="{ row }">
                     <template v-if="row.type === 'indicator-only'">
                       <span class="remark-text">-</span>
@@ -1092,7 +1121,16 @@ const handleDistributionImportCommitted = async () => {
                         >
                           保存中...
                         </span>
-                        <span v-else class="remark-text">{{ row.child?.remark || '-' }}</span>
+                        <el-tooltip
+                          v-else
+                          :content="row.child?.remark || ''"
+                          :disabled="(row.child?.remark || '').length <= 50"
+                          placement="top"
+                        >
+                          <span class="remark-text">{{
+                            row.child?.remark ? truncateText(row.child.remark, 50) : '-'
+                          }}</span>
+                        </el-tooltip>
                       </div>
                     </template>
                     <template v-else-if="row.type === 'new-child'">
@@ -1121,7 +1159,7 @@ const handleDistributionImportCommitted = async () => {
                 </el-table-column>
 
                 <!-- 操作列 - 学院模式：仅查看和删除（删除需先撤销） -->
-                <el-table-column label="操作" width="180" align="center">
+                <el-table-column label="操作" width="120" align="center">
                   <template #default="{ row }">
                     <!-- 没有子指标的父指标 - 无操作 -->
                     <template v-if="row.type === 'indicator-only'">
@@ -1272,7 +1310,7 @@ const handleDistributionImportCommitted = async () => {
                   </el-row>
                   <el-row :gutter="16">
                     <el-col :span="24">
-                      <el-form-item label="备注">
+                      <el-form-item label="下发备注">
                         <el-input
                           v-model="newIndicatorForm.remark"
                           type="textarea"
@@ -1370,7 +1408,7 @@ const handleDistributionImportCommitted = async () => {
           <el-descriptions-item label="创建时间" :span="2">
             {{ formatDetailDate(currentDetailIndicator.createTime) }}
           </el-descriptions-item>
-          <el-descriptions-item label="备注" :span="2">
+          <el-descriptions-item label="下发备注" :span="2">
             {{ currentDetailIndicator.remark || '暂无备注' }}
           </el-descriptions-item>
         </el-descriptions>
@@ -1608,7 +1646,7 @@ const handleDistributionImportCommitted = async () => {
             </template>
           </el-table-column>
           <!-- 备注列 -->
-          <el-table-column label="备注" width="150">
+          <el-table-column label="下发备注" width="150">
             <template #default="{ row }">
               <span class="indicator-remark">{{ row.indicator.remark || '-' }}</span>
             </template>

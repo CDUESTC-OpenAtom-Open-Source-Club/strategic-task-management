@@ -97,10 +97,10 @@ export function resolveHistoryStatusTag(status?: string): ApprovalStatusTag {
     return { label: '已通过', type: 'success' }
   }
   if (normalized === 'REJECTED') {
-    return { label: '已驳回', type: 'danger' }
+    return { label: '已回退', type: 'danger' }
   }
   if (normalized === 'WITHDRAWN') {
-    return { label: '已撤回', type: 'info' }
+    return { label: '已回退', type: 'info' }
   }
   if (normalized === 'IN_REVIEW' || normalized === 'PENDING' || normalized === 'SUBMITTED') {
     return { label: '审批中', type: 'warning' }

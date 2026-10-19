@@ -92,13 +92,13 @@ export function getIndicatorWorkflowStatusLabel(
     return '待审批'
   }
   if (workflowStatus === 'WITHDRAWN') {
-    return '已撤回'
+    return '已回退'
   }
   if (workflowStatus === 'APPROVED' || workflowStatus === 'COMPLETED') {
     return '已通过'
   }
   if (workflowStatus === 'REJECTED' || workflowStatus === 'RETURNED') {
-    return '已驳回'
+    return '已回退'
   }
 
   const fillStatus = String(snapshot?.status || '')
@@ -111,7 +111,7 @@ export function getIndicatorWorkflowStatusLabel(
     return '已通过'
   }
   if (fillStatus === 'rejected') {
-    return '已驳回'
+    return '已回退'
   }
   return '草稿'
 }
@@ -126,7 +126,7 @@ export function getIndicatorWorkflowTagType(
   if (label === '已通过') {
     return 'success'
   }
-  if (label === '已驳回') {
+  if (label === '已回退') {
     return 'danger'
   }
   return 'info'

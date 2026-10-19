@@ -1190,7 +1190,7 @@ export function useDashboardView(props: DashboardViewProps) {
               : item.approvalStatus === 'pending'
                 ? '待审批'
                 : item.approvalStatus === 'rejected'
-                  ? '已驳回'
+                  ? '已回退'
                   : '草稿',
           备注: item.description || ''
         }))
@@ -1224,7 +1224,7 @@ export function useDashboardView(props: DashboardViewProps) {
               : item.approvalStatus === 'pending'
                 ? '待审批'
                 : item.approvalStatus === 'rejected'
-                  ? '已驳回'
+                  ? '已回退'
                   : '草稿',
           备注: item.description || ''
         }))

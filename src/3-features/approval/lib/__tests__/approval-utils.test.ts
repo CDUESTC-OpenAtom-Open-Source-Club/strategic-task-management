@@ -85,7 +85,7 @@ describe('approval-utils', () => {
 
   it('maps workflow history statuses consistently', () => {
     expect(resolveHistoryStatusTag('APPROVED')).toEqual({ label: '已通过', type: 'success' })
-    expect(resolveHistoryStatusTag('rejected')).toEqual({ label: '已驳回', type: 'danger' })
+    expect(resolveHistoryStatusTag('rejected')).toEqual({ label: '已回退', type: 'danger' })
     expect(resolveHistoryStatusTag('submitted')).toEqual({ label: '审批中', type: 'warning' })
     expect(resolveHistoryStatusTag(undefined)).toEqual({ label: '未知', type: 'info' })
     expect(isTerminalHistoryStatus('approved')).toBe(true)

@@ -44,7 +44,7 @@ const getStatusConfig = (status?: string) => {
   const configs: Record<string, { label: string; type: string }> = {
     submitted: { label: '待审核', type: 'warning' },
     approved: { label: '已通过', type: 'success' },
-    rejected: { label: '已驳回', type: 'danger' }
+    rejected: { label: '已回退', type: 'danger' }
   }
   return configs[status || ''] || { label: status || '', type: 'info' }
 }
@@ -114,7 +114,12 @@ const loadPlanFill = async () => {
         id: detail.instanceId,
         plan_id: '',
         submit_date: detail.startTime || '',
-        status: detail.status === 'APPROVED' ? 'approved' : detail.status === 'REJECTED' ? 'rejected' : 'submitted',
+        status:
+          detail.status === 'APPROVED'
+            ? 'approved'
+            : detail.status === 'REJECTED'
+              ? 'rejected'
+              : 'submitted',
         submitted_by: String(detail.starterId || ''),
         submitted_by_name: detail.starterName || 'Unknown',
         fills: [],

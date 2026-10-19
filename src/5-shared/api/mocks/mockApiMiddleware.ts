@@ -724,7 +724,7 @@ export function mockApiMiddleware(req: IncomingMessage, res: ServerResponse, nex
             ...mockWorkflowInstanceDetail,
             status: 'REJECTED',
             currentTaskId: undefined,
-            currentStepName: '已驳回'
+            currentStepName: '已回退'
           },
           message: '审批驳回成功',
           timestamp: Date.now()

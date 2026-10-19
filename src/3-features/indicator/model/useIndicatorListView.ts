@@ -922,8 +922,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     )
   })
 
-  // 是否显示责任部门列（只有战略发展部才显示）
-  const showResponsibleDeptColumn = computed(() => isStrategicDept.value)
   const showOwnerDeptDetail = computed(() => isSecondaryCollege.value)
 
   // 当前选中任务索引
@@ -936,7 +934,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   // 筛选条件
   const filterType2 = ref('') // 任务类型筛选
   const filterType1 = ref('') // 指标类型筛选
-  const filterDept = ref('') // 责任部门筛选
   const filterOwnerDept = ref('') // 来源部门筛选（仅学院使用）
   const collegePlanDetailsMap = ref<Record<string, Plan>>({})
   const collegePlanDetailsLoading = ref(false)
@@ -1027,7 +1024,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   const resetFilters = () => {
     filterType2.value = ''
     filterType1.value = ''
-    filterDept.value = ''
     // 学院重置时恢复默认来源部门
     if (isSecondaryCollege.value && availableOwnerDepts.value.length > 0) {
       filterOwnerDept.value = availableOwnerDepts.value[0] ?? ''
@@ -2266,9 +2262,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       if (filterType1.value) {
         list = list.filter(i => i.type1 === filterType1.value)
       }
-      if (filterDept.value) {
-        list = list.filter(i => i.responsibleDept === filterDept.value)
-      }
       // 学院角色：按来源部门筛选
       if (isSecondaryCollege.value && filterOwnerDept.value) {
         list = list.filter(i => i.ownerDept === filterOwnerDept.value)
@@ -2376,9 +2369,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }
     if (filterType1.value) {
       list = list.filter(i => i.type1 === filterType1.value)
-    }
-    if (filterDept.value) {
-      list = list.filter(i => i.responsibleDept === filterDept.value)
     }
     // 学院角色：按来源部门筛选
     if (isSecondaryCollege.value && filterOwnerDept.value) {
@@ -2591,12 +2581,58 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return { label: '已审批', type: 'success' as StatusTagType }
     }
     if (uiStatus === 'REJECTED') {
-      return { label: '已驳回', type: 'danger' as StatusTagType }
+      return { label: '已回退', type: 'danger' as StatusTagType }
     }
     if (['SUBMITTED', 'IN_REVIEW', 'PENDING'].includes(uiStatus)) {
       return { label: '审批中', type: 'warning' as StatusTagType }
     }
     return { label: '未填报', type: 'info' as StatusTagType }
+  })
+
+  /**
+   * 2026-10-19 用户定案：列表右上角状态章改为「按月份顺序推进」口径——
+   * 不再出现「本月」字样。起点为计划下发后的首个可填月，随上报完成自动推进：
+   * - 有未填月 → 「5月未上报」/「6月未上报」…
+   * - 12 个月全部填完 → 「各月份已上报完毕」
+   * - 当前待填月报告在审批中/已通过 → 沿用审批态（审批中/已审批/已回退）
+   */
+  const monthlySequenceStatusMeta = computed(() => {
+    if (!usePlanReportFlow.value || !hasCurrentUserPlanData.value) {
+      return { label: '未填报', type: 'info' as StatusTagType }
+    }
+
+    const lockState = planReportEntryLockState.value
+    const earliest = String(lockState?.earliestUnfilledMonth || '').trim()
+
+    // 12 个月全部有报告（earliest 为空串）
+    if (lockState && earliest === '') {
+      return { label: '各月份已上报完毕', type: 'success' as StatusTagType }
+    }
+
+    // 该待填月已有报告（审批中/已通过/已回退）→ 沿用审批态
+    const targetStatus = String(lockState?.targetMonthReportStatus || '')
+      .trim()
+      .toUpperCase()
+    if (targetStatus === 'APPROVED') {
+      return { label: '已审批', type: 'success' as StatusTagType }
+    }
+    if (targetStatus === 'REJECTED') {
+      return { label: '已回退', type: 'danger' as StatusTagType }
+    }
+    if (['SUBMITTED', 'IN_REVIEW', 'PENDING'].includes(targetStatus)) {
+      return { label: '审批中', type: 'warning' as StatusTagType }
+    }
+
+    // 有明确的待填月 → 「N月未上报」
+    if (earliest.length === 6) {
+      const month = Number(earliest.slice(4, 6))
+      if (Number.isFinite(month) && month >= 1 && month <= 12) {
+        return { label: `${month}月未上报`, type: 'info' as StatusTagType }
+      }
+    }
+
+    // 数据不可得时降级为旧口径
+    return currentMonthlyReportStatusMeta.value
   })
 
   const normalizeWorkflowStepName = (value?: string | null) => {
@@ -2760,9 +2796,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       workflowStatus === 'CANCELLED'
     ) {
       return {
-        label: '已退回',
+        label: '已回退',
         type: 'danger' as const,
-        description: stepName ? `当前流程已在“${stepName}”环节退回。` : '当前计划审批流程已退回。'
+        description: stepName ? `当前流程已在“${stepName}”环节退回。` : '当前计划审批流程已回退。'
       }
     }
 
@@ -4846,6 +4882,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     currentPlanReportUiStatus,
     currentPlanStatus,
     currentMonthlyReportStatusMeta,
+    monthlySequenceStatusMeta,
     currentPlanWorkflowDetail,
     currentReportIndicator,
     currentTaskIndex,
@@ -4865,7 +4902,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     editingValue,
     effectiveViewingDept,
     effectiveViewingRole,
-    filterDept,
     filterIndicatorsForCurrentViewer,
     filterOwnerDept,
     filterType1,
@@ -4997,7 +5033,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     showAssignmentDialog,
     showOwnerDeptDetail,
     showPlanBatchActions,
-    showResponsibleDeptColumn,
     showStrategicTaskColumn,
     showSubmitAllButton,
     showWithdrawAllButton,

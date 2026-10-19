@@ -31,6 +31,10 @@ import { alertApi, type ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import type { Plan } from '@/shared/types'
 import { canUseAsFunctionalParentIndicator } from '@/features/indicator/lib/scope'
 import { getPlanStatusDisplay, normalizePlanStatus } from '@/features/task/lib/planStatus'
+import {
+  MANUAL_ALERT_LOCKED_HINT,
+  MANUAL_ALERT_WORKFLOW_LOCKED_HINT
+} from '@/features/task/lib/warning-level'
 import { strategicApi } from '@/features/task/api/strategicApi'
 import { getWorkflowDefinitionPreviewByCode } from '@/features/workflow/api'
 import type {
@@ -459,37 +463,58 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     const collegeOrgId = getOrgIdByDeptName(collegeName)
     const currentOrgId = currentDepartmentOrgId.value
 
-    return (
-      planStore.plans.find(plan => {
-        const planAny = plan as Plan & {
-          targetOrgId?: number | string
-          targetOrgName?: string
-          orgId?: number | string
-          orgName?: string
-          createdByOrgId?: number | string
-          year?: number | string
-          cycleId?: number | string
-        }
-        const planYear = resolvePlanYear(planAny)
-        const targetOrgId = Number(planAny.targetOrgId ?? planAny.org_id ?? planAny.orgId ?? NaN)
-        const targetOrgName = normalizeDepartmentName(
-          planAny.targetOrgName || planAny.orgName || ''
-        )
-        const createdByOrgId = Number(planAny.createdByOrgId ?? NaN)
-        const matchesOrgId =
-          collegeOrgId != null && Number.isFinite(targetOrgId) && targetOrgId === collegeOrgId
-        const matchesOrgName = targetOrgName === collegeName
-        const matchesCreatedByOrg =
-          currentOrgId == null ||
-          !Number.isFinite(createdByOrgId) ||
-          createdByOrgId === currentOrgId
+    // 2026-10-19 缺陷修复：此处只应取「职能部门→学院」这一层级的计划。
+    // 此前未校验 planLevel，当同一对部门之间同时存在 STRAT_TO_FUNC 空草稿
+    // （如纪委→计算机学院的 705463）时会被 find 先命中，导致选中学院后
+    // 审批历史查的是错误计划（查不到真正下发链 403757 的实例）。
+    const candidates = planStore.plans.filter(plan => {
+      const planAny = plan as Plan & {
+        targetOrgId?: number | string
+        targetOrgName?: string
+        orgId?: number | string
+        orgName?: string
+        createdByOrgId?: number | string
+        year?: number | string
+        cycleId?: number | string
+        planLevel?: string
+      }
+      const planYear = resolvePlanYear(planAny)
+      const targetOrgId = Number(planAny.targetOrgId ?? planAny.org_id ?? planAny.orgId ?? NaN)
+      const targetOrgName = normalizeDepartmentName(planAny.targetOrgName || planAny.orgName || '')
+      const createdByOrgId = Number(planAny.createdByOrgId ?? NaN)
+      const matchesOrgId =
+        collegeOrgId != null && Number.isFinite(targetOrgId) && targetOrgId === collegeOrgId
+      const matchesOrgName = targetOrgName === collegeName
+      const matchesCreatedByOrg =
+        currentOrgId == null || !Number.isFinite(createdByOrgId) || createdByOrgId === currentOrgId
+      const planLevel = String(planAny.planLevel || '')
+        .trim()
+        .toUpperCase()
+      const matchesLevel = planLevel === '' || planLevel === 'FUNC_TO_COLLEGE'
 
-        return (
-          planYear === timeContext.currentYear &&
-          (matchesOrgId || matchesOrgName) &&
-          matchesCreatedByOrg
-        )
-      }) || null
+      return (
+        planYear === timeContext.currentYear &&
+        (matchesOrgId || matchesOrgName) &&
+        matchesCreatedByOrg &&
+        matchesLevel
+      )
+    })
+
+    // 同层级多份计划时优先取已下发（有审批链），其次按 id 倒序取最新
+    const isDistributed = (plan: Plan) =>
+      String((plan as { status?: string }).status || '')
+        .trim()
+        .toUpperCase() === 'DISTRIBUTED'
+
+    return (
+      [...candidates].sort((left, right) => {
+        const leftDistributed = isDistributed(left) ? 1 : 0
+        const rightDistributed = isDistributed(right) ? 1 : 0
+        if (leftDistributed !== rightDistributed) {
+          return rightDistributed - leftDistributed
+        }
+        return Number(right.id ?? 0) - Number(left.id ?? 0)
+      })[0] || null
     )
   })
 
@@ -969,7 +994,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     routeApprovalDepartment,
     shouldAutoOpenApprovalFromRoute
   } = useApprovalRouteAutopen({
-    supportedEntityTypes: ['PLAN', 'PLAN_REPORT'] as const,
+    supportedEntityTypes: ['PLAN', 'PLAN_REPORT', 'INDICATOR'] as const,
     onAutoOpen: () => Promise.resolve().then(() => handleOpenApproval()),
     onClearFailure: error => {
       logger.warn('[IndicatorDistributeView] 清理审批自动打开参数失败:', error)
@@ -1225,9 +1250,9 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       workflowStatus === 'CANCELLED'
     ) {
       return {
-        label: '已退回',
+        label: '已回退',
         tagType: 'danger' as const,
-        description: stepName ? `当前流程已在“${stepName}”环节退回。` : '当前计划审批流程已退回。'
+        description: stepName ? `当前流程已在“${stepName}”环节退回。` : '当前计划审批流程已回退。'
       }
     }
 
@@ -4136,10 +4161,27 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     return normalized.some(role => MANUAL_ALERT_WRITE_ROLES.includes(role))
   })
 
+  // 2026-10-18 用户定案：鉴定进度等级是上报审批过程中的状态——
+  // 仅「计划已下发 + 上报审批流程进行中」可调整；平时（流程未发起/已结束/已回退）锁死。
+  const childManualAlertWorkflowInFlight = computed(() =>
+    ['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(
+      normalizedCurrentActiveCollegeWorkflowStatus.value
+    )
+  )
+
   const childManualAlertEditable = computed(
     () =>
-      canEditChildManualAlert.value && normalizedSelectedCollegePlanStatus.value === 'DISTRIBUTED'
+      canEditChildManualAlert.value &&
+      normalizedSelectedCollegePlanStatus.value === 'DISTRIBUTED' &&
+      childManualAlertWorkflowInFlight.value
   )
+
+  const childManualAlertLockHint = computed(() => {
+    if (normalizedSelectedCollegePlanStatus.value !== 'DISTRIBUTED') {
+      return MANUAL_ALERT_LOCKED_HINT
+    }
+    return MANUAL_ALERT_WORKFLOW_LOCKED_HINT
+  })
 
   const getChildManualAlertSeverity = (
     child: StrategicIndicator | NewChildIndicator | null | undefined
@@ -4326,6 +4368,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     // ===== 子指标进度等级（与战略任务管理页同一后端能力；写权限后续按角色放开）=====
     canEditChildManualAlert,
     childManualAlertEditable,
+    childManualAlertLockHint,
     childManualAlertLevels,
     getChildManualAlertLabel,
     getChildManualAlertSeverity,

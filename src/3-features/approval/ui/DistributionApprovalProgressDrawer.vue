@@ -3,7 +3,10 @@ import { computed } from 'vue'
 import { Document, User, Timer, Right } from '@element-plus/icons-vue'
 import ApprovalHistory from './ApprovalHistory.vue'
 import CustomApprovalFlow from './CustomApprovalFlow.vue'
-import { formatAppraisalLevel } from '@/features/approval/model/useApprovalProgressDrawer'
+import {
+  formatAppraisalLevel,
+  formatStayDuration
+} from '@/features/approval/model/useApprovalProgressDrawer'
 import {
   resolvePlanApprovalTypeLabel,
   showAppraisalLevelForFlow
@@ -266,7 +269,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
             已通过: {{ approvedCount }}
           </el-tag>
           <el-tag v-if="!hasPlanWorkflowData && rejectedCount > 0" type="danger" size="small">
-            已驳回: {{ rejectedCount }}
+            已回退: {{ rejectedCount }}
           </el-tag>
         </div>
       </div>
@@ -333,6 +336,16 @@ const displayedCurrentPlanApprovalName = computed(() => {
                       formatTime(currentPlanApprovalSummary.createdAt)
                     }}</span>
                   </div>
+                  <div
+                    v-if="formatStayDuration(currentPlanApprovalSummary?.createdAt)"
+                    class="info-row"
+                  >
+                    <el-icon><Timer /></el-icon>
+                    <span class="label">停留时长：</span>
+                    <span class="value">{{
+                      formatStayDuration(currentPlanApprovalSummary?.createdAt)
+                    }}</span>
+                  </div>
                   <div class="info-row">
                     <el-icon><Right /></el-icon>
                     <span class="label">当前步骤：</span>
@@ -361,7 +374,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
                     v-model="planAppraisalLevel"
                     size="small"
                     clearable
-                    placeholder="鉴定等级"
+                    placeholder="鉴定进度等级"
                     style="width: 118px; margin-right: 8px"
                   >
                     <el-option label="超前完成" value="AHEAD" />

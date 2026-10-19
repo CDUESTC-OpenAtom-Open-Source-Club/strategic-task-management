@@ -26,6 +26,7 @@ import {
 } from '@/shared/lib/export/excel'
 import { ApprovalProgressDrawer } from '@/features/approval'
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
+import { truncateText } from '@/shared/lib/utils/formatters'
 import {
   useIndicatorListView,
   type IndicatorListViewProps
@@ -113,6 +114,7 @@ const {
   currentPlanReportUiStatus,
   currentPlanStatus,
   currentMonthlyReportStatusMeta,
+  monthlySequenceStatusMeta,
   currentPlanWorkflowDetail,
   currentReportIndicator,
   currentTaskIndex,
@@ -134,7 +136,6 @@ const {
   editingValue,
   effectiveViewingDept,
   effectiveViewingRole,
-  filterDept,
   filterIndicatorsForCurrentViewer,
   filterOwnerDept,
   filterType1,
@@ -263,7 +264,6 @@ const {
   showAssignmentDialog,
   showOwnerDeptDetail,
   showPlanBatchActions,
-  showResponsibleDeptColumn,
   showStrategicTaskColumn,
   showSubmitAllButton,
   showWithdrawAllButton,
@@ -328,7 +328,7 @@ const buildIndicatorListExportColumns = (
     { header: '核心指标', width: 32, getValue: row => row.name || '-' },
     { header: '指标类型', width: 12, align: 'center', getValue: row => row.type1 || '-' },
     { header: '任务类别', width: 12, align: 'center', getValue: row => row.type2 || '-' },
-    { header: '备注', width: 24, getValue: row => row.remark || '-' },
+    { header: '下发备注', width: 24, getValue: row => row.remark || '-' },
     { header: '权重', width: 10, align: 'center', getValue: row => Number(row.weight || 0) },
     {
       header: '鉴定进度等级',
@@ -338,7 +338,7 @@ const buildIndicatorListExportColumns = (
     },
     { header: '填报说明', width: 28, getValue: row => row.pendingRemark || '-' },
     {
-      header: '附件',
+      header: '上报资料',
       width: 42,
       getValue: row => buildAttachmentCell(resolveIndicatorAttachmentItems(row))
     }
@@ -468,16 +468,6 @@ const handleExportIndicatorList = async () => {
                 />
               </el-select>
             </el-form-item>
-            <el-form-item v-if="showResponsibleDeptColumn" label="责任部门">
-              <el-select v-model="filterDept" placeholder="全部部门" clearable style="width: 200px">
-                <el-option
-                  v-for="dept in functionalDepartments"
-                  :key="dept"
-                  :label="dept"
-                  :value="dept"
-                />
-              </el-select>
-            </el-form-item>
             <el-form-item>
               <el-button @click="resetFilters">重置</el-button>
             </el-form-item>
@@ -490,12 +480,8 @@ const handleExportIndicatorList = async () => {
         <div class="card-header">
           <span class="card-title">指标列表</span>
           <div class="header-actions">
-            <el-tag
-              size="small"
-              class="overall-status-tag"
-              :type="currentMonthlyReportStatusMeta.type"
-            >
-              本月上报状态: {{ currentMonthlyReportStatusMeta.label }}
+            <el-tag size="small" class="overall-status-tag" :type="monthlySequenceStatusMeta.type">
+              {{ monthlySequenceStatusMeta.label }}
             </el-tag>
             <el-popover
               placement="top-start"
@@ -643,22 +629,23 @@ const handleExportIndicatorList = async () => {
                 v-if="showStrategicTaskColumn"
                 prop="taskContent"
                 label="战略任务"
-                width="200"
+                width="100"
               >
                 <template #default="{ row }">
                   <el-tooltip
-                    :content="row.type2 === '发展性' ? '发展性任务' : '基础性任务'"
+                    :content="row.taskContent || '未关联任务'"
+                    :disabled="(row.taskContent || '').length <= 50"
                     placement="top"
                   >
                     <span
                       class="task-content-colored"
                       :style="{ color: getTaskTypeColor(row.type2) }"
-                      >{{ row.taskContent || '未关联任务' }}</span
+                      >{{ truncateText(row.taskContent || '未关联任务', 50) }}</span
                     >
                   </el-tooltip>
                 </template>
               </el-table-column>
-              <el-table-column prop="name" label="核心指标" min-width="280">
+              <el-table-column prop="name" label="核心指标" min-width="196">
                 <template #default="{ row }">
                   <div class="indicator-name-cell" @dblclick="handleIndicatorDblClick(row, 'name')">
                     <el-input
@@ -671,7 +658,8 @@ const handleExportIndicatorList = async () => {
                     />
                     <el-tooltip
                       v-else
-                      :content="row.type1 === '定性' ? '定性指标' : '定量指标'"
+                      :content="row.name || ''"
+                      :disabled="(row.name || '').length <= 50"
                       placement="top"
                     >
                       <span
@@ -679,7 +667,7 @@ const handleExportIndicatorList = async () => {
                         :class="
                           row.type1 === '定性' ? 'indicator-qualitative' : 'indicator-quantitative'
                         "
-                        >{{ row.name }}</span
+                        >{{ truncateText(row.name || '', 50) }}</span
                       >
                     </el-tooltip>
 
@@ -692,7 +680,7 @@ const handleExportIndicatorList = async () => {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column prop="weight" label="权重" width="100" align="center">
+              <el-table-column prop="weight" label="权重" width="76" align="center">
                 <template #default="{ row }">
                   <div class="weight-cell" @dblclick="handleIndicatorDblClick(row, 'weight')">
                     <el-input
@@ -707,7 +695,7 @@ const handleExportIndicatorList = async () => {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column label="自评等级" width="120" align="center">
+              <el-table-column label="自评等级" width="108" align="center">
                 <template #default="{ row }">
                   <el-tag
                     v-if="row.selfRating"
@@ -722,23 +710,35 @@ const handleExportIndicatorList = async () => {
                   <span v-else style="color: #909399">—</span>
                 </template>
               </el-table-column>
-              <el-table-column label="鉴定等级" width="150" align="center">
+              <el-table-column
+                label="鉴定进度等级"
+                width="136"
+                align="center"
+                header-align="center"
+                label-class-name="manual-level-header"
+              >
                 <template #default="{ row }">
                   <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
                     {{ getManualAlertLabel(row.manualAlertSeverity) }}
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="进度说明" min-width="160">
+              <el-table-column label="进度说明" min-width="100">
                 <template #default="{ row }">
-                  <span class="pending-remark-text" :title="row.pendingRemark || ''">{{
-                    row.pendingRemark || '—'
-                  }}</span>
+                  <el-tooltip
+                    :content="row.pendingRemark || ''"
+                    :disabled="(row.pendingRemark || '').length <= 50"
+                    placement="top"
+                  >
+                    <span class="pending-remark-text">{{
+                      row.pendingRemark ? truncateText(row.pendingRemark, 50) : '—'
+                    }}</span>
+                  </el-tooltip>
                 </template>
               </el-table-column>
-              <el-table-column label="附件" width="90" align="center">
+              <el-table-column label="上报资料" width="104" align="center">
                 <template #default="{ row }">
-                  <span
+                  <div
                     v-if="
                       (row.attachments?.length || row.pendingAttachmentDetails?.length || 0) > 0
                     "
@@ -746,11 +746,11 @@ const handleExportIndicatorList = async () => {
                     <el-button link type="primary" size="small" @click="handleViewDetail(row)">
                       {{ row.attachments?.length || row.pendingAttachmentDetails?.length || 0 }} 个
                     </el-button>
-                  </span>
-                  <span v-else style="color: #909399">—</span>
+                  </div>
+                  <div v-else style="color: #909399">—</div>
                 </template>
               </el-table-column>
-              <el-table-column prop="remark" label="备注" width="130">
+              <el-table-column prop="remark" label="下发备注" width="132">
                 <template #default="{ row }">
                   <div
                     class="indicator-name-cell"
@@ -764,22 +764,20 @@ const handleExportIndicatorList = async () => {
                       :autosize="{ minRows: 2, maxRows: 6 }"
                       @blur="saveIndicatorEdit(row, 'remark')"
                     />
-                    <span v-else class="remark-text">{{ row.remark || '' }}</span>
+                    <el-tooltip
+                      v-else
+                      :content="row.remark || ''"
+                      :disabled="(row.remark || '').length <= 50"
+                      placement="top"
+                    >
+                      <span class="remark-text">{{
+                        row.remark ? truncateText(row.remark, 50) : ''
+                      }}</span>
+                    </el-tooltip>
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column
-                v-if="showResponsibleDeptColumn"
-                prop="responsibleDept"
-                label="责任部门"
-                min-width="140"
-              >
-                <template #default="{ row }">
-                  <span class="dept-text">{{ row.responsibleDept || '未分配' }}</span>
-                </template>
-              </el-table-column>
-
-              <el-table-column label="操作" width="260" align="center">
+              <el-table-column label="操作" width="104" align="center">
                 <template #default="{ row }">
                   <div class="action-cell">
                     <div class="action-buttons">
@@ -895,7 +893,7 @@ const handleExportIndicatorList = async () => {
         <el-form-item label="权重">
           <el-input v-model="newRow.weight" placeholder="请输入权重" type="number" />
         </el-form-item>
-        <el-form-item label="备注">
+        <el-form-item label="下发备注">
           <el-input v-model="newRow.remark" type="textarea" :rows="3" placeholder="请输入备注" />
         </el-form-item>
       </el-form>
@@ -943,7 +941,7 @@ const handleExportIndicatorList = async () => {
           >
           <el-descriptions-item label="指标类型">{{ currentDetail.type1 }}</el-descriptions-item>
           <el-descriptions-item label="权重">{{ currentDetail.weight }}</el-descriptions-item>
-          <el-descriptions-item label="鉴定等级">
+          <el-descriptions-item label="鉴定进度等级">
             <el-tag :type="getManualAlertTagType(currentDetail.manualAlertSeverity)" size="small">
               {{ getManualAlertLabel(currentDetail.manualAlertSeverity) }}
             </el-tag>
@@ -957,14 +955,14 @@ const handleExportIndicatorList = async () => {
           <el-descriptions-item label="创建时间" :span="2">{{
             formatDetailDate(currentDetail.createTime)
           }}</el-descriptions-item>
-          <el-descriptions-item label="备注" :span="2">{{
+          <el-descriptions-item label="下发备注" :span="2">{{
             currentDetail.remark || '暂无备注'
           }}</el-descriptions-item>
         </el-descriptions>
 
         <div v-if="currentDetailAttachmentItems.length > 0" class="detail-attachments">
           <div class="divider"></div>
-          <h4>相关附件</h4>
+          <h4>相关上报资料</h4>
           <div class="detail-attachments__list">
             <button
               v-for="(attachment, index) in currentDetailAttachmentItems"
@@ -1017,17 +1015,8 @@ const handleExportIndicatorList = async () => {
 
         <el-divider />
 
-        <!-- 2026-10-15 用户定案：归属月份由系统锁定（最早未填报月），不可选择——
-             按月顺序依次填报、不能跳月，故不再提供下拉，改为顶部醒目提示。 -->
-        <div class="report-month-banner">
-          <el-icon class="report-month-banner__icon"><Calendar /></el-icon>
-          <div class="report-month-banner__body">
-            <span class="report-month-banner__label">本次填报归属月份</span>
-            <span class="report-month-banner__value">{{ currentReportMonthLabel }}</span>
-          </div>
-          <span class="report-month-banner__hint">按月顺序填报，不可跳月</span>
-        </div>
-
+        <!-- 2026-10-19 用户定案：归属月份属整体计划上报口径（列表层展示），
+             单个指标的填报弹窗不再重复展示月份横幅。 -->
         <!-- 填报表单 -->
         <el-form label-width="100px" class="report-form">
           <el-form-item label="自评等级" required>
@@ -1052,7 +1041,7 @@ const handleExportIndicatorList = async () => {
               show-word-limit
             />
           </el-form-item>
-          <el-form-item label="附件（可选）">
+          <el-form-item label="上报资料（可选）">
             <el-upload
               v-model:file-list="reportUploadFiles"
               action="#"

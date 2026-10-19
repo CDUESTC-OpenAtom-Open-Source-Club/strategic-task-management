@@ -32,11 +32,11 @@ const APPRAISAL_LEVEL_LABELS: Record<string, string> = {
 
 export function formatStayDuration(createdAt?: string | null): string {
   if (!createdAt) return ''
-  // 后端返回的是北京时间裸串（无时区标记）。显式按 +08:00 解析，
-  // 避免非北京时区的浏览器按本地时区解析导致停留时长为负数。
+  // 2026-10-19 用户定案：时区不硬编码。后端返回服务器本地时间裸串，
+  // 前端按浏览器本地时区解析；服务器与浏览器同区时停留时长即真实耗时。
   const trimmed = createdAt.trim()
   const normalized = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(trimmed)
-    ? `${trimmed.replace(' ', 'T')}+08:00`
+    ? trimmed.replace(' ', 'T')
     : trimmed
   const start = new Date(normalized).getTime()
   if (!Number.isFinite(start)) return ''
@@ -1237,11 +1237,11 @@ export function useApprovalProgressDrawer(
 
     if (props.workflowEntityType === 'PLAN_REPORT') {
       if (['DRAFT', 'WITHDRAWN', 'CANCELLED'].includes(planWorkflowStatus.value)) {
-        return '已撤回，可重新发起审批'
+        return '已回退，可重新发起审批'
       }
 
       if (['RETURNED', 'REJECTED'].includes(planWorkflowStatus.value)) {
-        return '已退回，可修改后重新发起审批'
+        return '已回退，可重新发起审批'
       }
 
       if (isPlanCompletedApproval.value) {
@@ -1264,21 +1264,21 @@ export function useApprovalProgressDrawer(
     }
 
     if (normalizedPlanBusinessStatus.value === 'DRAFT') {
-      if (planWorkflowStatusTag.value.label === '已撤回') {
-        return '已撤回，可重新发起审批'
+      if (planWorkflowStatusTag.value.label === '已回退') {
+        return '已回退，可重新发起审批'
       }
-      if (planWorkflowStatusTag.value.label === '已驳回') {
-        return '已退回，可修改后重新发起审批'
+      if (planWorkflowStatusTag.value.label === '已回退') {
+        return '已回退，可重新发起审批'
       }
       return '草稿状态，可发起审批'
     }
 
     if (['DRAFT', 'WITHDRAWN', 'CANCELLED'].includes(planWorkflowStatus.value)) {
-      return '已撤回，可重新发起审批'
+      return '已回退，可重新发起审批'
     }
 
     if (['RETURNED', 'REJECTED'].includes(planWorkflowStatus.value)) {
-      return '已退回，可修改后重新发起审批'
+      return '已回退，可重新发起审批'
     }
 
     return null
@@ -1485,10 +1485,10 @@ export function useApprovalProgressDrawer(
       return { label: '已通过', type: 'success' as const }
     }
     if (rawStatus === 'RETURNED' || rawStatus === 'REJECTED') {
-      return { label: '已驳回', type: 'danger' as const }
+      return { label: '已回退', type: 'info' as const }
     }
     if (rawStatus === 'WITHDRAWN' || rawStatus === 'CANCELLED') {
-      return { label: '已撤回', type: 'info' as const }
+      return { label: '已回退', type: 'info' as const }
     }
     if (rawStatus === 'PENDING' || rawStatus === 'IN_REVIEW' || rawStatus === 'SUBMITTED') {
       return { label: '审批中', type: 'warning' as const }
@@ -1504,10 +1504,10 @@ export function useApprovalProgressDrawer(
 
     if (normalizedPlanBusinessStatus.value === 'DRAFT') {
       if (allTaskStatuses.has('WITHDRAWN')) {
-        return { label: '已撤回', type: 'info' as const }
+        return { label: '已回退', type: 'info' as const }
       }
       if (allTaskStatuses.has('REJECTED')) {
-        return { label: '已驳回', type: 'danger' as const }
+        return { label: '已回退', type: 'info' as const }
       }
       return { label: '草稿', type: 'info' as const }
     }
@@ -1517,10 +1517,10 @@ export function useApprovalProgressDrawer(
       .toUpperCase()
 
     if (latestTaskStatus === 'WITHDRAWN') {
-      return { label: '已撤回', type: 'info' as const }
+      return { label: '已回退', type: 'info' as const }
     }
     if (latestTaskStatus === 'REJECTED') {
-      return { label: '已驳回', type: 'danger' as const }
+      return { label: '已回退', type: 'info' as const }
     }
     return { label: rawStatus || '未发起', type: 'info' as const }
   })
@@ -2070,10 +2070,10 @@ export function useApprovalProgressDrawer(
       return '等待中'
     }
     if (normalizedStatus === 'WITHDRAWN') {
-      return '已撤回'
+      return '已回退'
     }
     if (normalizedStatus === 'REJECTED') {
-      return '已驳回'
+      return '已回退'
     }
     if (normalizedStatus === 'PENDING' && isPlanWorkflowTerminated.value) {
       return '等待中'
@@ -2633,13 +2633,13 @@ export function useApprovalProgressDrawer(
       currentPlanInstanceStatus.value === 'WITHDRAWN' ||
       currentPlanInstanceStatus.value === 'CANCELLED'
     ) {
-      return '已撤回'
+      return '已回退'
     }
     if (
       currentPlanInstanceStatus.value === 'REJECTED' ||
       currentPlanInstanceStatus.value === 'RETURNED'
     ) {
-      return '已退回'
+      return '已回退'
     }
     if (
       currentPlanInstanceStatus.value === 'APPROVED' ||
@@ -2649,7 +2649,7 @@ export function useApprovalProgressDrawer(
     }
 
     if (props.workflowEntityType === 'PLAN_REPORT') {
-      if (['已撤回', '已驳回', '已通过'].includes(latestPlanTaskDisplayLabel.value)) {
+      if (['已回退', '已通过'].includes(latestPlanTaskDisplayLabel.value)) {
         return latestPlanTaskDisplayLabel.value
       }
 
@@ -2659,16 +2659,16 @@ export function useApprovalProgressDrawer(
     }
 
     if (normalizedPlanBusinessStatus.value === 'DRAFT') {
-      if (planWorkflowStatusTag.value.label === '已撤回') {
-        return '已撤回'
+      if (planWorkflowStatusTag.value.label === '已回退') {
+        return '已回退'
       }
-      if (planWorkflowStatusTag.value.label === '已驳回') {
-        return '已退回'
+      if (planWorkflowStatusTag.value.label === '已回退') {
+        return '已回退'
       }
       return '草稿'
     }
 
-    if (['已撤回', '已驳回', '已通过'].includes(latestPlanTaskDisplayLabel.value)) {
+    if (['已回退', '已通过'].includes(latestPlanTaskDisplayLabel.value)) {
       return latestPlanTaskDisplayLabel.value
     }
 
@@ -2796,10 +2796,10 @@ export function useApprovalProgressDrawer(
       return { label: '已通过', type: 'success' }
     }
     if (normalized === 'REJECTED') {
-      return { label: '已驳回', type: 'danger' }
+      return { label: '已回退', type: 'info' }
     }
     if (normalized === 'WITHDRAWN') {
-      return { label: '已撤回', type: 'info' }
+      return { label: '已回退', type: 'info' }
     }
     if (normalized === 'IN_REVIEW' || normalized === 'PENDING' || normalized === 'SUBMITTED') {
       return { label: '审批中', type: 'warning' }
@@ -3542,10 +3542,10 @@ export function useApprovalProgressDrawer(
             workflowStatus: 'REJECTED',
             canWithdraw: false,
             currentTaskId: null,
-            currentStepName: '已驳回'
+            currentStepName: '已回退'
           })
           await refreshPlanApprovalAfterMutation()
-          ElMessage.success('审批已驳回')
+          ElMessage.success('审批已回退')
           handleClose()
         } finally {
           loadingInstance.close()
@@ -3597,7 +3597,7 @@ export function useApprovalProgressDrawer(
           workflowStatus: 'REJECTED',
           canWithdraw: false,
           currentTaskId: null,
-          currentStepName: '已驳回'
+          currentStepName: '已回退'
         })
         await refreshPlanApprovalAfterMutation()
         ElMessage.success(`已一键驳回 ${planScopedPlanApprovals.value.length} 条审批实例`)
@@ -3701,7 +3701,7 @@ export function useApprovalProgressDrawer(
           ElMessage.error(response.message || '驳回失败')
           return
         }
-        ElMessage.success('审批已驳回')
+        ElMessage.success('审批已回退')
         await refreshPlanApprovalAfterMutation()
       } finally {
         loadingInstance.close()
@@ -3716,7 +3716,17 @@ export function useApprovalProgressDrawer(
       return '--'
     }
 
-    const date = new Date(timestamp)
+    // 2026-10-18 用户反馈：提交时间出现「凌晨 04:14」这类观感错误——
+    // 与 formatStayDuration 统一口径：无时区标记的裸串按北京时间解析并渲染，
+    // 保证提交时间与停留时长用同一只钟。
+    const trimmed = String(timestamp).trim()
+    const normalized = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(trimmed)
+      ? trimmed.replace(' ', 'T')
+      : trimmed
+    const date = new Date(normalized)
+    if (Number.isNaN(date.getTime())) {
+      return '--'
+    }
     return date.toLocaleString('zh-CN', {
       year: 'numeric',
       month: '2-digit',

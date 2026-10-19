@@ -12,5 +12,4 @@ export { default as PlanAuditView } from './PlanAuditView.vue'
 // Components
 export { default as PlanAuditPanel } from './PlanAuditPanel.vue'
 export { default as PlanFillWorkspace } from './PlanFillWorkspace.vue'
-export { default as IndicatorFillForm } from './IndicatorFillForm.vue'
 export { default as IndicatorFillHistory } from './IndicatorFillHistory.vue'

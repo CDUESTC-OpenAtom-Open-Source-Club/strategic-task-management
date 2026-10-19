@@ -299,7 +299,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
             已通过: {{ approvedCount }}
           </ElTag>
           <ElTag v-if="!hasPlanWorkflowData && rejectedCount > 0" type="danger" size="small">
-            已驳回: {{ rejectedCount }}
+            已回退: {{ rejectedCount }}
           </ElTag>
         </div>
       </div>
@@ -405,7 +405,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
                     v-model="planAppraisalLevel"
                     size="small"
                     clearable
-                    placeholder="鉴定等级"
+                    placeholder="鉴定进度等级"
                     style="width: 118px; margin-right: 8px"
                   >
                     <ElOption label="超前完成" value="AHEAD" />
@@ -497,7 +497,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
                     v-model="planAppraisalLevel"
                     size="small"
                     clearable
-                    placeholder="鉴定等级"
+                    placeholder="鉴定进度等级"
                     style="width: 118px; margin-right: 8px"
                   >
                     <ElOption label="超前完成" value="AHEAD" />

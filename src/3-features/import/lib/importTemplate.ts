@@ -19,42 +19,52 @@ export interface ImportTemplateGuide {
   rules: string[]
 }
 
+// 2026-10-18 用户定案（晚间修订）：导入模板为「白板」——只保留导入需要的列
+// （序号/部门/战略任务/核心指标/指标类型/任务类别/备注/权重）；
+// 不含「内部ID」（系统内部主键，导出与模板均不再出现）、
+// 「鉴定进度等级」（等级由系统评定，白板导入时不存在）、
+// 「附件」（附件产生于上报环节，导入时无可导入内容）。
+// 系统按列名识别（别名兼容），导出表中的额外阅读列导入时自动忽略。
 const strategicImportGuide: ImportTemplateGuide = {
   title: '职能部门指标表示例',
   targetName: '职能部门',
   columns: [
-    { key: 'department', label: '职能部门' },
-    { key: 'taskType', label: '任务类型', required: true },
+    { key: 'serial', label: '序号' },
+    { key: 'department', label: '部门' },
     { key: 'strategicTask', label: '战略任务', required: true },
     { key: 'indicatorName', label: '核心指标', required: true },
     { key: 'indicatorType', label: '指标类型', required: true },
-    { key: 'weight', label: '权重' },
-    { key: 'remark', label: '备注' }
+    { key: 'taskCategory', label: '任务类别', required: true },
+    { key: 'remark', label: '下发备注' },
+    { key: 'weight', label: '权重' }
   ],
   rows: [
     {
+      serial: '1',
       department: '教务处',
-      taskType: '发展性',
       strategicTask: '推进本科教育教学改革',
       indicatorName: '建设智慧教学质量监测体系',
       indicatorType: '定量',
-      weight: '20%',
-      remark: '可填写说明'
+      taskCategory: '基础性',
+      remark: '',
+      weight: '20%'
     },
     {
+      serial: '2',
       department: '教务处',
-      taskType: '基础性',
       strategicTask: '完善专业建设质量保障机制',
       indicatorName: '完成重点专业年度质量报告',
       indicatorType: '定性',
-      weight: '15',
-      remark: ''
+      taskCategory: '发展性',
+      remark: '',
+      weight: '15'
     }
   ],
   rules: [
-    '表头建议放在第一行，列顺序可以调整，系统会按列名识别。',
-    '必填列：任务类型、战略任务、核心指标、指标类型；如果填写职能部门，必须和当前选择的职能部门一致。',
-    '权重支持 10、10%、0.1 三种写法，系统会统一换算为百分制。'
+    '系统按「战略任务+核心指标」名称匹配：匹配到已存在的指标则更新原指标，匹配不到自动新增。',
+    '必填列：任务类别、战略任务、核心指标、指标类型；「部门」如填写必须与当前选择的职能部门一致（留空则默认导入当前部门）。',
+    '权重支持 10、10%、0.1 三种写法，系统会统一换算为百分制；同一任务下基础性权重合计需为 100。',
+    '「序号」仅用于阅读对齐；「鉴定进度等级」「上报资料」由系统评定/填报产生，导入时无需填写（从导出表回导时相关列自动忽略）。'
   ]
 }
 
@@ -68,7 +78,7 @@ const distributionImportGuide: ImportTemplateGuide = {
     { key: 'indicatorName', label: '子指标名称', required: true },
     { key: 'indicatorType', label: '指标类型', required: true },
     { key: 'weight', label: '权重' },
-    { key: 'remark', label: '备注' }
+    { key: 'remark', label: '下发备注' }
   ],
   rows: [
     {

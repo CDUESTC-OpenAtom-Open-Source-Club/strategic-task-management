@@ -93,7 +93,6 @@ export { default as IndicatorForm } from './ui/IndicatorForm.vue'
 export { default as IndicatorList } from './ui/IndicatorList.vue'
 export { default as IndicatorDistributionDialog } from './ui/IndicatorDistributionDialog.vue'
 export { default as IndicatorDetailDialog } from './ui/IndicatorDetailDialog.vue'
-export { default as IndicatorFillView } from './ui/IndicatorFillView.vue'
 
 // View Components (Full-page views)
 export { default as IndicatorListView } from './ui/IndicatorListView.vue'
@@ -102,4 +101,4 @@ export { default as IndicatorEditView } from './ui/IndicatorEditView.vue'
 export { default as IndicatorDistributeView } from './ui/IndicatorDistributeView.vue'
 
 // Re-export plan-driven fill components
-export { IndicatorFillForm, IndicatorFillHistory } from '@/features/plan/ui'
+export { IndicatorFillHistory } from '@/features/plan/ui'

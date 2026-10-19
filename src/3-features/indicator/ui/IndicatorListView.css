@@ -337,8 +337,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 4px;
+  /* 2026-10-18 用户定案：操作列按钮不换行（查看/填报保持同一行） */
+  flex-wrap: nowrap;
+  white-space: nowrap;
   width: 100%;
 }
 
@@ -909,4 +911,14 @@
   overflow: hidden;
   word-break: break-word;
   color: var(--text-regular);
+}
+
+/* 2026-10-18 用户定案：鉴定进度等级列——表头六字需单行且居中。
+   Element Plus 默认左右各 12px 内边距在窄列会把表头挤成两行。 */
+.el-table th.manual-level-header .cell {
+  padding-left: 4px !important;
+  padding-right: 4px !important;
+  white-space: nowrap !important;
+  text-align: center !important;
+  justify-content: center;
 }

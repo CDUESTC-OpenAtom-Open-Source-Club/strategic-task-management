@@ -1199,11 +1199,9 @@ export function useApprovalProgressState(
     if (workflowStatus === 'APPROVED') {
       return '已通过'
     }
-    if (workflowStatus === 'REJECTED' || workflowStatus === 'RETURNED') {
-      return '已驳回'
-    }
-    if (workflowStatus === 'WITHDRAWN' || workflowStatus === 'CANCELLED') {
-      return '已撤回'
+    if (['REJECTED', 'RETURNED', 'WITHDRAWN', 'CANCELLED'].includes(workflowStatus)) {
+      // 2026-10-18 用户定案：驳回/撤回/退回统一中性词「已回退」，不再混用三种称谓
+      return '已回退'
     }
 
     return currentStepName || workflowStatus || '审批中'
@@ -1249,21 +1247,16 @@ export function useApprovalProgressState(
     }
 
     if (normalizedPlanBusinessStatus.value === 'DRAFT') {
-      if (planWorkflowStatusTag.value.label === '已撤回') {
-        return '已撤回，可重新发起审批'
-      }
-      if (planWorkflowStatusTag.value.label === '已驳回') {
-        return '已退回，可修改后重新发起审批'
+      if (planWorkflowStatusTag.value.label === '已回退') {
+        return '已回退，可重新发起审批'
       }
       return '草稿状态，可发起审批'
     }
 
-    if (['DRAFT', 'WITHDRAWN', 'CANCELLED'].includes(planWorkflowStatus.value)) {
-      return '已撤回，可重新发起审批'
-    }
-
-    if (['RETURNED', 'REJECTED'].includes(planWorkflowStatus.value)) {
-      return '已退回，可修改后重新发起审批'
+    if (
+      ['DRAFT', 'WITHDRAWN', 'CANCELLED', 'RETURNED', 'REJECTED'].includes(planWorkflowStatus.value)
+    ) {
+      return '已回退，可重新发起审批'
     }
 
     return null
@@ -1488,11 +1481,8 @@ export function useApprovalProgressState(
       .trim()
       .toUpperCase()
 
-    if (normalizedStatus === 'WITHDRAWN') {
-      return { label: '已撤回', type: 'info' }
-    }
-    if (normalizedStatus === 'REJECTED') {
-      return { label: '已驳回', type: 'danger' }
+    if (normalizedStatus === 'WITHDRAWN' || normalizedStatus === 'REJECTED') {
+      return { label: '已回退', type: 'info' }
     }
     if (normalizedStatus === 'COMPLETED') {
       return { label: '已通过', type: 'success' }
@@ -1518,11 +1508,8 @@ export function useApprovalProgressState(
     if (rawStatus === 'DISTRIBUTED' || rawStatus === 'APPROVED') {
       return { label: '已通过', type: 'success' as const }
     }
-    if (rawStatus === 'RETURNED' || rawStatus === 'REJECTED') {
-      return { label: '已驳回', type: 'danger' as const }
-    }
-    if (rawStatus === 'WITHDRAWN' || rawStatus === 'CANCELLED') {
-      return { label: '已撤回', type: 'info' as const }
+    if (['RETURNED', 'REJECTED', 'WITHDRAWN', 'CANCELLED'].includes(rawStatus)) {
+      return { label: '已回退', type: 'info' as const }
     }
     if (rawStatus === 'PENDING' || rawStatus === 'IN_REVIEW' || rawStatus === 'SUBMITTED') {
       return { label: '审批中', type: 'warning' as const }
@@ -1536,11 +1523,8 @@ export function useApprovalProgressState(
             .toUpperCase()
         )
       )
-      if (allTaskStatuses.has('WITHDRAWN')) {
-        return { label: '已撤回', type: 'info' as const }
-      }
-      if (allTaskStatuses.has('REJECTED')) {
-        return { label: '已驳回', type: 'danger' as const }
+      if (allTaskStatuses.has('WITHDRAWN') || allTaskStatuses.has('REJECTED')) {
+        return { label: '已回退', type: 'info' as const }
       }
       return { label: '草稿', type: 'info' as const }
     }
@@ -1961,16 +1945,9 @@ export function useApprovalProgressState(
 
   const currentPlanStepDisplay = computed(() => {
     if (
-      currentPlanInstanceStatus.value === 'WITHDRAWN' ||
-      currentPlanInstanceStatus.value === 'CANCELLED'
+      ['WITHDRAWN', 'CANCELLED', 'REJECTED', 'RETURNED'].includes(currentPlanInstanceStatus.value)
     ) {
-      return '已撤回'
-    }
-    if (
-      currentPlanInstanceStatus.value === 'REJECTED' ||
-      currentPlanInstanceStatus.value === 'RETURNED'
-    ) {
-      return '已退回'
+      return '已回退'
     }
     if (
       currentPlanInstanceStatus.value === 'APPROVED' ||
@@ -1980,16 +1957,13 @@ export function useApprovalProgressState(
     }
 
     if (normalizedPlanBusinessStatus.value === 'DRAFT') {
-      if (planWorkflowStatusTag.value.label === '已撤回') {
-        return '已撤回'
-      }
-      if (planWorkflowStatusTag.value.label === '已驳回') {
-        return '已退回'
+      if (planWorkflowStatusTag.value.label === '已回退') {
+        return '已回退'
       }
       return '草稿'
     }
 
-    if (['已撤回', '已驳回', '已通过'].includes(latestPlanTaskDisplayLabel.value)) {
+    if (['已回退', '已通过'].includes(latestPlanTaskDisplayLabel.value)) {
       return latestPlanTaskDisplayLabel.value
     }
 
@@ -2130,7 +2104,12 @@ export function useApprovalProgressState(
         key: planName,
         planName,
         currentStepName: currentPlanStepDisplay.value,
-        submitterName: planSubmitterName.value,
+        // 2026-10-18 用户反馈：提交人显示成了当前环节审批人——
+        // 优先取工作流真实发起人（starter），回退计划字段。
+        submitterName:
+          normalizeDisplayName(planWorkflowDetail.value?.starterName) ||
+          normalizeDisplayName(activePlanWorkflow.value?.submittedByName) ||
+          planSubmitterName.value,
         createdAt:
           activePlanWorkflow.value?.startedAt ||
           activePlanWorkflow.value?.submittedAt ||
@@ -2837,17 +2816,17 @@ export function useApprovalProgressState(
             workflowStatus: 'REJECTED',
             canWithdraw: false,
             currentTaskId: null,
-            currentStepName: '已驳回'
+            currentStepName: '已回退'
           })
           emit('refresh', {
             status: 'DRAFT',
             workflowStatus: 'REJECTED',
             canWithdraw: false,
             currentTaskId: null,
-            currentStepName: '已驳回'
+            currentStepName: '已回退'
           })
           await refreshPlanApprovalAfterMutation()
-          ElMessage.success('审批已驳回')
+          ElMessage.success('审批已回退')
         } finally {
           loadingInstance.close()
         }
@@ -2896,14 +2875,14 @@ export function useApprovalProgressState(
           workflowStatus: 'REJECTED',
           canWithdraw: false,
           currentTaskId: null,
-          currentStepName: '已驳回'
+          currentStepName: '已回退'
         })
         emit('refresh', {
           status: 'DRAFT',
           workflowStatus: 'REJECTED',
           canWithdraw: false,
           currentTaskId: null,
-          currentStepName: '已驳回'
+          currentStepName: '已回退'
         })
         await refreshPlanApprovalAfterMutation()
         ElMessage.success(`已一键驳回 ${scopedPlanApprovals.value.length} 条审批实例`)
@@ -2920,7 +2899,15 @@ export function useApprovalProgressState(
       return '--'
     }
 
-    const date = new Date(timestamp)
+    // 2026-10-18：与 formatStayDuration 统一口径——无时区标记的裸串按北京时间解析并渲染
+    const trimmed = String(timestamp).trim()
+    const normalized = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(trimmed)
+      ? trimmed.replace(' ', 'T')
+      : trimmed
+    const date = new Date(normalized)
+    if (Number.isNaN(date.getTime())) {
+      return '--'
+    }
     return date.toLocaleString('zh-CN', {
       year: 'numeric',
       month: '2-digit',
