@@ -463,37 +463,58 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     const collegeOrgId = getOrgIdByDeptName(collegeName)
     const currentOrgId = currentDepartmentOrgId.value
 
-    return (
-      planStore.plans.find(plan => {
-        const planAny = plan as Plan & {
-          targetOrgId?: number | string
-          targetOrgName?: string
-          orgId?: number | string
-          orgName?: string
-          createdByOrgId?: number | string
-          year?: number | string
-          cycleId?: number | string
-        }
-        const planYear = resolvePlanYear(planAny)
-        const targetOrgId = Number(planAny.targetOrgId ?? planAny.org_id ?? planAny.orgId ?? NaN)
-        const targetOrgName = normalizeDepartmentName(
-          planAny.targetOrgName || planAny.orgName || ''
-        )
-        const createdByOrgId = Number(planAny.createdByOrgId ?? NaN)
-        const matchesOrgId =
-          collegeOrgId != null && Number.isFinite(targetOrgId) && targetOrgId === collegeOrgId
-        const matchesOrgName = targetOrgName === collegeName
-        const matchesCreatedByOrg =
-          currentOrgId == null ||
-          !Number.isFinite(createdByOrgId) ||
-          createdByOrgId === currentOrgId
+    // 2026-10-19 缺陷修复：此处只应取「职能部门→学院」这一层级的计划。
+    // 此前未校验 planLevel，当同一对部门之间同时存在 STRAT_TO_FUNC 空草稿
+    // （如纪委→计算机学院的 705463）时会被 find 先命中，导致选中学院后
+    // 审批历史查的是错误计划（查不到真正下发链 403757 的实例）。
+    const candidates = planStore.plans.filter(plan => {
+      const planAny = plan as Plan & {
+        targetOrgId?: number | string
+        targetOrgName?: string
+        orgId?: number | string
+        orgName?: string
+        createdByOrgId?: number | string
+        year?: number | string
+        cycleId?: number | string
+        planLevel?: string
+      }
+      const planYear = resolvePlanYear(planAny)
+      const targetOrgId = Number(planAny.targetOrgId ?? planAny.org_id ?? planAny.orgId ?? NaN)
+      const targetOrgName = normalizeDepartmentName(planAny.targetOrgName || planAny.orgName || '')
+      const createdByOrgId = Number(planAny.createdByOrgId ?? NaN)
+      const matchesOrgId =
+        collegeOrgId != null && Number.isFinite(targetOrgId) && targetOrgId === collegeOrgId
+      const matchesOrgName = targetOrgName === collegeName
+      const matchesCreatedByOrg =
+        currentOrgId == null || !Number.isFinite(createdByOrgId) || createdByOrgId === currentOrgId
+      const planLevel = String(planAny.planLevel || '')
+        .trim()
+        .toUpperCase()
+      const matchesLevel = planLevel === '' || planLevel === 'FUNC_TO_COLLEGE'
 
-        return (
-          planYear === timeContext.currentYear &&
-          (matchesOrgId || matchesOrgName) &&
-          matchesCreatedByOrg
-        )
-      }) || null
+      return (
+        planYear === timeContext.currentYear &&
+        (matchesOrgId || matchesOrgName) &&
+        matchesCreatedByOrg &&
+        matchesLevel
+      )
+    })
+
+    // 同层级多份计划时优先取已下发（有审批链），其次按 id 倒序取最新
+    const isDistributed = (plan: Plan) =>
+      String((plan as { status?: string }).status || '')
+        .trim()
+        .toUpperCase() === 'DISTRIBUTED'
+
+    return (
+      [...candidates].sort((left, right) => {
+        const leftDistributed = isDistributed(left) ? 1 : 0
+        const rightDistributed = isDistributed(right) ? 1 : 0
+        if (leftDistributed !== rightDistributed) {
+          return rightDistributed - leftDistributed
+        }
+        return Number(right.id ?? 0) - Number(left.id ?? 0)
+      })[0] || null
     )
   })
 
