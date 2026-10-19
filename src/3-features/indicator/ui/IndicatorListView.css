@@ -337,8 +337,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 4px;
+  /* 2026-10-18 用户定案：操作列按钮不换行（查看/填报保持同一行） */
+  flex-wrap: nowrap;
+  white-space: nowrap;
   width: 100%;
 }
 

@@ -632,7 +632,7 @@ const handleExportIndicatorList = async () => {
                 v-if="showStrategicTaskColumn"
                 prop="taskContent"
                 label="战略任务"
-                width="126"
+                width="100"
               >
                 <template #default="{ row }">
                   <el-tooltip
@@ -713,7 +713,7 @@ const handleExportIndicatorList = async () => {
                   <span v-else style="color: #909399">—</span>
                 </template>
               </el-table-column>
-              <el-table-column label="鉴定进度等级" width="128" align="center">
+              <el-table-column label="鉴定进度等级" width="118" align="center">
                 <template #default="{ row }">
                   <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
                     {{ getManualAlertLabel(row.manualAlertSeverity) }}
@@ -747,7 +747,7 @@ const handleExportIndicatorList = async () => {
                   <div v-else style="color: #909399">—</div>
                 </template>
               </el-table-column>
-              <el-table-column prop="remark" label="下发备注" width="96">
+              <el-table-column prop="remark" label="下发备注" width="132">
                 <template #default="{ row }">
                   <div
                     class="indicator-name-cell"
@@ -774,7 +774,7 @@ const handleExportIndicatorList = async () => {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="132" align="center">
+              <el-table-column label="操作" width="104" align="center">
                 <template #default="{ row }">
                   <div class="action-cell">
                     <div class="action-buttons">
