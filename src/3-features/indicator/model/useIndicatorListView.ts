@@ -922,8 +922,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     )
   })
 
-  // 是否显示责任部门列（只有战略发展部才显示）
-  const showResponsibleDeptColumn = computed(() => isStrategicDept.value)
   const showOwnerDeptDetail = computed(() => isSecondaryCollege.value)
 
   // 当前选中任务索引
@@ -936,7 +934,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   // 筛选条件
   const filterType2 = ref('') // 任务类型筛选
   const filterType1 = ref('') // 指标类型筛选
-  const filterDept = ref('') // 责任部门筛选
   const filterOwnerDept = ref('') // 来源部门筛选（仅学院使用）
   const collegePlanDetailsMap = ref<Record<string, Plan>>({})
   const collegePlanDetailsLoading = ref(false)
@@ -1027,7 +1024,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   const resetFilters = () => {
     filterType2.value = ''
     filterType1.value = ''
-    filterDept.value = ''
     // 学院重置时恢复默认来源部门
     if (isSecondaryCollege.value && availableOwnerDepts.value.length > 0) {
       filterOwnerDept.value = availableOwnerDepts.value[0] ?? ''
@@ -2266,9 +2262,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       if (filterType1.value) {
         list = list.filter(i => i.type1 === filterType1.value)
       }
-      if (filterDept.value) {
-        list = list.filter(i => i.responsibleDept === filterDept.value)
-      }
       // 学院角色：按来源部门筛选
       if (isSecondaryCollege.value && filterOwnerDept.value) {
         list = list.filter(i => i.ownerDept === filterOwnerDept.value)
@@ -2376,9 +2369,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }
     if (filterType1.value) {
       list = list.filter(i => i.type1 === filterType1.value)
-    }
-    if (filterDept.value) {
-      list = list.filter(i => i.responsibleDept === filterDept.value)
     }
     // 学院角色：按来源部门筛选
     if (isSecondaryCollege.value && filterOwnerDept.value) {
@@ -4865,7 +4855,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     editingValue,
     effectiveViewingDept,
     effectiveViewingRole,
-    filterDept,
     filterIndicatorsForCurrentViewer,
     filterOwnerDept,
     filterType1,
@@ -4997,7 +4986,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     showAssignmentDialog,
     showOwnerDeptDetail,
     showPlanBatchActions,
-    showResponsibleDeptColumn,
     showStrategicTaskColumn,
     showSubmitAllButton,
     showWithdrawAllButton,

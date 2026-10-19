@@ -135,7 +135,6 @@ const {
   editingValue,
   effectiveViewingDept,
   effectiveViewingRole,
-  filterDept,
   filterIndicatorsForCurrentViewer,
   filterOwnerDept,
   filterType1,
@@ -264,7 +263,6 @@ const {
   showAssignmentDialog,
   showOwnerDeptDetail,
   showPlanBatchActions,
-  showResponsibleDeptColumn,
   showStrategicTaskColumn,
   showSubmitAllButton,
   showWithdrawAllButton,
@@ -463,16 +461,6 @@ const handleExportIndicatorList = async () => {
               <el-select v-model="filterOwnerDept" placeholder="选择来源部门" style="width: 200px">
                 <el-option
                   v-for="dept in availableOwnerDepts"
-                  :key="dept"
-                  :label="dept"
-                  :value="dept"
-                />
-              </el-select>
-            </el-form-item>
-            <el-form-item v-if="showResponsibleDeptColumn" label="责任部门">
-              <el-select v-model="filterDept" placeholder="全部部门" clearable style="width: 200px">
-                <el-option
-                  v-for="dept in functionalDepartments"
                   :key="dept"
                   :label="dept"
                   :value="dept"
@@ -786,17 +774,6 @@ const handleExportIndicatorList = async () => {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column
-                v-if="showResponsibleDeptColumn"
-                prop="responsibleDept"
-                label="责任部门"
-                min-width="112"
-              >
-                <template #default="{ row }">
-                  <span class="dept-text">{{ row.responsibleDept || '未分配' }}</span>
-                </template>
-              </el-table-column>
-
               <el-table-column label="操作" width="132" align="center">
                 <template #default="{ row }">
                   <div class="action-cell">
