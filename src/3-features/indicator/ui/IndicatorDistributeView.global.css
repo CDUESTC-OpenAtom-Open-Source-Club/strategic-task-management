@@ -4,3 +4,11 @@
   word-break: keep-all !important;
   overflow: visible !important;
 }
+
+/* 2026-10-18 用户定案：权重列窄列（58px）——表头「权重」两字必须单行。
+   Element Plus 默认左右各 12px 内边距会把两字挤成竖排，这里按列 class 收紧。 */
+.el-table th.weight-column-header .cell {
+  padding-left: 2px !important;
+  padding-right: 2px !important;
+  white-space: nowrap !important;
+}

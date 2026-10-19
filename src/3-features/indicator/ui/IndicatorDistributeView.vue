@@ -936,7 +936,13 @@ const handleDistributionImportCommitted = async () => {
                 </el-table-column>
 
                 <!-- 权重列 -->
-                <el-table-column label="权重" width="64" align="center">
+                <el-table-column
+                  label="权重"
+                  width="58"
+                  align="center"
+                  class-name="weight-column-header"
+                  label-class-name="weight-column-header"
+                >
                   <template #default="{ row }">
                     <template v-if="row.type === 'indicator-only'">
                       <span class="weight-text">-</span>
@@ -1055,7 +1061,7 @@ const handleDistributionImportCommitted = async () => {
                 </el-table-column>
 
                 <!-- 上报资料列（2026-10-13 用户定案：展示当前最新一次上报提交的资料；历次经上报小标查看） -->
-                <el-table-column label="上报资料" min-width="100">
+                <el-table-column label="上报资料" min-width="128">
                   <template #default="{ row }">
                     <template v-if="row.type === 'child'">
                       <ReportMaterialsCell :indicator-id="row.child?.id" />
@@ -1067,7 +1073,7 @@ const handleDistributionImportCommitted = async () => {
                 </el-table-column>
 
                 <!-- 进度说明列（2026-10-18 用户定案：与其他界面同构，展示当次上报说明） -->
-                <el-table-column label="进度说明" min-width="108">
+                <el-table-column label="进度说明" min-width="100">
                   <template #default="{ row }">
                     <template v-if="row.type === 'child'">
                       <el-tooltip
