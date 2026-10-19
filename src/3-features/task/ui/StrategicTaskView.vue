@@ -525,7 +525,8 @@ const strategicExportDepartmentsIndeterminate = computed(
 )
 
 // 导出与界面同构：同一战略任务的多行在「战略任务」列合并为一个单元格。
-// 2026-10-18 用户定案：「内部ID」列必须保留——回导时按 ID 精确关联更新（10-14 的移除决策撤销）。
+// 2026-10-18 用户定案（晚间修订）：导出不含「内部ID」——系统内部主键对导出读者无意义，
+// 行对齐由「序号」承担；回导匹配走「任务名+指标名」名称匹配。
 const buildStrategicExportColumns = (
   rows: StrategicExportRow[]
 ): ExcelExportColumn<StrategicExportRow>[] => {
@@ -546,13 +547,6 @@ const buildStrategicExportColumns = (
   })
 
   return [
-    {
-      header: '内部ID',
-      width: 12,
-      align: 'center',
-      // 指标数据库主键：导入解析器按「内部ID」别名识别，回导时精确更新原指标
-      getValue: row => (row as { id?: number | string }).id ?? '-'
-    },
     { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
     { header: '部门', width: 18, getValue: row => row.exportDepartment },
     {
