@@ -1258,12 +1258,18 @@ function evictOldestPlanReportCacheEntryIfNeeded(): void {
 function resolveCurrentMonthPlanReportSummaries(
   reports: PlanReportSimpleResponse[],
   reportOrgId: number,
-  reportMonth: string
+  reportMonth: string,
+  options: { fallbackToLatestMonth?: boolean } = {}
 ): {
   currentReport: PlanReportSimpleResponse | null
   latestReport: PlanReportSimpleResponse | null
 } {
-  const currentMonthReports = reports
+  // 2026-10-19 修复（上级角色看不见下级填报内容）：
+  // 填报月份锁定为「最早未填报月」（如 202601），不等于自然月；
+  // 默认按自然月查询时上级角色永远命中不到报告 → 自评等级/进度说明/资料全空。
+  // 当月精确匹配为空且调用方未显式指定月份时，回退取该组织最近月份的报告；
+  // 显式传月（如填报入口校验）保持精确匹配语义，不回退（避免把「该月无报告」误判为有）。
+  let currentMonthReports = reports
     .filter(
       report =>
         Number(report.reportOrgId) === Number(reportOrgId) && report.reportMonth === reportMonth
@@ -1273,6 +1279,27 @@ function resolveCurrentMonthPlanReportSummaries(
         new Date(b.updatedAt || b.createdAt || 0).getTime() -
         new Date(a.updatedAt || a.createdAt || 0).getTime()
     )
+
+  if (currentMonthReports.length === 0 && options.fallbackToLatestMonth) {
+    const latestMonth = reports
+      .filter(report => Number(report.reportOrgId) === Number(reportOrgId))
+      .map(report => String(report.reportMonth || ''))
+      .filter(Boolean)
+      .sort()
+      .pop()
+    if (latestMonth) {
+      currentMonthReports = reports
+        .filter(
+          report =>
+            Number(report.reportOrgId) === Number(reportOrgId) && report.reportMonth === latestMonth
+        )
+        .sort(
+          (a, b) =>
+            new Date(b.updatedAt || b.createdAt || 0).getTime() -
+            new Date(a.updatedAt || a.createdAt || 0).getTime()
+        )
+    }
+  }
 
   const currentWorkflowReport =
     currentMonthReports.find(report => {
@@ -2518,31 +2545,46 @@ export const indicatorFillApi = {
   async getCurrentMonthPlanReport(
     planId: number | string,
     reportOrgId: number,
-    reportMonth: string = getCurrentReportMonth()
+    reportMonth?: string
   ): Promise<PlanReportSimpleResponse | null> {
     const reports = await loadPlanReportsByPlanId(Number(planId))
-    return resolveCurrentMonthPlanReportSummaries(reports, reportOrgId, reportMonth).currentReport
+    return resolveCurrentMonthPlanReportSummaries(
+      reports,
+      reportOrgId,
+      reportMonth ?? getCurrentReportMonth(),
+      { fallbackToLatestMonth: reportMonth === undefined }
+    ).currentReport
   },
 
   async getLatestCurrentMonthPlanReport(
     planId: number | string,
     reportOrgId: number,
-    reportMonth: string = getCurrentReportMonth()
+    reportMonth?: string
   ): Promise<PlanReportSimpleResponse | null> {
     const reports = await loadPlanReportsByPlanId(Number(planId))
-    return resolveCurrentMonthPlanReportSummaries(reports, reportOrgId, reportMonth).latestReport
+    return resolveCurrentMonthPlanReportSummaries(
+      reports,
+      reportOrgId,
+      reportMonth ?? getCurrentReportMonth(),
+      { fallbackToLatestMonth: reportMonth === undefined }
+    ).latestReport
   },
 
   async getCurrentMonthPlanReportSummaries(
     planId: number | string,
     reportOrgId: number,
-    reportMonth: string = getCurrentReportMonth()
+    reportMonth?: string
   ): Promise<{
     currentReport: PlanReportSimpleResponse | null
     latestReport: PlanReportSimpleResponse | null
   }> {
     const reports = await loadPlanReportsByPlanId(Number(planId))
-    return resolveCurrentMonthPlanReportSummaries(reports, reportOrgId, reportMonth)
+    return resolveCurrentMonthPlanReportSummaries(
+      reports,
+      reportOrgId,
+      reportMonth ?? getCurrentReportMonth(),
+      { fallbackToLatestMonth: reportMonth === undefined }
+    )
   },
 
   /**

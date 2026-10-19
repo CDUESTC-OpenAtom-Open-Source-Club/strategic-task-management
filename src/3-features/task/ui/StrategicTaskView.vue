@@ -322,6 +322,19 @@ const {
 
 const activeTaskTabName = ref<'functional' | 'college'>('functional')
 
+// 2026-10-19 修复：切 tab 时按对应链路重新拉取上报摘要——
+// 二级学院 tab 用「职能部门→学院」的 FUNC_TO_COLLEGE 计划/组织查询，
+// 否则学院链路的自评等级与进度说明列读不到数据（恒为空）。
+watch(activeTaskTabName, tab => {
+  if (tab === 'college') {
+    if (selectedCollege.value) {
+      void syncCurrentPlanReportSummaries({ force: true, collegeScope: true })
+    }
+    return
+  }
+  void syncCurrentPlanReportSummaries({ force: true })
+})
+
 // 2026-10-13 用户定案：二级学院 tab 未选学院时的左侧入口引导（呼吸高亮 + 指向气泡），选中后消失
 // 仅当当前职能部门确实有下发学院时才引导（列表为空时引导会指向空列表，反而更困惑）
 const showCollegeGuide = computed(

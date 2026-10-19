@@ -1221,9 +1221,33 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   }> | null = null
   let currentPlanReportSummaryKey = ''
 
-  async function syncCurrentPlanReportSummaries(options: { force?: boolean } = {}): Promise<void> {
-    const planId = Number(currentPlan.value?.id ?? NaN)
-    const reportOrgId = Number(currentDepartmentOrgId.value ?? NaN)
+  async function syncCurrentPlanReportSummaries(
+    options: { force?: boolean; collegeScope?: boolean } = {}
+  ): Promise<void> {
+    // 2026-10-19 修复：二级学院 tab 查看的是「职能部门→学院」的上报，报告挂在
+    // FUNC_TO_COLLEGE 计划下（如 纪委办→计算机学院 403757），与左侧职能部门自身的
+    // STRAT_TO_FUNC 计划不同。此前恒按部门 plan+org 查询，学院链路的自评/说明永远为空。
+    const collegeScope = options.collegeScope === true ? resolveSelectedCollegeReportScope() : null
+    // TEMP-DEBUG(根因一验证，验证后移除)
+    console.log(
+      '[TEMP-DEBUG syncSummary]',
+      JSON.stringify({
+        collegeScopeOption: options.collegeScope === true,
+        collegeScope,
+        selectedCollege: selectedCollege.value,
+        selectedDepartment: selectedDepartment.value,
+        currentPlanId: currentPlan.value?.id ?? null,
+        plansLen: planStore.plans.length
+      })
+    )
+    const planId =
+      options.collegeScope === true
+        ? Number(collegeScope?.planId ?? NaN)
+        : Number(currentPlan.value?.id ?? NaN)
+    const reportOrgId =
+      options.collegeScope === true
+        ? Number(collegeScope?.orgId ?? NaN)
+        : Number(currentDepartmentOrgId.value ?? NaN)
     if (
       !(Number.isFinite(planId) && planId > 0 && Number.isFinite(reportOrgId) && reportOrgId > 0)
     ) {
@@ -1242,6 +1266,17 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       const summaries = await currentPlanReportSummaryPromise
       currentPlanReportSummary.value = summaries.currentReport
       latestPlanReportSummary.value = summaries.latestReport
+      // TEMP-DEBUG
+      console.log(
+        '[TEMP-DEBUG cache-hit]',
+        JSON.stringify({
+          cacheKey,
+          id: summaries.currentReport?.id ?? null,
+          details: Array.isArray(summaries.currentReport?.indicatorDetails)
+            ? summaries.currentReport.indicatorDetails.length
+            : -1
+        })
+      )
       return
     }
 
@@ -1261,6 +1296,19 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       const summaries = await currentPlanReportSummaryPromise
       currentPlanReportSummary.value = summaries.currentReport
       latestPlanReportSummary.value = summaries.latestReport
+      // TEMP-DEBUG
+      console.log(
+        '[TEMP-DEBUG fetched]',
+        JSON.stringify({
+          cacheKey,
+          id: summaries.currentReport?.id ?? null,
+          month: summaries.currentReport?.reportMonth ?? null,
+          org: summaries.currentReport?.reportOrgId ?? null,
+          details: Array.isArray(summaries.currentReport?.indicatorDetails)
+            ? summaries.currentReport.indicatorDetails.length
+            : -1
+        })
+      )
     } finally {
       currentPlanReportSummaryPromise = null
     }
@@ -2704,6 +2752,85 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       }
   )
 
+  // 2026-10-19 修复（上级/本级看不见自评等级与进度说明）：战略任务管理页此前没有把
+  // 「当期报告明细」覆盖到行上——自评等级/进度说明列永远为空。与指标填报页的
+  // applyReportDetailOverlay 同构：按 indicatorId 把报告明细覆盖到行。
+  const reportDetailByIndicatorId = computed(() => {
+    const map = new Map<string, Record<string, unknown>>()
+    const details = (currentPlanReportSummary.value as { indicatorDetails?: unknown } | null)
+      ?.indicatorDetails
+    if (Array.isArray(details)) {
+      details.forEach((detail: Record<string, unknown>) => {
+        const indicatorId = detail?.indicatorId
+        if (indicatorId !== undefined && indicatorId !== null) {
+          map.set(String(indicatorId), detail)
+        }
+      })
+    }
+    return map
+  })
+
+  const applyReportDetailOverlayToRow = <T>(row: T): T => {
+    const indicatorId = (row as { id?: unknown } | null)?.id
+    const detail = reportDetailByIndicatorId.value.get(String(indicatorId))
+    if (!detail) {
+      return row
+    }
+    const remark = String(detail.description ?? detail.comment ?? '').trim()
+    const attachments = detail.attachments
+    const current = row as {
+      selfRating?: string | null
+      pendingRemark?: string | null
+      pendingAttachmentDetails?: StrategicIndicator['pendingAttachmentDetails']
+    }
+    return {
+      ...(row as object),
+      selfRating: (detail.selfRating as string | null) || current.selfRating,
+      pendingRemark: remark || current.pendingRemark || null,
+      pendingAttachmentDetails: Array.isArray(attachments)
+        ? (attachments as StrategicIndicator['pendingAttachmentDetails'])
+        : current.pendingAttachmentDetails
+    } as T
+  }
+
+  // 2026-10-19 修复（二级学院链路组织错配）：二级学院表展示的是「当前职能部门 → 选中学院」
+  // 的上报，报告挂在 FUNC_TO_COLLEGE 计划（如 纪委办→计算机学院 403757）下，
+  // 与左侧选中职能部门的 STRAT_TO_FUNC 计划不同。解析失败时返回 null（宁可空，不串数据）。
+  const resolveSelectedCollegeReportScope = (): { planId: number; orgId: number } | null => {
+    const collegeOrgId = resolveDepartmentIdByName(selectedCollege.value)
+    const funcOrgId = resolveDepartmentIdByName(selectedDepartment.value)
+    if (!collegeOrgId || !funcOrgId) {
+      return null
+    }
+    const planCombination = plan => {
+      const planAny = plan as Record<string, unknown>
+      const level = String(planAny.planLevel ?? planAny.plan_level ?? '')
+        .trim()
+        .toUpperCase()
+      return {
+        match:
+          level === 'FUNC_TO_COLLEGE' &&
+          Number(planAny.targetOrgId ?? planAny.orgId ?? NaN) === collegeOrgId &&
+          Number(planAny.createdByOrgId ?? planAny.created_by_org_id ?? NaN) === funcOrgId,
+        year: resolvePlanYear(planAny)
+      }
+    }
+    // 跨年度同组合计划并存（如 403757/503757），必须优先命中年份精确等于当年的；
+    // 年度不可判定的（resolvePlanYear 返回 null，如 cycleId 不在已知映射内）仅作兜底，
+    // 否则会把其他年度的空计划当成当前查询目标，明细恒为空。
+    const combinationPlans = planStore.plans
+      .map(plan => ({ plan, ...planCombination(plan) }))
+      .filter(candidate => candidate.match)
+    const matchedPlan =
+      combinationPlans.find(candidate => candidate.year === timeContext.currentYear)?.plan ||
+      combinationPlans.find(candidate => candidate.year === null)?.plan ||
+      null
+    if (!matchedPlan?.id) {
+      return null
+    }
+    return { planId: Number(matchedPlan.id), orgId: collegeOrgId }
+  }
+
   // 从 Store 获取指标列表（带里程碑），按年份和部门过滤，按任务类型和战略任务分组排序
   const indicators = computed(() => {
     // 过滤当前年份的指标
@@ -2726,7 +2853,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     )
 
     const mappedList = list.map(i => ({
-      ...i,
+      ...applyReportDetailOverlayToRow(i),
       // type2 仅用于展示标签；业务判断统一走 task_type 映射。
       type2: getIndicatorCategoryLabel(i)
     }))
@@ -3959,6 +4086,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       return
     }
     selectedCollege.value = college
+    // 2026-10-19 修复：切换学院后重新拉取该学院的上报摘要（自评等级/进度说明回显依据）
+    void syncCurrentPlanReportSummaries({ force: true, collegeScope: true })
   }
 
   // 切换职能部门时，原选中学院可能不在新部门的下发范围——自动清空选中
@@ -3985,6 +4114,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     const target = normalizeDepartmentName(selectedCollege.value)
     const ownerDept = normalizeDepartmentName(selectedDepartment.value || '')
     return normalizedIndicators.value
+      .map(item => applyReportDetailOverlayToRow(item))
       .filter(item => {
         if (ownerDept && item.ownerDept !== ownerDept) {
           return false
