@@ -329,7 +329,7 @@ const buildIndicatorListExportColumns = (
     { header: '核心指标', width: 32, getValue: row => row.name || '-' },
     { header: '指标类型', width: 12, align: 'center', getValue: row => row.type1 || '-' },
     { header: '任务类别', width: 12, align: 'center', getValue: row => row.type2 || '-' },
-    { header: '备注', width: 24, getValue: row => row.remark || '-' },
+    { header: '下发备注', width: 24, getValue: row => row.remark || '-' },
     { header: '权重', width: 10, align: 'center', getValue: row => Number(row.weight || 0) },
     {
       header: '鉴定进度等级',
@@ -759,7 +759,7 @@ const handleExportIndicatorList = async () => {
                   <div v-else style="color: #909399">—</div>
                 </template>
               </el-table-column>
-              <el-table-column prop="remark" label="备注" width="104">
+              <el-table-column prop="remark" label="下发备注" width="104">
                 <template #default="{ row }">
                   <div
                     class="indicator-name-cell"
@@ -913,7 +913,7 @@ const handleExportIndicatorList = async () => {
         <el-form-item label="权重">
           <el-input v-model="newRow.weight" placeholder="请输入权重" type="number" />
         </el-form-item>
-        <el-form-item label="备注">
+        <el-form-item label="下发备注">
           <el-input v-model="newRow.remark" type="textarea" :rows="3" placeholder="请输入备注" />
         </el-form-item>
       </el-form>
@@ -975,7 +975,7 @@ const handleExportIndicatorList = async () => {
           <el-descriptions-item label="创建时间" :span="2">{{
             formatDetailDate(currentDetail.createTime)
           }}</el-descriptions-item>
-          <el-descriptions-item label="备注" :span="2">{{
+          <el-descriptions-item label="下发备注" :span="2">{{
             currentDetail.remark || '暂无备注'
           }}</el-descriptions-item>
         </el-descriptions>

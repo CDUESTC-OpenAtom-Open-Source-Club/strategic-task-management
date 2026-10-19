@@ -365,7 +365,7 @@ const buildDistributionExportColumns = (
       align: 'center',
       getValue: row => getDistributionChildTypeText(row.child)
     },
-    { header: '备注', width: 24, getValue: row => row.child.remark || '-' },
+    { header: '下发备注', width: 24, getValue: row => row.child.remark || '-' },
     { header: '权重', width: 10, align: 'center', getValue: row => Number(row.child.weight || 0) },
     {
       header: '鉴定进度等级',
@@ -1087,7 +1087,7 @@ const handleDistributionImportCommitted = async () => {
                 </el-table-column>
 
                 <!-- 备注列（2026-10-13 用户定案：备注移到操作列前） -->
-                <el-table-column label="备注" width="98">
+                <el-table-column label="下发备注" width="98">
                   <template #default="{ row }">
                     <template v-if="row.type === 'indicator-only'">
                       <span class="remark-text">-</span>
@@ -1304,7 +1304,7 @@ const handleDistributionImportCommitted = async () => {
                   </el-row>
                   <el-row :gutter="16">
                     <el-col :span="24">
-                      <el-form-item label="备注">
+                      <el-form-item label="下发备注">
                         <el-input
                           v-model="newIndicatorForm.remark"
                           type="textarea"
@@ -1402,7 +1402,7 @@ const handleDistributionImportCommitted = async () => {
           <el-descriptions-item label="创建时间" :span="2">
             {{ formatDetailDate(currentDetailIndicator.createTime) }}
           </el-descriptions-item>
-          <el-descriptions-item label="备注" :span="2">
+          <el-descriptions-item label="下发备注" :span="2">
             {{ currentDetailIndicator.remark || '暂无备注' }}
           </el-descriptions-item>
         </el-descriptions>
@@ -1640,7 +1640,7 @@ const handleDistributionImportCommitted = async () => {
             </template>
           </el-table-column>
           <!-- 备注列 -->
-          <el-table-column label="备注" width="150">
+          <el-table-column label="下发备注" width="150">
             <template #default="{ row }">
               <span class="indicator-remark">{{ row.indicator.remark || '-' }}</span>
             </template>

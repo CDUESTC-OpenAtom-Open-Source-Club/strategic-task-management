@@ -573,7 +573,7 @@ const buildStrategicExportColumns = (
       align: 'center',
       getValue: row => getCategoryText(row.type2)
     },
-    { header: '备注', width: 24, getValue: row => row.remark || '-' },
+    { header: '下发备注', width: 24, getValue: row => row.remark || '-' },
     { header: '权重', width: 10, align: 'center', getValue: row => Number(row.weight || 0) },
     {
       header: '鉴定进度等级',
@@ -1366,7 +1366,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </el-tooltip>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="remark" label="备注" width="130">
+                  <el-table-column prop="remark" label="下发备注" width="130">
                     <template #default="{ row }">
                       <div
                         class="indicator-name-cell"
@@ -1740,7 +1740,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   </el-row>
                   <el-row :gutter="16">
                     <el-col :span="24">
-                      <el-form-item label="备注">
+                      <el-form-item label="下发备注">
                         <el-input
                           v-model="newRow.remark"
                           type="textarea"
@@ -1946,7 +1946,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </el-tooltip>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="remark" label="备注" width="106">
+                  <el-table-column prop="remark" label="下发备注" width="106">
                     <template #default="{ row }">
                       <div
                         class="indicator-name-cell"
@@ -2124,7 +2124,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <el-descriptions-item label="创建时间" :span="2">{{
             formatDetailDate(currentDetail.createTime)
           }}</el-descriptions-item>
-          <el-descriptions-item label="备注" :span="2">{{
+          <el-descriptions-item label="下发备注" :span="2">{{
             currentDetail.remark
           }}</el-descriptions-item>
         </el-descriptions>

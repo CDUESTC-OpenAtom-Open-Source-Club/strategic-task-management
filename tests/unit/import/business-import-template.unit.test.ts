@@ -17,11 +17,19 @@ const expectedHeaders: Record<BusinessImportType, string[]> = {
     '核心指标',
     '指标类型',
     '任务类别',
-    '备注',
+    '下发备注',
     '权重'
   ],
   // 2026-10-14 P10 修订：不引入内部ID列（手工导入不要求系统主键），父级指标按名称精确匹配（模板行由系统带出，名称一致）
-  distribution: ['学院', '父级战略任务', '父级核心指标', '子指标名称', '指标类型', '权重', '备注']
+  distribution: [
+    '学院',
+    '父级战略任务',
+    '父级核心指标',
+    '子指标名称',
+    '指标类型',
+    '权重',
+    '下发备注'
+  ]
 }
 
 const expectedSheetNames: Record<BusinessImportType, string> = {

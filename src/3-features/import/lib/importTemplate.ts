@@ -35,7 +35,7 @@ const strategicImportGuide: ImportTemplateGuide = {
     { key: 'indicatorName', label: '核心指标', required: true },
     { key: 'indicatorType', label: '指标类型', required: true },
     { key: 'taskCategory', label: '任务类别', required: true },
-    { key: 'remark', label: '备注' },
+    { key: 'remark', label: '下发备注' },
     { key: 'weight', label: '权重' }
   ],
   rows: [
@@ -78,7 +78,7 @@ const distributionImportGuide: ImportTemplateGuide = {
     { key: 'indicatorName', label: '子指标名称', required: true },
     { key: 'indicatorType', label: '指标类型', required: true },
     { key: 'weight', label: '权重' },
-    { key: 'remark', label: '备注' }
+    { key: 'remark', label: '下发备注' }
   ],
   rows: [
     {
