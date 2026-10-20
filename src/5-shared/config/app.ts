@@ -1,6 +1,6 @@
 /**
  * Application Configuration
- * 
+ *
  * General application settings and constants
  */
 
@@ -12,7 +12,7 @@ export const APP_NAME = '战略任务管理系统'
 /**
  * Application version
  */
-export const APP_VERSION = '1.0.0'
+export const APP_VERSION = import.meta.env['VITE_APP_VERSION'] || '1.3.0'
 
 /**
  * Default page size for pagination

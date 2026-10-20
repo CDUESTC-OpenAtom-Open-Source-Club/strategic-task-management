@@ -122,6 +122,7 @@
 
         <div class="copyright">
           <p>© 2024-{{ new Date().getFullYear() }} 战略发展部 版权所有</p>
+          <p class="app-version">v{{ APP_VERSION }}</p>
           <p>
             <a
               href="https://beian.miit.gov.cn/"
@@ -146,6 +147,7 @@ import { useAuthStore } from '@/features/auth/model/store'
 import { dingTalkLoginError, isDingTalkContainer } from '@/features/auth/lib/dingtalk'
 import LoginForm from './LoginForm.vue'
 import { announcementApi } from '@/features/admin/api/announcementApi'
+import { APP_VERSION } from '@/shared/config/app'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -754,6 +756,12 @@ onUnmounted(() => {
 
 .copyright .icp-link:hover {
   color: var(--color-primary);
+}
+
+.copyright .app-version {
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
 }
 
 /* Responsive */

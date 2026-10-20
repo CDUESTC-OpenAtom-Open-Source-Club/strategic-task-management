@@ -11,7 +11,7 @@ import { API_BASE_URL, API_TIMEOUT } from '@/shared/config/api'
 /**
  * Application version
  */
-export const APP_VERSION = import.meta.env['VITE_APP_VERSION'] || '1.0.1'
+export const APP_VERSION = import.meta.env['VITE_APP_VERSION'] || '1.3.0'
 
 /**
  * Application name

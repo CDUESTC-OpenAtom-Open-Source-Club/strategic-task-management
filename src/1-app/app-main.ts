@@ -62,7 +62,7 @@ app.mount('#app')
 /**
  * Print application version information
  */
-const version = import.meta.env['VITE_APP_VERSION'] || '1.0.1'
+const version = import.meta.env['VITE_APP_VERSION'] || '1.3.0'
 const commitHash = import.meta.env['VITE_APP_COMMIT_HASH'] || 'unknown'
 const buildTime = new Date().toISOString()
 if (import.meta.env.DEV || import.meta.env.PROD) {
