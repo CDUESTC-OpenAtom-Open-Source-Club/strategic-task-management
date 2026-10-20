@@ -3243,8 +3243,23 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   const mutationApiLoading = ref(false)
 
-  const hasMutationDraft = computed(() => Boolean(mutationDraft.value))
-  const mutationDraftLabels = computed(() => mutationDraft.value?.labels ?? [])
+  /**
+   * 2026-10-20 用户定案：已下发计划新增的指标先落库但不立即发起异动，
+   * 记在这里；用户调整完其他指标权重（合计回到 100）后点「发起异动」时
+   * 统一为这些新指标发起异动审批。
+   */
+  const pendingCreatedIndicatorIds = ref<Array<string | number>>([])
+
+  const hasMutationDraft = computed(
+    () => Boolean(mutationDraft.value) || pendingCreatedIndicatorIds.value.length > 0
+  )
+  const mutationDraftLabels = computed(() => {
+    const labels = [...(mutationDraft.value?.labels ?? [])]
+    if (pendingCreatedIndicatorIds.value.length > 0) {
+      labels.push(`新增指标×${pendingCreatedIndicatorIds.value.length}`)
+    }
+    return labels
+  })
 
   const MUTATION_FIELD_MAP: Record<
     string,
@@ -3331,10 +3346,15 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 顶部「发起异动」：一次性提交全部攒改，走异动审批链
   const submitMutationDraft = async () => {
     const draft = mutationDraft.value
-    if (!draft) {
+    const pendingCreates = pendingCreatedIndicatorIds.value
+    // 2026-10-20：只有新增指标（无字段修改）时也允许点「发起异动」
+    if (!draft && pendingCreates.length === 0) {
       return
     }
-    const summary = draft.labels.join('、')
+    const summary = [
+      ...(draft?.labels ?? []),
+      ...(pendingCreates.length > 0 ? [`新增指标 ${pendingCreates.length} 项`] : [])
+    ].join('、')
     try {
       await ElMessageBox.confirm(
         `将提交以下异动调整：${summary}。\n确认后启动异动审批（战略发展部负责人 → 分管校领导），` +
@@ -3348,16 +3368,30 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     try {
       mutationApiLoading.value = true
       const { mutationApi } = await import('@/features/indicator/api/mutationApi')
-      const response = await mutationApi.initiate(draft.indicatorId as number, draft.changes)
-      if (response.success) {
-        mutationDraft.value = null
-        ElMessage.success('异动已提交审批；审批期间其他模块不受影响')
-        void refreshTaskPageAfterIndicatorMutation()
-      } else {
-        ElMessage.error(response.message || '发起异动失败')
+
+      // 先为新增指标发起异动（任一失败则整批中止，避免部分提交）
+      for (const createdId of pendingCreates) {
+        const createdResponse = await mutationApi.initiateForCreate(createdId)
+        if (!createdResponse.success) {
+          throw new Error(createdResponse.message || '新增指标异动发起失败')
+        }
       }
+
+      // 再提交字段修改异动
+      if (draft) {
+        const response = await mutationApi.initiate(draft.indicatorId as number, draft.changes)
+        if (!response.success) {
+          throw new Error(response.message || '发起异动失败')
+        }
+      }
+
+      mutationDraft.value = null
+      pendingCreatedIndicatorIds.value = []
+      ElMessage.success('异动已提交审批；审批期间其他模块不受影响')
+      void refreshTaskPageAfterIndicatorMutation()
     } catch (error) {
-      ElMessage.error(error instanceof Error ? error.message : '发起异动失败')
+      const msg = (error as { message?: string })?.message
+      ElMessage.error(msg || '发起异动失败')
     } finally {
       mutationApiLoading.value = false
     }
@@ -3930,6 +3964,25 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       const createdIndicatorId = Number(
         createdIndicatorResponse?.data?.indicatorId ?? createdIndicatorResponse?.data?.id ?? NaN
       )
+
+      // 2026-10-20 用户定案：已下发计划新增的指标必须走异动审批链，
+      // 落库后立即为该新指标发起 PLAN_MUTATION_STRATEGY（审批通过才正式生效）。
+      // 2026-10-20 用户定案：已下发计划新增指标时**不立即发起异动**、也不做权重校验。
+      // 新增的指标先落库并计入「异动草稿」，用户可继续调整其他指标权重使合计回到 100，
+      // 再点顶部「发起异动」时统一校验（校验不通过则整批不提交）。
+      if (
+        hasDistributedIndicators.value &&
+        Number.isFinite(createdIndicatorId) &&
+        createdIndicatorId > 0
+      ) {
+        pendingCreatedIndicatorIds.value = [...pendingCreatedIndicatorIds.value, createdIndicatorId]
+        logger.info(
+          '[StrategicTaskView] 已下发计划新增指标，已加入待发起异动列表:',
+          createdIndicatorId
+        )
+        ElMessage.info('指标已新增；请确认基础性权重合计为 100 后点顶部「发起异动」提交审批')
+      }
+
       // 统一走“变更后刷新”链路，避免新增后被旧缓存覆盖，导致主页仍显示上一版状态。
       logger.info('[StrategicTaskView] Refreshing task page after successful indicator creation...')
       await refreshTaskPageAfterIndicatorMutation()

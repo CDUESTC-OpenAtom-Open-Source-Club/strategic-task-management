@@ -32,6 +32,14 @@ export const mutationApi = {
     return apiClient.post(`/indicators/${indicatorId}/mutation`, changes)
   },
 
+  /**
+   * 2026-10-20：已下发计划新增指标后，立即为该新指标发起异动审批。
+   * 与 initiate 的区别：无 before 值（快照记为「(新增)」），节点链相同。
+   */
+  async initiateForCreate(indicatorId: number | string): Promise<ApiResponse<string>> {
+    return apiClient.post(`/indicators/${indicatorId}/mutation-for-create`, {})
+  },
+
   /** 异动历史（已更改 N 次 + 历史版本快照） */
   async history(indicatorId: number | string): Promise<ApiResponse<MutationHistoryItem[]>> {
     return apiClient.get(`/indicators/${indicatorId}/mutation-history`)

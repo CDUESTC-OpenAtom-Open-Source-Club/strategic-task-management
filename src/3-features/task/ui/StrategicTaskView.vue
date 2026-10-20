@@ -877,6 +877,19 @@ const openStrategicImportDialog = () => {
     ElMessage.warning('当前周期信息不可用，暂不能导入')
     return
   }
+  // 2026-10-20 用户定案：已下发计划不允许再通过导入修改，点击入口时就拦住，
+  // 不让用户白跑一趟选文件流程；同时给出替代操作路径。
+  if (hasDistributedIndicators.value) {
+    ElMessageBox.alert(
+      '该部门计划已下发，不能再通过导入修改。\n\n如需新增或调整指标：\n' +
+        '· 新增：点表格上方「新增行」，或指标行右下角的「+」\n' +
+        '· 修改：双击指标名称/权重/下发备注就地编辑\n' +
+        '· 改完后点击顶部「发起异动」提交审批（审批通过后生效）',
+      '该计划已下发，导入已关闭',
+      { confirmButtonText: '我知道了', type: 'warning' }
+    ).catch(() => {})
+    return
+  }
   strategicImportDialogVisible.value = true
 }
 
@@ -988,12 +1001,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
       <!-- Excel工具栏 -->
       <div class="excel-toolbar">
         <div class="toolbar-left">
-          <el-button
-            type="primary"
-            size="small"
-            :disabled="isReadOnly || hasDistributedIndicators"
-            @click.stop="addNewRow"
-          >
+          <!-- 2026-10-20 用户定案：已下发计划允许战略部继续新增指标（走异动审批链），
+               不再因 hasDistributedIndicators 禁用「新增行」 -->
+          <el-button type="primary" size="small" :disabled="isReadOnly" @click.stop="addNewRow">
             <el-icon><Plus /></el-icon>
             新增行
           </el-button>
@@ -1232,9 +1242,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                           </div>
                         </div>
 
-                        <!-- 右下角新增指标三角形按钮 -->
+                        <!-- 右下角新增指标三角形按钮
+                             2026-10-20 用户定案：已下发计划也允许新增指标（走异动链），
+                             不再限定 canWithdraw（该条件仅未下发时为真） -->
                         <div
-                          v-if="!isReadOnly && getTaskStatus(row).canWithdraw"
+                          v-if="!isReadOnly"
                           class="add-indicator-trigger"
                           @click="handleAddIndicatorToTask(row)"
                         >
