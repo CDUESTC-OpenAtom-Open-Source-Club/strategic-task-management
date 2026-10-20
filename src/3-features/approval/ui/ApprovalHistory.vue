@@ -6,12 +6,15 @@ import AppAvatar from '@/shared/ui/avatar/AppAvatar.vue'
 
 const props = defineProps<{
   history: ApprovalHistoryItem[]
-  // 审批类型：'distribution' = 下发审批, 'submission' = 上报审批
+  // 审批类型：'distribution' = 下发审批, 'submission' = 审批流程
   approvalType?: 'distribution' | 'submission'
 }>()
 
+// 2026-10-20 用户定案：标签不再按「上报/下发」二选一硬编码。
+// 下发审批历史沿用「下发审批」，其余统一显示「审批流程」——
+// 审批实例详情弹窗里的历史可能是下发审批的，硬标「上报审批」会张冠李戴。
 const approvalTypeLabel = computed(() => {
-  return props.approvalType === 'distribution' ? '下发审批' : '上报审批'
+  return props.approvalType === 'distribution' ? '下发审批' : '审批流程'
 })
 
 const approvalTypeTagType = computed(() => {
