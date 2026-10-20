@@ -632,7 +632,7 @@ const handleExportIndicatorList = async () => {
                 v-if="showStrategicTaskColumn"
                 prop="taskContent"
                 label="战略任务"
-                width="148"
+                width="200"
               >
                 <template #default="{ row }">
                   <!-- 2026-10-19 用户定案：上方=任务属性，右侧竖排看板=截断全文，两框互不干扰 -->
@@ -651,7 +651,7 @@ const handleExportIndicatorList = async () => {
                 </template>
               </el-table-column>
               <!-- 与战略任务列等宽：用固定 width（min-width 会吃掉剩余空间导致不等宽） -->
-              <el-table-column prop="name" label="核心指标" width="148">
+              <el-table-column prop="name" label="核心指标" width="200">
                 <template #default="{ row }">
                   <div class="indicator-name-cell" @dblclick="handleIndicatorDblClick(row, 'name')">
                     <el-input
@@ -732,7 +732,9 @@ const handleExportIndicatorList = async () => {
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="进度说明" min-width="100">
+              <!-- 2026-10-20 用户定案：进度说明不占太大位置——固定宽度，
+                   剩余空间让给战略任务/核心指标两列 -->
+              <el-table-column label="进度说明" width="140">
                 <template #default="{ row }">
                   <el-tooltip
                     :content="row.pendingRemark || ''"
