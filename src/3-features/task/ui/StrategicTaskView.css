@@ -1880,7 +1880,16 @@
 .approval-badge {
   display: inline-flex;
   position: relative;
-  z-index: 5;
+  /* 2026-10-20 修复（复盘图16 角标偏移）：状态浮动标签 z-index:1 会盖住红点，
+     这里提到 20 确保红点始终显示在按钮右上角，不被相邻标签遮挡。 */
+  z-index: 20;
+}
+
+.approval-badge :deep(.el-badge__content.is-dot) {
+  z-index: 21;
+  /* 与按钮右上角对齐，避免被 .approval-status-chip（right:-42px）视觉挤压 */
+  top: 2px;
+  right: 6px;
 }
 
 .approval-entry-wrapper {
@@ -1898,8 +1907,9 @@
 
 .approval-status-chip {
   position: absolute;
-  top: -12px;
-  right: -42px;
+  /* 2026-10-20：原 top:-12px / right:-42px 与按钮右上角红点重叠，下移并右移避开 */
+  top: 26px;
+  right: -46px;
   z-index: 1;
   max-width: 156px;
   padding: 2px 9px;

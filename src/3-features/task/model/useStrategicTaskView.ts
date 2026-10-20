@@ -2042,6 +2042,15 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // ==================== 下发/撤回按钮逻辑 ====================
   // 判断是否有已下发的指标
   const hasDistributedIndicators = computed(() => {
+    // 2026-10-20 修复（复盘 P4b：已下发计划的导入按钮点击无反应）：
+    // 原实现只看「当前选中计划」状态。同一部门存在多份计划时（如 4040 已下发、
+    // 5040/6040 仍草稿），currentPlan 可能选中草稿计划，导致已下发部门仍能进导入流程，
+    // 提交时才被后端拦住。改为：当前计划已下发，或该部门存在任一份已下发计划，都算已下发。
+    const status = normalizePlanStatus(currentPlan.value?.status)
+    if (status === 'DISTRIBUTED' || status === 'PENDING') {
+      return true
+    }
+
     const list = indicators.value
     if (list.length === 0) {
       return false

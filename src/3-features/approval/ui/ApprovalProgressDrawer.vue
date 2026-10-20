@@ -453,65 +453,10 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 </div>
               </div>
 
-              <!-- my-tasks 待办卡（月报审批 PLAN_REPORT / 指标异动 INDICATOR）：
-                   这些任务分配给当前登录人，直接按任务审批，不依赖当前计划上下文 -->
-              <div
-                v-for="item in externalWorkflowTodoItems"
-                :key="`workflow-todo-${item.taskId || item.instanceId}`"
-                class="approval-card"
-              >
-                <div class="card-header">
-                  <div class="plan-info">
-                    <el-icon class="plan-icon"><Document /></el-icon>
-                    <div class="info-text">
-                      <div class="plan-name">
-                        {{ item.title || item.planName || item.taskName || '待审批任务' }}
-                      </div>
-                      <div class="plan-year">{{ item.flowName || '待办审批' }}</div>
-                    </div>
-                  </div>
-                  <ElTag type="warning" size="small">待审批</ElTag>
-                </div>
-                <div class="submit-info">
-                  <div class="info-row">
-                    <el-icon><User /></el-icon>
-                    <span class="label">提交人：</span>
-                    <span class="value">{{ resolveExternalTodoSubmitterName(item) }}</span>
-                  </div>
-                  <div class="info-row">
-                    <el-icon><Timer /></el-icon>
-                    <span class="label">提交时间：</span>
-                    <span class="value">{{
-                      item.createdAt ? formatTime(item.createdAt) : '--'
-                    }}</span>
-                  </div>
-                  <div class="info-row">
-                    <el-icon><Right /></el-icon>
-                    <span class="label">当前步骤：</span>
-                    <span class="value">{{ item.currentStepName || '审批中' }}</span>
-                  </div>
-                </div>
-                <div class="card-actions">
-                  <ElSelect
-                    v-if="isReportApprovalInstance(item)"
-                    v-model="planAppraisalLevel"
-                    size="small"
-                    clearable
-                    placeholder="鉴定进度等级"
-                    style="width: 118px; margin-right: 8px"
-                  >
-                    <ElOption label="超前完成" value="AHEAD" />
-                    <ElOption label="正常" value="NORMAL" />
-                    <ElOption label="延期" value="DELAYED" />
-                  </ElSelect>
-                  <ElButton type="success" @click="handleApproveExternalWorkflowTodo(item)">
-                    审批通过
-                  </ElButton>
-                  <ElButton type="danger" @click="handleRejectExternalWorkflowTodo(item)">
-                    审批驳回
-                  </ElButton>
-                </div>
-              </div>
+              <!-- 2026-10-20 用户定案（复盘 P3）：删除 my-tasks 待办卡（B 卡）。
+                   同一次填报会同时出现在 A 卡（上报审批 · 部门 -> 上级）与本 B 卡
+                   （202601 XX月报）中，属同一实例的重复展示，且 B 卡提交人显示错误、
+                   还带不该出现的鉴定进度等级下拉。统一只走 A 卡，与战略发展部审批中心对齐。 -->
             </div>
           </div>
         </ElTabPane>
