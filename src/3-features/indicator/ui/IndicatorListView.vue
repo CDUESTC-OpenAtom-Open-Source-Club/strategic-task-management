@@ -628,13 +628,14 @@ const handleExportIndicatorList = async () => {
             >
               <!-- 2026-10-20 用户定案（第二次）：两列用 min-width 等分剩余空间——
                    此前全表固定宽度合计约 1200px，容器更宽时表格右侧留白。
-                   改为 min-width 后，两列同比例吃掉剩余宽度，表格始终铺满且保持等宽；
-                   窄屏时不低于 200px，由容器横向滚动兜底 -->
+                   改为 min-width 后，两列同比例吃掉剩余宽度，表格始终铺满且保持等宽。
+                   下限取 192：1280 视口下容器约 1184px，固定列合计 800，两列各 192 正好铺满；
+                   更窄时才出现横向滚动 -->
               <el-table-column
                 v-if="showStrategicTaskColumn"
                 prop="taskContent"
                 label="战略任务"
-                min-width="200"
+                min-width="192"
               >
                 <template #default="{ row }">
                   <!-- 2026-10-19 用户定案：上方=任务属性，右侧竖排看板=截断全文，两框互不干扰 -->
@@ -653,7 +654,7 @@ const handleExportIndicatorList = async () => {
                 </template>
               </el-table-column>
               <!-- 与战略任务列同为 min-width：两列等分剩余宽度，表格铺满容器 -->
-              <el-table-column prop="name" label="核心指标" min-width="200">
+              <el-table-column prop="name" label="核心指标" min-width="192">
                 <template #default="{ row }">
                   <div class="indicator-name-cell" @dblclick="handleIndicatorDblClick(row, 'name')">
                     <el-input
