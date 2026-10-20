@@ -527,17 +527,24 @@ const getCandidateSummary = (node: WorkflowNode) => {
   min-width: 0;
 }
 
+/* 2026-10-20 修复（P7 图17）：节点名过长时挤压「步骤 N」与「或签」标签导致错位/换行。
+   三者空间固定：步骤角标与或签标签禁止收缩，节点名独占剩余空间并可截断换行。 */
 .node-step {
   font-size: 12px;
   color: var(--el-text-color-secondary);
   background: var(--el-fill-color-light);
   padding: 2px 8px;
   border-radius: 12px;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .node-name {
   font-weight: 600;
   color: var(--el-text-color-primary);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .node-sign-mode {
@@ -550,6 +557,8 @@ const getCandidateSummary = (node: WorkflowNode) => {
   color: #409eff;
   font-size: 12px;
   font-weight: 600;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .node-status-tag {
