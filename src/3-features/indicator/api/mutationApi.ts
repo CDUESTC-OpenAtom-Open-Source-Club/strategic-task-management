@@ -24,7 +24,7 @@ export interface MutationInProgressItem {
  * P5 指标异动 API（仅战略发展部可发起）
  */
 export const mutationApi = {
-  /** 发起异动：原地修改+写快照+启动 PLAN_MUTATION_STRATEGY 三级审批并全面锁死该组织 */
+  /** 发起异动：原地修改+写快照+启动 PLAN_MUTATION_STRATEGY 三级审批（2026-10-20 起不再锁死其他模块） */
   async initiate(
     indicatorId: number | string,
     changes: { indicator_desc?: string; weight_percent?: number; remark?: string }
@@ -48,9 +48,7 @@ export const mutationApi = {
   },
 
   /** 异动审批实例清单（审批中心「异动审批」卡片数据源，含进行中与已完成） */
-  async approvals(
-    orgId: number | string
-  ): Promise<
+  async approvals(orgId: number | string): Promise<
     ApiResponse<
       Array<{
         instance_id: number

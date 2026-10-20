@@ -3338,7 +3338,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     try {
       await ElMessageBox.confirm(
         `将提交以下异动调整：${summary}。\n确认后启动异动审批（战略发展部负责人 → 分管校领导），` +
-          '审批期间目标部门与全部二级学院将被锁死；驳回后可重新发起。',
+          '审批期间其他模块不受影响；驳回后可重新发起。',
         '发起指标异动',
         { confirmButtonText: '确认发起', cancelButtonText: '取消', type: 'warning' }
       )
@@ -3351,7 +3351,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       const response = await mutationApi.initiate(draft.indicatorId as number, draft.changes)
       if (response.success) {
         mutationDraft.value = null
-        ElMessage.success('异动已提交审批；审批期间该部门填报已锁死')
+        ElMessage.success('异动已提交审批；审批期间其他模块不受影响')
         void refreshTaskPageAfterIndicatorMutation()
       } else {
         ElMessage.error(response.message || '发起异动失败')
@@ -3393,7 +3393,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   /**
    * 已下发指标的异动入口：仅战略发展部可发起；支持 指标内容/权重/备注 三类字段。
-   * 提交后走异动审批链，审批期间目标组织与全部学院锁死（后端硬校验）。
+   * 提交后走异动审批链；2026-10-20 定案：审批期间不再锁死其他模块（人为处理）。
    */
   const openMutationDialogForField = async (row: StrategicIndicator, field: string) => {
     const role = String(props.selectedRole || authStore.userRole || '').trim()
@@ -3423,7 +3423,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     try {
       const { value } = await ElMessageBox.prompt(
         `该指标已下发，直接修改会被系统拒绝。是否发起「指标异动」调整${mapping.label}？` +
-          '确认后将启动异动审批（战略发展部负责人 → 分管校领导），审批期间目标部门与全部二级学院将被锁死。',
+          '确认后将启动异动审批（战略发展部负责人 → 分管校领导）。审批期间其他模块不受影响，异动结果由审批链决定。',
         `发起指标异动 · ${mapping.label}`,
         {
           confirmButtonText: '发起异动',
@@ -3458,7 +3458,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       const { mutationApi } = await import('@/features/indicator/api/mutationApi')
       const response = await mutationApi.initiate(row.id as number, payload)
       if (response.success) {
-        ElMessage.success('异动已提交审批；审批期间该部门与相关学院已锁死')
+        ElMessage.success('异动已提交审批；审批期间其他模块不受影响')
         void refreshTaskPageAfterIndicatorMutation()
       } else {
         ElMessage.error(response.message || '发起异动失败')
