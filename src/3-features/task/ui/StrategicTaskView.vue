@@ -32,6 +32,7 @@ import {
   type ExcelExportSheet,
   type ExcelRowTone
 } from '@/shared/lib/export/excel'
+import { collectAttachmentRefs, exportDepartmentsAsZip } from '@/shared/lib/export/zipExport'
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import {
   useStrategicTaskView,
@@ -588,15 +589,22 @@ const buildStrategicExportColumns = (
       getValue: row => getCategoryText(row.type2)
     },
     { header: '下发备注', width: 24, getValue: row => row.remark || '-' },
-    { header: '权重', width: 10, align: 'center', getValue: row => Number(row.weight || 0) },
+    // 2026-10-20 用户定案：表头直接标出权重可接受的写法，避免用户猜格式
     {
-      header: '鉴定进度等级',
-      width: 18,
+      header: '权重（可填 10 / 10% / 0.1）',
+      width: 16,
+      align: 'center',
+      getValue: row => Number(row.weight || 0)
+    },
+    // 2026-10-20：阅读列标注「导入忽略」——导入解析器不识别这两列，改了不起作用
+    {
+      header: '鉴定进度等级（导入忽略）',
+      width: 20,
       align: 'center',
       getValue: row => getManualAlertLabel(row.manualAlertSeverity)
     },
     {
-      header: '上报资料',
+      header: '上报资料（导入忽略）',
       width: 42,
       getValue: row =>
         buildAttachmentCell(
@@ -791,6 +799,8 @@ const openStrategicBatchExportDialog = () => {
   strategicBatchExportDialogVisible.value = true
 }
 
+// 2026-10-20 用户定案：全部导出 = 每个部门一个 Excel（序号各自从 1 开始），
+// 附件原始文件一并打进 zip，避免多部门挤在一个工作簿里导致序号跨部门错位、附件只有链接。
 const handleExportSelectedStrategicDepartments = async () => {
   const departments = selectedStrategicExportDepartments.value
   if (departments.length === 0) {
@@ -805,22 +815,30 @@ const handleExportSelectedStrategicDepartments = async () => {
       strategicStore.loadIndicatorsByYear(timeContext.currentYear, { force: true })
     ])
 
-    const sheets = await Promise.all(
+    const payloads = await Promise.all(
       departments.map(async department => {
         const taskIdSet = await loadStrategicExportTaskIdSetByDepartment(department)
-        return buildStrategicExportSheet(
+        const rows = getStrategicExportRowsByDepartment(department, taskIdSet)
+        return {
           department,
-          getStrategicExportRowsByDepartment(department, taskIdSet)
-        ) as ExcelExportSheet<unknown>
+          sheets: [buildStrategicExportSheet(department, rows) as ExcelExportSheet<unknown>],
+          attachments: collectAttachmentRefs(rows)
+        }
       })
     )
 
-    await exportSheetsToExcel(
-      sheets,
-      buildExportFileName('战略任务指标总表', departments.length === 1 ? departments[0] : '多部门')
+    const dateText = new Date().toISOString().slice(0, 10)
+    await exportDepartmentsAsZip(
+      payloads,
+      `战略任务指标总表_${departments.length === 1 ? departments[0] : '多部门'}_${dateText}.zip`,
+      { onProgress: text => ElMessage({ message: text, duration: 1200, grouping: true }) }
     )
     strategicBatchExportDialogVisible.value = false
-    ElMessage.success('导出成功')
+    ElMessage.success(
+      departments.length === 1
+        ? '导出成功（单部门已直接输出 xlsx）'
+        : `导出成功：${departments.length} 个部门各一个 Excel，附件已一并打包`
+    )
   } catch {
     ElMessage.error('导出失败，请稍后重试')
   } finally {

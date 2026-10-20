@@ -37,7 +37,8 @@ const strategicImportGuide: ImportTemplateGuide = {
     { key: 'indicatorType', label: '指标类型', required: true },
     { key: 'taskCategory', label: '任务类别', required: true },
     { key: 'remark', label: '下发备注' },
-    { key: 'weight', label: '权重' }
+    // 2026-10-20：表头直接标出可接受写法
+    { key: 'weight', label: '权重（可填 10 / 10% / 0.1）' }
   ],
   rows: [
     {
@@ -82,7 +83,8 @@ const distributionImportGuide: ImportTemplateGuide = {
     { key: 'parentIndicator', label: '父级核心指标', required: true },
     { key: 'indicatorName', label: '子指标名称', required: true },
     { key: 'indicatorType', label: '指标类型', required: true },
-    { key: 'weight', label: '权重' },
+    // 2026-10-20：表头直接标出可接受写法
+    { key: 'weight', label: '权重（可填 10 / 10% / 0.1）' },
     { key: 'remark', label: '下发备注' }
   ],
   rows: [

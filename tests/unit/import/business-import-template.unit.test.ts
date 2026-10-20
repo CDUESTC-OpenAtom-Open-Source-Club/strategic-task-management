@@ -18,7 +18,7 @@ const expectedHeaders: Record<BusinessImportType, string[]> = {
     '指标类型',
     '任务类别',
     '下发备注',
-    '权重'
+    '权重（可填 10 / 10% / 0.1）'
   ],
   // 2026-10-19 用户定案：序号列必填（1、2、3…），导入按序号还原内部ID做唯一性匹配；不引入内部ID列
   distribution: [
@@ -28,7 +28,7 @@ const expectedHeaders: Record<BusinessImportType, string[]> = {
     '父级核心指标',
     '子指标名称',
     '指标类型',
-    '权重',
+    '权重（可填 10 / 10% / 0.1）',
     '下发备注'
   ]
 }

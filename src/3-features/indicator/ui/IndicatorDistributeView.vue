@@ -367,7 +367,13 @@ const buildDistributionExportColumns = (
       getValue: row => getDistributionChildTypeText(row.child)
     },
     { header: '下发备注', width: 24, getValue: row => row.child.remark || '-' },
-    { header: '权重', width: 10, align: 'center', getValue: row => Number(row.child.weight || 0) },
+    // 2026-10-20 用户定案：表头标出权重可接受写法
+    {
+      header: '权重（可填 10 / 10% / 0.1）',
+      width: 16,
+      align: 'center',
+      getValue: row => Number(row.child.weight || 0)
+    },
     {
       header: '鉴定进度等级',
       width: 18,

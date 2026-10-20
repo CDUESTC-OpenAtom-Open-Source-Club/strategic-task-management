@@ -157,6 +157,15 @@ export async function exportSheetsToExcel(
   sheets: ExcelExportSheet<unknown>[],
   fileName: string
 ): Promise<void> {
+  const blob = await buildExcelBlob(sheets)
+  await saveBlobAsFile(blob, sanitizeFileName(fileName))
+}
+
+/**
+ * 2026-10-20：把多 sheet 工作簿构建为 Blob（不触发下载），
+ * 供「按部门打包 zip」等场景复用。
+ */
+export async function buildExcelBlob(sheets: ExcelExportSheet<unknown>[]): Promise<Blob> {
   const { default: writeXlsxFile } = await loadExcelWriter()
   const usedSheetNames = new Set<string>()
   const excelSheets = sheets.map(sheet => ({
@@ -167,10 +176,22 @@ export async function exportSheetsToExcel(
     showGridLines: false
   }))
 
-  await writeXlsxFile(excelSheets, {
+  return writeXlsxFile(excelSheets, {
     fontFamily: 'Microsoft YaHei',
     fontSize: 11
-  }).toFile(sanitizeFileName(fileName))
+  }).toBlob()
+}
+
+/** 触发浏览器下载（统一封装，避免各处重复写 a[download] 逻辑） */
+export function saveBlobAsFile(blob: Blob, fileName: string): void {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = fileName
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 export function buildExportFileName(pageName: string, scopeName?: string): string {
