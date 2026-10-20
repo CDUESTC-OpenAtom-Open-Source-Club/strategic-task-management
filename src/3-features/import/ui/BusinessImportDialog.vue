@@ -245,7 +245,8 @@ const handlePreview = async () => {
           sequenceMapJson
         })
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '导入解析失败')
+    const msg = (error as { message?: string })?.message
+    ElMessage.error(msg || '导入解析失败')
   } finally {
     previewing.value = false
   }
@@ -307,7 +308,10 @@ const handleCommit = async () => {
     emit('committed', result)
     dialogVisible.value = false
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '确认导入失败')
+    // 2026-10-20：apiClient 抛的是 AppError 对象（非 Error 实例），
+    // 后端业务拦截原因（如异动审批锁、权重不符）必须透传给用户
+    const msg = (error as { message?: string })?.message
+    ElMessage.error(msg || '确认导入失败')
   } finally {
     committing.value = false
   }
