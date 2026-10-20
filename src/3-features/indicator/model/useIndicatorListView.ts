@@ -3668,10 +3668,17 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     // 2026-10-07：有未提交草稿时优先锁定草稿月，并刷新等级/说明回显覆盖层
     await refreshReportDetailOverlay()
     lockedReportMonth.value = await resolveEarliestUnfilledReportMonth(row.id)
+    // 2026-10-20 修复：自评等级保存后重开弹窗显示为空——回显取刚刷新的草稿明细等级，
+    // 无草稿明细时依次退回列表行（覆盖层已算）与服务端快照的已存等级
+    const draftDetail = reportDetailOverlay.value[String(row.id)] as
+      | { selfRating?: string | null }
+      | undefined
     reportForm.value = {
       newProgress: Math.max(actualProgress, Number(preferredProgress) || 0),
       remark: row.pendingRemark ?? persistedDraft?.remark ?? '',
-      selfRating: '',
+      selfRating: String(
+        draftDetail?.selfRating || row.selfRating || latestIndicator.selfRating || ''
+      ),
       reportMonth:
         lockedReportMonth.value ||
         String(new Date().getFullYear()) + String(new Date().getMonth() + 1).padStart(2, '0'),
@@ -4028,6 +4035,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       reportProgress: number
       pendingProgress?: number | null
       pendingRemark?: string | null
+      selfRating?: string | null
       pendingAttachments?: string[]
       pendingAttachmentDetails?: Attachment[]
       currentReportId?: number | null
@@ -4059,6 +4067,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
             reportProgress: payload.reportProgress,
             pendingProgress: payload.pendingProgress,
             pendingRemark: payload.pendingRemark,
+            selfRating: payload.selfRating ?? (item as { selfRating?: string }).selfRating,
             pendingAttachments: payload.pendingAttachments,
             pendingAttachmentDetails: payload.pendingAttachmentDetails,
             currentReportId: payload.currentReportId
@@ -4080,6 +4089,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
             ...detail,
             progress: payload.pendingProgress ?? payload.reportProgress,
             comment: payload.pendingRemark ?? '',
+            selfRating: payload.selfRating ?? detail.selfRating,
             attachments: Array.isArray(payload.pendingAttachmentDetails)
               ? payload.pendingAttachmentDetails
               : []
@@ -4196,6 +4206,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           reportProgress: Number(item.progress),
           pendingProgress: Number(item.progress),
           pendingRemark: item.content,
+          selfRating: reportForm.value.selfRating || null,
           pendingAttachments:
             String(item.indicator_id) === String(indicator.id)
               ? attachmentUrls
