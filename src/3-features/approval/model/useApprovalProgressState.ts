@@ -1746,6 +1746,18 @@ export function useApprovalProgressState(
   function resolveTaskCandidateApprovers(
     task: WorkflowTaskResponse
   ): WorkflowNode['approverCandidates'] {
+    // 2026-10-20 修复（复盘图15）：提交类节点（填报人提交 / 填报人修改 / 填报人上报）
+    // 不是审批节点，不应展示「可审批成员」「或签」。此前对所有节点统一返回候选，
+    // 导致填报人提交节点下错误列出后续审核成员（党委办审核人2、党委办[演示]）。
+    const stepNameForSubmitCheck =
+      normalizeDisplayName(task.currentStepName) || normalizeDisplayName(task.taskName) || ''
+    if (
+      /填报人/.test(stepNameForSubmitCheck) &&
+      /(提交|修改|上报|填报)/.test(stepNameForSubmitCheck)
+    ) {
+      return []
+    }
+
     const preview = workflowDefinitionPreview.value
     const taskStepNo = Number(task.stepNo ?? NaN)
     const rawStepName =
