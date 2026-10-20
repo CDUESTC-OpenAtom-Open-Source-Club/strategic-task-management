@@ -31,7 +31,8 @@ const compatibilityWhitelist = [
   { method: 'post', path: '/api/v1/auth/password-reset/send' },
   { method: 'post', path: '/api/v1/auth/password-reset/verify' },
   { method: 'post', path: '/api/v1/auth/password-reset/confirm' },
-  { method: 'put', path: '/api/v1/alerts/indicator/{id}/manual-level' }
+  { method: 'put', path: '/api/v1/alerts/indicator/{id}/manual-level' },
+  { method: 'post', path: '/api/v1/indicators/{id}/mutation-for-create' }
 ] as const
 
 function normalizePathLiteral(rawPath: string): string | null {
