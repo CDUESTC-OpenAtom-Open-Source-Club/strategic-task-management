@@ -626,11 +626,13 @@ const handleExportIndicatorList = async () => {
               class="unified-table"
               @selection-change="handleSelectionChange"
             >
+              <!-- 2026-10-20 用户定案：战略任务与核心指标两列「取长补短」——总宽不变（100+196=296），
+                   两者各 148，让长任务名有更多展示空间 -->
               <el-table-column
                 v-if="showStrategicTaskColumn"
                 prop="taskContent"
                 label="战略任务"
-                width="100"
+                width="148"
               >
                 <template #default="{ row }">
                   <!-- 2026-10-19 用户定案：上方=任务属性，右侧竖排看板=截断全文，两框互不干扰 -->
@@ -648,7 +650,8 @@ const handleExportIndicatorList = async () => {
                   </el-tooltip>
                 </template>
               </el-table-column>
-              <el-table-column prop="name" label="核心指标" min-width="196">
+              <!-- 与战略任务列等宽：用固定 width（min-width 会吃掉剩余空间导致不等宽） -->
+              <el-table-column prop="name" label="核心指标" width="148">
                 <template #default="{ row }">
                   <div class="indicator-name-cell" @dblclick="handleIndicatorDblClick(row, 'name')">
                     <el-input
