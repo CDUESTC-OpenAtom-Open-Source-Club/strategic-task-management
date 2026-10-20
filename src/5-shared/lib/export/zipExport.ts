@@ -1,4 +1,5 @@
 import JSZip from 'jszip'
+import { apiClient } from '@/5-shared/api/client'
 import {
   buildExcelBlob,
   normalizeExportAttachments,
@@ -54,11 +55,9 @@ async function downloadAttachment(ref: ExportAttachmentRef): Promise<Blob | null
     ref.url || (ref.attachmentId ? `/api/v1/attachments/${ref.attachmentId}/download` : '')
   if (!url) return null
   try {
-    // 同源请求自动带 Cookie / Authorization 由 axios 拦截器负责；这里用 fetch 简化，
-    // 对需要 token 的下载接口，url 通常是相对路径且浏览器已登录（同源 Cookie 或前端已注入头）。
-    const response = await fetch(url, { credentials: 'include' })
-    if (!response.ok) return null
-    return await response.blob()
+    // 走 apiClient（axios 实例）以复用鉴权拦截器，避免绕过统一请求层
+    const response = await apiClient.getAxiosInstance().get(url, { responseType: 'blob' })
+    return new Blob([response.data])
   } catch {
     return null
   }
