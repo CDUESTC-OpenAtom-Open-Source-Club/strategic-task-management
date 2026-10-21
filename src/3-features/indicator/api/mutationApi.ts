@@ -40,6 +40,23 @@ export const mutationApi = {
     return apiClient.post(`/indicators/${indicatorId}/mutation-for-create`, {})
   },
 
+  /**
+   * 2026-10-21 用户定案：一次异动可同时调整多条指标——字段攒改与新增指标
+   * 整批一次提交；后端先全部应用再统一做权重合计校验，任一失败整批不生效。
+   * item：{ id, create?: true 表示新增指标, indicator_desc?/weight_percent?/remark?: 变更值 }
+   */
+  async initiateBatch(
+    items: Array<{
+      id: number | string
+      create?: boolean
+      indicator_desc?: string
+      weight_percent?: number
+      remark?: string
+    }>
+  ): Promise<ApiResponse<string[]>> {
+    return apiClient.post('/indicators/mutations/batch', { items })
+  },
+
   /** 异动历史（已更改 N 次 + 历史版本快照） */
   async history(indicatorId: number | string): Promise<ApiResponse<MutationHistoryItem[]>> {
     return apiClient.get(`/indicators/${indicatorId}/mutation-history`)

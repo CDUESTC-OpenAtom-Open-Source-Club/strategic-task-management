@@ -3242,33 +3242,28 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   }
 
   // ===== 2026-10-14 用户定案：P8 异动改为「表单式就地编辑 + 顶部一键发起」=====
-  // 已下发指标双击进入就地编辑：改动只写内存草稿（不落库、刷新即丢），
-  // 顶部出现「发起异动」按钮，点击后把整条指标的全部攒改一次性提交走 PLAN_MUTATION_STRATEGY 审批。
-  const mutationDraft = ref<{
-    indicatorId: string | number
-    changes: { indicator_desc?: string; weight_percent?: number; remark?: string }
-    labels: string[]
-  } | null>(null)
+  // 2026-10-21 用户定案（修正）：一次异动可同时调整多条指标——双击编辑只攒内存
+  // 草稿（不落库、刷新即丢），中途不做任何拦截；顶部「发起异动」把全部指标的
+  // 攒改与新增指标一起上报，走 PLAN_MUTATION_STRATEGY 审批。
+  const mutationDrafts = ref<
+    Array<{
+      indicatorId: string | number
+      changes: { indicator_desc?: string; weight_percent?: number; remark?: string }
+      labels: string[]
+    }>
+  >([])
 
   const mutationApiLoading = ref(false)
 
   /**
    * 2026-10-20 用户定案：已下发计划新增的指标先落库但不立即发起异动，
-   * 记在这里；用户调整完其他指标权重（合计回到 100）后点「发起异动」时
-   * 统一为这些新指标发起异动审批。
+   * 记在这里；点「发起异动」时与字段攒改一起统一上报、统一做权重合计校验。
    */
   const pendingCreatedIndicatorIds = ref<Array<string | number>>([])
 
   const hasMutationDraft = computed(
-    () => Boolean(mutationDraft.value) || pendingCreatedIndicatorIds.value.length > 0
+    () => mutationDrafts.value.length > 0 || pendingCreatedIndicatorIds.value.length > 0
   )
-  const mutationDraftLabels = computed(() => {
-    const labels = [...(mutationDraft.value?.labels ?? [])]
-    if (pendingCreatedIndicatorIds.value.length > 0) {
-      labels.push(`新增指标×${pendingCreatedIndicatorIds.value.length}`)
-    }
-    return labels
-  })
 
   const MUTATION_FIELD_MAP: Record<
     string,
@@ -3279,16 +3274,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     remark: { payloadKey: 'remark', label: '备注' }
   }
 
-  // 就地编辑保存 → 已下发时写入草稿而不是落库
+  // 就地编辑保存 → 已下发时写入草稿而不是落库（2026-10-21 用户定案：可攒多条指标，无拦截）
   const applyMutationDraftChange = (row: StrategicIndicator, field: string, rawValue: unknown) => {
     const mapping = MUTATION_FIELD_MAP[field]
     if (!mapping) {
-      return false
-    }
-    const currentDraft = mutationDraft.value
-    // 一次异动只能针对同一条指标（表单即整条指标）
-    if (currentDraft && String(currentDraft.indicatorId) !== String(row.id)) {
-      ElMessage.warning('一次异动只能调整同一条指标，请先提交或取消当前异动')
       return false
     }
 
@@ -3318,19 +3307,24 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         ? Number(originalValue) === nextValue
         : String(originalValue).trim() === String(nextValue)
 
-    const changes = { ...(currentDraft?.changes ?? {}) }
-    const labels = new Set(currentDraft?.labels ?? [])
-    if (unchanged) {
-      delete changes[mapping.payloadKey]
-      labels.delete(mapping.label)
-    } else {
-      changes[mapping.payloadKey] = nextValue
-      labels.add(mapping.label)
+    let draft = mutationDrafts.value.find(item => String(item.indicatorId) === String(row.id))
+    if (!draft) {
+      draft = { indicatorId: row.id, changes: {}, labels: [] }
+      mutationDrafts.value.push(draft)
     }
-
-    mutationDraft.value = Object.keys(changes).length
-      ? { indicatorId: row.id, changes, labels: [...labels] }
-      : null
+    if (unchanged) {
+      delete draft.changes[mapping.payloadKey]
+      draft.labels = draft.labels.filter(label => label !== mapping.label)
+    } else {
+      draft.changes[mapping.payloadKey] = nextValue
+      if (!draft.labels.includes(mapping.label)) {
+        draft.labels.push(mapping.label)
+      }
+    }
+    // 该指标的攒改全部改回原值时，把它从本次异动中移出
+    if (draft.labels.length === 0) {
+      mutationDrafts.value = mutationDrafts.value.filter(item => item !== draft)
+    }
 
     // 同步内存显示（表格立即反映编辑结果，刷新后还原）
     const target = strategicStore.indicators.find(item => String(item.id) === String(row.id))
@@ -3347,21 +3341,20 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   }
 
   const cancelMutationDraft = () => {
-    mutationDraft.value = null
+    mutationDrafts.value = []
     ElMessage.info('已取消本次异动编辑')
     void refreshTaskPageAfterIndicatorMutation()
   }
 
-  // 顶部「发起异动」：一次性提交全部攒改，走异动审批链
+  // 顶部「发起异动」：全部指标攒改 + 新增指标一起上报（2026-10-21 用户定案：不做拦截、整批校验）
   const submitMutationDraft = async () => {
-    const draft = mutationDraft.value
+    const drafts = mutationDrafts.value
     const pendingCreates = pendingCreatedIndicatorIds.value
-    // 2026-10-20：只有新增指标（无字段修改）时也允许点「发起异动」
-    if (!draft && pendingCreates.length === 0) {
+    if (drafts.length === 0 && pendingCreates.length === 0) {
       return
     }
     const summary = [
-      ...(draft?.labels ?? []),
+      ...drafts.flatMap(draft => draft.labels),
       ...(pendingCreates.length > 0 ? [`新增指标 ${pendingCreates.length} 项`] : [])
     ].join('、')
     try {
@@ -3378,23 +3371,17 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       mutationApiLoading.value = true
       const { mutationApi } = await import('@/features/indicator/api/mutationApi')
 
-      // 先为新增指标发起异动（任一失败则整批中止，避免部分提交）
-      for (const createdId of pendingCreates) {
-        const createdResponse = await mutationApi.initiateForCreate(createdId)
-        if (!createdResponse.success) {
-          throw new Error(createdResponse.message || '新增指标异动发起失败')
-        }
+      // 一起上报：新增指标与字段攒改整批一次提交，后端统一做权重合计校验，任一失败整批不生效
+      const items = [
+        ...pendingCreates.map(id => ({ id, create: true })),
+        ...drafts.map(draft => ({ id: draft.indicatorId, ...draft.changes }))
+      ]
+      const response = await mutationApi.initiateBatch(items)
+      if (!response.success) {
+        throw new Error(response.message || '发起异动失败')
       }
 
-      // 再提交字段修改异动
-      if (draft) {
-        const response = await mutationApi.initiate(draft.indicatorId as number, draft.changes)
-        if (!response.success) {
-          throw new Error(response.message || '发起异动失败')
-        }
-      }
-
-      mutationDraft.value = null
+      mutationDrafts.value = []
       pendingCreatedIndicatorIds.value = []
       ElMessage.success('异动已提交审批；审批期间其他模块不受影响')
       void refreshTaskPageAfterIndicatorMutation()
@@ -5595,7 +5582,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     handleIndicatorDblClick,
     openMutationDialogForField,
     hasMutationDraft,
-    mutationDraftLabels,
     submitMutationDraft,
     cancelMutationDraft,
     handleOpenApproval,

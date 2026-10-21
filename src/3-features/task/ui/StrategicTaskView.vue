@@ -281,7 +281,6 @@ const {
   refreshIndicatorWorkflowContext,
   refreshTaskPageAfterIndicatorMutation,
   hasMutationDraft,
-  mutationDraftLabels,
   submitMutationDraft,
   cancelMutationDraft,
   registerTaskLocally,
@@ -1052,7 +1051,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <el-button size="small" :icon="Upload" @click="openStrategicImportDialog">
             导入
           </el-button>
-          <!-- 2026-10-14 用户定案（P8）：就地编辑攒改后，顶部出现「发起异动」一键提交 -->
+          <!-- 2026-10-21 用户定案：全部攒改一起上报；按钮就叫「发起异动」 -->
           <template v-if="hasMutationDraft">
             <el-button
               size="small"
@@ -1060,7 +1059,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
               :loading="mutationApiLoading"
               @click="submitMutationDraft"
             >
-              发起异动（{{ mutationDraftLabels.join('、') }}）
+              发起异动
             </el-button>
             <el-button size="small" :disabled="mutationApiLoading" @click="cancelMutationDraft">
               取消异动
