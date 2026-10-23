@@ -1824,6 +1824,21 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     return isPlanDraft
   }
 
+  /**
+   * 2026-10-23 用户定案：二级学院看板也能删，但**只能删子指标**。
+   *
+   * 口径：核心指标是战略发展部下发给职能部门的，其删除权限归属
+   * 「职能部门战略任务管理」那条链路；学院看板里出现的核心指标只是
+   * 展示用的分组列，不提供删除入口。
+   */
+  const canDeleteCollegeIndicator = (indicator: StrategicIndicator): boolean => {
+    const parentId = (indicator as { parentIndicatorId?: unknown })?.parentIndicatorId
+    if (parentId === null || parentId === undefined || parentId === '') {
+      return false
+    }
+    return canDeleteIndicator(indicator)
+  }
+
   /** 该指标是否已有进行中的异动（后端 mutation_status = IN_MUTATION） */
   const indicatorMutationInFlight = (indicator: StrategicIndicator): boolean => {
     const raw = indicator as { mutationStatus?: unknown; mutation_status?: unknown }
@@ -3221,8 +3236,150 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     type1: '定量' as '定性' | '定量',
     type2: '基础性' as '发展性' | '基础性',
     weight: 0,
-    remark: ''
+    remark: '',
+    /** 2026-10-23：二级学院 tab 新增子指标时，必须指定挂靠的核心指标 */
+    parentIndicatorId: '' as string
   })
+
+  /**
+   * 2026-10-23 用户定案：二级学院 tab 的「新增行」= 给该学院建子指标。
+   *
+   * 复用「指标下发与管理」页新增子指标的同一套契约：
+   *   ownerOrgId  = 当前选中的职能部门（创建方）
+   *   targetOrgId = 当前选中的学院（接收方）
+   *   parentIndicatorId = 所选核心指标
+   * 与战略部直接建核心指标（parentIndicatorId 为空）严格区分。
+   */
+  const collegeAddMode = ref(false)
+
+  /**
+   * 二级学院 tab 可挂靠的核心指标。
+   *
+   * 数据口径（实测）：核心指标 ownerDept=战略发展部、responsibleDept=职能部门；
+   * 子指标 ownerDept=职能部门、responsibleDept=学院。
+   * 因此「当前职能部门可下发给该学院的核心指标」= 无父指标 + responsibleDept=当前职能部门。
+   * 学院只作为接收方（targetOrgId），不参与父指标筛选。
+   */
+  const collegeParentIndicatorOptions = computed(() => {
+    const ownerDept = normalizeDepartmentName(selectedDepartment.value || '')
+    if (!ownerDept) {
+      return []
+    }
+    const seen = new Set<string>()
+    const options: Array<{ id: string; name: string; taskContent: string }> = []
+    normalizedIndicators.value.forEach(item => {
+      if (item.parentIndicatorId) {
+        return
+      }
+      const candidate = item as {
+        targetDepartment?: string
+        targetOrgName?: string
+        responsibleDept?: string
+      }
+      const deptName = normalizeDepartmentName(
+        String(
+          candidate.targetDepartment ?? candidate.targetOrgName ?? candidate.responsibleDept ?? ''
+        )
+      )
+      if (deptName !== ownerDept && !deptName.includes(ownerDept)) {
+        return
+      }
+      const key = String(item.id)
+      if (seen.has(key)) {
+        return
+      }
+      seen.add(key)
+      options.push({
+        id: key,
+        name: String(item.name || ''),
+        taskContent: String(item.taskContent || '')
+      })
+    })
+    return options
+  })
+
+  /** 二级学院 tab 新增子指标：校验 → 调后端 createIndicator → 进待发起异动列表 */
+  const saveCollegeChildIndicator = async (weight: number) => {
+    if (!selectedCollege.value) {
+      ElMessage.warning('请先在左侧选择学院')
+      return
+    }
+    const parentIdRaw = String(newRow.value.parentIndicatorId || '').trim()
+    if (!parentIdRaw) {
+      ElMessage.warning('请选择关联的核心指标')
+      return
+    }
+    const parentIndicatorId = Number(parentIdRaw)
+    if (!Number.isFinite(parentIndicatorId) || parentIndicatorId <= 0) {
+      ElMessage.warning('关联的核心指标无效')
+      return
+    }
+    const ownerOrgId = resolveDepartmentIdByName(selectedDepartment.value)
+    const targetOrgId = resolveDepartmentIdByName(selectedCollege.value)
+    if (!ownerOrgId) {
+      ElMessage.warning(`无法解析当前职能部门：${selectedDepartment.value}`)
+      return
+    }
+    if (!targetOrgId) {
+      ElMessage.warning(`无法解析目标学院：${selectedCollege.value}`)
+      return
+    }
+    const parentOption = collegeParentIndicatorOptions.value.find(o => o.id === parentIdRaw)
+    const parentRow = strategicStore.indicators.find(
+      item => String(item.id) === String(parentIndicatorId)
+    )
+    const taskId = Number(getIndicatorTaskId(parentRow as StrategicIndicator))
+    if (!Number.isFinite(taskId) || taskId <= 0) {
+      ElMessage.warning('关联的核心指标缺少有效任务，无法新增子指标')
+      return
+    }
+
+    const loading = ElLoading.service({
+      lock: true,
+      text: '正在保存子指标...',
+      background: 'rgba(0, 0, 0, 0.7)'
+    })
+    try {
+      const createResp = await indicatorApi.createIndicator({
+        taskId,
+        indicatorDesc: String(newRow.value.name || '').trim(),
+        ownerOrgId,
+        targetOrgId,
+        weightPercent: weight,
+        sortOrder: 0,
+        remark: newRow.value.remark || '',
+        progress: 0,
+        year: timeContext.currentYear,
+        canWithdraw: false,
+        parentIndicatorId,
+        type: newRow.value.type1
+      })
+      if (!createResp.success || !createResp.data) {
+        throw new Error(createResp.message || '创建子指标失败')
+      }
+      const createdId = Number(createResp.data.id)
+      if (!Number.isFinite(createdId) || createdId <= 0) {
+        throw new Error('后端返回的子指标缺少有效 ID')
+      }
+      pendingCreatedIndicatorIds.value = [...pendingCreatedIndicatorIds.value, createdId]
+      ElMessage.info('子指标已新增；请确认学院指标权重合计为 100 后点顶部「发起异动」提交审批')
+      logger.info('[StrategicTaskView] 学院 tab 新增子指标:', {
+        createdId,
+        parentIndicatorId,
+        ownerOrgId,
+        targetOrgId,
+        taskContent: parentOption?.taskContent
+      })
+      await refreshTaskPageAfterIndicatorMutation()
+      cancelAdd()
+      updateEditTime()
+    } catch (error) {
+      logger.error('[StrategicTaskView] 学院 tab 新增子指标失败:', error)
+      ElMessage.error((error as { message?: string })?.message || '新增子指标失败')
+    } finally {
+      loading.close()
+    }
+  }
 
   // 任务下发相关状态
   const showAssignmentDialog = ref(false)
@@ -4133,7 +4290,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       type1: overrides.type1 ?? '定量',
       type2: overrides.type2 ?? '基础性',
       weight: 0,
-      remark: ''
+      remark: '',
+      parentIndicatorId: ''
     }
   }
 
@@ -4186,6 +4344,24 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   // 保存新行
   const saveNewRow = async () => {
+    // 2026-10-23 用户定案：二级学院 tab 的新增行 = 给该学院建子指标，
+    // 必须挂到一个核心指标下（与「指标下发与管理」页的新增子指标同构）。
+    // 走独立分支，复用同一个 createIndicator 契约（parentIndicatorId + ownerOrgId + targetOrgId）。
+    // 注意：子指标的战略任务/任务类型从所选核心指标继承，因此不校验 newRow.taskContent。
+    if (collegeAddMode.value) {
+      const collegeWeight = Number(newRow.value.weight)
+      if (!String(newRow.value.name || '').trim()) {
+        ElMessage.warning('请填写子指标内容')
+        return
+      }
+      if (!Number.isFinite(collegeWeight) || collegeWeight <= 0) {
+        ElMessage.warning('请填写大于 0 的权重')
+        return
+      }
+      await saveCollegeChildIndicator(collegeWeight)
+      return
+    }
+
     if (!String(newRow.value.taskContent || '').trim()) {
       ElMessage.warning('请填写战略任务')
       return
@@ -5779,6 +5955,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     canCurrentUserHandleCurrentIndicatorWorkflow,
     canCurrentUserSubmitCurrentPlan,
     canDeleteIndicator,
+    canDeleteCollegeIndicator,
     canDistribute,
     canEdit,
     canEditIndicators,
@@ -5937,6 +6114,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     loadIndicatorWorkflowSnapshot,
     loadPendingPlanApprovalCount,
     newRow,
+    collegeAddMode,
+    collegeParentIndicatorOptions,
     normalizeDepartmentName,
     normalizeEditableText,
     normalizePreviewCandidateDisplayName,

@@ -73,6 +73,7 @@ const {
   currentPlanTaskId,
   currentUserId,
   pendingMutationApprovalItems,
+  pendingReportApprovalItems,
   currentUserOrgId,
   currentUserPermissionCodes,
   currentUserRoleCodes,
@@ -249,6 +250,44 @@ const planDetailIsMutationItem = computed(() => {
   return Boolean(item.batchId || (item.changedFields && Object.keys(item.changedFields).length > 0))
 })
 
+/**
+ * 2026-10-23：月报待办卡（PLAN_REPORT）的标题与操作。
+ *
+ * 注意流向：后端 my-tasks 给的 sourceOrg/targetOrg 是「下发方向」
+ * （教务处 -> 计算机学院），而上报是反方向，标题须翻转，
+ * 与审批历史卡片的「上报审批 · 计算机学院 -> 教务处」口径一致。
+ */
+const resolveReportApprovalTitle = (item: Record<string, any>): string => {
+  const sourceName = normalizeDisplayName(item.sourceOrgName)
+  const targetName = normalizeDisplayName(item.targetOrgName)
+  if (sourceName && targetName) {
+    // 上报方向 = 接收方 -> 下发方
+    return `上报审批 · ${targetName} -> ${sourceName}`
+  }
+  return (
+    normalizeDisplayName(item.planName) ||
+    normalizeDisplayName(item.taskName) ||
+    normalizeDisplayName(item.title) ||
+    '上报审批'
+  )
+}
+
+const openReportApprovalDetails = (item: Record<string, any>) => {
+  const instanceId = String(item.instanceId ?? item.taskId ?? '')
+  if (instanceId) {
+    selectedHistoryInstanceId.value = instanceId
+  }
+  planDetailDialogVisible.value = true
+}
+
+const handleApproveReportTodo = async (item: Record<string, any>) => {
+  await handleApproveMutation(item as PlanApprovalDetailItem)
+}
+
+const handleRejectReportTodo = async (item: Record<string, any>) => {
+  await handleRejectMutation(item as PlanApprovalDetailItem)
+}
+
 /** 选中实例的标题（计划实例在历史卡片中找，异动实例在异动卡片中找） */
 const planDetailSelectedTitle = computed(() => {
   if (!selectedHistoryInstanceId.value) {
@@ -364,18 +403,22 @@ const displayedCurrentPlanApprovalName = computed(() => {
             v-loading="planApprovalsLoading || planWorkflowDetailLoading"
             class="plan-approval-pane"
           >
+            <!-- 2026-10-23 修复（计划审批 tab 空白）：恢复 de6eb6f 的 v-if/v-else 互斥结构——
+                 8a806f8 把三个分支改为并列独立 v-if 后，「计划下发审批」场景下
+                 计划汇总卡不渲染（pane 只剩注释节点，无空态也无卡片，实测截图 g41） -->
             <el-empty
               v-if="
                 !planApprovalsLoading &&
                 !planWorkflowDetailLoading &&
                 !showPlanPendingCard &&
-                !pendingMutationApprovalItems.length
+                !pendingMutationApprovalItems.length &&
+                !pendingReportApprovalItems.length
               "
               description="暂无审批中的计划"
               :image-size="120"
             />
-            <!-- 2026-10-21：审批中的异动卡片，与「审批历史」卡片同构（同一套 approval-card 样式与字段） -->
-            <div v-if="pendingMutationApprovalItems.length" class="approval-list">
+            <div v-else class="approval-list">
+              <!-- 2026-10-21：审批中的异动卡片，与「审批历史」卡片同构（同一套 approval-card 样式与字段） -->
               <div
                 v-for="item in pendingMutationApprovalItems"
                 :key="`${item.instanceId}-pending`"
@@ -436,6 +479,57 @@ const displayedCurrentPlanApprovalName = computed(() => {
                     @click="handleWithdrawMutation(item)"
                   >
                     撤回
+                  </el-button>
+                </div>
+              </div>
+              <!-- 2026-10-23 修复（上报审批卡片不显示）：月报待办独立成卡。
+                   此前月报被排除在计划汇总卡之外且无替代渲染路径，导致
+                   「待战略发展部终审人审批」时审批中心却是空的。 -->
+              <div
+                v-for="item in pendingReportApprovalItems"
+                :key="`report-pending-${item.instanceId || item.taskId}`"
+                class="approval-card"
+              >
+                <div class="card-header">
+                  <div class="plan-info">
+                    <el-icon class="plan-icon"><Document /></el-icon>
+                    <div class="info-text">
+                      <div class="plan-name">{{ resolveReportApprovalTitle(item) }}</div>
+                      <div class="plan-year">
+                        {{ item.flowName || '上报审批' }}
+                      </div>
+                    </div>
+                  </div>
+                  <el-tag type="warning" size="small">审批中</el-tag>
+                </div>
+                <div class="submit-info">
+                  <div class="info-row">
+                    <el-icon><User /></el-icon>
+                    <span class="label">提交人：</span>
+                    <span class="value">{{ item.submitterName || '--' }}</span>
+                  </div>
+                  <div class="info-row">
+                    <el-icon><Timer /></el-icon>
+                    <span class="label">提交时间：</span>
+                    <span class="value">{{
+                      item.createdAt ? formatTime(item.createdAt) : '--'
+                    }}</span>
+                  </div>
+                  <div class="info-row">
+                    <el-icon><Right /></el-icon>
+                    <span class="label">当前步骤：</span>
+                    <span class="value">{{
+                      item.currentStepName || item.taskName || '审批中'
+                    }}</span>
+                  </div>
+                </div>
+                <div class="card-actions">
+                  <el-button @click="openReportApprovalDetails(item)">查看详情</el-button>
+                  <el-button type="success" @click="handleApproveReportTodo(item)">
+                    审批通过
+                  </el-button>
+                  <el-button type="danger" @click="handleRejectReportTodo(item)">
+                    审批驳回
                   </el-button>
                 </div>
               </div>

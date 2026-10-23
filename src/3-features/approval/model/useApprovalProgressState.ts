@@ -652,6 +652,18 @@ export function useApprovalProgressState(
     )
   )
 
+  /**
+   * 2026-10-23 修复（上报审批卡片不显示）：月报待办（PLAN_REPORT）的独立卡片集合。
+   *
+   * 背景：`planScopedPlanApprovals` 把月报排除在计划汇总卡之外（正确——月报是独立业务实例），
+   * 但此前**没有任何地方渲染它**，导致：战略部终审人在「计算机学院」视图下，
+   * 页面顶部显示「待战略发展部终审人审批」，审批中心「计划审批」tab 却是空的
+   * （my-tasks 里明明有这条待办）。现在把月报待办单独成卡（与异动卡同构）。
+   */
+  const pendingReportApprovalItems = computed<Record<string, any>[]>(() =>
+    pendingPlanApprovals.value.filter(instance => isExternalWorkflowTodo(instance))
+  )
+
   interface PendingPlanApprovalPreviewItem {
     key: string
     title: string
@@ -3435,6 +3447,7 @@ export function useApprovalProgressState(
     pendingCount,
     pendingPlanApprovalPreviewItems,
     pendingMutationApprovalItems,
+    pendingReportApprovalItems,
     pendingPlanApprovals,
     permissionUtil,
     planApprovalsLoading,

@@ -102,6 +102,7 @@ const {
   canCurrentUserHandleCurrentIndicatorWorkflow,
   canCurrentUserSubmitCurrentPlan,
   canDeleteIndicator,
+  canDeleteCollegeIndicator,
   canDistribute,
   canEdit,
   canEditIndicators,
@@ -175,6 +176,8 @@ const {
   selectCollege,
   collegeTableIndicators,
   collegeDepartmentsScoped,
+  collegeAddMode,
+  collegeParentIndicatorOptions,
   indicatorById,
   collegeSpanMethod,
   getCategoryColor,
@@ -321,6 +324,16 @@ const {
 } = useStrategicTaskView(props)
 
 const activeTaskTabName = ref<'functional' | 'college'>('functional')
+
+/**
+ * 2026-10-23 用户定案：新增行按 tab 分流——
+ * 职能部门 tab 建核心指标（战略部下发），学院 tab 建该学院的子指标（挂到所选核心指标）。
+ * 由 collegeAddMode 告知 model 走哪条创建契约。
+ */
+const handleAddNewRow = () => {
+  collegeAddMode.value = activeTaskTabName.value === 'college'
+  addNewRow()
+}
 
 // 2026-10-19 修复：切 tab 时按对应链路重新拉取上报摘要——
 // 二级学院 tab 用「职能部门→学院」的 FUNC_TO_COLLEGE 计划/组织查询，
@@ -1068,7 +1081,15 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <!-- 2026-10-20 用户定案：已下发计划允许战略部继续新增指标（走异动审批链），
                不再因 hasDistributedIndicators 禁用「新增行」 -->
           <!-- 2026-10-21 用户定案：编辑权只属于填报人，负责人/校领导只审批不编辑 -->
-          <el-button type="primary" size="small" :disabled="!canEdit" @click.stop="addNewRow">
+          <!-- 2026-10-23 用户定案：学院 tab 也能新增，但新增的是「该学院的子指标」，
+               必须挂到所选核心指标下（复用指标下发与管理页的新增子指标契约） -->
+          <el-button
+            type="primary"
+            size="small"
+            :disabled="!canEdit || (activeTaskTabName === 'college' && !selectedCollege)"
+            :title="activeTaskTabName === 'college' && !selectedCollege ? '请先在左侧选择学院' : ''"
+            @click.stop="handleAddNewRow"
+          >
             <el-icon><Plus /></el-icon>
             新增行
           </el-button>
@@ -1534,9 +1555,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   <el-table-column label="操作" width="116" align="center">
                     <template #default="{ row }">
                       <div class="action-buttons-inline">
-                        <!-- 查看按钮 - 始终显示 -->
+                        <!-- 详情按钮 - 始终显示（2026-10-23 用户定案：查看/详情文案统一为「详情」） -->
                         <el-button link type="primary" size="small" @click="handleViewDetail(row)"
-                          >查看</el-button
+                          >详情</el-button
                         >
 
                         <!-- 删除按钮 - 仅草稿状态可删除 -->
@@ -1799,11 +1820,50 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             </template>
 
             <!-- 新增行表单 -->
-            <div v-if="isAddingOrEditing" ref="addRowFormRef" class="add-row-form">
-              <h3 class="form-title">新增任务指标</h3>
+            <!-- 2026-10-23 修复：表单此前固定在职能部门面板内，学院 tab 点「新增行」时
+                 表单渲染到隐藏面板、用户看不见。改为按当前 tab 渲染 -->
+            <div
+              v-if="isAddingOrEditing && activeTaskTabName === 'functional'"
+              ref="addRowFormRef"
+              class="add-row-form"
+            >
+              <h3 class="form-title">
+                {{ collegeAddMode ? '新增子指标（挂到核心指标下）' : '新增任务指标' }}
+              </h3>
               <div class="add-form-content">
-                <el-form label-width="80px">
+                <!-- 2026-10-23：学院 tab 新增的是子指标，必须先选关联的核心指标 -->
+                <el-form v-if="collegeAddMode" label-width="80px">
                   <el-row :gutter="16">
+                    <el-col :span="24">
+                      <el-form-item class="required-form-item">
+                        <template #label><span class="required-asterisk">*</span>关联指标</template>
+                        <el-select
+                          v-model="newRow.parentIndicatorId"
+                          filterable
+                          placeholder="选择要挂靠的核心指标"
+                          style="width: 100%"
+                          :teleported="false"
+                        >
+                          <el-option
+                            v-for="opt in collegeParentIndicatorOptions"
+                            :key="opt.id"
+                            :label="opt.name"
+                            :value="opt.id"
+                          >
+                            <span>{{ opt.name }}</span>
+                            <span class="parent-indicator-option__task">{{ opt.taskContent }}</span>
+                          </el-option>
+                        </el-select>
+                        <div v-if="collegeParentIndicatorOptions.length === 0" class="form-hint">
+                          当前职能部门尚未向「{{ selectedCollege }}」下发核心指标，无法新增子指标
+                        </div>
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+                </el-form>
+                <el-form label-width="80px">
+                  <!-- 2026-10-23：学院 tab 建子指标时，任务类型与战略任务均从所选核心指标继承，不在此填写 -->
+                  <el-row v-if="!collegeAddMode" :gutter="16">
                     <el-col :span="4">
                       <el-form-item class="required-form-item">
                         <template #label><span class="required-asterisk">*</span>任务类型</template>
@@ -2119,17 +2179,128 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column label="操作" width="84" align="center" fixed="right">
+                  <el-table-column label="操作" width="120" align="center" fixed="right">
                     <template #default="{ row }">
                       <el-button link type="primary" size="small" @click="handleViewDetail(row)">
                         详情
                       </el-button>
+                      <!-- 2026-10-23 用户定案：学院看板也能删，但只能删子指标——
+                           核心指标归属「战略部→职能部门」链路，不在此处删除 -->
+                      <el-button
+                        v-if="canDeleteCollegeIndicator(row)"
+                        link
+                        type="danger"
+                        size="small"
+                        @click="handleDeleteIndicator(row)"
+                        >删除</el-button
+                      >
                     </template>
                   </el-table-column>
                 </el-table>
               </div>
               <div class="excel-status-bar">
                 <div class="status-left">共 {{ collegeTableIndicators.length }} 条记录</div>
+              </div>
+
+              <!-- 2026-10-23：学院 tab 的新增子指标表单（与职能部门面板同构，仅保留子指标字段）。
+                   此前表单只挂在职能部门面板内，学院 tab 点「新增行」时用户看不到表单。 -->
+              <div
+                v-if="isAddingOrEditing && activeTaskTabName === 'college'"
+                ref="addRowFormRef"
+                class="add-row-form"
+              >
+                <h3 class="form-title">新增子指标（挂到核心指标下）</h3>
+                <div class="add-form-content">
+                  <el-form label-width="80px">
+                    <el-row :gutter="16">
+                      <el-col :span="24">
+                        <el-form-item class="required-form-item">
+                          <template #label
+                            ><span class="required-asterisk">*</span>关联指标</template
+                          >
+                          <el-select
+                            v-model="newRow.parentIndicatorId"
+                            filterable
+                            placeholder="选择要挂靠的核心指标"
+                            style="width: 100%"
+                            :teleported="false"
+                          >
+                            <el-option
+                              v-for="opt in collegeParentIndicatorOptions"
+                              :key="opt.id"
+                              :label="opt.name"
+                              :value="opt.id"
+                            >
+                              <span>{{ opt.name }}</span>
+                              <span class="parent-indicator-option__task">{{
+                                opt.taskContent
+                              }}</span>
+                            </el-option>
+                          </el-select>
+                          <div v-if="collegeParentIndicatorOptions.length === 0" class="form-hint">
+                            当前职能部门尚未向「{{ selectedCollege }}」下发核心指标，无法新增子指标
+                          </div>
+                        </el-form-item>
+                      </el-col>
+                    </el-row>
+                    <el-row :gutter="16">
+                      <el-col :span="4">
+                        <el-form-item class="required-form-item">
+                          <template #label
+                            ><span class="required-asterisk">*</span>指标类型</template
+                          >
+                          <el-select v-model="newRow.type1" style="width: 100%">
+                            <el-option label="定性" value="定性" />
+                            <el-option label="定量" value="定量" />
+                          </el-select>
+                        </el-form-item>
+                      </el-col>
+                      <el-col :span="4">
+                        <el-form-item class="required-form-item">
+                          <template #label><span class="required-asterisk">*</span>权重</template>
+                          <el-input-number
+                            v-model="newRow.weight"
+                            :min="0"
+                            placeholder="权重"
+                            :controls="false"
+                            style="width: 100%"
+                          />
+                        </el-form-item>
+                      </el-col>
+                    </el-row>
+                    <el-row :gutter="16">
+                      <el-col :span="24">
+                        <el-form-item class="required-form-item">
+                          <template #label
+                            ><span class="required-asterisk">*</span>子指标内容</template
+                          >
+                          <el-input
+                            v-model="newRow.name"
+                            type="textarea"
+                            :autosize="{ minRows: 2, maxRows: 10 }"
+                            placeholder="设置子指标内容"
+                          />
+                        </el-form-item>
+                      </el-col>
+                    </el-row>
+                    <el-row :gutter="16">
+                      <el-col :span="24">
+                        <el-form-item label="下发备注">
+                          <el-input
+                            v-model="newRow.remark"
+                            type="textarea"
+                            :autosize="{ minRows: 3, maxRows: 15 }"
+                            placeholder="输入指标备注"
+                          />
+                        </el-form-item>
+                      </el-col>
+                    </el-row>
+                  </el-form>
+                </div>
+                <div class="add-form-actions">
+                  <el-button type="primary" @click="saveNewRow">保存</el-button>
+                  <el-button @click="cancelAdd">取消</el-button>
+                </div>
               </div>
             </template>
           </div>
