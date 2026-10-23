@@ -130,12 +130,28 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 只读模式（历史年份为只读）
   const isReadOnly = computed(() => timeContext.isReadOnly)
 
-  // 判断是否可以编辑（只有战略发展部可以编辑，且非只读模式）
+  /**
+   * 编辑权只属于填报人（2026-10-21 用户定案）。
+   *
+   * 口径：从草稿计划到已下发计划，能改数据的始终只有填报人——草稿阶段是他填报，
+   * 已下发之后是他发起异动；负责人和校领导只做审批，不编辑任何字段。
+   * 因此这里不再按「是不是战略发展部」判断，而是要求具备 ROLE_REPORTER。
+   *
+   * 兼容：若账号没有下发 roles（旧会话/演示数据），退回原来的「战略部即可编辑」，
+   * 避免因数据缺失把正常填报人锁死在只读态。
+   */
+  const isReporter = computed(() => {
+    if (currentUserRoleCodes.value.length === 0) {
+      return authStore.userRole === 'strategic_dept' || props.selectedRole === 'strategic_dept'
+    }
+    return isCurrentUserReporter.value
+  })
+
   const canEdit = computed(() => {
     if (isReadOnly.value) {
       return false
     }
-    return authStore.userRole === 'strategic_dept' || props.selectedRole === 'strategic_dept'
+    return isReporter.value
   })
 
   // 首屏加载态：接口未返回前展示骨架，避免先渲染"暂无数据"造成误判
@@ -1346,6 +1362,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
           force: options.force
         })
       }
+      // 2026-10-22：刷新/重进页面后回填「待提交新增」标记（sessionStorage 持久化）
+      hydratePendingCreatedIndicators()
       await loadCurrentPlanTaskScope({ force: options.force })
       await syncCurrentPlanReportSummaries({ force: options.force })
       if (
@@ -1777,6 +1795,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   // @requirement: Plan-centric status - 使用 Plan 状态判断是否可以删除指标
   // 只有 Plan 处于草稿状态时才能删除指标
+  /**
+   * 删除按钮可见性。
+   * 草稿计划：直接删除（原有路径）。
+   * 已下发计划：2026-10-21 用户定案——删除和修改、新增一样走异动审批，
+   * 点击后进异动草稿，随「发起异动」整批提交，审批通过后才真正生效。
+   */
   const canDeleteIndicator = (indicator: StrategicIndicator): boolean => {
     if (isReadOnly.value) {
       return false
@@ -1790,9 +1814,25 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       return false
     }
 
-    // Plan 必须处于草稿状态才能删除指标
+    // 已有异动在审批中的指标不能再发起删除异动
+    if (hasDistributedIndicators.value) {
+      return !indicatorMutationInFlight(indicator)
+    }
+
+    // Plan 必须处于草稿状态才能直接删除指标
     const isPlanDraft = currentPlanStatus.value === 'DRAFT' || !currentPlanStatus.value
     return isPlanDraft
+  }
+
+  /** 该指标是否已有进行中的异动（后端 mutation_status = IN_MUTATION） */
+  const indicatorMutationInFlight = (indicator: StrategicIndicator): boolean => {
+    const raw = indicator as { mutationStatus?: unknown; mutation_status?: unknown }
+    const status = raw.mutationStatus ?? raw.mutation_status
+    return (
+      String(status || '')
+        .trim()
+        .toUpperCase() === 'IN_MUTATION'
+    )
   }
 
   const currentPendingPlanWorkflowTask = computed(() => {
@@ -1932,7 +1972,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   })
 
   const { routeApprovalEntityType, routeApprovalEntityId } = useApprovalRouteAutopen({
-    supportedEntityTypes: ['PLAN', 'PLAN_REPORT', 'INDICATOR'] as const,
+    supportedEntityTypes: ['PLAN', 'PLAN_REPORT', 'INDICATOR', 'TASK'] as const,
     onAutoOpen: async () => {
       retainedRouteApprovalEntityType.value = routeApprovalEntityType.value
       retainedRouteApprovalEntityId.value = routeApprovalEntityId.value
@@ -3250,8 +3290,19 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       indicatorId: string | number
       changes: { indicator_desc?: string; weight_percent?: number; remark?: string }
       labels: string[]
+      /** 已下发计划上的删除：与字段攒改互斥，删除优先 */
+      deleteRequested?: boolean
+      /** 删除草稿的显示名，用于取消时还原表格行 */
+      indicatorName?: string
     }>
   >([])
+
+  /**
+   * 2026-10-21 用户定案：战略任务列与指标字段同一套异动口径——
+   * 已下发后双击任务名同样只攒内存草稿（刷新即丢），随「发起异动」一起上报。
+   * 任务改名以 sys_task 为主键（一次异动覆盖该任务下全部指标行）。
+   */
+  const taskNameDrafts = ref<Array<{ taskId: string | number; before: string; after: string }>>([])
 
   const mutationApiLoading = ref(false)
 
@@ -3261,8 +3312,71 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
    */
   const pendingCreatedIndicatorIds = ref<Array<string | number>>([])
 
+  /**
+   * 2026-10-22 修复（刷新丢失「待提交新增」标记 → 孤儿指标）：
+   * 新增指标是「先落库、审批通过才生效」的，而标记此前只存内存——刷新即丢，
+   * 「发起异动」按钮随之消失，指标既提交不了、又计入权重合计把后续异动卡死。
+   * 现在把标记随每次变更同步持久化到 sessionStorage，页面重载后按
+   * 「指标仍存在且仍为草稿」回填；提交/取消/删除等链路照常清空。
+   */
+  const PENDING_CREATE_STORAGE_KEY = 'sism.mutation.pending-created-indicators'
+
+  const persistPendingCreatedIndicators = () => {
+    if (typeof window === 'undefined') {
+      return
+    }
+    try {
+      if (pendingCreatedIndicatorIds.value.length === 0) {
+        window.sessionStorage.removeItem(PENDING_CREATE_STORAGE_KEY)
+      } else {
+        window.sessionStorage.setItem(
+          PENDING_CREATE_STORAGE_KEY,
+          JSON.stringify(pendingCreatedIndicatorIds.value)
+        )
+      }
+    } catch (error) {
+      logger.warn('[StrategicTaskView] 持久化待提交新增指标失败:', error)
+    }
+  }
+
+  const hydratePendingCreatedIndicators = () => {
+    if (typeof window === 'undefined' || pendingCreatedIndicatorIds.value.length > 0) {
+      return
+    }
+    let stored: unknown = null
+    try {
+      const raw = window.sessionStorage.getItem(PENDING_CREATE_STORAGE_KEY)
+      stored = raw ? JSON.parse(raw) : null
+    } catch (error) {
+      logger.warn('[StrategicTaskView] 读取待提交新增指标失败:', error)
+      return
+    }
+    if (!Array.isArray(stored) || stored.length === 0) {
+      return
+    }
+    const rows = strategicStore.indicators
+    // 数据尚未加载成功时先原样保留，避免把标记误清
+    const restored =
+      rows.length === 0
+        ? stored
+        : stored.filter(id =>
+            rows.some(row => String(row.id) === String(id) && row.status === 'DRAFT')
+          )
+    logger.info('[StrategicTaskView] 回填待提交新增指标:', { stored, restored })
+    pendingCreatedIndicatorIds.value = restored
+  }
+
+  // flush: 'sync' 保证每次变更立即落盘，与提交/取消等后续动作零竞态
+  watch(pendingCreatedIndicatorIds, persistPendingCreatedIndicators, {
+    deep: true,
+    flush: 'sync'
+  })
+
   const hasMutationDraft = computed(
-    () => mutationDrafts.value.length > 0 || pendingCreatedIndicatorIds.value.length > 0
+    () =>
+      mutationDrafts.value.length > 0 ||
+      taskNameDrafts.value.length > 0 ||
+      pendingCreatedIndicatorIds.value.length > 0
   )
 
   const MUTATION_FIELD_MAP: Record<
@@ -3272,6 +3386,69 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     name: { payloadKey: 'indicator_desc', label: '指标内容' },
     weight: { payloadKey: 'weight_percent', label: '权重' },
     remark: { payloadKey: 'remark', label: '备注' }
+  }
+
+  /**
+   * 已下发计划上的删除 → 进异动草稿（不立即删库）。
+   *
+   * 2026-10-21 用户定案：删除与修改、新增同属异动，审批通过后才生效。
+   * 草稿期只在表格里把该行隐藏，用户点「取消异动」或刷新页面即还原。
+   */
+  const applyDeleteMutationDraft = (row: StrategicIndicator) => {
+    const indicatorId = row?.id
+    if (indicatorId === null || indicatorId === undefined || indicatorId === '') {
+      ElMessage.warning('当前行不是可删除的指标数据')
+      return
+    }
+
+    // 2026-10-22：本次异动里刚新增、尚未提交审批的指标，直接撤掉即可。
+    // 若照常记成「删除异动」，同一 ID 会同时出现在 create 与 delete 两个条目里，
+    // 后端先给它打异动标记、再报「该指标已有异动在审批中」，整批提交直接失败。
+    const isPendingCreate = pendingCreatedIndicatorIds.value.some(
+      id => String(id) === String(indicatorId)
+    )
+    if (isPendingCreate) {
+      pendingCreatedIndicatorIds.value = pendingCreatedIndicatorIds.value.filter(
+        id => String(id) !== String(indicatorId)
+      )
+      void strategicStore.deleteIndicator(String(indicatorId)).catch(error => {
+        logger.warn('[StrategicTaskView] 撤销本次新增指标失败:', { indicatorId, error })
+      })
+      const createdIndex = strategicStore.indicators.findIndex(
+        item => String(item.id) === String(indicatorId)
+      )
+      if (createdIndex !== -1) {
+        strategicStore.indicators.splice(createdIndex, 1)
+      }
+      ElMessage.info('已撤销本次新增的指标')
+      return
+    }
+
+    const existing = mutationDrafts.value.find(
+      item => String(item.indicatorId) === String(indicatorId)
+    )
+    if (existing) {
+      existing.deleteRequested = true
+      existing.changes = {}
+      existing.labels = ['删除']
+    } else {
+      mutationDrafts.value.push({
+        indicatorId,
+        changes: {},
+        labels: ['删除'],
+        deleteRequested: true,
+        indicatorName: String(row.name || '')
+      })
+    }
+
+    // 表格里先隐藏该行（刷新或取消异动即还原，因为后端尚未删除）
+    const index = strategicStore.indicators.findIndex(
+      item => String(item.id) === String(indicatorId)
+    )
+    if (index !== -1) {
+      strategicStore.indicators.splice(index, 1)
+    }
+    ElMessage.info('已标记删除；点顶部「发起异动」提交审批后生效')
   }
 
   // 就地编辑保存 → 已下发时写入草稿而不是落库（2026-10-21 用户定案：可攒多条指标，无拦截）
@@ -3340,28 +3517,114 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     return true
   }
 
-  const cancelMutationDraft = () => {
+  /**
+   * 战略任务改名 → 已下发时写入草稿（与指标字段攒改同构）。
+   * 任务名以 sys_task 为单位，同一任务下的多行指标共享一次改名。
+   */
+  const applyTaskNameDraftChange = (row: StrategicIndicator, rawValue: unknown) => {
+    const nextName = normalizeEditableText(rawValue)
+    if (!nextName) {
+      ElMessage.warning('战略任务名称不能为空')
+      return false
+    }
+
+    const taskId = getIndicatorTaskId(row)
+    // 任务异动以后端 sys_task 主键为锚点，非数字/占位值（如 "null"）无法走审批链
+    const numericTaskId = Number(taskId)
+    if (!taskId || !Number.isFinite(numericTaskId) || numericTaskId <= 0) {
+      ElMessage.warning('该任务尚未落库，无法发起任务异动')
+      return false
+    }
+
+    const currentName = normalizeEditableText(row.taskContent)
+    const existing = taskNameDrafts.value.find(item => String(item.taskId) === String(taskId))
+    const originalName = existing ? existing.before : currentName
+
+    if (nextName === originalName) {
+      taskNameDrafts.value = taskNameDrafts.value.filter(
+        item => String(item.taskId) !== String(taskId)
+      )
+    } else if (existing) {
+      existing.after = nextName
+    } else {
+      taskNameDrafts.value.push({ taskId, before: originalName, after: nextName })
+    }
+
+    // 同步内存显示（整列任务名一起变，刷新后还原）
+    strategicStore.patchIndicatorsByTaskId(taskId, { taskContent: nextName })
+    return true
+  }
+
+  /**
+   * 取消异动 = 放弃尚未提交的本地草稿，等价于一次局部刷新。
+   *
+   * 2026-10-21 修复：此前只清两个内存集合，漏了 pendingCreatedIndicatorIds。
+   * 已下发计划新增指标是「先落库、再等发起异动」的，落库那一刻数据已在库里，
+   * 所以取消必须把它真的删掉，否则会出现两类事故：
+   *   a) 按钮不消失（集合非空），下次点「发起异动」把用户以为已取消的指标一起提交；
+   *   b) 残留的 DRAFT 指标继续计入权重合计，把整个部门的异动全部卡死（实测 110/100）。
+   */
+  const cancelMutationDraft = async () => {
+    const createdIds = [...pendingCreatedIndicatorIds.value]
     mutationDrafts.value = []
-    ElMessage.info('已取消本次异动编辑')
+    taskNameDrafts.value = []
+    pendingCreatedIndicatorIds.value = []
+
+    const failedIds: string[] = []
+    for (const id of createdIds) {
+      try {
+        await strategicStore.deleteIndicator(String(id))
+      } catch (error) {
+        failedIds.push(String(id))
+        logger.warn('[StrategicTaskView] 取消异动时删除新增指标失败:', { id, error })
+      }
+    }
+
+    if (failedIds.length > 0) {
+      // 删不掉就不能假装取消成功：留在待提交列表里，让用户能看见并重试
+      pendingCreatedIndicatorIds.value = failedIds
+      ElMessage.error(`有 ${failedIds.length} 条新增指标未能撤销，请重试或手动删除`)
+    } else {
+      ElMessage.info('已取消本次异动编辑')
+    }
     void refreshTaskPageAfterIndicatorMutation()
   }
 
-  // 顶部「发起异动」：全部指标攒改 + 新增指标一起上报（2026-10-21 用户定案：不做拦截、整批校验）
+  // 顶部「发起异动」：指标攒改 + 新增指标 + 战略任务改名一起上报
+  // （2026-10-21 用户定案：不做拦截、整批校验）
   const submitMutationDraft = async () => {
     const drafts = mutationDrafts.value
+    const taskDrafts = taskNameDrafts.value
     const pendingCreates = pendingCreatedIndicatorIds.value
-    if (drafts.length === 0 && pendingCreates.length === 0) {
+    if (drafts.length === 0 && taskDrafts.length === 0 && pendingCreates.length === 0) {
       return
     }
-    const summary = [
-      ...drafts.flatMap(draft => draft.labels),
-      ...(pendingCreates.length > 0 ? [`新增指标 ${pendingCreates.length} 项`] : [])
-    ].join('、')
+
+    // 2026-10-22 修复（指标 2051 卡死整批提交）：剔除「无实际变更」的草稿条目。
+    // 一条 changes 为空、又没标记删除的脏草稿会让后端整批拒绝
+    // （400 异动内容为空：指标 X 未提供有效变更字段），
+    // 用户看到的就是「点了确认发起却什么都没发生」。
+    const effectiveDrafts = drafts.filter(
+      draft => draft.deleteRequested || Object.keys(draft.changes).length > 0
+    )
+    const skippedIds = drafts
+      .filter(draft => !draft.deleteRequested && Object.keys(draft.changes).length === 0)
+      .map(draft => draft.indicatorId)
+    if (skippedIds.length > 0) {
+      logger.warn('[StrategicTaskView] 发起异动跳过无实际变更的草稿:', skippedIds)
+      ElMessage.info(`已跳过 ${skippedIds.length} 条无实际变更的指标（${skippedIds.join('、')}）`)
+    }
+    if (effectiveDrafts.length === 0 && taskDrafts.length === 0 && pendingCreates.length === 0) {
+      ElMessage.warning('本次没有可提交的异动内容')
+      return
+    }
+
     try {
+      // 2026-10-21 用户定案：改动内容可能很多、弹窗里列不全，且发起人自己清楚改了什么，
+      // 这里只做「是否发起」的确认，不罗列改动清单。
       await ElMessageBox.confirm(
-        `将提交以下异动调整：${summary}。\n确认后启动异动审批（战略发展部负责人 → 分管校领导），` +
-          '审批期间其他模块不受影响；驳回后可重新发起。',
-        '发起指标异动',
+        '确认发起本次异动审批？审批期间其他模块不受影响；驳回后可修改后重新发起。',
+        '发起异动',
         { confirmButtonText: '确认发起', cancelButtonText: '取消', type: 'warning' }
       )
     } catch {
@@ -3371,10 +3634,20 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       mutationApiLoading.value = true
       const { mutationApi } = await import('@/features/indicator/api/mutationApi')
 
-      // 一起上报：新增指标与字段攒改整批一次提交，后端统一做权重合计校验，任一失败整批不生效
+      // 一起上报：新增指标、字段攒改、删除与任务改名整批一次提交，
+      // 后端统一做权重合计校验，任一失败整批不生效
       const items = [
         ...pendingCreates.map(id => ({ id, create: true })),
-        ...drafts.map(draft => ({ id: draft.indicatorId, ...draft.changes }))
+        ...effectiveDrafts.map(draft =>
+          draft.deleteRequested
+            ? { id: draft.indicatorId, delete: true }
+            : { id: draft.indicatorId, ...draft.changes }
+        ),
+        ...taskDrafts.map(draft => ({
+          id: draft.taskId,
+          entity_type: 'TASK' as const,
+          name: draft.after
+        }))
       ]
       const response = await mutationApi.initiateBatch(items)
       if (!response.success) {
@@ -3382,6 +3655,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       }
 
       mutationDrafts.value = []
+      taskNameDrafts.value = []
       pendingCreatedIndicatorIds.value = []
       ElMessage.success('异动已提交审批；审批期间其他模块不受影响')
       void refreshTaskPageAfterIndicatorMutation()
@@ -3390,6 +3664,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       ElMessage.error(msg || '发起异动失败')
     } finally {
       mutationApiLoading.value = false
+      // 提交耗时超过 MessageBox 的自动关闭时机时，确认框会残留；
+      // 这里显式收起，避免挡住后续操作（实测需再按 Esc 才能关）。
+      ElMessageBox.close()
     }
   }
 
@@ -3400,9 +3677,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
     // 2026-10-14 用户定案：已下发指标双击进入就地编辑，改动攒入异动草稿，
     // 由顶部「发起异动」按钮统一提交；未下发指标维持原有直接落库编辑。
+    // 2026-10-21 用户定案：战略任务列（taskContent）与指标字段同构——
+    // 已下发后同样可双击改名，攒入草稿随「发起异动」一起上报，不再锁死。
     if (hasDistributedIndicators.value) {
+      const isTaskNameField = field === 'taskContent'
       const mapping = MUTATION_FIELD_MAP[field]
-      if (!mapping) {
+      if (!mapping && !isTaskNameField) {
         return
       }
       if (savingIndicatorId.value === row.id) {
@@ -3422,13 +3702,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   }
 
   /**
-   * 已下发指标的异动入口：仅战略发展部可发起；支持 指标内容/权重/备注 三类字段。
+   * 已下发指标的异动入口：仅填报人可发起；支持 指标内容/权重/备注 三类字段。
    * 提交后走异动审批链；2026-10-20 定案：审批期间不再锁死其他模块（人为处理）。
+   * 2026-10-21 定案：发起权收紧到填报人，负责人/校领导只审批不发起。
    */
   const openMutationDialogForField = async (row: StrategicIndicator, field: string) => {
-    const role = String(props.selectedRole || authStore.userRole || '').trim()
-    if (role !== 'strategic_dept') {
-      ElMessage.warning('已下发的指标只能由战略发展部发起异动调整')
+    if (!canEdit.value) {
+      ElMessage.warning('已下发的指标只能由填报人发起异动调整')
       return
     }
 
@@ -3453,7 +3733,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     try {
       const { value } = await ElMessageBox.prompt(
         `该指标已下发，直接修改会被系统拒绝。是否发起「指标异动」调整${mapping.label}？` +
-          '确认后将启动异动审批（战略发展部负责人 → 分管校领导）。审批期间其他模块不受影响，异动结果由审批链决定。',
+          '确认后将启动异动审批（填报人修改 → 战略发展部负责人审批 → 分管校领导审批）。' +
+          '审批期间其他模块不受影响，异动结果由审批链决定。',
         `发起指标异动 · ${mapping.label}`,
         {
           confirmButtonText: '发起异动',
@@ -3530,11 +3811,22 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
     // 2026-10-14 用户定案：已下发指标的就地编辑只攒入异动草稿（内存态，不落库），
     // 由顶部「发起异动」按钮一次性提交走审批；刷新页面即丢弃未发起的改动。
+    // 2026-10-21 用户定案：战略任务改名同构——有 taskId 时攒草稿，没有则维持原直写。
     if (hasDistributedIndicators.value && MUTATION_FIELD_MAP[field]) {
       const value = editingIndicatorValue.value
       cancelIndicatorEdit()
       applyMutationDraftChange(row, field, value)
       return
+    }
+
+    if (hasDistributedIndicators.value && field === 'taskContent') {
+      // 有真实 taskId 的任务走异动草稿；无 taskId 的临时任务仍按原路径直写
+      if (getIndicatorTaskId(row)) {
+        const value = editingIndicatorValue.value
+        cancelIndicatorEdit()
+        applyTaskNameDraftChange(row, value)
+        return
+      }
     }
 
     try {
@@ -4017,6 +4309,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
         try {
           await strategicStore.deleteIndicator(indicatorId.toString())
+          pendingCreatedIndicatorIds.value = pendingCreatedIndicatorIds.value.filter(
+            id => String(id) !== String(indicatorId)
+          )
           await refreshTaskPageAfterIndicatorMutation()
           ElMessage.success('指标已删除')
           updateEditTime()
@@ -4490,6 +4785,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const handleApprovalRefresh = async () => {
     // 使用统一的变更后刷新逻辑，确保指标列表、计划详情、上报摘要、待办数量全部同步
     await refreshTaskPageAfterIndicatorMutation()
+
+    // 异动卡片的数据源是父组件按部门拉取的（经 prop 传入抽屉），
+    // 审批/撤回后必须重新拉一次，否则卡片仍停留在旧状态。
+    await loadDepartmentMutationWorkflowEntities()
 
     // 额外刷新 planStore 的详情（与 strategicStore 不同步）
     const planId = currentPlan.value?.id
@@ -5236,13 +5535,23 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 删除单个指标
   const handleDeleteIndicator = (row: StrategicIndicator) => {
     if (!canDeleteIndicator(row)) {
-      ElMessage.warning('只有未下发的草稿计划才能删除指标')
+      ElMessage.warning(
+        hasDistributedIndicators.value
+          ? '该指标已有异动在审批中，不能重复发起'
+          : '只有未下发的草稿计划才能直接删除指标'
+      )
       return
     }
 
     const indicatorId = row?.id
     if (indicatorId === null || indicatorId === undefined || indicatorId === '') {
       ElMessage.warning('当前行不是可删除的指标数据')
+      return
+    }
+
+    // 已下发计划：删除进异动草稿，随「发起异动」统一提交，审批通过后才生效
+    if (hasDistributedIndicators.value) {
+      applyDeleteMutationDraft(row)
       return
     }
 
@@ -5260,6 +5569,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
         try {
           await strategicStore.deleteIndicator(indicatorId.toString())
+          // 已删除的指标不能再留在待发起异动列表里，否则下次提交会带上一条已归档的实体
+          pendingCreatedIndicatorIds.value = pendingCreatedIndicatorIds.value.filter(
+            id => String(id) !== String(indicatorId)
+          )
           await refreshTaskPageAfterIndicatorMutation()
           ElMessage.success('指标已删除')
           updateEditTime()

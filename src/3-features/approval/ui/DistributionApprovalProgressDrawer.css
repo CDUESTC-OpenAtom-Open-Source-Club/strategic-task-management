@@ -239,6 +239,57 @@
   word-break: break-all;
 }
 
+/* 2026-10-21：异动审批详情里的「本次异动内容」逐字段 before→after */
+.detail-item-mutation {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid #fde68a;
+  border-radius: 10px;
+  background: #fffbeb;
+}
+
+.detail-mutation-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #92400e;
+  margin-bottom: 8px;
+}
+
+.detail-mutation-hint {
+  font-weight: 400;
+  color: #b45309;
+}
+
+.detail-mutation-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 13px;
+  padding: 3px 0;
+}
+
+.detail-mutation-field {
+  color: var(--el-text-color-secondary);
+  min-width: 88px;
+}
+
+.detail-mutation-before {
+  color: var(--el-text-color-secondary);
+  text-decoration: line-through;
+  word-break: break-all;
+}
+
+.detail-mutation-arrow {
+  color: #d97706;
+}
+
+.detail-mutation-after {
+  color: #b45309;
+  font-weight: 600;
+  word-break: break-all;
+}
+
 .snapshot-summary-card,
 .snapshot-indicator-card {
   border: 1px solid #e2e8f0;

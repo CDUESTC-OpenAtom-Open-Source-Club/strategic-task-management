@@ -576,7 +576,34 @@ export function useApprovalProgressState(
     return false
   }
 
+  /** 月报（PLAN_REPORT）待办：与计划审批并列的独立业务实例，不参与计划汇总卡。 */
+  function isExternalWorkflowTodo(instance: Record<string, any>): boolean {
+    const entityType = String(instance.entityType ?? instance.businessEntityType ?? '')
+      .trim()
+      .toUpperCase()
+    return entityType === 'PLAN_REPORT'
+  }
+
+  /**
+   * 异动审批实例（INDICATOR / TASK，flowCode=PLAN_MUTATION_STRATEGY）。
+   * 与月报同理，属于独立业务实例：各自成卡，不参与计划汇总卡生成与计数。
+   */
+  function isMutationWorkflowInstance(instance: Record<string, any>): boolean {
+    if (normalizeWorkflowCode(instance.flowCode) === 'PLAN_MUTATION_STRATEGY') {
+      return true
+    }
+    const entityType = String(instance.entityType ?? instance.businessEntityType ?? '')
+      .trim()
+      .toUpperCase()
+    return entityType === 'INDICATOR' || entityType === 'TASK'
+  }
+
   const scopedPlanApprovals = computed(() => {
+    // 2026-10-21 二次修正（用户定案）：异动实例不再并入计划集合。
+    // 异动与「上报审批」同类，是独立业务实例，必须各自成卡；
+    // 混进计划集合会让 currentPlanApprovalSummary 误判「有计划审批中」，
+    // 同一条异动被渲染成两张卡（异动卡 + 计划汇总卡），且汇总卡缺提交人/提交时间。
+    // 异动卡统一由 pendingMutationApprovalItems 渲染。
     const matchingApprovals = pendingPlanApprovals.value.filter(instance => {
       const flowCode = (instance as { flowCode?: string }).flowCode
       if (!matchesExpectedWorkflowCode(flowCode)) {
@@ -614,6 +641,17 @@ export function useApprovalProgressState(
     })
   })
 
+  /**
+   * 计划汇总卡 / 一键审批只针对计划（PLAN）实例。
+   * 与「上报审批」既有规律对齐：月报、指标异动、任务异动都是独立业务实例，
+   * 各自成卡，不参与计划汇总卡的生成与计数。
+   */
+  const planScopedPlanApprovals = computed(() =>
+    scopedPlanApprovals.value.filter(
+      instance => !isExternalWorkflowTodo(instance) && !isMutationWorkflowInstance(instance)
+    )
+  )
+
   interface PendingPlanApprovalPreviewItem {
     key: string
     title: string
@@ -623,7 +661,7 @@ export function useApprovalProgressState(
 
   function normalizeWorkflowEntityType(
     value: unknown
-  ): 'PLAN' | 'PLAN_REPORT' | 'INDICATOR' | undefined {
+  ): 'PLAN' | 'PLAN_REPORT' | 'INDICATOR' | 'TASK' | undefined {
     const normalized = String(value || '')
       .trim()
       .toUpperCase()
@@ -636,6 +674,10 @@ export function useApprovalProgressState(
     // 异动审批（PLAN_MUTATION_STRATEGY）挂在指标实体上
     if (normalized === 'INDICATOR') {
       return 'INDICATOR'
+    }
+    // 2026-10-21：战略任务改名异动同样走 PLAN_MUTATION_STRATEGY，实体类型为 TASK
+    if (normalized === 'TASK') {
+      return 'TASK'
     }
     return undefined
   }
@@ -704,12 +746,98 @@ export function useApprovalProgressState(
 
   const scopedPendingPlanCount = computed(() => scopedPlanApprovals.value.length)
 
+  /**
+   * 2026-10-21：审批中的异动实例卡片（「计划审批」看板）。
+   * 此前看板数据源是 my-pending（我是审批人），异动发起人看不到自己发起的异动。
+   * 复用历史卡片的 PlanApprovalDetailItem 结构，保证两处卡片样式与字段一致；
+   * 同一次「发起异动」提交的多条改动（同一 batch_id）聚合成一张卡片。
+   */
+  const pendingMutationApprovalItems = computed<PlanApprovalDetailItem[]>(() => {
+    const groups = new Map<string, Record<string, any>[]>()
+    for (const item of props.mutationPendingApprovals ?? []) {
+      if (String(item.status || '').toUpperCase() !== 'IN_REVIEW') {
+        continue
+      }
+      // 无批次号的历史实例按实例独立成卡，避免误聚合
+      const groupKey = normalizeDisplayName(item.batchId) || `instance-${item.instanceId}`
+      const list = groups.get(groupKey) ?? []
+      list.push(item)
+      groups.set(groupKey, list)
+    }
+
+    return Array.from(groups.entries()).map(([_groupKey, items], index) => {
+      const first = items[0]
+      const statusTag = resolveHistoryStatusTag('IN_REVIEW')
+      const sourceOrgName = normalizeDisplayName(first.sourceOrgName)
+      const targetOrgName = normalizeDisplayName(first.targetOrgName)
+      const flowCode = normalizeDisplayName(first.flowCode) || 'PLAN_MUTATION_STRATEGY'
+
+      // 聚合本批次全部字段变更：字段名 → before/after（多实体同名字段按指标名区分）
+      const changedFields: Record<string, { before?: unknown; after?: unknown }> = {}
+      for (const entry of items) {
+        const fields = entry.changedFields
+        if (!fields || typeof fields !== 'object') {
+          continue
+        }
+        for (const [key, value] of Object.entries(fields as Record<string, any>)) {
+          // 多实体时用「指标名 · 字段」区分；单实体直接用字段名，避免标签重复
+          const entityLabel = normalizeDisplayName(
+            (value as { before?: unknown })?.before ?? entry.title
+          )
+          const label = items.length > 1 ? `${entityLabel || '指标'} · ${key}` : key
+          changedFields[label] = {
+            before: value?.before,
+            after: value?.after
+          }
+        }
+      }
+
+      const title =
+        items.length > 1
+          ? `${normalizeDisplayName(first.title) || '异动'} 等 ${items.length} 项`
+          : normalizeDisplayName(first.title) || '异动审批'
+      const entityType = normalizeWorkflowEntityType(first.entityType)
+
+      return {
+        instanceId: Number(first.instanceId) || index,
+        instanceNo: String(first.instanceId || ''),
+        title,
+        // 与「审批历史」异动卡片同源：同一个 resolveApprovalRouteTitle 生成流向标题
+        routeTitle: resolveApprovalRouteTitle({
+          flowCode,
+          sourceOrgName,
+          targetOrgName
+        }),
+        flowName:
+          entityType === 'TASK' ? '任务异动审批（战略发展部）' : '指标异动审批（战略发展部）',
+        flowCode,
+        submitterName: normalizeDisplayName(first.submitterName) || '战略发展部',
+        currentStepName: normalizeDisplayName(first.currentStepName) || '—',
+        createdAt: first.createdAt,
+        statusLabel: statusTag.label,
+        statusType: statusTag.type,
+        entityId: first.entityId,
+        batchId: normalizeDisplayName(first.batchId) || null,
+        changedFields,
+        mutationEntityType: entityType === 'TASK' ? 'TASK' : 'INDICATOR',
+        // 2026-10-22：一次异动提交会为每个实体各建一个实例（共享 batchId），
+        // 卡片把它们聚合成一张。审批/驳回必须作用于整批，否则只处理第一条，
+        // 其余实例会一直卡在「审批中」——用户看到的「驳回没退回」就是这个原因。
+        mutationInstanceIds: items
+          .map(entry => Number(entry.instanceId))
+          .filter(id => Number.isFinite(id) && id > 0),
+        // 当前待办节点的审批组织：异动卡片按「组织 + 步骤名角色」判定审批按钮可见性
+        approverOrgId: first.approverOrgId
+      } as PlanApprovalDetailItem
+    })
+  })
+
   const historyTargets = computed<WorkflowHistoryTarget[]>(() => {
     const targets: WorkflowHistoryTarget[] = []
     const seen = new Set<string>()
 
     const appendTarget = (
-      entityType: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR' | undefined,
+      entityType: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR' | 'TASK' | undefined,
       entityId: unknown
     ) => {
       const normalizedType =
@@ -719,7 +847,9 @@ export function useApprovalProgressState(
             ? 'PLAN'
             : entityType === 'INDICATOR'
               ? 'INDICATOR'
-              : null
+              : entityType === 'TASK'
+                ? 'TASK'
+                : null
       const normalizedId = Number(entityId ?? NaN)
       if (!normalizedType || !Number.isFinite(normalizedId) || normalizedId <= 0) {
         return
@@ -741,8 +871,9 @@ export function useApprovalProgressState(
     appendTarget(props.secondaryWorkflowEntityType, props.secondaryWorkflowEntityId)
     appendTarget('PLAN_REPORT', relatedPlanReportSummary.value?.id)
     // 2026-10-10：指标异动审批链（PLAN_MUTATION_*，entity_type=INDICATOR）纳入审批历史
+    // 2026-10-21：任务改名异动（entity_type=TASK）按各自类型追加，否则会拿 TASK 的 id 去查指标历史
     for (const mutation of props.mutationWorkflowEntities ?? []) {
-      appendTarget('INDICATOR', mutation.entityId)
+      appendTarget(mutation.entityType ?? 'INDICATOR', mutation.entityId)
     }
 
     return targets
@@ -2185,11 +2316,12 @@ export function useApprovalProgressState(
       }
     }
 
-    if (scopedPlanApprovals.value.length === 0) {
+    // 汇总卡只统计计划实例：异动/月报各自成卡，不能触发「计划审批中」
+    if (planScopedPlanApprovals.value.length === 0) {
       return null
     }
 
-    const sortedCreatedAt = scopedPlanApprovals.value
+    const sortedCreatedAt = planScopedPlanApprovals.value
       .map(item => item.createdAt)
       .filter(Boolean)
       .sort()
@@ -2200,13 +2332,13 @@ export function useApprovalProgressState(
       key: planName,
       planName,
       currentStepName:
-        scopedPlanApprovals.value
+        planScopedPlanApprovals.value
           .map(item => item.currentStepName)
           .find(step => typeof step === 'string' && step.trim()) ||
         latestPlanTaskDisplayLabel.value ||
         '审批中',
       submitterName:
-        scopedPlanApprovals.value
+        planScopedPlanApprovals.value
           .map(item =>
             resolveSubmitterDisplayName(
               item.submitterName,
@@ -2218,14 +2350,48 @@ export function useApprovalProgressState(
           )
           .find(name => typeof name === 'string' && name.trim()) || '待确认',
       createdAt: latestCreatedAt,
-      count: scopedPlanApprovals.value.length
+      count: planScopedPlanApprovals.value.length
     }
   })
 
   // ============ 审批流程节点数据 ============
   const workflowNodes = computed<WorkflowNode[]>(() => {
     if (isPlanHistoryOnlyMode.value) {
-      return []
+      // 计划自身流程已归档（下发审批已完成）；此时抽屉里正在走的是异动流程，
+      // 与上报审批同理，应当显示它当前走到哪一步，而不是空态。
+      if (activeMutationWorkflowTasks.value.length === 0) {
+        return []
+      }
+      const mutationTaskIds = new Set(
+        activeMutationWorkflowTasks.value.map(task => String(task.taskId || ''))
+      )
+      return activeMutationWorkflowTasks.value.map(task => {
+        const taskId = String(task.taskId || task.taskKey || task.currentStepName || task.taskName)
+        const isPending =
+          String(task.status || '')
+            .trim()
+            .toUpperCase() === 'PENDING'
+        return {
+          id: taskId,
+          name:
+            normalizeDisplayName(task.currentStepName) ||
+            normalizeDisplayName(task.taskName) ||
+            '审批节点',
+          status: isPending ? 'current' : mapWorkflowTaskStatusToNodeStatus(task),
+          operatorName: resolveWorkflowTaskOperatorName(task),
+          operatorAvatar: task.assigneeId
+            ? workflowUserAvatarCache.value[String(task.assigneeId)] || undefined
+            : undefined,
+          approverCandidates: resolveTaskCandidateApprovers(task),
+          operateTime: task.approvedAt
+            ? new Date(task.approvedAt)
+            : task.createdTime
+              ? new Date(task.createdTime)
+              : undefined,
+          comment:
+            typeof task.comment === 'string' && task.comment.trim() ? task.comment : undefined
+        } satisfies WorkflowNode
+      })
     }
 
     if (hasPlanWorkflowData.value && props.plan) {
@@ -2373,6 +2539,17 @@ export function useApprovalProgressState(
 
   // 当前节点ID
   const currentNodeId = computed(() => {
+    // 计划流程已归档、由异动流程接管时，当前节点取异动的待办任务
+    if (isPlanHistoryOnlyMode.value) {
+      const pendingTask = activeMutationWorkflowTasks.value.find(
+        task =>
+          String(task.status || '')
+            .trim()
+            .toUpperCase() === 'PENDING'
+      )
+      return pendingTask ? String(pendingTask.taskId || '') : ''
+    }
+
     if (hasPlanWorkflowData.value && props.plan) {
       if (isPlanPendingApproval.value && currentPlanTaskId.value) {
         return String(currentPlanTaskId.value)
@@ -2534,6 +2711,49 @@ export function useApprovalProgressState(
       logger.warn('[DistributionApprovalProgressDrawer] 加载关联上报审批摘要失败:', error)
     }
   }
+
+  /**
+   * 审批中的异动实例的流程详情（含 tasks）。
+   * 与上报审批同理：异动也是一条独立的审批流程，审批中心应当能看到它走到哪一步。
+   * 只在计划自身流程已归档（isPlanHistoryOnlyMode）时接管「审批流程」页签，
+   * 计划流程仍在审批中时仍以计划节点为准，互不覆盖。
+   * 2026-10-21：抽屉里可能同时存在多条异动（不同实例），优先跟随用户正在查看的那张卡，
+   * 未选中时回落到最新一条（后端按 created_at DESC 返回）。
+   */
+  const activeMutationWorkflowDetail = computed<WorkflowInstanceDetailResponse | null>(() => {
+    if (!isPlanHistoryOnlyMode.value) {
+      return null
+    }
+    const candidates = props.mutationPendingApprovals ?? []
+    const selectedId = String(selectedHistoryInstanceId.value || '').trim()
+    const matched = selectedId
+      ? candidates.find(item => String(item.instanceId || '') === selectedId)
+      : undefined
+    const source = matched ?? candidates[0]
+    const detail = (source as { workflowDetail?: unknown } | undefined)?.workflowDetail
+    if (!detail || typeof detail !== 'object') {
+      return null
+    }
+    const tasks = (detail as WorkflowInstanceDetailResponse).tasks
+    return Array.isArray(tasks) && tasks.length > 0
+      ? (detail as WorkflowInstanceDetailResponse)
+      : null
+  })
+
+  const activeMutationWorkflowTasks = computed<WorkflowTaskResponse[]>(() => {
+    const detail = activeMutationWorkflowDetail.value
+    if (!detail || !Array.isArray(detail.tasks)) {
+      return []
+    }
+    return [...detail.tasks].sort((left, right) => {
+      const leftStep = Number(left.stepNo ?? 0)
+      const rightStep = Number(right.stepNo ?? 0)
+      if (leftStep !== rightStep) {
+        return leftStep - rightStep
+      }
+      return Number(left.taskId ?? 0) - Number(right.taskId ?? 0)
+    })
+  })
 
   async function loadPlanWorkflowDetail() {
     // INDICATOR（异动审批）实例没有 plan 上下文，凭 workflowEntityId 也可按业务实体加载
@@ -2771,14 +2991,15 @@ export function useApprovalProgressState(
       }
     }
 
-    if (scopedPlanApprovals.value.length === 0) {
+    // 一键审批只针对计划实例：异动/月报有各自的审批入口，不能被批量带上
+    if (planScopedPlanApprovals.value.length === 0) {
       ElMessage.warning('当前计划暂无待审批实例')
       return
     }
 
     try {
       const { value } = await ElMessageBox.prompt(
-        `确认一键审批通过“${currentPlanApprovalSummary.value?.planName || '当前计划'}”下的 ${scopedPlanApprovals.value.length} 条审批实例？`,
+        `确认一键审批通过“${currentPlanApprovalSummary.value?.planName || '当前计划'}”下的 ${planScopedPlanApprovals.value.length} 条审批实例？`,
         '审批通过',
         {
           confirmButtonText: '确认通过',
@@ -2796,7 +3017,7 @@ export function useApprovalProgressState(
 
       try {
         const userId = authStore.user?.userId || authStore.user?.id || 1
-        for (const instance of scopedPlanApprovals.value) {
+        for (const instance of planScopedPlanApprovals.value) {
           const response = await approvalApi.approvePlan(
             instance.instanceId,
             userId,
@@ -2903,14 +3124,15 @@ export function useApprovalProgressState(
       }
     }
 
-    if (scopedPlanApprovals.value.length === 0) {
+    // 一键驳回只针对计划实例：异动/月报有各自的审批入口
+    if (planScopedPlanApprovals.value.length === 0) {
       ElMessage.warning('当前计划暂无待审批实例')
       return
     }
 
     try {
       const { value } = await ElMessageBox.prompt(
-        `确认一键驳回“${currentPlanApprovalSummary.value?.planName || '当前计划'}”下的 ${scopedPlanApprovals.value.length} 条审批实例？`,
+        `确认一键驳回“${currentPlanApprovalSummary.value?.planName || '当前计划'}”下的 ${planScopedPlanApprovals.value.length} 条审批实例？`,
         '审批拒绝',
         {
           confirmButtonText: '确认拒绝',
@@ -2929,7 +3151,7 @@ export function useApprovalProgressState(
 
       try {
         const userId = authStore.user?.userId || authStore.user?.id || 1
-        for (const instance of scopedPlanApprovals.value) {
+        for (const instance of planScopedPlanApprovals.value) {
           const response = await approvalApi.rejectPlan(instance.instanceId, userId, value)
           if (!response.success) {
             ElMessage.error(response.message || '拒绝失败')
@@ -3122,10 +3344,10 @@ export function useApprovalProgressState(
   })
 
   const showArchivedPlanWorkflowEmptyState = computed(() => {
+    // 计划流程归档后若由异动流程接管（workflowNodes 已有异动节点），这里不会命中空态，
+    // 两个条件同时为假——无需额外守卫。
     return Boolean(
-      props.showPlanApprovals &&
-      hasPlanWorkflowData.value &&
-      (isPlanHistoryOnlyMode.value || workflowNodes.value.length === 0)
+      props.showPlanApprovals && hasPlanWorkflowData.value && workflowNodes.value.length === 0
     )
   })
 
@@ -3212,6 +3434,7 @@ export function useApprovalProgressState(
     parsePositiveUserId,
     pendingCount,
     pendingPlanApprovalPreviewItems,
+    pendingMutationApprovalItems,
     pendingPlanApprovals,
     permissionUtil,
     planApprovalsLoading,
@@ -3237,6 +3460,7 @@ export function useApprovalProgressState(
     resolveCandidateDisplayName,
     resolveExpectedApproverOrgId,
     resolveExpectedApproverRoleCodes,
+    resolveExpectedApproverRoleCodesByStepName,
     resolveHistoryStatusTag,
     resolveTaskCandidateApprovers,
     resolveTaskStatusLabel,

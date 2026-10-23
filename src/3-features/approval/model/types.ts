@@ -100,10 +100,23 @@ export interface PlanApprovalDetailItem {
   statusType?: 'success' | 'warning' | 'danger' | 'info'
   entityId?: string | number
   planName?: string
+  /** 2026-10-21：异动批次号（同一次提交的多条改动共享，用于聚合展示与按批回滚） */
+  batchId?: string | null
+  /** 2026-10-21：本次异动的字段变更明细（字段 → before/after），详情弹窗逐字段展示 */
+  changedFields?: Record<string, { before?: unknown; after?: unknown }> | null
+  /** 2026-10-21：异动实体类型，决定字段名与业务文案 */
+  mutationEntityType?: 'INDICATOR' | 'TASK'
+  /**
+   * 2026-10-22：本卡片聚合的全部异动实例 ID（同一次提交按实体各建一个实例）。
+   * 审批/驳回必须逐个处理，只处理 instanceId 会让同批其余实例永远停在审批中。
+   */
+  mutationInstanceIds?: number[]
+  /** 当前待办节点的审批组织（异动卡片据此判定审批按钮可见性） */
+  approverOrgId?: number | string | null
 }
 
 export interface WorkflowHistoryTarget {
-  entityType: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR'
+  entityType: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR' | 'TASK'
   entityId: number
 }
 
@@ -157,12 +170,15 @@ export interface DistributionApprovalProgressDrawerProps {
   approvalType?: 'distribution' | 'submission'
   historyViewMode?: 'auto' | 'card-only'
   workflowCode?: string | string[]
-  workflowEntityType?: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR'
+  workflowEntityType?: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR' | 'TASK'
   workflowEntityId?: number | string
-  secondaryWorkflowEntityType?: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR'
+  secondaryWorkflowEntityType?: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR' | 'TASK'
   secondaryWorkflowEntityId?: number | string
   /** 2026-10-10：指标异动审批实例（审批历史「异动审批」卡片数据源） */
-  mutationWorkflowEntities?: Array<{ entityId: number | string }>
+  /** 2026-10-21：任务改名异动同样走该链路，故实体类型可为 TASK */
+  mutationWorkflowEntities?: Array<{ entityId: number | string; entityType?: 'INDICATOR' | 'TASK' }>
+  /** 2026-10-21：审批中的异动实例（「计划审批」看板数据源），使发起人/部门视角可见异动 */
+  mutationPendingApprovals?: Array<Record<string, any>>
 }
 
 export interface DistributionApprovalProgressDrawerEmit {

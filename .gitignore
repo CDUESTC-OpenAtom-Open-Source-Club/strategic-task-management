@@ -58,3 +58,6 @@ docs/账号密码对照表.md
 # Archive directories (backup files, not for production)
 docs/archive/
 .mimosa/
+
+# 2026-10-22：视频/自动化工具本地缓存
+.video_agent/

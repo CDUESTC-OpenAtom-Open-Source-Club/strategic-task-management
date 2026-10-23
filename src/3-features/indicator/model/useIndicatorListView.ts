@@ -912,14 +912,26 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     return canViewReceivedPlanContentByStatus(currentPlanStatus.value, isStrategicDept.value)
   })
 
-  // 判断是否可以编辑（只有战略发展部可以编辑，且计划处于草稿状态，历史年份只读）
+  /**
+   * 编辑权只属于填报人（2026-10-21 用户定案，与战略任务管理页同一口径）。
+   * 前端 `userRole` 把所有战略部账号都压成 `strategic_dept`，无法区分填报人/负责人/校领导，
+   * 因此看后端下发的原始角色码 ROLE_REPORTER。
+   * 兼容：无 roles 的旧会话退回「战略部即可编辑」，避免把正常填报人锁死。
+   */
+  const isReporter = computed(() => {
+    const roles = (authStore.user as { roles?: unknown[] } | null)?.roles
+    const roleCodes = Array.isArray(roles)
+      ? roles.map(role => (typeof role === 'string' ? role.trim() : '')).filter(Boolean)
+      : []
+    if (roleCodes.length === 0) {
+      return authStore.userRole === 'strategic_dept'
+    }
+    return roleCodes.includes('ROLE_REPORTER')
+  })
+
+  // 判断是否可以编辑（只有填报人可以编辑，且计划处于草稿状态，历史年份只读）
   const canEdit = computed(() => {
-    return (
-      authStore.userRole === 'strategic_dept' &&
-      isStrategicDept.value &&
-      !timeContext.isReadOnly &&
-      isPlanDraft.value
-    )
+    return isReporter.value && isStrategicDept.value && !timeContext.isReadOnly && isPlanDraft.value
   })
 
   const showOwnerDeptDetail = computed(() => isSecondaryCollege.value)

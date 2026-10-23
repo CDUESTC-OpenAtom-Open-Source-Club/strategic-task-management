@@ -5,6 +5,7 @@ import ApprovalHistory from './ApprovalHistory.vue'
 import CustomApprovalFlow from './CustomApprovalFlow.vue'
 import {
   formatAppraisalLevel,
+  formatInstanceNo,
   formatStayDuration
 } from '@/features/approval/model/useApprovalProgressDrawer'
 import {
@@ -16,6 +17,7 @@ import {
   type DistributionApprovalProgressDrawerEmit,
   type DistributionApprovalProgressDrawerProps
 } from '@/3-features/approval/model/useDistributionApprovalProgressDrawer'
+import type { PlanApprovalDetailItem } from '@/3-features/approval/model/types'
 
 const props = withDefaults(defineProps<DistributionApprovalProgressDrawerProps>(), {
   modelValue: false,
@@ -36,6 +38,7 @@ const props = withDefaults(defineProps<DistributionApprovalProgressDrawerProps>(
   secondaryWorkflowEntityType: undefined,
   secondaryWorkflowEntityId: undefined,
   mutationWorkflowEntities: () => [],
+  mutationPendingApprovals: () => [],
   routeTarget: ''
 })
 
@@ -54,6 +57,8 @@ const {
   cacheSubmitterName,
   cacheWorkflowUserAvatar,
   canCurrentUserHandlePlanApproval,
+  canCurrentUserHandleMutationApproval,
+  canCurrentUserWithdrawMutation,
   canLookupWorkflowUsers,
   currentDetailWorkflow,
   currentIndicator,
@@ -67,6 +72,7 @@ const {
   currentPlanStepDisplay,
   currentPlanTaskId,
   currentUserId,
+  pendingMutationApprovalItems,
   currentUserOrgId,
   currentUserPermissionCodes,
   currentUserRoleCodes,
@@ -91,13 +97,16 @@ const {
   getStrategicStatus,
   handleAddNode,
   handleApplyTemplate,
+  handleApproveMutation,
   handleApprovePlanBatch,
   planAppraisalLevel,
   handleClose,
   handlePlanReportAttachmentOpen,
+  handleRejectMutation,
   handleRejectPlanBatch,
   handleSaveTemplate,
   handleUpdateApprover,
+  handleWithdrawMutation,
   hasApprovalData,
   hasDisplayableApprovalContent,
   hasPlanApprovalPermission,
@@ -187,6 +196,70 @@ const isPlaceholderPlanApprovalName = (value: unknown): boolean => {
   const normalized = normalizeDisplayName(value).replace(/\s+/g, ' ')
   return /^Plan\s*#?\s*\d+$/i.test(normalized) || /^计划\s*#?\s*\d+$/i.test(normalized)
 }
+
+// 2026-10-21：异动字段名 → 中文标签，与右下角「异动历史」角标口径一致
+const MUTATION_FIELD_LABELS: Record<string, string> = {
+  indicator_desc: '指标内容',
+  weight_percent: '权重',
+  remark: '下发备注',
+  name: '战略任务'
+}
+
+const formatMutationFieldLabel = (fieldKey: string, entityType?: 'INDICATOR' | 'TASK'): string => {
+  // 聚合卡片会把字段名拼成「指标名 · 字段」，这里只翻译后缀
+  const parts = fieldKey.split(' · ')
+  const rawField = parts.length > 1 ? parts[parts.length - 1] : fieldKey
+  const label = MUTATION_FIELD_LABELS[rawField] || rawField
+  if (parts.length > 1) {
+    return `${parts.slice(0, -1).join(' · ')} · ${label}`
+  }
+  if (!MUTATION_FIELD_LABELS[rawField] && entityType === 'TASK') {
+    return '战略任务'
+  }
+  return label
+}
+
+const formatMutationValue = (value: unknown): string => {
+  if (value === null || value === undefined || value === '') {
+    return '空'
+  }
+  return String(value)
+}
+
+/**
+ * 详情弹窗条目数据源：与原版一致——选中实例时按 instanceId 在历史卡片中定位；
+ * 异动卡片走同一查看详情入口，故追加在异动待审卡片中定位（计划实例不会落入其中）。
+ * 未选中时保持原版口径：当前审批条目。
+ */
+const planDetailDialogItems = computed<PlanApprovalDetailItem[]>(() => {
+  if (!selectedHistoryInstanceId.value) {
+    return currentPlanApprovalItems.value
+  }
+  return [...historicalPlanApprovalItems.value, ...pendingMutationApprovalItems.value].filter(
+    item => String(item.instanceId) === selectedHistoryInstanceId.value
+  )
+})
+
+/** 当前弹窗选中的条目是否为异动（异动条目以「本次异动内容」替代业务快照区） */
+const planDetailIsMutationItem = computed(() => {
+  const item = planDetailDialogItems.value[0]
+  if (!item) {
+    return false
+  }
+  return Boolean(item.batchId || (item.changedFields && Object.keys(item.changedFields).length > 0))
+})
+
+/** 选中实例的标题（计划实例在历史卡片中找，异动实例在异动卡片中找） */
+const planDetailSelectedTitle = computed(() => {
+  if (!selectedHistoryInstanceId.value) {
+    return ''
+  }
+  return (
+    planDetailDialogItems.value.find(item => item.routeTitle)?.routeTitle ||
+    planDetailDialogItems.value[0]?.title ||
+    ''
+  )
+})
 
 const normalizeApprovalDepartmentName = (value: unknown): string => {
   return normalizeDisplayName(value)
@@ -292,11 +365,80 @@ const displayedCurrentPlanApprovalName = computed(() => {
             class="plan-approval-pane"
           >
             <el-empty
-              v-if="!planApprovalsLoading && !planWorkflowDetailLoading && !showPlanPendingCard"
+              v-if="
+                !planApprovalsLoading &&
+                !planWorkflowDetailLoading &&
+                !showPlanPendingCard &&
+                !pendingMutationApprovalItems.length
+              "
               description="暂无审批中的计划"
               :image-size="120"
             />
-            <div v-else class="approval-list">
+            <!-- 2026-10-21：审批中的异动卡片，与「审批历史」卡片同构（同一套 approval-card 样式与字段） -->
+            <div v-if="pendingMutationApprovalItems.length" class="approval-list">
+              <div
+                v-for="item in pendingMutationApprovalItems"
+                :key="`${item.instanceId}-pending`"
+                class="approval-card"
+              >
+                <div class="card-header">
+                  <div class="plan-info">
+                    <el-icon class="plan-icon"><Document /></el-icon>
+                    <div class="info-text">
+                      <div class="plan-name">{{ item.routeTitle || item.title }}</div>
+                      <div class="plan-year">
+                        {{ item.flowName || '指标异动审批（战略发展部）' }}
+                      </div>
+                    </div>
+                  </div>
+                  <el-tag :type="item.statusType || 'warning'" size="small">
+                    {{ item.statusLabel || '审批中' }}
+                  </el-tag>
+                </div>
+                <div class="submit-info">
+                  <div class="info-row">
+                    <el-icon><User /></el-icon>
+                    <span class="label">提交人：</span>
+                    <span class="value">{{ item.submitterName }}</span>
+                  </div>
+                  <div class="info-row">
+                    <el-icon><Timer /></el-icon>
+                    <span class="label">提交时间：</span>
+                    <span class="value">{{ formatTime(item.createdAt) }}</span>
+                  </div>
+                  <div class="info-row">
+                    <el-icon><Right /></el-icon>
+                    <span class="label">流转方向：</span>
+                    <span class="value">{{ item.routeTitle || '--' }}</span>
+                  </div>
+                  <div class="info-row">
+                    <el-icon><Right /></el-icon>
+                    <span class="label">当前步骤：</span>
+                    <span class="value">{{ item.currentStepName }}</span>
+                  </div>
+                </div>
+                <div class="card-actions">
+                  <el-button @click="openPlanApprovalDetails(item)">查看详情</el-button>
+                  <!-- 2026-10-21：异动卡片的审批操作——仅当前节点审批人可见，
+                       否则发起人/无关角色会看到点不动的按钮 -->
+                  <template v-if="canCurrentUserHandleMutationApproval(item)">
+                    <el-button type="success" @click="handleApproveMutation(item)">
+                      审批通过
+                    </el-button>
+                    <el-button type="danger" @click="handleRejectMutation(item)"
+                      >审批驳回</el-button
+                    >
+                  </template>
+                  <!-- 撤回：与上报审批同源（POST /workflows/{id}/cancel），仅发起人且未过窗口时可见 -->
+                  <el-button
+                    v-if="canCurrentUserWithdrawMutation(item)"
+                    type="warning"
+                    @click="handleWithdrawMutation(item)"
+                  >
+                    撤回
+                  </el-button>
+                </div>
+              </div>
               <div
                 v-if="showPlanPendingCard && currentPlanApprovalSummary"
                 :key="currentPlanApprovalSummary.key"
@@ -311,7 +453,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
                         {{
                           hasPlanWorkflowData
                             ? '当前审批状态已接入'
-                            : `审批中实例 ${currentPlanApprovalSummary.count} 条`
+                            : `审批中流程 ${currentPlanApprovalSummary.count} 条`
                         }}
                       </div>
                     </div>
@@ -538,46 +680,30 @@ const displayedCurrentPlanApprovalName = computed(() => {
 
     <el-dialog
       v-model="planDetailDialogVisible"
-      title="审批实例详情"
+      title="审批流程详情"
       width="680px"
       class="plan-detail-dialog"
     >
       <div v-loading="planDetailContentLoading" class="plan-detail-content">
         <div class="plan-detail-summary">
           <div class="summary-title">
-            {{
-              historicalPlanApprovalItems.find(
-                item => String(item.instanceId) === selectedHistoryInstanceId
-              )?.routeTitle ||
-              displayedCurrentPlanApprovalName ||
-              '当前计划'
-            }}
+            {{ planDetailSelectedTitle || displayedCurrentPlanApprovalName || '当前计划' }}
           </div>
           <div class="summary-subtitle">
             {{
               selectedHistoryInstanceId
-                ? '当前查看审批实例'
+                ? '当前查看审批流程'
                 : isPlanPendingApproval
-                  ? '审批中实例'
-                  : '历史审批实例'
+                  ? '审批中流程'
+                  : '历史审批流程'
             }}
             {{ selectedHistoryInstanceId ? '' : currentPlanApprovalItems.length }}
           </div>
         </div>
 
-        <div
-          v-if="
-            (selectedHistoryInstanceId ? historicalPlanApprovalItems : currentPlanApprovalItems)
-              .length > 0
-          "
-          class="plan-detail-list"
-        >
+        <div v-if="planDetailDialogItems.length > 0" class="plan-detail-list">
           <div
-            v-for="item in selectedHistoryInstanceId
-              ? historicalPlanApprovalItems.filter(
-                  historyItem => String(historyItem.instanceId) === selectedHistoryInstanceId
-                )
-              : currentPlanApprovalItems"
+            v-for="item in planDetailDialogItems"
             :key="item.instanceId"
             class="plan-detail-item"
           >
@@ -597,8 +723,8 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 <span class="detail-value">{{ item.flowName }}</span>
               </div>
               <div class="detail-meta-row">
-                <span class="detail-label">实例编号：</span>
-                <span class="detail-value">{{ item.instanceNo }}</span>
+                <span class="detail-label">流程编号：</span>
+                <span class="detail-value">{{ formatInstanceNo(item.instanceNo) }}</span>
               </div>
               <div class="detail-meta-row">
                 <span class="detail-label">提交人：</span>
@@ -610,7 +736,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
               </div>
               <div class="detail-meta-row">
                 <span class="detail-label"
-                  >{{ selectedHistoryInstanceId ? '实例状态' : '当前步骤' }}：</span
+                  >{{ selectedHistoryInstanceId ? '流程状态' : '当前步骤' }}：</span
                 >
                 <span class="detail-value">{{ item.currentStepName }}</span>
               </div>
@@ -619,19 +745,44 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 <span class="detail-value">{{ formatTime(item.completedAt) }}</span>
               </div>
               <div v-if="item.entityId" class="detail-meta-row">
-                <span class="detail-label">关联实体ID：</span>
+                <span class="detail-label">关联业务编号：</span>
                 <span class="detail-value">{{ item.entityId }}</span>
+              </div>
+            </div>
+            <!-- 2026-10-21：异动审批必须能看到「改了哪些内容」——逐字段展示 before→after -->
+            <div
+              v-if="item.changedFields && Object.keys(item.changedFields).length > 0"
+              class="detail-item-mutation"
+            >
+              <div class="detail-mutation-title">
+                本次异动内容
+                <span class="detail-mutation-hint">（审批通过后生效）</span>
+              </div>
+              <div
+                v-for="(change, fieldKey) in item.changedFields"
+                :key="fieldKey"
+                class="detail-mutation-row"
+              >
+                <span class="detail-mutation-field">{{
+                  formatMutationFieldLabel(String(fieldKey), item.mutationEntityType)
+                }}</span>
+                <span class="detail-mutation-before">{{
+                  formatMutationValue(change?.before)
+                }}</span>
+                <span class="detail-mutation-arrow">→</span>
+                <span class="detail-mutation-after">{{ formatMutationValue(change?.after) }}</span>
               </div>
             </div>
           </div>
         </div>
-        <el-empty v-else description="暂无审批实例详情" :image-size="100" />
+        <el-empty v-else description="暂无审批流程详情" :image-size="100" />
 
         <div
           v-if="
-            displayedPlanReportIndicatorItems.length > 0 ||
-            displayedDistributionIndicatorItems.length > 0 ||
-            displayedPlanReportSummaryComment
+            !planDetailIsMutationItem &&
+            (displayedPlanReportIndicatorItems.length > 0 ||
+              displayedDistributionIndicatorItems.length > 0 ||
+              displayedPlanReportSummaryComment)
           "
           class="plan-detail-snapshot"
         >

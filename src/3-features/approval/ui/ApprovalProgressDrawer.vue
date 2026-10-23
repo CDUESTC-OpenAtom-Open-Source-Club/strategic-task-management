@@ -99,6 +99,7 @@ const {
   handleApproveExternalWorkflowTodo,
   planAppraisalLevel,
   formatAppraisalLevel,
+  formatInstanceNo,
   handleClose,
   handleWorkflowNodeAttachmentOpen,
   handleRejectPlanBatch,
@@ -342,7 +343,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
                         {{
                           hasPlanWorkflowData
                             ? '当前审批状态已接入'
-                            : `待审批实例 ${currentPlanApprovalSummary.count} 条`
+                            : `待审批流程 ${currentPlanApprovalSummary.count} 条`
                         }}
                       </div>
                     </div>
@@ -585,7 +586,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
 
     <ElDialog
       v-model="planDetailDialogVisible"
-      title="审批实例详情"
+      title="审批流程详情"
       width="680px"
       class="plan-detail-dialog"
     >
@@ -603,10 +604,10 @@ const displayedCurrentPlanApprovalName = computed(() => {
           <div class="summary-subtitle">
             {{
               selectedHistoryInstanceId
-                ? '当前查看审批实例'
+                ? '当前查看审批流程'
                 : isPlanPendingApproval
-                  ? '待审批实例'
-                  : '历史审批实例'
+                  ? '待审批流程'
+                  : '历史审批流程'
             }}
             {{ selectedHistoryInstanceId ? '' : currentPlanApprovalItems.length }}
           </div>
@@ -644,8 +645,8 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 <span class="detail-value">{{ item.flowName }}</span>
               </div>
               <div class="detail-meta-row">
-                <span class="detail-label">实例编号：</span>
-                <span class="detail-value">{{ item.instanceNo }}</span>
+                <span class="detail-label">流程编号：</span>
+                <span class="detail-value">{{ formatInstanceNo(item.instanceNo) }}</span>
               </div>
               <div class="detail-meta-row">
                 <span class="detail-label">提交人：</span>
@@ -657,7 +658,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
               </div>
               <div class="detail-meta-row">
                 <span class="detail-label"
-                  >{{ selectedHistoryInstanceId ? '实例状态' : '当前步骤' }}：</span
+                  >{{ selectedHistoryInstanceId ? '流程状态' : '当前步骤' }}：</span
                 >
                 <span class="detail-value">{{ item.currentStepName }}</span>
               </div>
@@ -666,13 +667,13 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 <span class="detail-value">{{ formatTime(item.completedAt) }}</span>
               </div>
               <div v-if="item.entityId" class="detail-meta-row">
-                <span class="detail-label">关联实体ID：</span>
+                <span class="detail-label">关联业务编号：</span>
                 <span class="detail-value">{{ item.entityId }}</span>
               </div>
             </div>
           </div>
         </div>
-        <ElEmpty v-else description="暂无审批实例详情" :image-size="100" />
+        <ElEmpty v-else description="暂无审批流程详情" :image-size="100" />
 
         <div
           v-if="

@@ -456,6 +456,272 @@ export function useApprovalProgressWorkflow({
     notifyApprovalStateRefresh({ source: 'distribution-approval-progress-drawer' })
   }
 
+  /**
+   * 2026-10-21：异动卡片的审批操作。
+   * 与计划卡片同口径：按卡片当前步骤名解析角色（resolveExpectedApproverRoleCodesByStepName），
+   * 加上「当前待办节点的审批组织 = 本人组织」判定；提交时后端 decideTask 仍是最终权威。
+   */
+  function canCurrentUserHandleMutationApproval(item: PlanApprovalDetailItem): boolean {
+    const expectedRoleCodes = state.resolveExpectedApproverRoleCodesByStepName(item.currentStepName)
+    if (
+      expectedRoleCodes.length > 0 &&
+      !expectedRoleCodes.some(roleCode => state.currentUserRoleCodes.value.includes(roleCode))
+    ) {
+      return false
+    }
+
+    const approverOrgId = Number((item as { approverOrgId?: number | string | null }).approverOrgId)
+    if (
+      Number.isFinite(approverOrgId) &&
+      approverOrgId > 0 &&
+      Number.isFinite(state.currentUserOrgId.value)
+    ) {
+      return state.currentUserOrgId.value === approverOrgId
+    }
+
+    return false
+  }
+
+  /**
+   * 2026-10-22：异动卡片的「待处理实例清单」。
+   *
+   * 一次「发起异动」会为每个实体（多条指标 + 任务改名）各建一个审批实例，
+   * 它们共享 batchId，审批中心聚合成一张卡。审批/驳回必须逐个处理整批，
+   * 只处理 instanceId（批次里的第一条）会让其余实例永远停在审批中——
+   * 用户看到的就是「点了驳回，链路没有退回」。
+   */
+  function resolveMutationInstanceIds(item: PlanApprovalDetailItem): number[] {
+    const ids = Array.isArray(item.mutationInstanceIds) ? item.mutationInstanceIds : []
+    const normalized = ids.map(id => Number(id)).filter(id => Number.isFinite(id) && id > 0)
+    if (normalized.length > 0) {
+      return [...new Set(normalized)]
+    }
+    const fallback = Number(item.instanceId)
+    return Number.isFinite(fallback) && fallback > 0 ? [fallback] : []
+  }
+
+  async function handleApproveMutation(item: PlanApprovalDetailItem) {
+    const mutationInstanceIds = resolveMutationInstanceIds(item)
+    if (mutationInstanceIds.length === 0) {
+      ElMessage.warning('未找到该异动的审批实例，请刷新后重试')
+      return
+    }
+    if (!canCurrentUserHandleMutationApproval(item)) {
+      ElMessage.warning('当前审批节点不是你，无法执行审批通过')
+      return
+    }
+
+    let comment = '审批通过'
+    try {
+      const batchSuffix =
+        mutationInstanceIds.length > 1
+          ? `（本次异动共 ${mutationInstanceIds.length} 项，将一并处理）`
+          : ''
+      const { value } = await ElMessageBox.prompt(
+        `确认通过“${item.currentStepName || '异动审批'}”节点的审批？${batchSuffix}`,
+        '审批通过',
+        {
+          confirmButtonText: '确认通过',
+          cancelButtonText: '取消',
+          inputPlaceholder: '请输入审批意见（可选）',
+          inputType: 'textarea'
+        }
+      )
+      if (value && String(value).trim()) {
+        comment = String(value).trim()
+      }
+    } catch {
+      return
+    }
+
+    const loadingInstance = ElLoading.service({
+      lock: true,
+      text: '正在审批并同步数据，请稍候...',
+      background: 'rgba(0, 0, 0, 0.7)'
+    })
+    try {
+      const userId = state.authStore.user?.userId || state.authStore.user?.id || 1
+      const failures: string[] = []
+      for (const instanceId of mutationInstanceIds) {
+        try {
+          const response = await approvalApi.approvePlan(instanceId, userId, comment)
+          if (!response.success) {
+            failures.push(`${instanceId}: ${response.message || '审批失败'}`)
+          }
+        } catch (error) {
+          failures.push(`${instanceId}: ${(error as Error)?.message || '审批失败'}`)
+        }
+      }
+      if (failures.length > 0) {
+        ElMessage.error(`有 ${failures.length} 项审批未成功：${failures[0]}`)
+        return
+      }
+      ElMessage.success(
+        mutationInstanceIds.length > 1
+          ? `已通过本次异动全部 ${mutationInstanceIds.length} 项`
+          : '审批通过'
+      )
+      await refreshPlanApprovalAfterMutation()
+      emit('refresh', {})
+    } finally {
+      loadingInstance.close()
+    }
+  }
+
+  async function handleRejectMutation(item: PlanApprovalDetailItem) {
+    const mutationInstanceIds = resolveMutationInstanceIds(item)
+    if (mutationInstanceIds.length === 0) {
+      ElMessage.warning('未找到该异动的审批实例，请刷新后重试')
+      return
+    }
+    if (!canCurrentUserHandleMutationApproval(item)) {
+      ElMessage.warning('当前审批节点不是你，无法执行审批驳回')
+      return
+    }
+
+    let reason = '审批驳回'
+    try {
+      const batchSuffix =
+        mutationInstanceIds.length > 1
+          ? `（本次异动共 ${mutationInstanceIds.length} 项，将一并退回）`
+          : ''
+      const { value } = await ElMessageBox.prompt(
+        `请输入驳回原因（驳回后将退回上一节点）${batchSuffix}`,
+        '审批驳回',
+        {
+          confirmButtonText: '确认驳回',
+          cancelButtonText: '取消',
+          inputPlaceholder: '请输入驳回原因',
+          inputType: 'textarea',
+          inputValidator: (val: string) => (String(val || '').trim() ? true : '驳回原因不能为空')
+        }
+      )
+      reason = String(value || '').trim()
+    } catch {
+      return
+    }
+
+    const loadingInstance = ElLoading.service({
+      lock: true,
+      text: '正在提交驳回...',
+      background: 'rgba(0, 0, 0, 0.7)'
+    })
+    try {
+      const userId = state.authStore.user?.userId || state.authStore.user?.id || 1
+      const failures: string[] = []
+      for (const instanceId of mutationInstanceIds) {
+        try {
+          const response = await approvalApi.rejectPlan(instanceId, userId, reason)
+          if (!response.success) {
+            failures.push(`${instanceId}: ${response.message || '驳回失败'}`)
+          }
+        } catch (error) {
+          failures.push(`${instanceId}: ${(error as Error)?.message || '驳回失败'}`)
+        }
+      }
+      if (failures.length > 0) {
+        ElMessage.error(
+          `有 ${failures.length} 项驳回未成功：${failures[0]}${
+            failures.length > 1 ? '（其余可能已退回，请刷新确认）' : ''
+          }`
+        )
+        return
+      }
+      ElMessage.success(
+        mutationInstanceIds.length > 1
+          ? `已驳回本次异动全部 ${mutationInstanceIds.length} 项`
+          : '已驳回'
+      )
+      await refreshPlanApprovalAfterMutation()
+      emit('refresh', {})
+    } finally {
+      loadingInstance.close()
+    }
+  }
+
+  /**
+   * 异动撤回：与上报审批的「一键撤回」同源——都调 POST /workflows/{instanceId}/cancel，
+   * 后端 BusinessWorkflowApplicationService.cancelInstance 校验「只有发起人可撤回」，
+   * 且取消窗口由 AuditInstance.canRequesterWithdraw() 卡住（负责人通过后即不可撤回）。
+   * 撤回后走 WorkflowBusinessStatusSyncService → 清 mutation_status，指标回到稳定态。
+   */
+  function canCurrentUserWithdrawMutation(item: PlanApprovalDetailItem): boolean {
+    const instanceId = Number(item.instanceId)
+    if (!Number.isFinite(instanceId) || instanceId <= 0) {
+      return false
+    }
+    // 只有发起人可撤回：卡片上的提交人姓名与当前登录人比对
+    const currentUserName = String(
+      state.authStore.user?.realName || state.authStore.user?.userName || ''
+    ).trim()
+    const submitterName = String(item.submitterName || '').trim()
+    if (!currentUserName || !submitterName || currentUserName !== submitterName) {
+      return false
+    }
+    // 只在审批中可撤回
+    const stepName = String(item.currentStepName || '')
+    return !stepName.includes('终审') && !stepName.includes('分管校领导')
+  }
+
+  async function handleWithdrawMutation(item: PlanApprovalDetailItem) {
+    // 2026-10-22：同审批/驳回——一次异动提交对应多个实例，撤回必须整批一起撤，
+    // 否则会留下一半仍在审批中的实例。
+    const instanceIds = resolveMutationInstanceIds(item)
+    if (instanceIds.length === 0) {
+      ElMessage.warning('未找到该异动的审批实例，请刷新后重试')
+      return
+    }
+
+    try {
+      const batchSuffix =
+        instanceIds.length > 1 ? `\n\n本次异动共 ${instanceIds.length} 项，将一并撤回。` : ''
+      await ElMessageBox.confirm(
+        `确认撤回本次异动审批？${batchSuffix}\n\n撤回后异动回到未提交状态，改动内容保留，可重新修改后再发起。`,
+        '撤回异动审批',
+        { confirmButtonText: '确定撤回', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch {
+      return
+    }
+
+    const loadingInstance = ElLoading.service({
+      lock: true,
+      text: '正在撤回...',
+      background: 'rgba(0, 0, 0, 0.7)'
+    })
+    try {
+      const { cancelWorkflow } = await import('@/features/workflow/api/mutations')
+      const failures: string[] = []
+      for (const instanceId of instanceIds) {
+        try {
+          const response = await cancelWorkflow(String(instanceId))
+          if (!response.success) {
+            failures.push(`${instanceId}: ${response.message || '撤回失败'}`)
+          }
+        } catch (error) {
+          failures.push(`${instanceId}: ${(error as Error)?.message || '撤回失败'}`)
+        }
+      }
+      if (failures.length > 0) {
+        ElMessage.error(`有 ${failures.length} 项撤回未成功：${failures[0]}`)
+        return
+      }
+      ElMessage.success(
+        instanceIds.length > 1
+          ? `已撤回本次异动全部 ${instanceIds.length} 项`
+          : '已撤回本次异动审批'
+      )
+      await refreshPlanApprovalAfterMutation()
+      // 异动卡片的列表由父组件（StrategicTaskView）按部门拉取后经 prop 传入，
+      // 这里必须通知父组件重新拉取，否则撤回成功后卡片仍停留在「审批中」。
+      emit('refresh', {})
+    } catch (error) {
+      ElMessage.error(error instanceof Error ? error.message : '撤回失败')
+    } finally {
+      loadingInstance.close()
+    }
+  }
+
   async function handleApprovePlanBatch() {
     if (!state.hasPlanApprovalPermission.value) {
       ElMessage.warning('当前角色或组织范围不匹配该审批节点，无法执行审批通过')
@@ -1089,8 +1355,13 @@ export function useApprovalProgressWorkflow({
     ensureWorkflowRelatedAvatarsLoaded,
     ensureWorkflowUserAvatarLoaded,
     formatTime,
+    canCurrentUserHandleMutationApproval,
+    canCurrentUserWithdrawMutation,
+    handleApproveMutation,
     handleApprovePlanBatch,
+    handleRejectMutation,
     handleRejectPlanBatch,
+    handleWithdrawMutation,
     loadPendingPlanApprovals,
     loadPlanWorkflowDetail,
     loadPlanWorkflowHistoryCards,

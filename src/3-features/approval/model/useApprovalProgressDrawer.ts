@@ -53,6 +53,33 @@ export function formatAppraisalLevel(value?: string | null): string {
   if (!value) return ''
   return APPRAISAL_LEVEL_LABELS[value] || value
 }
+
+/** 流程编号里的实体类型前缀 → 用户看得懂的业务名称。 */
+const INSTANCE_NO_ENTITY_LABELS: Record<string, string> = {
+  PLAN: '计划',
+  PLAN_REPORT: '月报',
+  INDICATOR: '指标异动',
+  TASK: '任务异动'
+}
+
+/**
+ * 2026-10-21 用户定案：流程编号是给用户看的，不该暴露后端实体类型前缀。
+ * 后端格式为 `{实体类型}-{实体ID}-{轮次}`（如 INDICATOR-2051-001），
+ * 这里在前端转成「指标异动 2051 · 第1轮」；不符合该格式的原样返回，
+ * 避免把其他形态的编号（如「审批实例 1」占位）改坏。
+ */
+export function formatInstanceNo(value?: string | null): string {
+  const raw = String(value ?? '').trim()
+  if (!raw) return ''
+  const matched = raw.match(/^([A-Z_]+)-(\d+)(?:-(\d+))?$/)
+  if (!matched) return raw
+  const [, entityType, entityId, roundNo] = matched
+  const entityLabel = INSTANCE_NO_ENTITY_LABELS[entityType] || entityType
+  const round = Number(roundNo)
+  return Number.isFinite(round) && round > 0
+    ? `${entityLabel} ${entityId} · 第${round}轮`
+    : `${entityLabel} ${entityId}`
+}
 import { getIndicatorById as getIndicatorDetailById } from '@/features/indicator/api/query'
 import { indicatorFillApi } from '@/features/plan/api/planApi'
 import { getUserById, getUsersByOrgId, tryGetUserById } from '@/features/user/api/query'
@@ -104,9 +131,9 @@ interface Props {
   approvalType?: 'distribution' | 'submission'
   historyViewMode?: 'auto' | 'card-only'
   workflowCode?: string | string[]
-  workflowEntityType?: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR'
+  workflowEntityType?: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR' | 'TASK'
   workflowEntityId?: number | string
-  secondaryWorkflowEntityType?: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR'
+  secondaryWorkflowEntityType?: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR' | 'TASK'
   secondaryWorkflowEntityId?: number | string
   routeTarget?: string
   showRouteButton?: boolean
@@ -376,7 +403,9 @@ export function useApprovalProgressDrawer(
     return expectedWorkflowCodes.value.includes(normalizeWorkflowCode(workflowCode))
   }
 
-  function normalizeWorkflowEntityType(value: unknown): 'PLAN' | 'PLAN_REPORT' | 'INDICATOR' | '' {
+  function normalizeWorkflowEntityType(
+    value: unknown
+  ): 'PLAN' | 'PLAN_REPORT' | 'INDICATOR' | 'TASK' | '' {
     const normalized = String(value || '')
       .trim()
       .toUpperCase()
@@ -389,6 +418,10 @@ export function useApprovalProgressDrawer(
     // 异动审批（PLAN_MUTATION_STRATEGY）挂在指标实体上
     if (normalized === 'INDICATOR') {
       return 'INDICATOR'
+    }
+    // 2026-10-21：战略任务改名异动（entity_type=TASK）同链
+    if (normalized === 'TASK') {
+      return 'TASK'
     }
     return ''
   }
@@ -1016,7 +1049,7 @@ export function useApprovalProgressDrawer(
     const seen = new Set<string>()
 
     const appendTarget = (
-      entityType: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR' | undefined,
+      entityType: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR' | 'TASK' | undefined,
       entityId: unknown
     ) => {
       const normalizedType =
@@ -1026,7 +1059,9 @@ export function useApprovalProgressDrawer(
             ? 'PLAN'
             : entityType === 'INDICATOR'
               ? 'INDICATOR'
-              : null
+              : entityType === 'TASK'
+                ? 'TASK'
+                : null
       const normalizedId = Number(entityId ?? NaN)
       if (!normalizedType || !Number.isFinite(normalizedId) || normalizedId <= 0) {
         return
@@ -4379,6 +4414,7 @@ export function useApprovalProgressDrawer(
     externalWorkflowTodoItems,
     resolveExternalTodoSubmitterName,
     formatAppraisalLevel,
+    formatInstanceNo,
     formatStayDuration,
     hasPlanWorkflowData,
     hasWorkflowTabContent,

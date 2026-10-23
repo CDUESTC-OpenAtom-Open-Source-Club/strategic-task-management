@@ -1,9 +1,9 @@
 import { readonly, ref } from 'vue'
 
 export interface ApprovalCenterContext {
-  workflowEntityType?: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR'
+  workflowEntityType?: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR' | 'TASK'
   workflowEntityId?: number | string
-  secondaryWorkflowEntityType?: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR'
+  secondaryWorkflowEntityType?: 'PLAN' | 'PLAN_REPORT' | 'INDICATOR' | 'TASK'
   secondaryWorkflowEntityId?: number | string
   approvalInstanceId?: number | string
   departmentName?: string
@@ -26,7 +26,8 @@ function normalizeApprovalCenterContext(
   if (
     context.workflowEntityType === 'PLAN' ||
     context.workflowEntityType === 'PLAN_REPORT' ||
-    context.workflowEntityType === 'INDICATOR'
+    context.workflowEntityType === 'INDICATOR' ||
+    context.workflowEntityType === 'TASK'
   ) {
     normalized.workflowEntityType = context.workflowEntityType
   }
@@ -34,7 +35,8 @@ function normalizeApprovalCenterContext(
   if (
     context.secondaryWorkflowEntityType === 'PLAN' ||
     context.secondaryWorkflowEntityType === 'PLAN_REPORT' ||
-    context.secondaryWorkflowEntityType === 'INDICATOR'
+    context.secondaryWorkflowEntityType === 'INDICATOR' ||
+    context.secondaryWorkflowEntityType === 'TASK'
   ) {
     normalized.secondaryWorkflowEntityType = context.secondaryWorkflowEntityType
   }

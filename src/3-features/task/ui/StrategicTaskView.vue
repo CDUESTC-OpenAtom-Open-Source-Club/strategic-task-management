@@ -437,20 +437,76 @@ const strategicExporting = ref(false)
 const mutationApiLoading = ref(false)
 
 // 2026-10-10：异动审批实例 → 审批中心「审批历史」卡片（P1 修复：异动链不缺失前端）
-const departmentMutationWorkflowEntities = ref<Array<{ entityId: number }>>([])
+// 2026-10-21：任务改名异动（entity_type=TASK）与指标异动并列，需按各自类型取历史
+const departmentMutationWorkflowEntities = ref<
+  Array<{ entityId: number; entityType?: 'INDICATOR' | 'TASK' }>
+>([])
+// 2026-10-21：审批中（IN_REVIEW）的异动实例 → 审批中心「计划审批」看板，
+// 让发起人和部门视角都能看到自己发起的异动（此前看板只列"我是审批人"的实例）
+const departmentMutationPendingApprovals = ref<Array<Record<string, any>>>([])
 const loadDepartmentMutationWorkflowEntities = async () => {
   try {
     const orgId = resolveDepartmentIdByName(selectedDepartment.value)
     if (!orgId) {
       departmentMutationWorkflowEntities.value = []
+      departmentMutationPendingApprovals.value = []
       return
     }
     const { mutationApi } = await import('@/features/indicator/api/mutationApi')
     const response = await mutationApi.approvals(orgId)
     const items = Array.isArray(response.data) ? response.data : []
     departmentMutationWorkflowEntities.value = items
-      .filter(item => Number(item.indicator_id) > 0)
-      .map(item => ({ entityId: Number(item.indicator_id) }))
+      .map(item => ({
+        entityId: Number(item.indicator_id),
+        entityType:
+          String(item.entity_type || 'INDICATOR').toUpperCase() === 'TASK'
+            ? ('TASK' as const)
+            : ('INDICATOR' as const)
+      }))
+      .filter(item => Number.isFinite(item.entityId) && item.entityId > 0)
+    departmentMutationPendingApprovals.value = items
+      .filter(item => String(item.status || '').toUpperCase() === 'IN_REVIEW')
+      .map(item => ({
+        instanceId: item.instance_id,
+        entityId: Number(item.indicator_id),
+        entityType:
+          String(item.entity_type || 'INDICATOR').toUpperCase() === 'TASK'
+            ? ('TASK' as const)
+            : ('INDICATOR' as const),
+        flowCode: item.flow_code || 'PLAN_MUTATION_STRATEGY',
+        status: 'IN_REVIEW',
+        title: item.indicator_desc,
+        currentStepName: item.current_step_name,
+        approverOrgId: item.approver_org_id,
+        sourceOrgId: item.source_org_id,
+        sourceOrgName: item.source_org_name,
+        targetOrgId: item.target_org_id,
+        targetOrgName: item.target_org_name,
+        // 2026-10-21：批次号与字段变更明细，供看板聚合与详情弹窗逐字段展示
+        batchId: item.batch_id || null,
+        changedFields: item.changed_fields || null,
+        // 提交人取后端真实发起人（audit_instance.requester 的姓名）
+        submitterName: item.submitter_name,
+        createdAt: item.created_at
+      }))
+
+    // 2026-10-21：异动本身也是一条审批流程，「审批流程」页签要能显示它走到哪一步。
+    // 按实例取流程详情挂到对应条目上（与计划审批同一套 getWorkflowInstanceDetail 接口）。
+    const { getWorkflowInstanceDetail } = await import('@/features/workflow/api/queries')
+    departmentMutationPendingApprovals.value = await Promise.all(
+      departmentMutationPendingApprovals.value.map(async entry => {
+        try {
+          const detail = await getWorkflowInstanceDetail(String(entry.instanceId))
+          return detail?.success && detail.data ? { ...entry, workflowDetail: detail.data } : entry
+        } catch (error) {
+          logger.warn('[StrategicTaskView] 加载异动流程详情失败:', {
+            instanceId: entry.instanceId,
+            error
+          })
+          return entry
+        }
+      })
+    )
   } catch (error) {
     logger.warn('[StrategicTaskView] 加载异动审批实例失败:', error)
   }
@@ -462,6 +518,15 @@ watch(
     void loadDepartmentMutationWorkflowEntities()
   },
   { immediate: true }
+)
+// 抽屉每次打开都重新拉一次：审批推进后异动的当前节点与流程详情都会变
+watch(
+  () => taskApprovalVisible?.value,
+  visible => {
+    if (visible) {
+      void loadDepartmentMutationWorkflowEntities()
+    }
+  }
 )
 const strategicBatchExportDialogVisible = ref(false)
 const selectedStrategicExportDepartments = ref<string[]>([])
@@ -1002,7 +1067,8 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
         <div class="toolbar-left">
           <!-- 2026-10-20 用户定案：已下发计划允许战略部继续新增指标（走异动审批链），
                不再因 hasDistributedIndicators 禁用「新增行」 -->
-          <el-button type="primary" size="small" :disabled="isReadOnly" @click.stop="addNewRow">
+          <!-- 2026-10-21 用户定案：编辑权只属于填报人，负责人/校领导只审批不编辑 -->
+          <el-button type="primary" size="small" :disabled="!canEdit" @click.stop="addNewRow">
             <el-icon><Plus /></el-icon>
             新增行
           </el-button>
@@ -1052,7 +1118,8 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             导入
           </el-button>
           <!-- 2026-10-21 用户定案：全部攒改一起上报；按钮就叫「发起异动」 -->
-          <template v-if="hasMutationDraft">
+          <!-- 编辑权只属于填报人：负责人/校领导不产生草稿，也不应看到提交入口 -->
+          <template v-if="canEdit && hasMutationDraft">
             <el-button
               size="small"
               type="warning"
@@ -2423,6 +2490,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
       :secondary-workflow-entity-type="secondaryApprovalWorkflowEntityType"
       :secondary-workflow-entity-id="secondaryApprovalWorkflowEntityId"
       :mutation-workflow-entities="departmentMutationWorkflowEntities"
+      :mutation-pending-approvals="departmentMutationPendingApprovals"
       approval-type="submission"
       @close="taskApprovalVisible = false"
       @refresh="handleApprovalRefresh"

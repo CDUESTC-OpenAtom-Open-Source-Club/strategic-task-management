@@ -44,17 +44,21 @@ export const mutationApi = {
    * 2026-10-21 用户定案：一次异动可同时调整多条指标——字段攒改与新增指标
    * 整批一次提交；后端先全部应用再统一做权重合计校验，任一失败整批不生效。
    * item：{ id, create?: true 表示新增指标, indicator_desc?/weight_percent?/remark?: 变更值 }
+   * 任务改名条目：{ id: 任务ID, entity_type: 'TASK', name: 新任务名 }
    */
   async initiateBatch(
     items: Array<{
       id: number | string
       create?: boolean
+      entity_type?: 'INDICATOR' | 'TASK'
+      name?: string
       indicator_desc?: string
       weight_percent?: number
       remark?: string
     }>
   ): Promise<ApiResponse<string[]>> {
-    return apiClient.post('/indicators/mutations/batch', { items })
+    // 后端接收裸数组（List<Map>）；早期版本发 {items} 会 400
+    return apiClient.post('/indicators/mutations/batch', items)
   },
 
   /** 异动历史（已更改 N 次 + 历史版本快照） */
@@ -78,10 +82,23 @@ export const mutationApi = {
       Array<{
         instance_id: number
         indicator_id: number
+        /** 异动实体类型：INDICATOR=指标异动，TASK=战略任务改名异动 */
+        entity_type?: 'INDICATOR' | 'TASK'
         indicator_desc: string
         status: string
         created_at: string
         completed_at?: string
+        flow_code?: string
+        current_step_name?: string
+        source_org_name?: string
+        target_org_name?: string
+        approver_org_id?: number
+        source_org_id?: number
+        target_org_id?: number
+        /** 2026-10-21：同一次提交的多条改动共享同一批次号，审批中心据此聚合卡片 */
+        batch_id?: string | null
+        /** 2026-10-21：本次异动的字段变更明细，详情弹窗逐字段展示 before→after */
+        changed_fields?: Record<string, { before?: unknown; after?: unknown }> | null
       }>
     >
   > {
