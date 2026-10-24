@@ -56,6 +56,7 @@ import { useApprovalStore } from '@/features/approval/model/store'
 import { indicatorApi } from '@/features/indicator/api'
 import { usePlanStore } from '@/features/plan/model/store'
 import { indicatorFillApi } from '@/features/plan/api/planApi'
+import { useIndicatorFills } from '@/features/indicator/model/useIndicatorFills'
 import { getUsersByOrgId } from '@/features/user/api/query'
 import { sleep } from '@/5-shared/api/retry'
 import {
@@ -1096,6 +1097,40 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     const stepName = currentApprovalStepName.value
     const approverName = currentApprovalApproverName.value
     const candidateNames = currentApprovalCandidateNames.value
+
+    // #82 一致性：头部「异动状态」与表格「上报状态」列不得互相矛盾。
+    // 计划级/上报流已到终态时，若指标级最新填报仍有在审（submitted）或刚被回退（rejected），
+    // 以指标级填报审批态覆盖头部标签。聚合口径与 ReportStatusCell 完全一致（同取 fills[0]）。
+    const fillApproval = currentPlanFillApprovalSummary.value
+    const isTerminalApprovedStatus =
+      workflowStatus === 'APPROVED' ||
+      workflowStatus === 'COMPLETED' ||
+      workflowStatus === 'FINISHED'
+    const isTerminalRejectedStatus =
+      workflowStatus === 'REJECTED' ||
+      workflowStatus === 'RETURNED' ||
+      workflowStatus === 'WITHDRAWN' ||
+      workflowStatus === 'CANCELLED'
+
+    if (fillApproval.loaded && (isTerminalApprovedStatus || isTerminalRejectedStatus)) {
+      if (fillApproval.hasSubmitted) {
+        return {
+          label: formatPendingApprovalLabel(fillApproval.submittedStepName),
+          tagType: 'warning' as const,
+          description: fillApproval.submittedStepName
+            ? `当前计划有指标正在“${fillApproval.submittedStepName}”环节审批。`
+            : '当前计划有指标正在审批中。'
+        }
+      }
+
+      if (fillApproval.hasRejected && isTerminalApprovedStatus) {
+        return {
+          label: '已回退',
+          tagType: 'danger' as const,
+          description: '当前计划有指标的填报已被回退，等待重新上报。'
+        }
+      }
+    }
 
     if (
       workflowStatus === 'APPROVED' ||
@@ -2617,6 +2652,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
           hydrateCurrentPlanWorkflowState({ force: true })
         ])
 
+        // #82 审批流转后重算指标级填报审批态聚合，保持头部「异动状态」与「上报状态」列同步
+        void refreshCurrentPlanFillApprovalSummary()
+
         if (
           currentPlanStatus.value === 'PENDING' ||
           currentPlanStatus.value === 'DISTRIBUTED' ||
@@ -2908,6 +2946,88 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       return taskA.localeCompare(taskB)
     })
   })
+
+  // #82 头部「异动状态」与「上报状态」列一致性：
+  // 聚合当前计划可见指标的最新一次非草稿填报审批态，口径与 ReportStatusCell 完全一致
+  // （同取 fills[0]：approved→已上报 / submitted→审批中 / rejected→已回退）。
+  // useIndicatorFills 内部按 indicatorId 缓存 Promise，与表格单元格共享同一请求，不增加网络开销。
+  const currentPlanFillApprovalSummary = ref<{
+    loaded: boolean
+    hasSubmitted: boolean
+    hasRejected: boolean
+    submittedStepName: string
+  }>({
+    loaded: false,
+    hasSubmitted: false,
+    hasRejected: false,
+    submittedStepName: ''
+  })
+
+  let fillApprovalSummaryRequestId = 0
+
+  async function refreshCurrentPlanFillApprovalSummary(): Promise<void> {
+    const rows = indicators.value
+    const requestId = ++fillApprovalSummaryRequestId
+
+    if (rows.length === 0) {
+      currentPlanFillApprovalSummary.value = {
+        loaded: true,
+        hasSubmitted: false,
+        hasRejected: false,
+        submittedStepName: ''
+      }
+      return
+    }
+
+    try {
+      const fillsPerIndicator = await Promise.all(rows.map(row => useIndicatorFills(row.id)))
+      // 丢弃过期响应，避免快速切换部门/计划时旧数据覆盖新数据
+      if (requestId !== fillApprovalSummaryRequestId) {
+        return
+      }
+
+      let hasSubmitted = false
+      let hasRejected = false
+      let submittedStepName = ''
+
+      fillsPerIndicator.forEach(fills => {
+        const latest = fills[0]
+        if (!latest) {
+          return
+        }
+        if (latest.status === 'submitted') {
+          hasSubmitted = true
+          if (!submittedStepName) {
+            submittedStepName = String(latest.currentStepName || '').trim()
+          }
+        } else if (latest.status === 'rejected') {
+          hasRejected = true
+        }
+      })
+
+      currentPlanFillApprovalSummary.value = {
+        loaded: true,
+        hasSubmitted,
+        hasRejected,
+        submittedStepName
+      }
+    } catch (error) {
+      // 拉取失败时保持既有计划级语义，不阻塞页面渲染
+      logger.warn('[StrategicTaskView] 聚合指标填报审批态失败:', { error })
+    }
+  }
+
+  watch(
+    () =>
+      [
+        currentPlan.value?.id ?? '',
+        indicators.value.map(indicator => indicator.id).join(',')
+      ].join('|'),
+    () => {
+      void refreshCurrentPlanFillApprovalSummary()
+    },
+    { immediate: true }
+  )
 
   watch(
     () => currentIndicator.value?.id,
