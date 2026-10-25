@@ -79,6 +79,12 @@ export function useNotificationCenter() {
         return
       }
 
+      // 2026-10-24（铃铛跳转修复）：上报审批（PLAN_REPORT）的 source/target 是
+      // 「下发方向」（教务处 -> 计算机学院），上报是反方向——提交方=targetOrg。
+      // departmentName 必须带提交方组织名，/distribution 深链靠它自动选中对应学院。
+      const entityTypeUpper = String(message.entityType || '').trim().toUpperCase()
+      const sourceOrgName = getMessageMetadataValue(message, 'sourceOrgName') || null
+      const targetOrgName = getMessageMetadataValue(message, 'targetOrgName') || null
       const payload = {
         approvalInstanceId: message.approvalInstanceId,
         entityType: message.entityType,
@@ -86,11 +92,13 @@ export function useNotificationCenter() {
         actionUrl: message.actionUrl,
         viewerRole: authStore.effectiveRole || authStore.userRole,
         departmentName:
-          getMessageMetadataValue(message, 'targetOrgName') ||
-          getMessageMetadataValue(message, 'sourceOrgName') ||
-          '',
-        sourceOrgName: getMessageMetadataValue(message, 'sourceOrgName') || null,
-        targetOrgName: getMessageMetadataValue(message, 'targetOrgName') || null
+          entityTypeUpper === 'PLAN_REPORT'
+            ? targetOrgName || sourceOrgName || ''
+            : targetOrgName || sourceOrgName || '',
+        sourceOrgName,
+        targetOrgName,
+        currentDepartmentName:
+          (typeof authStore.user?.orgName === 'string' && authStore.user.orgName.trim()) || null
       }
       const workbenchRoute = resolveApprovalRoute(payload)
       if (workbenchRoute) {

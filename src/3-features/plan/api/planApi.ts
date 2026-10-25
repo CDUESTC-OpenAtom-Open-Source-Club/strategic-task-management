@@ -810,6 +810,8 @@ function mapPlanReportToIndicatorFill(
     created_at: report.createdAt || fillDate,
     updated_at: report.updatedAt || report.createdAt || fillDate,
     status: convertReportStatusToFillStatus(report.status),
+    // 2026-10-24：本轮填报的自评等级随记录下发，供上报记录卡与详情展示
+    selfRating: resolvedDetail?.selfRating ?? null,
     audit_comment: report.rejectionReason || undefined,
     audited_by: report.approvedBy != null ? String(report.approvedBy) : undefined,
     audited_at: report.approvedAt || undefined,
@@ -1264,6 +1266,17 @@ function resolveReportRoundTimestamp(report: PlanReportSimpleResponse): number {
   return new Date(report.submittedAt || report.createdAt || 0).getTime()
 }
 
+/**
+ * 2026-10-24（草稿优先）：同月同组织存在多条报告时（如历史 APPROVED + 本轮新草稿），
+ * 「当前可编辑报告」应优先命中 DRAFT/REJECTED——否则被旧 APPROVED 抢占 currentReport，
+ * 填报入口被锁死、无法发起下一轮上报（线上实测：202610 月 APPROVED(5)+DRAFT(6) 并存，
+ * 一键提交按钮消失）。排序上把可编辑态排到同月最前，供 currentEditableReport 稳定命中。
+ */
+function resolveReportEditablePriority(report: PlanReportSimpleResponse): number {
+  const normalizedStatus = getNormalizedReportStatus(report.status)
+  return ['DRAFT', 'REJECTED'].includes(normalizedStatus) ? 1 : 0
+}
+
 function resolveCurrentMonthPlanReportSummaries(
   reports: PlanReportSimpleResponse[],
   reportOrgId: number,
@@ -1278,12 +1291,18 @@ function resolveCurrentMonthPlanReportSummaries(
   // 默认按自然月查询时上级角色永远命中不到报告 → 自评等级/进度说明/资料全空。
   // 当月精确匹配为空且调用方未显式指定月份时，回退取该组织最近月份的报告；
   // 显式传月（如填报入口校验）保持精确匹配语义，不回退（避免把「该月无报告」误判为有）。
+  const byRoundDesc = (a: PlanReportSimpleResponse, b: PlanReportSimpleResponse) =>
+    resolveReportRoundTimestamp(b) - resolveReportRoundTimestamp(a)
+  // 可编辑态优先于同月其他轮次（草稿要能继续填报/提交）
+  const byEditableFirst = (a: PlanReportSimpleResponse, b: PlanReportSimpleResponse) =>
+    resolveReportEditablePriority(b) - resolveReportEditablePriority(a) || byRoundDesc(a, b)
+
   let currentMonthReports = reports
     .filter(
       report =>
         Number(report.reportOrgId) === Number(reportOrgId) && report.reportMonth === reportMonth
     )
-    .sort((a, b) => resolveReportRoundTimestamp(b) - resolveReportRoundTimestamp(a))
+    .sort(byEditableFirst)
 
   if (currentMonthReports.length === 0 && options.fallbackToLatestMonth) {
     const latestMonth = reports
@@ -1298,7 +1317,7 @@ function resolveCurrentMonthPlanReportSummaries(
           report =>
             Number(report.reportOrgId) === Number(reportOrgId) && report.reportMonth === latestMonth
         )
-        .sort((a, b) => resolveReportRoundTimestamp(b) - resolveReportRoundTimestamp(a))
+        .sort(byEditableFirst)
     }
   }
 
@@ -1322,7 +1341,9 @@ function resolveCurrentMonthPlanReportSummaries(
     ) || null
 
   return {
-    currentReport: currentWorkflowReport || currentEditableReport || currentMonthReports[0] || null,
+    // 2026-10-24（草稿优先）：存在可编辑报告（DRAFT/REJECTED）时它就是「当前报告」——
+    // 历史 APPROVED 不能抢占 currentReport，否则填报入口被锁死、无法发起下一轮上报。
+    currentReport: currentEditableReport || currentWorkflowReport || currentMonthReports[0] || null,
     latestReport:
       currentMonthReports.find(report => {
         const normalizedStatus = getNormalizedReportStatus(report.status)

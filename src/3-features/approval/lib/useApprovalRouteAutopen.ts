@@ -6,7 +6,10 @@ const APPROVAL_ROUTE_QUERY_KEYS = [
   'approvalEntityType',
   'approvalEntityId',
   'approvalInstanceId',
-  'approvalDepartment'
+  'approvalDepartment',
+  // 2026-10-24（铃铛跳转修复）：上报方向判定需要下发方向的 source/target
+  'approvalSourceOrg',
+  'approvalTargetOrg'
 ] as const
 
 type ApprovalRouteAutopenOptions<T extends string> = {
@@ -19,6 +22,8 @@ type ApprovalRouteAutopenResult<T extends string> = {
   routeApprovalEntityType: ComputedRef<T | undefined>
   routeApprovalEntityId: ComputedRef<string | undefined>
   routeApprovalDepartment: ComputedRef<string | undefined>
+  routeApprovalSourceOrg: ComputedRef<string | undefined>
+  routeApprovalTargetOrg: ComputedRef<string | undefined>
   shouldAutoOpenApprovalFromRoute: ComputedRef<boolean>
 }
 
@@ -51,6 +56,14 @@ export function useApprovalRouteAutopen<T extends string>(
 
   const routeApprovalDepartment = computed<string | undefined>(() =>
     normalizeApprovalRouteQueryValue(route.query.approvalDepartment)
+  )
+
+  const routeApprovalSourceOrg = computed<string | undefined>(() =>
+    normalizeApprovalRouteQueryValue(route.query.approvalSourceOrg)
+  )
+
+  const routeApprovalTargetOrg = computed<string | undefined>(() =>
+    normalizeApprovalRouteQueryValue(route.query.approvalTargetOrg)
   )
 
   const shouldAutoOpenApprovalFromRoute = computed(() => {
@@ -119,6 +132,8 @@ export function useApprovalRouteAutopen<T extends string>(
     routeApprovalEntityType,
     routeApprovalEntityId,
     routeApprovalDepartment,
+    routeApprovalSourceOrg,
+    routeApprovalTargetOrg,
     shouldAutoOpenApprovalFromRoute
   }
 }

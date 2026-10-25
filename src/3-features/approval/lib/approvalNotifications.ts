@@ -167,7 +167,18 @@ function resolveApprovalWorkbenchRoute(payload: ApprovalRoutePayload): string | 
   const viewerRole = normalizeViewerRole(payload.viewerRole) || resolveCurrentViewerRole()
 
   switch (entityType) {
-    case 'PLAN_REPORT':
+    case 'PLAN_REPORT': {
+      // 2026-10-24（铃铛跳转修复）：source/target 是「下发方向」，
+      // 上报反方向——提交方=targetOrg。targetOrg 与 sourceOrg 不同 → 学院向职能部门
+      // 上报 → 职能部门落 /distribution（学院看板所在页）；相同 → 本部门自报 → /indicators。
+      // 不再依赖 currentDepartmentName 参与方向猜测（通知 payload 里此前根本没传）。
+      const sourceOrg = normalizeDepartmentName(payload.sourceOrgName)
+      const targetOrg = normalizeDepartmentName(payload.targetOrgName)
+      const originType = resolvePlanReportOriginType(payload)
+      const isCollegeReportUpward =
+        originType === 'college-report-upward' ||
+        (Boolean(targetOrg) && Boolean(sourceOrg) && targetOrg !== sourceOrg)
+
       if (viewerRole === 'strategic_dept') {
         return '/strategic-tasks'
       }
@@ -177,15 +188,11 @@ function resolveApprovalWorkbenchRoute(payload: ApprovalRoutePayload): string | 
       }
 
       if (viewerRole === 'functional_dept') {
-        const originType = resolvePlanReportOriginType(payload)
-        if (originType === 'college-report-upward') {
-          return '/distribution'
-        }
-
-        return '/indicators'
+        return isCollegeReportUpward ? '/distribution' : '/indicators'
       }
 
       return '/strategic-tasks'
+    }
     case 'PLAN':
       if (viewerRole === 'functional_dept') {
         return '/distribution'
@@ -197,9 +204,17 @@ function resolveApprovalWorkbenchRoute(payload: ApprovalRoutePayload): string | 
 
       return '/strategic-tasks'
     case 'TASK':
+    case 'INDICATOR': {
+      // 2026-10-23 用户定案（异动审批跳转缺陷修复）：异动审批卡挂在战略任务管理页
+      // 审批抽屉的「异动审批」区（mutation-workflow-entities 数据源），战略发展部/
+      // 分管校领导点击异动通知必须落 /strategic-tasks 并自动选中目标部门；
+      // 此前 INDICATOR 一律落 /indicators，审批人到达的页面没有异动卡。
+      // 职能部门/学院视角多为异动结果通知，仍落各自的指标视图（可见异动角标与历史）。
+      if (viewerRole === 'functional_dept' || viewerRole === 'secondary_college') {
+        return '/indicators'
+      }
       return '/strategic-tasks'
-    case 'INDICATOR':
-      return '/indicators'
+    }
     case 'INDICATOR_DISTRIBUTION':
       return '/distribution'
     default:
@@ -232,6 +247,17 @@ function appendApprovalContext(path: string, payload: ApprovalRoutePayload): str
 
   if (departmentName) {
     params.set('approvalDepartment', departmentName)
+  }
+
+  // 2026-10-24：下发方向的 source/target 随深链透传，落地页据此判定上报方向、
+  // 自动选中提交方学院（/distribution 的左侧学院列表）
+  const sourceOrg = normalizeApprovalQueryValue(payload.sourceOrgName)
+  const targetOrg = normalizeApprovalQueryValue(payload.targetOrgName)
+  if (sourceOrg) {
+    params.set('approvalSourceOrg', sourceOrg)
+  }
+  if (targetOrg) {
+    params.set('approvalTargetOrg', targetOrg)
   }
 
   const query = params.toString()

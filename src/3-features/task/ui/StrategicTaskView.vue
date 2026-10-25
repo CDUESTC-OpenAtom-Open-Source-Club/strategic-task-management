@@ -18,6 +18,7 @@ import {
   Upload
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { logger } from '@/shared/lib/utils/logger'
 import AppAvatar from '@/shared/ui/avatar/AppAvatar.vue'
 import { DistributionApprovalProgressDrawer } from '@/features/approval'
 import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
@@ -105,6 +106,7 @@ const {
   canDeleteCollegeIndicator,
   canDistribute,
   canEdit,
+  isCurrentPlanUnderApproval,
   canEditIndicators,
   canWithdrawPlan,
   cancelAdd,
@@ -326,6 +328,34 @@ const {
 const activeTaskTabName = ref<'functional' | 'college'>('functional')
 
 /**
+ * 2026-10-24 用户定案：卡片视图暂无业务需求，入口从工具栏隐藏（代码保留）。
+ * 恢复显示只需把此开关改回 true。
+ */
+const SHOW_CARD_VIEW_TOGGLE = false
+
+/**
+ * 2026-10-24 用户定案：从「上报记录」卡点开单次上报详情。
+ * 抽屉里只显示历次摘要，点某一张卡看该轮的完整内容（进度/自评/说明/附件/审核意见）。
+ */
+const fillDetailVisible = ref(false)
+const activeFillDetail = ref<Record<string, any> | null>(null)
+
+const openFillDetail = (fill: Record<string, any>) => {
+  activeFillDetail.value = fill || null
+  fillDetailVisible.value = Boolean(fill)
+}
+
+const downloadFillAttachment = async (attachment: Record<string, any>) => {
+  try {
+    const { apiClient } = await import('@/shared/api/client')
+    await apiClient.download(`/attachments/${attachment.id}/download`, attachment.fileName)
+  } catch (error) {
+    logger.warn('[StrategicTaskView] 上报附件下载失败:', error)
+    ElMessage.error('附件下载失败，请稍后重试')
+  }
+}
+
+/**
  * 2026-10-23 用户定案：新增行按 tab 分流——
  * 职能部门 tab 建核心指标（战略部下发），学院 tab 建该学院的子指标（挂到所选核心指标）。
  * 由 collegeAddMode 告知 model 走哪条创建契约。
@@ -374,19 +404,6 @@ const manualAlertEditable = computed(() =>
   })
 )
 
-const manualAlertLockHint = computed(() => {
-  if (isReadOnly.value) {
-    return MANUAL_ALERT_READONLY_HINT
-  }
-  if (
-    String(currentPlanStatus.value ?? '')
-      .trim()
-      .toUpperCase() !== 'DISTRIBUTED'
-  ) {
-    return MANUAL_ALERT_LOCKED_HINT
-  }
-  return MANUAL_ALERT_WORKFLOW_LOCKED_HINT
-})
 
 // 二级学院页签（P2）：筛出下发到学院的任务与指标，复用 TaskIndicatorTree 树状下钻
 // 2026-10-11 修复：原过滤只看 department 字段（二级学院子指标的 owner 是职能部门，
@@ -544,7 +561,6 @@ watch(
 const strategicBatchExportDialogVisible = ref(false)
 const selectedStrategicExportDepartments = ref<string[]>([])
 const strategicImportDialogVisible = ref(false)
-const savingManualAlertIndicatorId = ref<string | number | null>(null)
 type ManualAlertSelectValue = Exclude<ManualAlertSeverity, null> | ''
 
 const manualAlertOptions: Array<{
@@ -567,39 +583,6 @@ const getManualAlertLabel = (severity?: ManualAlertSeverity) => getManualAlertOp
 const getManualAlertTagType = (severity?: ManualAlertSeverity) =>
   getManualAlertOption(severity).type
 
-const handleManualAlertChange = async (
-  row: StrategicIndicator,
-  selectedSeverity: ManualAlertSelectValue
-) => {
-  const severity: ManualAlertSeverity = selectedSeverity === '' ? null : selectedSeverity
-  const previousSeverity = row.manualAlertSeverity ?? null
-  if (previousSeverity === severity) {
-    return
-  }
-
-  const label = getManualAlertLabel(severity)
-  try {
-    await ElMessageBox.confirm(
-      `确认将「${row.name || '该指标'}」的进度等级调整为「${label}」？确认后会通知对应下级部门。`,
-      '调整进度等级',
-      {
-        confirmButtonText: '确认调整',
-        cancelButtonText: '取消',
-        type: severity ? 'warning' : 'info'
-      }
-    )
-
-    savingManualAlertIndicatorId.value = row.id
-    await strategicStore.updateManualAlertLevel(String(row.id), severity)
-    ElMessage.success(severity ? '进度等级已调整，并已通知下级部门' : '进度等级已恢复未评定')
-  } catch (error) {
-    if (error !== 'cancel' && error !== 'close') {
-      ElMessage.error(error instanceof Error && error.message ? error.message : '进度等级调整失败')
-    }
-  } finally {
-    savingManualAlertIndicatorId.value = null
-  }
-}
 
 const allStrategicExportDepartmentsSelected = computed({
   get: () =>
@@ -1086,8 +1069,10 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <el-button
             type="primary"
             size="small"
-            :disabled="!canEdit || (activeTaskTabName === 'college' && !selectedCollege)"
-            :title="activeTaskTabName === 'college' && !selectedCollege ? '请先在左侧选择学院' : ''"
+            :disabled="!canEdit || isCurrentPlanUnderApproval || (activeTaskTabName === 'college' && !selectedCollege)"
+            :title="isCurrentPlanUnderApproval
+              ? '计划正在审批中，暂不能新增：请等审批结束或先撤回本次审批'
+              : activeTaskTabName === 'college' && !selectedCollege ? '请先在左侧选择学院' : ''"
             @click.stop="handleAddNewRow"
           >
             <el-icon><Plus /></el-icon>
@@ -1154,7 +1139,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             </el-button>
           </template>
           <!-- 视图切换按钮 -->
-          <el-button-group style="margin-left: 16px">
+          <!-- 2026-10-24 用户定案：卡片视图无业务需求，且不能切换时单独留「表格视图」按钮
+               也无意义——整组隐藏（两个按钮与卡片视图模板代码均保留） -->
+          <el-button-group v-if="SHOW_CARD_VIEW_TOGGLE" style="margin-left: 16px">
             <el-button
               :type="viewMode === 'table' ? 'primary' : ''"
               size="small"
@@ -1443,40 +1430,13 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       <span v-else style="color: #909399">—</span>
                     </template>
                   </el-table-column>
+                  <!-- 2026-10-24 用户定案（鉴定等级锁死）：填报看板上的鉴定进度等级
+                       一律只读展示——鉴定由上级部门在审批详情里按指标评定（指标级鉴定），
+                       看板不再提供行内修改入口，防止绕过审批链直接改等级。 -->
                   <el-table-column label="鉴定进度等级" width="122" align="center">
                     <template #default="{ row }">
                       <div class="manual-alert-cell">
-                        <el-tooltip
-                          v-if="isStrategicDept || row.responsibleDept === selectedDepartment"
-                          :disabled="manualAlertEditable"
-                          :content="manualAlertLockHint"
-                          placement="top"
-                        >
-                          <div class="manual-alert-select-wrapper">
-                            <el-select
-                              :model-value="row.manualAlertSeverity ?? ''"
-                              size="small"
-                              class="manual-alert-select"
-                              :disabled="
-                                !manualAlertEditable || savingManualAlertIndicatorId === row.id
-                              "
-                              :loading="savingManualAlertIndicatorId === row.id"
-                              @change="
-                                value =>
-                                  handleManualAlertChange(row, value as ManualAlertSelectValue)
-                              "
-                            >
-                              <el-option
-                                v-for="option in manualAlertOptions"
-                                :key="option.value || 'NONE'"
-                                :label="option.label"
-                                :value="option.value"
-                              />
-                            </el-select>
-                          </div>
-                        </el-tooltip>
                         <el-tag
-                          v-else
                           :type="getManualAlertTagType(row.manualAlertSeverity)"
                           size="small"
                         >
@@ -2420,6 +2380,17 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           >
           <el-descriptions-item label="指标类型">{{ currentDetail.type1 }}</el-descriptions-item>
           <el-descriptions-item label="权重">{{ currentDetail.weight }}</el-descriptions-item>
+          <!-- 2026-10-24 用户定案：自评等级与鉴定等级并列展示（前者填报告知，后者上级鉴定） -->
+          <el-descriptions-item label="自评等级">
+            <el-tag v-if="(currentDetail as any).selfRating" size="small" type="info">
+              {{
+                { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' }[
+                  String((currentDetail as any).selfRating).toUpperCase()
+                ] || (currentDetail as any).selfRating
+              }}
+            </el-tag>
+            <span v-else style="color: #909399">—</span>
+          </el-descriptions-item>
           <el-descriptions-item label="鉴定进度等级">
             <el-tag :type="getManualAlertTagType(currentDetail.manualAlertSeverity)" size="small">
               {{ getManualAlertLabel(currentDetail.manualAlertSeverity) }}
@@ -2442,6 +2413,8 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
         <!-- 上报记录：固定展开展示，不做折叠交互（2026-10-07 用户拍板） -->
         <div class="report-history-section">
           <div class="report-history-title">上报记录（历次填报 / 含被驳回）</div>
+          <!-- 2026-10-24 用户定案：点某张上报卡看该轮完整详情——弹窗内聚在
+               IndicatorFillHistory 组件内，三个复用页面共同生效 -->
           <IndicatorFillHistory v-if="currentDetailId" :indicator-id="currentDetailId" />
         </div>
       </div>
@@ -2675,5 +2648,28 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
 /* 计划未正式下发时锁定鉴定等级 */
 .manual-alert-select-wrapper--locked {
   cursor: not-allowed;
+}
+
+/* 2026-10-24：单次上报详情弹窗（从上报记录卡点开） */
+.fill-detail {
+  padding: 4px 2px;
+}
+
+.fill-attachment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fill-attachment-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.fill-attachment-name {
+  color: #374151;
+  font-size: 13px;
+  word-break: break-all;
 }
 </style>

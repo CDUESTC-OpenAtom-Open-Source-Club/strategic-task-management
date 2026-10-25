@@ -41,7 +41,10 @@ import type {
   WorkflowDefinitionPreviewResponse,
   WorkflowInstanceDetailResponse
 } from '@/features/workflow/api/types'
-import { getWorkflowInstanceDetailByBusiness } from '@/features/workflow/api/queries'
+import {
+  getWorkflowInstanceDetailByBusiness,
+  getMyPendingTasks
+} from '@/features/workflow/api/queries'
 import { buildQueryKey, invalidateQueries } from '@/shared/lib/utils/cache'
 import {
   GLOBAL_DATA_REFRESH_REQUEST_EVENT,
@@ -852,6 +855,10 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   const retainedRouteApprovalEntityType = ref<'PLAN' | 'PLAN_REPORT' | undefined>(undefined)
   const retainedRouteApprovalEntityId = ref<string | undefined>(undefined)
   const retainedRouteApprovalDepartment = ref<string | undefined>(undefined)
+  // 2026-10-24（铃铛跳转修复）：autopen 清参数前直读 route 的下发方向字段，
+  // 上报审批（PLAN_REPORT）落地时据此选中提交方学院
+  const retainedRouteApprovalSourceOrg = ref<string | undefined>(undefined)
+  const retainedRouteApprovalTargetOrg = ref<string | undefined>(undefined)
 
   const effectiveRouteApprovalEntityType = computed<'PLAN' | 'PLAN_REPORT' | undefined>(() => {
     return routeApprovalEntityType.value || retainedRouteApprovalEntityType.value
@@ -973,6 +980,16 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       return ['PLAN_APPROVAL_COLLEGE', currentDispatchWorkflowCode.value]
     }
 
+    // 2026-10-24（铃铛跳转修复）：上报深链打开时报告摘要尚未加载，
+    // 退化为只剩下发链会把 my-tasks 里的 PLAN_APPROVAL_COLLEGE 待办过滤掉
+    // （抽屉「计划审批」页签空白）。上报实体深链恒带上学院上报链。
+    if (
+      effectiveRouteApprovalEntityType.value === 'PLAN_REPORT' ||
+      String(props.workflowEntityType || '').trim().toUpperCase() === 'PLAN_REPORT'
+    ) {
+      return ['PLAN_APPROVAL_COLLEGE', currentDispatchWorkflowCode.value]
+    }
+
     return currentDispatchWorkflowCode.value
   })
 
@@ -992,6 +1009,8 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     routeApprovalEntityType,
     routeApprovalEntityId,
     routeApprovalDepartment,
+    routeApprovalSourceOrg,
+    routeApprovalTargetOrg,
     shouldAutoOpenApprovalFromRoute
   } = useApprovalRouteAutopen({
     supportedEntityTypes: ['PLAN', 'PLAN_REPORT', 'INDICATOR'] as const,
@@ -1000,6 +1019,12 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       logger.warn('[IndicatorDistributeView] 清理审批自动打开参数失败:', error)
     }
   })
+
+  // 2026-10-24（TDZ 修复）：必须在 autopen 解构之后声明——getter 引用了上面的
+  // routeApprovalSourceOrg / routeApprovalTargetOrg；放在文件更早处会因
+  // const 暂时性死区在首次求值时抛 ReferenceError（线上实测踩坑）。
+  const notificationSourceOrgName = computed<string | undefined>(() => routeApprovalSourceOrg.value)
+  const notificationTargetOrgName = computed<string | undefined>(() => routeApprovalTargetOrg.value)
 
   const currentApprovalEntityType = computed<'PLAN' | 'PLAN_REPORT'>(() => {
     if (effectiveRouteApprovalEntityType.value) {
@@ -1053,6 +1078,26 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   })
 
   const usePlanReportFlow = computed(() => currentApprovalType.value === 'submission')
+
+  // 2026-10-24 用户定案：审批入口/chip 不能只看当前选中学院计划的流程——
+  // 当前用户名下存在待办审批（如本部门上报审批停在「职能部门审批人审批」）时，
+  // 红点、黄色按钮与审批状态 chip 都要点亮，与审批中心待办一致。
+  const myPendingApprovalTasks = ref<
+    Array<{ taskId: string; currentStepName?: string; entityType?: string; entityId?: number | string }>
+  >([])
+  const loadMyPendingApprovalTasks = async () => {
+    try {
+      const response = await getMyPendingTasks(1)
+      const items = response.success && response.data ? response.data.items : []
+      myPendingApprovalTasks.value = (items || []).filter(task =>
+        ['PENDING', 'RUNNING'].includes(String(task.status || '').trim().toUpperCase())
+      )
+    } catch (error) {
+      logger.warn('[IndicatorDistributeView] 加载我的待办审批失败:', error)
+      myPendingApprovalTasks.value = []
+    }
+  }
+  const hasMyPendingApprovalTasks = computed(() => myPendingApprovalTasks.value.length > 0)
 
   const currentApprovalWorkflowStatus = computed(() => {
     return String(
@@ -1225,6 +1270,16 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   )
 
   const approvalFlowStatusMeta = computed(() => {
+    // 2026-10-24：名下有待办审批时，chip 优先反映「审批中」，不再显示「已完成审批」
+    if (hasMyPendingApprovalTasks.value) {
+      // 2026-10-24 用户定案：直接显示当前环节名，不带「审批中 ·」前缀
+      const topTask = myPendingApprovalTasks.value[0]
+      return {
+        label: topTask?.currentStepName?.trim() || '审批中',
+        tagType: 'warning' as const,
+        description: '有等待你处理的审批事项，点击「查看审批进度」处理。'
+      }
+    }
     const workflowStatus = currentApprovalWorkflowStatus.value
     const stepName = currentApprovalStepName.value
     const approverName = currentApprovalApproverName.value
@@ -1430,7 +1485,10 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   })
 
   const distributionApprovalButtonType = computed(() => {
-    return hasCurrentCollegePendingApproval.value ? 'warning' : 'default'
+    // 2026-10-24：名下有待办（任意流程）也点亮黄色
+    return hasCurrentCollegePendingApproval.value || hasMyPendingApprovalTasks.value
+      ? 'warning'
+      : 'default'
   })
 
   const distributionApprovalButtonText = computed(() => {
@@ -1692,6 +1750,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         'plan.list',
         'plan.detail',
         'dashboard.overview',
+        'workflow.todo',
         buildQueryKey('task', 'list', { year: timeContext.currentYear })
       ])
 
@@ -1707,6 +1766,10 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         {
           source: 'reportSummary',
           job: loadCurrentCollegePlanReportSummary()
+        },
+        {
+          source: 'myPendingApprovalTasks',
+          job: loadMyPendingApprovalTasks()
         },
         {
           source: 'taskTypeMap',
@@ -1891,9 +1954,32 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   }
 
   const syncSelectedCollegeFromApprovalRoute = async () => {
-    await waitForPageBootstrap()
+    let routeDepartmentName = normalizeDepartmentName(effectiveRouteApprovalDepartment.value)
 
-    const routeDepartmentName = normalizeDepartmentName(effectiveRouteApprovalDepartment.value)
+    // 2026-10-24（铃铛跳转修复）：上报审批（PLAN_REPORT）深链的 org 名是「下发方向」
+    // （source=职能部门、target=学院）。审批方要选中的是「提交方学院」= target。
+    // routeApprovalDepartment 现由通知层按 PLAN_REPORT 反转（useNotificationCenter），
+    // 此处再兜底一次：department 与本部门同名且 source/target 可辨时取 target。
+    if (effectiveRouteApprovalEntityType.value === 'PLAN_REPORT') {
+      try {
+        const payloadSource = normalizeDepartmentName(notificationSourceOrgName.value)
+        const payloadTarget = normalizeDepartmentName(notificationTargetOrgName.value)
+        if (payloadSource && payloadTarget && payloadSource !== payloadTarget) {
+          // 下发方向 source=职能部门、target=学院；上报提交方=学院（target）
+          routeDepartmentName = payloadTarget
+        }
+      } catch (directionError) {
+        logger.warn('[IndicatorDistributeView] 上报方向解析失败，降级用 department:', directionError)
+      }
+    }
+
+    // bootstrap 只保证组织/计划列表就绪；学院名解析不依赖它，
+    // 放在赋值前等待即可（此前放在函数开头会因 bootstrap 未完成而整段挂起，
+    // 线上实测：铃铛深链打开时 bootstrap 可能持续未落定 → 学院永不选中）
+    // 2026-10-24 实测：bootstrap promise 在深链打开窗口期可能长时间不落定，
+    // 任何形式的 await 都会挂死选学院流程。改为：先赋值 selectedCollege（纯 ref，
+    // 不依赖组织列表），后续 loadCurrentSelectedCollegePlanDetails 内部自带容错。
+    // 不再等待 bootstrap。
 
     let nextCollege = routeDepartmentName
 
@@ -1944,6 +2030,8 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       retainedRouteApprovalEntityType.value = routeApprovalEntityType.value
       retainedRouteApprovalEntityId.value = routeApprovalEntityId.value
       retainedRouteApprovalDepartment.value = routeApprovalDepartment.value
+      retainedRouteApprovalSourceOrg.value = notificationSourceOrgName.value
+      retainedRouteApprovalTargetOrg.value = notificationTargetOrgName.value
     }
 
     await syncSelectedCollegeFromApprovalRoute()
@@ -4340,6 +4428,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     applyLocalCollegePlanReportSummaryPatch,
     approvalDrawerPlan,
     approvalFlowStatusMeta,
+    hasMyPendingApprovalTasks,
     approvalIndicators,
     approvalPreviewLoading,
     approvalSetupDialogVisible,

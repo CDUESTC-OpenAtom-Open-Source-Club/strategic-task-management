@@ -21,7 +21,8 @@ import type { ElTable } from 'element-plus'
 // eslint-disable-next-line no-restricted-syntax -- Backend-aligned types
 import type { StrategicTask as _StrategicTask, StrategicIndicator } from '@/shared/types'
 import { IndicatorStatus } from '@/shared/types/entities'
-import { useStrategicStore } from '@/features/task/model/strategic'
+import { useStrategicStore, toStrategicIndicator } from '@/features/task/model/strategic'
+import type { ApiResponse } from '@/features/indicator/api/types'
 import { useAuthStore } from '@/features/auth/model/store'
 import { useTimeContextStore } from '@/shared/lib/timeContext'
 import { useOrgStore } from '@/features/organization/model/store'
@@ -948,6 +949,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       .trim()
       .toUpperCase()
   })
+
+  // 2026-10-24 用户定案：计划审批中（下发审批待负责人/校领导处理）内容冻结——
+  // 「新增行」与行内「+」对填报人锁死；审批通过走异动链、驳回/撤回后自动放开。
+  const isCurrentPlanUnderApproval = computed(() =>
+    ['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(currentApprovalWorkflowStatus.value)
+  )
 
   const currentApprovalStepName = computed(() => {
     if (shouldPreferCurrentReportWorkflow.value) {
@@ -1989,7 +1996,25 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const { routeApprovalEntityType, routeApprovalEntityId } = useApprovalRouteAutopen({
     supportedEntityTypes: ['PLAN', 'PLAN_REPORT', 'INDICATOR', 'TASK'] as const,
     onAutoOpen: async () => {
-      retainedRouteApprovalEntityType.value = routeApprovalEntityType.value
+      // 2026-10-23 用户定案（异动审批跳转缺陷修复）：异动深链（INDICATOR/TASK）
+      // 不携带 PLAN 流程上下文——审批抽屉里的异动卡片由部门级
+      // mutation-workflow-entities / mutation-pending-approvals 渲染，
+      // 只需选中目标部门、刷新看板后打开抽屉；若把 INDICATOR 塞进
+      // workflowEntityType，抽屉会拿指标 ID 去查 PLAN 流程导致详情为空。
+      if (routeApprovalEntityType.value === 'INDICATOR' || routeApprovalEntityType.value === 'TASK') {
+        try {
+          await syncSelectedDepartmentFromRoute()
+          await nextTick()
+          await refreshCurrentDepartmentView({ showLoading: true, force: true })
+        } catch (error) {
+          logger.warn('[StrategicTaskView] 异动深链刷新失败，降级使用当前页面数据:', error)
+        } finally {
+          await nextTick()
+          taskApprovalVisible.value = true
+        }
+        return
+      }
+      retainedRouteApprovalEntityType.value = routeApprovalEntityType.value as 'PLAN' | 'PLAN_REPORT' | undefined
       retainedRouteApprovalEntityId.value = routeApprovalEntityId.value
       try {
         await syncSelectedDepartmentFromRoute()
@@ -2573,7 +2598,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   }
 
   const isLightGlobalRefreshSource = (source?: GlobalDataRefreshDetail['source']): boolean => {
-    return source === 'heartbeat' || source === 'window-focus' || source === 'visibility-return'
+    return (
+      source === 'heartbeat' ||
+      source === 'window-focus' ||
+      source === 'visibility-return' ||
+      // 2026-10-24 跨窗口数据同步：DATA_CHANGED 广播走轻刷新（整表数据静默收敛），
+      // 单行精度补丁由 indicator-data-changed 事件单独处理
+      source === 'data-change-push'
+    )
   }
 
   const isApprovalDrivenRefreshSource = (source?: GlobalDataRefreshDetail['source']): boolean => {
@@ -4151,6 +4183,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         GLOBAL_DATA_REFRESH_REQUEST_EVENT,
         handleGlobalDataRefreshRequest as EventListener
       )
+      // 2026-10-24 跨窗口数据同步：别人改了哪条指标，本窗就局部刷哪条——
+      // 单行拉取 + patch，权重合计 chip 是 computed 会自动重算
+      window.addEventListener(
+        'indicator-data-changed',
+        handleIndicatorDataChanged as EventListener
+      )
     }
   })
 
@@ -4160,6 +4198,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       window.removeEventListener(
         GLOBAL_DATA_REFRESH_REQUEST_EVENT,
         handleGlobalDataRefreshRequest as EventListener
+      )
+      window.removeEventListener(
+        'indicator-data-changed',
+        handleIndicatorDataChanged as EventListener
       )
     }
     if (departmentSwitchingTimer) {
@@ -4193,6 +4235,50 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         })
       }
     }, waitMs)
+  }
+
+  // 2026-10-24 跨窗口数据同步（用户定案：修改哪个指标，那个指标就局部异步刷新）：
+  // 收到后端 DATA_CHANGED 广播后，只对当前视图里存在的那一行做「单行拉取 + patch」，
+  // 不整表重载；权重合计 chip 是 computed，随行数据自动重算。
+  // 行外变更（当前部门看不到的指标）直接忽略；行已删（404）则交由轻刷新收敛。
+  const handleIndicatorDataChanged = (event: Event) => {
+    const detail = (event as CustomEvent<{ entityType?: string; entityId?: number }>).detail || {}
+    if (String(detail.entityType || '').toUpperCase() !== 'INDICATOR' || !detail.entityId) {
+      return
+    }
+    const indicatorId = Number(detail.entityId)
+    if (!Number.isFinite(indicatorId)) {
+      return
+    }
+    void (async () => {
+      try {
+        const exists = strategicStore.indicators.some(item => Number(item.id) === indicatorId)
+        if (!exists) {
+          return
+        }
+        // 直接走 apiClient 绕过查询缓存，确保拿到的是提交后的最新值
+        const { apiClient } = await import('@/shared/api/client')
+        const response = await apiClient.get<ApiResponse<Record<string, unknown>>>(
+          `/indicators/${indicatorId}`
+        )
+        if (!response?.success || !response.data) {
+          return
+        }
+        const incoming = toStrategicIndicator(response.data)
+        const patch: Record<string, unknown> = {}
+        for (const [key, value] of Object.entries(incoming)) {
+          if (value !== undefined && value !== null) {
+            patch[key] = value
+          }
+        }
+        strategicStore.patchIndicator(String(indicatorId), patch)
+      } catch (error) {
+        logger.warn('[StrategicTaskView] 局部刷新指标行失败（等待轻刷新收敛）:', {
+          indicatorId,
+          error
+        })
+      }
+    })()
   }
 
   const handleGlobalDataRefreshRequest = (event: Event) => {
@@ -4311,6 +4397,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   }
 
   const addNewRow = () => {
+    // 2026-10-24 用户定案：计划审批中内容冻结，不能新增行（后端 createIndicator 同口径守卫）
+    if (isCurrentPlanUnderApproval.value) {
+      ElMessage.warning('计划正在审批中，暂不能新增：请等审批结束或先撤回本次审批')
+      return
+    }
     openNewRowDialog()
   }
 
@@ -5973,6 +6064,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     currentApprovalStepName,
     currentApprovalStepPreview,
     currentApprovalWorkflowStatus,
+    isCurrentPlanUnderApproval,
     currentDepartmentOrgId,
     currentDetail,
     reportHistoryOpen,
