@@ -282,7 +282,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     await Promise.allSettled([
       orgStore.loadDepartments(),
       planStore.loadPlans({ background: true }),
-      strategicStore.loadIndicatorsByYear(timeContext.currentYear)
+      strategicStore.loadIndicatorsByYear(timeContext.currentYear),
+      loadMutationInFlightSignal()
     ])
 
     await loadCollegePlanDetails()
@@ -4526,7 +4527,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }
     const hasRating = Boolean(String(withReport.selfRating || '').trim())
     const hasRemark = Boolean(String(withReport.pendingRemark || '').trim())
-    return row.pendingProgress !== undefined && row.pendingProgress !== null && hasRating && hasRemark
+    return (
+      row.pendingProgress !== undefined && row.pendingProgress !== null && hasRating && hasRemark
+    )
   }
 
   // 2026-10-24：缺自评等级/进度说明的条数（一键提交提示用）
@@ -4618,6 +4621,30 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     return canWithdrawCurrentPlan.value
   })
 
+  // 2026-10-24 用户定案（互斥锁②）：异动审批在途时锁定上报提交——
+  // 同一学院链上「上报审批」与「异动审批」二选一。信号与任务页同源（mutation-approvals）。
+  const mutationInFlightForCurrentDept = ref(false)
+
+  const loadMutationInFlightSignal = async () => {
+    try {
+      const auth = JSON.parse(localStorage.getItem('currentUser') || '{}')
+      const orgId = Number(auth?.orgId ?? NaN)
+      if (!Number.isFinite(orgId) || orgId <= 0) {
+        mutationInFlightForCurrentDept.value = false
+        return
+      }
+      const { mutationApi } = await import('@/features/indicator/api/mutationApi')
+      const response = await mutationApi.approvals(orgId)
+      const items = Array.isArray(response.data) ? response.data : []
+      mutationInFlightForCurrentDept.value = items.some(
+        item => String(item.status || '').toUpperCase() === 'IN_REVIEW'
+      )
+    } catch (error) {
+      // 信号失败不阻塞填报：后端 submit 守卫兜底
+      mutationInFlightForCurrentDept.value = false
+    }
+  }
+
   const isCurrentPlanReportLocked = computed(() => {
     if (!usePlanReportFlow.value) {
       return false
@@ -4667,6 +4694,15 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return
     }
 
+    // 2026-10-24 用户定案（互斥锁②）：异动审批在途时不能提交上报——
+    // 两者对同一学院链二选一，避免异动改动的内容被上报审批固化
+    if (mutationInFlightForCurrentDept.value) {
+      ElMessage.warning(
+        '当前部门存在进行中的异动审批，暂不能提交上报；请等异动审批结束或撤回后再操作'
+      )
+      return
+    }
+
     const planId = getCurrentPlanId()
     if (!planId) {
       ElMessage.warning('当前部门还没有可提交审批的计划')
@@ -4691,7 +4727,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         parts.push(`${missingRemarkCount.value} 个指标未填写进度说明`)
       }
       const detail = parts.length > 0 ? `（${parts.join('、')}）` : ''
-      ElMessage.warning(`还有 ${unfilledIndicatorsCount.value} 个指标未完成填报${detail}，请逐条填报后再一键提交`)
+      ElMessage.warning(
+        `还有 ${unfilledIndicatorsCount.value} 个指标未完成填报${detail}，请逐条填报后再一键提交`
+      )
       return
     }
 

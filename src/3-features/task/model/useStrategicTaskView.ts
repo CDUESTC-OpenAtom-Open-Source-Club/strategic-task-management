@@ -1114,10 +1114,23 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     // 仅在学院页签生效（该页签才有「上报状态」列）；职能部门页签保持原计划级语义。
     const fillApproval = currentPlanFillApprovalSummary.value
 
-    // 2026-10-24 用户定案（学院隔离）：学院页签下 chip 完全由「该学院链」的填报聚合驱动，
-    // 聚合未就绪显示加载中、无填报行按「未填报」——绝不回落到计划级/其他实例的状态
+    // 2026-10-24 用户定案（学院隔离 + C 项口径）：学院页签标签名「审批状况」，
+    // 状态聚合 = 该学院的「上报审批 + 异动审批」合并视角——两者互斥：
+    // 异动在审时上报被锁（不会同时存在两条在途），异动在审优先显示；
+    // 聚合未就绪显示加载中、无任何在途与填报行按「未填报」——绝不回落到计划级/其他实例的状态
     // （否则宣传部上下文会把自己上报给战略部的环节显示到马院语境里，互相掺杂）。
     if (collegeFillStatusScope.value) {
+      // 异动审批在审（该部门上下文的异动实例）：优先级最高，互斥锁生效的可见信号
+      const mutationPending = departmentMutationPendingApprovals.value
+      if (mutationPending.length > 0) {
+        const top = mutationPending[0]
+        return {
+          label: `异动审批中 · ${String(top.currentStepName || '').trim()}`.replace(/ ·\s*$/, ''),
+          tagType: 'warning' as const,
+          description: '该学院存在进行中的异动审批；异动期间上报提交被锁定。'
+        }
+      }
+
       if (!fillApproval.loaded) {
         return {
           label: '…',
@@ -3863,6 +3876,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       return
     }
 
+    // 2026-10-24 用户定案（互斥锁①）：上报审批在途时不能发起异动——
+    // 两者对同一学院链二选一，避免上报审批期间表内容被异动改动
+    if (isReportApprovalInFlight.value) {
+      ElMessage.warning('当前计划的上报正在审批中，暂不能发起异动；请等上报审批结束或撤回后再操作')
+      return
+    }
+
     // 2026-10-22 修复（指标 2051 卡死整批提交）：剔除「无实际变更」的草稿条目。
     // 一条 changes 为空、又没标记删除的脏草稿会让后端整批拒绝
     // （400 异动内容为空：指标 X 未提供有效变更字段），
@@ -4794,6 +4814,22 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 数据源与 ReportStatusCell 严格同批行。口径与 ReportStatusCell 完全一致
   // （同取 fills[0]：approved→已上报 / submitted→审批中 / rejected→已回退）。
   const collegeFillStatusScope = ref(false)
+
+  // 2026-10-24 用户定案（异动/上报互斥）：同一学院链上「上报审批在途」与「异动审批在途」
+  // 二选一——上报在审时异动发起入口锁定；异动在审时上报提交被锁（另一方向同理）。
+  // 信号源：当前部门上下文的上报审批摘要（workflowStatus 处于在途态即视为上报在审）。
+  const isReportApprovalInFlight = computed(() => {
+    const status = String(
+      currentPlanReportSummary.value?.workflowStatus || currentPlanReportSummary.value?.status || ''
+    )
+      .trim()
+      .toUpperCase()
+    return ['PENDING', 'IN_REVIEW', 'SUBMITTED', 'RETURNED'].includes(status)
+  })
+
+  const isMutationApprovalInFlight = computed(
+    () => departmentMutationPendingApprovals.value.length > 0
+  )
 
   const currentPlanFillApprovalSummary = ref<{
     loaded: boolean
@@ -6295,6 +6331,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     collegeSpanMethod,
     collegeFillStatusScope,
     refreshCurrentPlanFillApprovalSummary,
+    isReportApprovalInFlight,
+    isMutationApprovalInFlight,
     getCategoryColor,
     getCategoryText,
     getCurrentActorUserId,

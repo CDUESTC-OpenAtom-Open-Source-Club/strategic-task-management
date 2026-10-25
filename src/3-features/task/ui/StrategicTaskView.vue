@@ -178,6 +178,8 @@ const {
   selectCollege,
   collegeTableIndicators,
   collegeFillStatusScope,
+  isReportApprovalInFlight,
+  isMutationApprovalInFlight,
   collegeDepartmentsScoped,
   collegeAddMode,
   collegeParentIndicatorOptions,
@@ -1135,7 +1137,15 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           </el-button>
           <!-- 2026-10-21 用户定案：全部攒改一起上报；按钮就叫「发起异动」 -->
           <!-- 编辑权只属于填报人：负责人/校领导不产生草稿，也不应看到提交入口 -->
-          <template v-if="canEdit && hasMutationDraft">
+          <!-- 2026-10-24 用户定案（互斥）：上报在审时异动发起入口锁定；异动在审时草稿区一并锁定 -->
+          <template
+            v-if="
+              canEdit &&
+              hasMutationDraft &&
+              !isReportApprovalInFlight &&
+              !isMutationApprovalInFlight
+            "
+          >
             <el-button
               size="small"
               type="warning"
@@ -1185,7 +1195,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                 class="approval-status-tag"
                 @click.stop="handleOpenApproval"
               >
-                {{ activeTaskTabName === 'college' ? '异动状态' : '审批状态' }}:
+                {{ activeTaskTabName === 'college' ? '审批状况' : '审批状态' }}:
                 {{ approvalFlowStatusMeta.label }}
               </el-tag>
             </template>
