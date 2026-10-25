@@ -64,6 +64,7 @@ const {
   applyLocalCollegePlanReportSummaryPatch,
   approvalDrawerPlan,
   approvalFlowStatusMeta,
+  hasMyPendingApprovalTasks,
   approvalIndicators,
   approvalPreviewLoading,
   approvalSetupDialogVisible,
@@ -605,6 +606,26 @@ const currentDistributionImportCycleId = computed(() => {
 const distributionImportEnabled = true
 const distributionImportDisabledReason = '导入功能暂不启用'
 
+// 2026-10-24 用户定案：详情抽屉补「鉴定进度等级」展示（只读三档，与战略任务页口径一致）
+const _getManualAlertLabel = (severity?: string | null): string => {
+  const normalized = String(severity || '')
+    .trim()
+    .toUpperCase()
+  if (normalized === 'AHEAD') return '超前完成'
+  if (normalized === 'NORMAL') return '正常'
+  if (normalized === 'DELAYED' || normalized === 'WARNING') return '延期'
+  return '未评定'
+}
+
+const _getManualAlertTagType = (severity?: string | null): 'success' | 'info' | 'warning' => {
+  const normalized = String(severity || '')
+    .trim()
+    .toUpperCase()
+  if (normalized === 'AHEAD' || normalized === 'NORMAL') return 'success'
+  if (normalized === 'DELAYED' || normalized === 'WARNING') return 'warning'
+  return 'info'
+}
+
 const openDistributionImportDialog = () => {
   if (!distributionImportEnabled) {
     ElMessage.warning(distributionImportDisabledReason)
@@ -823,8 +844,9 @@ const handleDistributionImportCommitted = async () => {
                 </template>
                 <template v-else>
                   <div class="approval-entry-wrapper">
+                    <!-- 2026-10-24：名下任意待办审批也点亮红点 -->
                     <span
-                      v-if="canCurrentUserApproveCurrentPlan"
+                      v-if="canCurrentUserApproveCurrentPlan || hasMyPendingApprovalTasks"
                       class="approval-entry-dot"
                       aria-hidden="true"
                     ></span>
@@ -1431,6 +1453,25 @@ const handleDistributionImportCommitted = async () => {
           <el-descriptions-item label="权重">{{
             currentDetailIndicator.weight
           }}</el-descriptions-item>
+          <!-- 2026-10-24 用户定案：自评等级与鉴定等级并列展示，与战略任务页详情抽屉同构 -->
+          <el-descriptions-item label="自评等级">
+            <el-tag v-if="(currentDetailIndicator as any).selfRating" size="small" type="info">
+              {{
+                { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' }[
+                  String((currentDetailIndicator as any).selfRating).toUpperCase()
+                ] || (currentDetailIndicator as any).selfRating
+              }}
+            </el-tag>
+            <span v-else style="color: #909399">—</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="鉴定进度等级">
+            <el-tag
+              :type="_getManualAlertTagType((currentDetailIndicator as any).manualAlertSeverity)"
+              size="small"
+            >
+              {{ _getManualAlertLabel((currentDetailIndicator as any).manualAlertSeverity) }}
+            </el-tag>
+          </el-descriptions-item>
           <el-descriptions-item label="责任部门">
             {{ currentDetailIndicator.responsibleDept || '未分配' }}
           </el-descriptions-item>

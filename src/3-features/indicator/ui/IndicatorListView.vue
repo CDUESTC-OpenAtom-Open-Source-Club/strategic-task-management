@@ -548,10 +548,8 @@ const handleExportIndicatorList = async () => {
                 v-if="showSubmitAllButton"
                 type="primary"
                 size="small"
-                :disabled="
-                  timeContext.isReadOnly || indicators.length === 0 || !allIndicatorsFilled
-                "
-                :title="!allIndicatorsFilled ? `还有 ${unfilledIndicatorsCount} 个指标未填报` : ''"
+                :disabled="timeContext.isReadOnly || indicators.length === 0"
+                title="提交前会校验每条指标的自评等级与进度说明"
                 @click="handleSubmitAll"
               >
                 <el-icon><Upload /></el-icon>
@@ -656,17 +654,10 @@ const handleExportIndicatorList = async () => {
               <!-- 与战略任务列同为 min-width：两列等分剩余宽度，表格铺满容器 -->
               <el-table-column prop="name" label="核心指标" min-width="192">
                 <template #default="{ row }">
-                  <div class="indicator-name-cell" @dblclick="handleIndicatorDblClick(row, 'name')">
-                    <el-input
-                      v-if="editingIndicatorId === row.id && editingIndicatorField === 'name'"
-                      v-model="editingIndicatorValue"
-                      v-focus
-                      type="textarea"
-                      :autosize="{ minRows: 2, maxRows: 6 }"
-                      @blur="saveIndicatorEdit(row, 'name')"
-                    />
+                  <!-- 2026-10-24 用户定案：填报页字段一律只读，不能双击编辑——
+                       填报人只能通过最右侧操作栏「填报」进入填报弹窗 -->
+                  <div class="indicator-name-cell">
                     <el-tooltip
-                      v-else
                       :content="row.type1 === '定性' ? '定性指标' : '定量指标'"
                       placement="top"
                     >
@@ -694,7 +685,7 @@ const handleExportIndicatorList = async () => {
               </el-table-column>
               <el-table-column prop="weight" label="权重" width="76" align="center">
                 <template #default="{ row }">
-                  <div class="weight-cell" @dblclick="handleIndicatorDblClick(row, 'weight')">
+                  <div class="weight-cell">
                     <el-input
                       v-if="editingIndicatorId === row.id && editingIndicatorField === 'weight'"
                       v-model="editingIndicatorValue"
@@ -766,20 +757,9 @@ const handleExportIndicatorList = async () => {
               </el-table-column>
               <el-table-column prop="remark" label="下发备注" width="132">
                 <template #default="{ row }">
-                  <div
-                    class="indicator-name-cell"
-                    @dblclick="handleIndicatorDblClick(row, 'remark')"
-                  >
-                    <el-input
-                      v-if="editingIndicatorId === row.id && editingIndicatorField === 'remark'"
-                      v-model="editingIndicatorValue"
-                      v-focus
-                      type="textarea"
-                      :autosize="{ minRows: 2, maxRows: 6 }"
-                      @blur="saveIndicatorEdit(row, 'remark')"
-                    />
+                  <!-- 2026-10-24 用户定案：下发备注同样只读（不能双击编辑） -->
+                  <div class="indicator-name-cell">
                     <el-tooltip
-                      v-else
                       :content="row.remark || ''"
                       :disabled="(row.remark || '').length <= 50"
                       placement="top"
@@ -798,8 +778,10 @@ const handleExportIndicatorList = async () => {
                       <el-button link type="primary" size="small" @click="handleViewDetail(row)"
                         >查看</el-button
                       >
+                      <!-- 2026-10-24 用户定案：填报/编辑按钮只属于填报人角色——
+                           此前只判 !isStrategicDept，导致职能部门/学院的审核人也能看到并进入填报。 -->
                       <el-button
-                        v-if="!isStrategicDept"
+                        v-if="!isStrategicDept && isCurrentUserReporter"
                         v-show="!isCurrentPlanReportLocked"
                         link
                         :type="hasReportContent(row) ? 'info' : 'success'"
@@ -955,6 +937,17 @@ const handleExportIndicatorList = async () => {
           >
           <el-descriptions-item label="指标类型">{{ currentDetail.type1 }}</el-descriptions-item>
           <el-descriptions-item label="权重">{{ currentDetail.weight }}</el-descriptions-item>
+          <!-- 2026-10-24 用户定案：自评等级与鉴定等级并列展示（前者填报告知，后者上级鉴定） -->
+          <el-descriptions-item label="自评等级">
+            <el-tag v-if="(currentDetail as any).selfRating" size="small" type="info">
+              {{
+                { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' }[
+                  String((currentDetail as any).selfRating).toUpperCase()
+                ] || (currentDetail as any).selfRating
+              }}
+            </el-tag>
+            <span v-else style="color: #909399">—</span>
+          </el-descriptions-item>
           <el-descriptions-item label="鉴定进度等级">
             <el-tag :type="getManualAlertTagType(currentDetail.manualAlertSeverity)" size="small">
               {{ getManualAlertLabel(currentDetail.manualAlertSeverity) }}

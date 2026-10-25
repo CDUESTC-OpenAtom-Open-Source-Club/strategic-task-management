@@ -98,6 +98,12 @@ const {
   handleApprovePlanBatch,
   handleApproveExternalWorkflowTodo,
   planAppraisalLevel,
+  // 2026-10-24 指标级鉴定
+  planIndicatorAppraisalLevels,
+  getPlanIndicatorAppraisalLevel,
+  setPlanIndicatorAppraisalLevel,
+  isCurrentPlanAppraisalStep,
+  confirmAppraisalDialogApproval,
   formatAppraisalLevel,
   formatInstanceNo,
   handleClose,
@@ -396,23 +402,8 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 </div>
                 <div class="card-actions">
                   <ElButton @click="openPlanApprovalDetails">查看详情</ElButton>
-                  <ElSelect
-                    v-if="
-                      hasPlanWorkflowData &&
-                      isPlanPendingApproval &&
-                      canCurrentUserHandlePlanApproval &&
-                      showPlanAppraisalLevelSelect
-                    "
-                    v-model="planAppraisalLevel"
-                    size="small"
-                    clearable
-                    placeholder="鉴定进度等级"
-                    style="width: 118px; margin-right: 8px"
-                  >
-                    <ElOption label="超前完成" value="AHEAD" />
-                    <ElOption label="正常" value="NORMAL" />
-                    <ElOption label="延期" value="DELAYED" />
-                  </ElSelect>
+                  <!-- 2026-10-24 用户定案：整体鉴定废弃——鉴定等级改在审批详情里
+                       按指标逐条评定（仅上报链末级审批节点出现），卡片上不再有选择器 -->
                   <ElButton
                     v-if="
                       hasPlanWorkflowData &&
@@ -745,6 +736,49 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 </div>
               </div>
 
+              <!-- 2026-10-24 指标级鉴定：末级审批节点逐指标评定；其余只读展示 -->
+              <div class="snapshot-section">
+                <div class="snapshot-section-title">鉴定进度等级</div>
+                <div class="snapshot-section-content">
+                  <ElSelect
+                    v-if="isCurrentPlanAppraisalStep"
+                    :model-value="
+                      getPlanIndicatorAppraisalLevel(indicator.reportId, indicator.indicatorId)
+                    "
+                    size="small"
+                    clearable
+                    placeholder="未评定"
+                    style="width: 140px"
+                    @update:model-value="
+                      value =>
+                        setPlanIndicatorAppraisalLevel(
+                          indicator.reportId,
+                          indicator.indicatorId,
+                          String(value ?? '')
+                        )
+                    "
+                  >
+                    <ElOption label="超前完成" value="AHEAD" />
+                    <ElOption label="正常" value="NORMAL" />
+                    <ElOption label="延期" value="DELAYED" />
+                  </ElSelect>
+                  <ElTag
+                    v-else-if="indicator.appraisalLevel"
+                    size="small"
+                    :type="
+                      indicator.appraisalLevel === 'DELAYED'
+                        ? 'warning'
+                        : indicator.appraisalLevel === 'AHEAD'
+                          ? 'success'
+                          : 'info'
+                    "
+                  >
+                    {{ formatAppraisalLevel(indicator.appraisalLevel) }}
+                  </ElTag>
+                  <span v-else class="snapshot-section-empty">未评定</span>
+                </div>
+              </div>
+
               <div class="snapshot-section">
                 <div class="snapshot-section-title">{{ displayedBusinessAttachmentLabel }}</div>
                 <div v-if="indicator.attachments.length > 0" class="snapshot-attachment-list">
@@ -799,6 +833,14 @@ const displayedCurrentPlanApprovalName = computed(() => {
 
       <template #footer>
         <ElButton @click="planDetailDialogVisible = false">关闭</ElButton>
+        <!-- 2026-10-24 指标级鉴定：上级部门逐指标评定后确认通过 -->
+        <ElButton
+          v-if="isCurrentPlanAppraisalStep && canCurrentUserHandlePlanApproval"
+          type="success"
+          @click="confirmAppraisalDialogApproval"
+        >
+          确认通过
+        </ElButton>
       </template>
     </ElDialog>
   </ElDrawer>

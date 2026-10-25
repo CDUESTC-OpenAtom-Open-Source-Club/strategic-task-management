@@ -4517,7 +4517,35 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
   // 检查指标是否已有真实填报内容
   // 业务要求：按钮文案只根据当前轮次的 pendingProgress 判断。
+  // 2026-10-24 用户定案：自评等级与进度说明是必填项，缺任一即视为未完成填报——
+  // 按钮维持「填报」态，一键提交闸门拦截（与后端提交守卫同口径）。
   const hasReportContent = (row: StrategicIndicator): boolean => {
+    const withReport = row as StrategicIndicator & {
+      selfRating?: string | null
+      pendingRemark?: string | null
+    }
+    const hasRating = Boolean(String(withReport.selfRating || '').trim())
+    const hasRemark = Boolean(String(withReport.pendingRemark || '').trim())
+    return row.pendingProgress !== undefined && row.pendingProgress !== null && hasRating && hasRemark
+  }
+
+  // 2026-10-24：缺自评等级/进度说明的条数（一键提交提示用）
+  const missingSelfRatingCount = computed(
+    () =>
+      indicators.value.filter(
+        row => !String((row as { selfRating?: string | null }).selfRating || '').trim()
+      ).length
+  )
+  const missingRemarkCount = computed(
+    () =>
+      indicators.value.filter(
+        row => !String((row as { pendingRemark?: string | null }).pendingRemark || '').trim()
+      ).length
+  )
+
+  // 宽松判定：本轮回有过填报动作（pendingProgress 有值即可，不要求自评/说明齐全）——
+  // 仅用于「一键提交」按钮的可见性；完整性与缺口提示走 hasReportContent + handleSubmitAll 拦截
+  const hasReportDraftTrace = (row: StrategicIndicator): boolean => {
     return row.pendingProgress !== undefined && row.pendingProgress !== null
   }
 
@@ -4653,10 +4681,17 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return
     }
 
-    // 检查是否所有指标都已填报
+    // 检查是否所有指标都已填报（2026-10-24：自评等级与进度说明必须全部有值）
     if (!allIndicatorsFilled.value) {
-      const unfilled = unfilledIndicatorsCount.value
-      ElMessage.warning(`还有 ${unfilled} 个指标未填报，请先完成所有指标的填报后再进行一键提交`)
+      const parts: string[] = []
+      if (missingSelfRatingCount.value > 0) {
+        parts.push(`${missingSelfRatingCount.value} 个指标未选择自评等级`)
+      }
+      if (missingRemarkCount.value > 0) {
+        parts.push(`${missingRemarkCount.value} 个指标未填写进度说明`)
+      }
+      const detail = parts.length > 0 ? `（${parts.join('、')}）` : ''
+      ElMessage.warning(`还有 ${unfilledIndicatorsCount.value} 个指标未完成填报${detail}，请逐条填报后再一键提交`)
       return
     }
 

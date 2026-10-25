@@ -74,6 +74,13 @@ const {
   currentUserId,
   pendingMutationApprovalItems,
   pendingReportApprovalItems,
+  // 2026-10-24 指标级鉴定
+  isAppraisalApprovalItem,
+  isAppraisalInstanceId,
+  appraisalDialogActive,
+  getPlanIndicatorAppraisalLevel,
+  setPlanIndicatorAppraisalLevel,
+  confirmAppraisalDialogApproval,
   currentUserOrgId,
   currentUserPermissionCodes,
   currentUserRoleCodes,
@@ -190,6 +197,8 @@ const {
   toPositiveNumber,
   workflowDefinitionPreview,
   workflowNodes,
+  reportWorkflowInstances,
+  selectedReportInstanceIdx,
   workflowUserAvatarCache
 } = useDistributionApprovalProgressDrawer(props, emit)
 
@@ -278,6 +287,58 @@ const openReportApprovalDetails = (item: Record<string, any>) => {
     selectedHistoryInstanceId.value = instanceId
   }
   planDetailDialogVisible.value = true
+}
+
+// 2026-10-24（B 卡内容装配）：my-tasks 条目缺 submitterName、flowName 透传
+// 「Plan审批流程（二级学院）」易与计划汇总卡混淆——展示层统一转译。
+/** 上报卡的流程标签：按 flowCode 转译为上报语义，不透传 Plan 审批字样 */
+const resolveReportFlowLabel = (item: Record<string, any>): string => {
+  const flowCode = String(item?.flowCode || '').trim().toUpperCase()
+  if (flowCode === 'PLAN_APPROVAL_COLLEGE') {
+    return '上报审批流程（二级学院 → 职能部门）'
+  }
+  if (flowCode === 'PLAN_APPROVAL_FUNCDEPT') {
+    return '上报审批流程（职能部门 → 战略发展部）'
+  }
+  return String(item?.flowName || '') || '上报审批'
+}
+
+/**
+ * 上报卡提交人：my-tasks 无 submitterName 时按提交方组织名兜底。
+ * 注意方向：my-tasks 的 source/target 是「下发方向」（教务处 -> 计算机学院），
+ * 上报是反方向——提交方 = targetOrg（计算机学院），审批方 = sourceOrg（教务处）。
+ */
+const resolveReportSubmitterName = (item: Record<string, any>): string => {
+  const direct = String(item?.submitterName || '').trim()
+  if (direct) {
+    return direct
+  }
+  const targetOrg = String(item?.targetOrgName || '').trim()
+  if (targetOrg) {
+    return targetOrg
+  }
+  return '--'
+}
+
+/** 上报卡停留时长：与历史卡 formatTime 同源的时间差展示 */
+const resolveReportStayDuration = (item: Record<string, any>): string => {
+  const raw = item?.createdAt
+  const created = raw ? new Date(raw).getTime() : NaN
+  if (!Number.isFinite(created)) {
+    return '--'
+  }
+  const minutes = Math.max(0, Math.floor((Date.now() - created) / 60000))
+  if (minutes < 1) {
+    return '刚刚提交'
+  }
+  if (minutes < 60) {
+    return `已停留 ${minutes} 分钟`
+  }
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) {
+    return `已停留 ${hours} 小时 ${minutes % 60} 分钟`
+  }
+  return `已停留 ${Math.floor(hours / 24)} 天`
 }
 
 const handleApproveReportTodo = async (item: Record<string, any>) => {
@@ -487,6 +548,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
                    「待战略发展部终审人审批」时审批中心却是空的。 -->
               <div
                 v-for="item in pendingReportApprovalItems"
+                data-card-kind="report-todo-card"
                 :key="`report-pending-${item.instanceId || item.taskId}`"
                 class="approval-card"
               >
@@ -496,7 +558,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
                     <div class="info-text">
                       <div class="plan-name">{{ resolveReportApprovalTitle(item) }}</div>
                       <div class="plan-year">
-                        {{ item.flowName || '上报审批' }}
+                        {{ resolveReportFlowLabel(item) }}
                       </div>
                     </div>
                   </div>
@@ -506,7 +568,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
                   <div class="info-row">
                     <el-icon><User /></el-icon>
                     <span class="label">提交人：</span>
-                    <span class="value">{{ item.submitterName || '--' }}</span>
+                    <span class="value">{{ resolveReportSubmitterName(item) }}</span>
                   </div>
                   <div class="info-row">
                     <el-icon><Timer /></el-icon>
@@ -514,6 +576,11 @@ const displayedCurrentPlanApprovalName = computed(() => {
                     <span class="value">{{
                       item.createdAt ? formatTime(item.createdAt) : '--'
                     }}</span>
+                  </div>
+                  <div class="info-row">
+                    <el-icon><Timer /></el-icon>
+                    <span class="label">停留时长：</span>
+                    <span class="value">{{ resolveReportStayDuration(item) }}</span>
                   </div>
                   <div class="info-row">
                     <el-icon><Right /></el-icon>
@@ -535,6 +602,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
               </div>
               <div
                 v-if="showPlanPendingCard && currentPlanApprovalSummary"
+                data-card-kind="plan-summary-card"
                 :key="currentPlanApprovalSummary.key"
                 class="approval-card"
               >
@@ -600,23 +668,8 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 </div>
                 <div class="card-actions">
                   <el-button @click="openPlanApprovalDetails">查看详情</el-button>
-                  <el-select
-                    v-if="
-                      hasPlanWorkflowData &&
-                      isPlanPendingApproval &&
-                      canCurrentUserHandlePlanApproval &&
-                      showPlanAppraisalLevelSelect
-                    "
-                    v-model="planAppraisalLevel"
-                    size="small"
-                    clearable
-                    placeholder="鉴定进度等级"
-                    style="width: 118px; margin-right: 8px"
-                  >
-                    <el-option label="超前完成" value="AHEAD" />
-                    <el-option label="正常" value="NORMAL" />
-                    <el-option label="延期" value="DELAYED" />
-                  </el-select>
+                  <!-- 2026-10-24 用户定案：整体鉴定废弃——鉴定等级改在审批详情里
+                       按指标逐条评定（仅上报链末级审批节点出现），卡片上不再有选择器 -->
                   <el-button
                     v-if="
                       hasPlanWorkflowData &&
@@ -663,8 +716,30 @@ const displayedCurrentPlanApprovalName = computed(() => {
 
         <!-- 审批流程视图（使用CustomApprovalFlow组件） -->
         <el-tab-pane name="workflow" label="审批流程">
+          <!-- 2026-10-24 用户定案：多条进行中实例时顶部选择栏——
+               列出每条实例（标题+当前环节），点选切换展开渲染对应流程 -->
+          <div
+            v-if="reportWorkflowInstances.length > 1"
+            class="workflow-instance-selector"
+          >
+            <button
+              v-for="(instance, idx) in reportWorkflowInstances"
+              :key="String(instance.instanceId || idx)"
+              type="button"
+              class="workflow-instance-option"
+              :class="{ active: idx === selectedReportInstanceIdx }"
+              @click="selectedReportInstanceIdx = idx"
+            >
+              <span class="option-index">实例{{ idx + 1 }}</span>
+              <span class="option-title">{{ instance.routeTitle || instance.title || `审批实例${idx + 1}` }}</span>
+              <span v-if="instance.currentStepName" class="option-step">{{ instance.currentStepName }}</span>
+            </button>
+          </div>
           <el-empty
-            v-if="showArchivedPlanWorkflowEmptyState || workflowNodes.length === 0"
+            v-if="
+              (showArchivedPlanWorkflowEmptyState || workflowNodes.length === 0) &&
+                reportWorkflowInstances.length === 0
+            "
             description="暂无审批数据"
             :image-size="120"
           />
@@ -943,6 +1018,50 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 </div>
               </div>
 
+              <!-- 2026-10-24 指标级鉴定：末级审批节点（上级部门鉴定环节）逐指标评定；
+                   其余节点只读展示已评定结果 -->
+              <div class="snapshot-section">
+                <div class="snapshot-section-title">鉴定进度等级</div>
+                <div class="snapshot-section-content">
+                  <el-select
+                    v-if="appraisalDialogActive"
+                    :model-value="
+                      getPlanIndicatorAppraisalLevel(indicator.reportId, indicator.indicatorId)
+                    "
+                    size="small"
+                    clearable
+                    placeholder="未评定"
+                    style="width: 140px"
+                    @update:model-value="
+                      value =>
+                        setPlanIndicatorAppraisalLevel(
+                          indicator.reportId,
+                          indicator.indicatorId,
+                          String(value ?? '')
+                        )
+                    "
+                  >
+                    <el-option label="超前完成" value="AHEAD" />
+                    <el-option label="正常" value="NORMAL" />
+                    <el-option label="延期" value="DELAYED" />
+                  </el-select>
+                  <ElTag
+                    v-else-if="indicator.appraisalLevel"
+                    size="small"
+                    :type="
+                      indicator.appraisalLevel === 'DELAYED'
+                        ? 'warning'
+                        : indicator.appraisalLevel === 'AHEAD'
+                          ? 'success'
+                          : 'info'
+                    "
+                  >
+                    {{ formatAppraisalLevel(indicator.appraisalLevel) }}
+                  </ElTag>
+                  <span v-else class="snapshot-section-empty">未评定</span>
+                </div>
+              </div>
+
               <div class="snapshot-section">
                 <div class="snapshot-section-title">{{ displayedBusinessAttachmentLabel }}</div>
                 <div v-if="indicator.attachments.length > 0" class="snapshot-attachment-list">
@@ -997,9 +1116,74 @@ const displayedCurrentPlanApprovalName = computed(() => {
 
       <template #footer>
         <el-button @click="planDetailDialogVisible = false">关闭</el-button>
+        <!-- 2026-10-24 指标级鉴定：上级部门在详情里逐指标评定后确认通过 -->
+        <el-button
+          v-if="appraisalDialogActive"
+          type="success"
+          @click="confirmAppraisalDialogApproval"
+        >
+          确认通过
+        </el-button>
       </template>
     </el-dialog>
   </el-drawer>
 </template>
 
-<style scoped src="./DistributionApprovalProgressDrawer.css"></style>
+<style scoped src="./DistributionApprovalProgressDrawer.css">
+/* 2026-10-24：审批流程页签的多实例选择栏 */
+.workflow-instance-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.workflow-instance-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  color: #475569;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.workflow-instance-option:hover {
+  border-color: #93c5fd;
+}
+
+.workflow-instance-option.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.12);
+}
+
+.workflow-instance-option .option-index {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.workflow-instance-option.active .option-index {
+  background: #dbeafe;
+}
+
+.workflow-instance-option .option-title {
+  font-weight: 600;
+}
+
+.workflow-instance-option .option-step {
+  color: #94a3b8;
+  font-size: 12px;
+}
+</style>
