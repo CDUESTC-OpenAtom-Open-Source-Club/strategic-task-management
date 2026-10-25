@@ -1102,42 +1102,41 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     const approverName = currentApprovalApproverName.value
     const candidateNames = currentApprovalCandidateNames.value
 
-    // #82 一致性：头部「异动状态」与学院页签「上报状态」列不得互相矛盾。
-    // 计划级/上报流已到终态时，若指标级最新填报仍有在审（submitted）或刚被回退（rejected），
-    // 以指标级填报审批态覆盖头部标签。聚合口径与 ReportStatusCell 完全一致（同取 fills[0]）。
-    // 仅学院页签存在逐指标状态列（职能部门页签无此列），覆盖也只在该页签生效。
+    // #82 头部「异动状态」与学院页签「上报状态」列逐态对齐（用户定案：列是什么态，头部就是什么态）。
+    // 列是每行一个状态，头部取聚合口径，文案与配色和列完全一致（同 ReportStatusCell）：
+    // 有在审→审批中；否则有回退→已回退；否则有未填报→未填报；全部已上报→已上报。
+    // 仅在学院页签生效（该页签才有「上报状态」列）；职能部门页签无此列，保持原计划级语义。
     const fillApproval = currentPlanFillApprovalSummary.value
-    const isTerminalApprovedStatus =
-      workflowStatus === 'APPROVED' ||
-      workflowStatus === 'COMPLETED' ||
-      workflowStatus === 'FINISHED'
-    const isTerminalRejectedStatus =
-      workflowStatus === 'REJECTED' ||
-      workflowStatus === 'RETURNED' ||
-      workflowStatus === 'WITHDRAWN' ||
-      workflowStatus === 'CANCELLED'
 
-    if (
-      collegeFillStatusScope.value &&
-      fillApproval.loaded &&
-      (isTerminalApprovedStatus || isTerminalRejectedStatus)
-    ) {
+    if (collegeFillStatusScope.value && fillApproval.loaded && fillApproval.hasRows) {
       if (fillApproval.hasSubmitted) {
         return {
-          label: formatPendingApprovalLabel(fillApproval.submittedStepName),
+          label: '审批中',
           tagType: 'warning' as const,
-          description: fillApproval.submittedStepName
-            ? `当前计划有指标正在“${fillApproval.submittedStepName}”环节审批。`
-            : '当前计划有指标正在审批中。'
+          description: '当前计划有指标的填报正在审批中。'
         }
       }
 
-      if (fillApproval.hasRejected && isTerminalApprovedStatus) {
+      if (fillApproval.hasRejected) {
         return {
           label: '已回退',
           tagType: 'danger' as const,
-          description: '当前计划有指标的填报已被回退，等待重新上报。'
+          description: '当前计划有指标的填报被回退，等待重新上报。'
         }
+      }
+
+      if (fillApproval.hasUnfilled) {
+        return {
+          label: '未填报',
+          tagType: 'info' as const,
+          description: '当前计划有指标尚未填报。'
+        }
+      }
+
+      return {
+        label: '已上报',
+        tagType: 'success' as const,
+        description: '当前计划的指标填报均已上报。'
       }
     }
 
@@ -4688,14 +4687,16 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   const currentPlanFillApprovalSummary = ref<{
     loaded: boolean
+    hasRows: boolean
     hasSubmitted: boolean
     hasRejected: boolean
-    submittedStepName: string
+    hasUnfilled: boolean
   }>({
     loaded: false,
+    hasRows: false,
     hasSubmitted: false,
     hasRejected: false,
-    submittedStepName: ''
+    hasUnfilled: false
   })
 
   let fillApprovalSummaryRequestId = 0
@@ -4708,9 +4709,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     if (rows.length === 0) {
       currentPlanFillApprovalSummary.value = {
         loaded: true,
+        hasRows: false,
         hasSubmitted: false,
         hasRejected: false,
-        submittedStepName: ''
+        hasUnfilled: false
       }
       return
     }
@@ -4725,30 +4727,33 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         return
       }
 
+      // 聚合口径与 ReportStatusCell 完全一致（同取 fills[0]）：
+      // approved→已上报 / submitted→审批中 / rejected→已回退 / 无→未填报
       let hasSubmitted = false
       let hasRejected = false
-      let submittedStepName = ''
+      let hasUnfilled = false
 
       fillsPerIndicator.forEach(fills => {
         const latest = fills[0]
         if (!latest) {
+          hasUnfilled = true
           return
         }
         if (latest.status === 'submitted') {
           hasSubmitted = true
-          if (!submittedStepName) {
-            submittedStepName = String(latest.currentStepName || '').trim()
-          }
         } else if (latest.status === 'rejected') {
           hasRejected = true
+        } else if (latest.status !== 'approved') {
+          hasUnfilled = true
         }
       })
 
       currentPlanFillApprovalSummary.value = {
         loaded: true,
+        hasRows: true,
         hasSubmitted,
         hasRejected,
-        submittedStepName
+        hasUnfilled
       }
 
       // 缓存已重填，广播让「上报状态」单元格直接重读：两端同源同鲜度，且不产生重复请求
