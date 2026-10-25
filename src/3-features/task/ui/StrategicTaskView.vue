@@ -177,6 +177,7 @@ const {
   selectedCollege,
   selectCollege,
   collegeTableIndicators,
+  collegeFillStatusScope,
   collegeDepartmentsScoped,
   collegeAddMode,
   collegeParentIndicatorOptions,
@@ -369,6 +370,9 @@ const handleAddNewRow = () => {
 // 二级学院 tab 用「职能部门→学院」的 FUNC_TO_COLLEGE 计划/组织查询，
 // 否则学院链路的自评等级与进度说明列读不到数据（恒为空）。
 watch(activeTaskTabName, tab => {
+  // PR#83：告知 model 头部「审批状态」的填报审批态聚合范围——
+  // 「上报状态」列只存在于学院页签，聚合也只在该页签进行
+  collegeFillStatusScope.value = tab === 'college'
   if (tab === 'college') {
     if (selectedCollege.value) {
       void syncCurrentPlanReportSummaries({ force: true, collegeScope: true })
@@ -403,7 +407,6 @@ const manualAlertEditable = computed(() =>
     workflowInFlight: manualAlertWorkflowInFlight.value
   })
 )
-
 
 // 二级学院页签（P2）：筛出下发到学院的任务与指标，复用 TaskIndicatorTree 树状下钻
 // 2026-10-11 修复：原过滤只看 department 字段（二级学院子指标的 owner 是职能部门，
@@ -582,7 +585,6 @@ const getManualAlertLabel = (severity?: ManualAlertSeverity) => getManualAlertOp
 
 const getManualAlertTagType = (severity?: ManualAlertSeverity) =>
   getManualAlertOption(severity).type
-
 
 const allStrategicExportDepartmentsSelected = computed({
   get: () =>
@@ -1069,10 +1071,18 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <el-button
             type="primary"
             size="small"
-            :disabled="!canEdit || isCurrentPlanUnderApproval || (activeTaskTabName === 'college' && !selectedCollege)"
-            :title="isCurrentPlanUnderApproval
-              ? '计划正在审批中，暂不能新增：请等审批结束或先撤回本次审批'
-              : activeTaskTabName === 'college' && !selectedCollege ? '请先在左侧选择学院' : ''"
+            :disabled="
+              !canEdit ||
+              isCurrentPlanUnderApproval ||
+              (activeTaskTabName === 'college' && !selectedCollege)
+            "
+            :title="
+              isCurrentPlanUnderApproval
+                ? '计划正在审批中，暂不能新增：请等审批结束或先撤回本次审批'
+                : activeTaskTabName === 'college' && !selectedCollege
+                  ? '请先在左侧选择学院'
+                  : ''
+            "
             @click.stop="handleAddNewRow"
           >
             <el-icon><Plus /></el-icon>
@@ -1175,7 +1185,8 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                 class="approval-status-tag"
                 @click.stop="handleOpenApproval"
               >
-                审批状态: {{ approvalFlowStatusMeta.label }}
+                {{ activeTaskTabName === 'college' ? '异动状态' : '审批状态' }}:
+                {{ approvalFlowStatusMeta.label }}
               </el-tag>
             </template>
 
@@ -1436,10 +1447,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   <el-table-column label="鉴定进度等级" width="122" align="center">
                     <template #default="{ row }">
                       <div class="manual-alert-cell">
-                        <el-tag
-                          :type="getManualAlertTagType(row.manualAlertSeverity)"
-                          size="small"
-                        >
+                        <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
                           {{ getManualAlertLabel(row.manualAlertSeverity) }}
                         </el-tag>
                       </div>
