@@ -1192,7 +1192,8 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                 class="approval-status-tag"
                 @click.stop="handleOpenApproval"
               >
-                异动状态: {{ approvalFlowStatusMeta.label }}
+                {{ activeTaskTabName === 'college' ? '异动状态' : '审批状态' }}:
+                {{ approvalFlowStatusMeta.label }}
               </el-tag>
             </template>
 
