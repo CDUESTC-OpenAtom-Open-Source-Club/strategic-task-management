@@ -83,6 +83,42 @@ const getStatusLabel = (status?: string) => {
   }
 }
 
+/**
+ * 2026-10-24 用户定案：每次上报记录都要能看出这一轮的自评等级。
+ * 等级制填报时进度百分比无意义（后端也会跳过递增校验），卡片上并列展示等级。
+ */
+const SELF_RATING_LABELS: Record<string, string> = {
+  AHEAD: '超前完成',
+  NORMAL: '正常',
+  DELAYED: '延期'
+}
+
+const resolveSelfRatingLabel = (rating?: string | null): string => {
+  const normalized = String(rating || '')
+    .trim()
+    .toUpperCase()
+  if (!normalized) {
+    return ''
+  }
+  return SELF_RATING_LABELS[normalized] || normalized
+}
+
+const resolveSelfRatingTone = (rating?: string | null): 'ahead' | 'normal' | 'delayed' | 'unknown' => {
+  const normalized = String(rating || '')
+    .trim()
+    .toUpperCase()
+  if (normalized === 'AHEAD') {
+    return 'ahead'
+  }
+  if (normalized === 'NORMAL') {
+    return 'normal'
+  }
+  if (normalized === 'DELAYED') {
+    return 'delayed'
+  }
+  return 'unknown'
+}
+
 const formatDate = (dateStr?: string) => {
   if (!dateStr) {
     return '-'
@@ -117,12 +153,31 @@ const selectFill = async (fill: IndicatorFill) => {
   detailLoading.value = String(fill.id)
   try {
     const detailedFill = await planStore.loadIndicatorFillById(fill.id, props.indicatorId)
-    emit('select', detailedFill || fill)
+    // 2026-10-24 用户定案：详情弹窗内聚在本组件——点卡片就地打开该次上报的完整内容，
+    // 三个复用页面（战略任务/指标视图/下发管理）无需各自实现。emit 保留给需要联动的外层。
+    activeFill.value = detailedFill || fill
+    fillDetailVisible.value = true
+    emit('select', activeFill.value)
   } catch {
+    activeFill.value = fill
+    fillDetailVisible.value = true
     emit('select', fill)
   } finally {
     detailLoading.value = null
   }
+}
+
+/** 2026-10-24：单次上报详情（组件内自包含弹窗） */
+const fillDetailVisible = ref(false)
+const activeFill = ref<IndicatorFill | null>(null)
+
+const resolveStatusTagType = (status?: string) => getStatusType(status)
+
+const resolveStatusLabel = (status?: string) => getStatusLabel(status)
+
+const resolveSelfRatingText = (rating?: string | null): string => {
+  const label = resolveSelfRatingLabel(rating)
+  return label || '未填写'
 }
 
 void loadHistory()
@@ -148,9 +203,18 @@ void loadHistory()
         @click="selectFill(fill)"
       >
         <div class="history-top">
+          <!-- 2026-10-24 用户定案：「进度百分比」概念已废弃，统一为鉴定进度等级体系——
+               上报记录卡只展示本轮自评等级（超前完成/正常/延期），不再显示进度% -->
           <div class="progress-block">
-            <span class="muted-label">进度</span>
-            <span class="progress-value">{{ fill.progress }}%</span>
+            <span class="muted-label">自评等级</span>
+            <span
+              v-if="resolveSelfRatingLabel(fill.selfRating)"
+              class="self-rating-tag"
+              :data-tone="resolveSelfRatingTone(fill.selfRating)"
+            >
+              {{ resolveSelfRatingLabel(fill.selfRating) }}
+            </span>
+            <span v-else class="self-rating-value self-rating-empty">未填写</span>
           </div>
           <span class="status-tag" :data-status="getStatusType(fill.status)">
             {{ getStatusLabel(fill.status) }}
@@ -197,8 +261,79 @@ void loadHistory()
             }}
           </span>
         </div>
+
+        <!-- 2026-10-24 用户定案：卡片可点开查看该次上报的完整详情（含附件） -->
+        <div class="history-open-hint">
+          {{ detailLoading === String(fill.id) ? '正在打开...' : '点开查看本次上报详情 ›' }}
+        </div>
       </button>
     </div>
+
+    <!-- 2026-10-24：单次上报详情弹窗（组件内自包含，三个复用页面共同生效） -->
+    <el-dialog v-model="fillDetailVisible" title="上报详情" width="560px" append-to-body>
+      <div v-if="activeFill" class="fill-detail">
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item label="填报日期">
+            {{ formatDate(activeFill.fill_date) }}
+          </el-descriptions-item>
+          <el-descriptions-item label="审核状态">
+            <el-tag size="small" :type="resolveStatusTagType(activeFill.status)">
+              {{ resolveStatusLabel(activeFill.status) }}
+            </el-tag>
+          </el-descriptions-item>
+          <!-- 2026-10-24 用户定案：进度百分比已废弃，统一为鉴定进度等级体系 -->
+          <el-descriptions-item label="自评等级">
+            <el-tag
+              v-if="resolveSelfRatingLabel(activeFill.selfRating)"
+              size="small"
+              :data-tone="resolveSelfRatingTone(activeFill.selfRating)"
+              class="self-rating-tag"
+            >
+              {{ resolveSelfRatingText(activeFill.selfRating) }}
+            </el-tag>
+            <span v-else class="fill-detail-muted">未填写</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="填报人">
+            {{ activeFill.filled_by_name || '-' }}
+          </el-descriptions-item>
+          <el-descriptions-item label="更新时间" :span="2">
+            {{ formatDateTime(activeFill.updated_at) }}
+          </el-descriptions-item>
+          <el-descriptions-item label="填报说明" :span="2">
+            {{ activeFill.content || '—' }}
+          </el-descriptions-item>
+          <el-descriptions-item v-if="activeFill.audit_comment" label="审核意见" :span="2">
+            {{ activeFill.audit_comment }}
+          </el-descriptions-item>
+          <el-descriptions-item label="上报资料" :span="2">
+            <div
+              v-if="activeFill.attachments && activeFill.attachments.length"
+              class="fill-detail-attachments"
+            >
+              <div
+                v-for="attachment in activeFill.attachments"
+                :key="attachment.id"
+                class="fill-detail-attachment"
+              >
+                <span class="attachment-name">{{ attachment.fileName }}</span>
+                <button
+                  type="button"
+                  class="attachment-download"
+                  :disabled="downloadingAttachment === attachment.id"
+                  @click="downloadAttachment(attachment)"
+                >
+                  {{ downloadingAttachment === attachment.id ? '下载中...' : '下载' }}
+                </button>
+              </div>
+            </div>
+            <span v-else class="fill-detail-muted">本次上报没有附件</span>
+          </el-descriptions-item>
+        </el-descriptions>
+      </div>
+      <template #footer>
+        <el-button @click="fillDetailVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -274,6 +409,18 @@ void loadHistory()
   color: #111827;
 }
 
+/* 2026-10-24：自评等级为空时的占位文本 */
+.self-rating-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.self-rating-empty {
+  color: #9ca3af;
+  font-weight: 400;
+}
+
 .status-tag {
   padding: 4px 10px;
   border-radius: 999px;
@@ -299,6 +446,62 @@ void loadHistory()
 .status-tag[data-status='draft'] {
   background: #e5e7eb;
   color: #374151;
+}
+
+/* 2026-10-24：上报记录卡上的自评等级标签 */
+.self-rating-tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.self-rating-tag[data-tone='ahead'] {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.self-rating-tag[data-tone='normal'] {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.self-rating-tag[data-tone='delayed'] {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.self-rating-tag[data-tone='unknown'] {
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
+.history-open-hint {
+  margin-top: 4px;
+  color: #2563eb;
+  font-size: 12px;
+  text-align: right;
+}
+
+/* 2026-10-24：单次上报详情弹窗 */
+.fill-detail {
+  padding: 4px 2px;
+}
+
+.fill-detail-muted {
+  color: #9ca3af;
+}
+
+.fill-detail-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fill-detail-attachment {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .history-content,

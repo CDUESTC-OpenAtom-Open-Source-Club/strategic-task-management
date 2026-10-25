@@ -594,6 +594,11 @@ export interface IndicatorFill {
   audit_comment?: string // 审核意见
   audited_by?: string // 审核人ID
   audited_at?: string // 审核时间
+  /**
+   * 2026-10-24 用户定案：每次上报的自评等级必须随记录一起展示——
+   * 此前上报记录卡只有进度%，看不出这一轮填报自评是超前/正常/延期。
+   */
+  selfRating?: string | null
   workflowInstanceId?: string | number
   currentTaskId?: string | number
   workflowStatus?: string

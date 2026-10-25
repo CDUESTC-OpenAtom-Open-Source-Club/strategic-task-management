@@ -186,6 +186,24 @@ function handleMessage(event: MessageEvent): void {
   try {
     const message: NotificationMessage = JSON.parse(event.data)
 
+    // 2026-10-24 跨窗口数据同步：DATA_CHANGED 是后端广播的数据变更事件（指标直改/
+    // 异动落库等），不是用户消息——不进消息列表、不弹浏览器通知。做两件事：
+    // ① 派发 indicator-data-changed 精确事件，战略任务视图据此对单行做局部补丁；
+    // ② 走全局数据域总线（indicator/plan 域），其余视图复用既有轻刷新。
+    if (message.type === 'DATA_CHANGED') {
+      window.dispatchEvent(
+        new CustomEvent('indicator-data-changed', {
+          detail: { entityType: message.entityType, entityId: message.entityId }
+        })
+      )
+      requestGlobalDataRefresh({
+        source: 'data-change-push',
+        silent: true,
+        domains: ['indicator', 'plan']
+      })
+      return
+    }
+
     // Add to notifications list
     notifications.value.unshift(message)
     if (notifications.value.length > MAX_NOTIFICATION_HISTORY) {

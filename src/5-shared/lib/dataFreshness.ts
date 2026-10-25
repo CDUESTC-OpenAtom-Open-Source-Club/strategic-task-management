@@ -14,6 +14,8 @@ export interface GlobalDataRefreshDetail {
     | 'message-mutation'
     | 'indicator-list-mutation'
     | 'indicator-distribution-mutation'
+    // 2026-10-24 跨窗口数据同步：后端 DATA_CHANGED 广播触发的定向刷新
+    | 'data-change-push'
     | 'manual'
   silent?: boolean
   domains?: string[]
