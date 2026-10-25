@@ -33,3 +33,19 @@ export function invalidateIndicatorFills(indicatorId?: number | string | null): 
   }
   cache.delete(String(indicatorId))
 }
+
+// #82 填报数据刷新信号：审批等动作后先 invalidate 重填缓存，再广播让订阅方重读。
+// 头部「异动状态」聚合与「上报状态」单元格（ReportStatusCell）共用同一信号，
+// 保证两端同源同鲜度，不会出现「头部已刷新、列还停在旧状态」的新矛盾。
+const fillRefreshListeners = new Set<() => void>()
+
+export function notifyIndicatorFillsRefresh(): void {
+  fillRefreshListeners.forEach(listener => listener())
+}
+
+export function onIndicatorFillsRefresh(listener: () => void): () => void {
+  fillRefreshListeners.add(listener)
+  return () => {
+    fillRefreshListeners.delete(listener)
+  }
+}

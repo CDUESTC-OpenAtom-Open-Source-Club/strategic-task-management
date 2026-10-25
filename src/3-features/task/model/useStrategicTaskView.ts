@@ -56,7 +56,11 @@ import { useApprovalStore } from '@/features/approval/model/store'
 import { indicatorApi } from '@/features/indicator/api'
 import { usePlanStore } from '@/features/plan/model/store'
 import { indicatorFillApi } from '@/features/plan/api/planApi'
-import { useIndicatorFills } from '@/features/indicator/model/useIndicatorFills'
+import {
+  useIndicatorFills,
+  invalidateIndicatorFills,
+  notifyIndicatorFillsRefresh
+} from '@/features/indicator/model/useIndicatorFills'
 import { getUsersByOrgId } from '@/features/user/api/query'
 import { sleep } from '@/5-shared/api/retry'
 import {
@@ -1098,9 +1102,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     const approverName = currentApprovalApproverName.value
     const candidateNames = currentApprovalCandidateNames.value
 
-    // #82 一致性：头部「异动状态」与表格「上报状态」列不得互相矛盾。
+    // #82 一致性：头部「异动状态」与学院页签「上报状态」列不得互相矛盾。
     // 计划级/上报流已到终态时，若指标级最新填报仍有在审（submitted）或刚被回退（rejected），
     // 以指标级填报审批态覆盖头部标签。聚合口径与 ReportStatusCell 完全一致（同取 fills[0]）。
+    // 仅学院页签存在逐指标状态列（职能部门页签无此列），覆盖也只在该页签生效。
     const fillApproval = currentPlanFillApprovalSummary.value
     const isTerminalApprovedStatus =
       workflowStatus === 'APPROVED' ||
@@ -1112,7 +1117,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       workflowStatus === 'WITHDRAWN' ||
       workflowStatus === 'CANCELLED'
 
-    if (fillApproval.loaded && (isTerminalApprovedStatus || isTerminalRejectedStatus)) {
+    if (
+      collegeFillStatusScope.value &&
+      fillApproval.loaded &&
+      (isTerminalApprovedStatus || isTerminalRejectedStatus)
+    ) {
       if (fillApproval.hasSubmitted) {
         return {
           label: formatPendingApprovalLabel(fillApproval.submittedStepName),
@@ -2670,6 +2679,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
           approvalStore.loadPendingApprovals(),
           hydrateCurrentPlanWorkflowState({ force: true })
         ])
+
+        // #82 轻量刷新（WS 断线时的心跳/聚焦/可见性兜底）同样重算填报审批态聚合，
+        // 避免陈旧的 hasSubmitted/hasRejected 覆盖刚刷新出来的终态工作流，
+        // 使既有「漏推送兜底」机制对填报维度同样生效
+        void refreshCurrentPlanFillApprovalSummary()
+
         if (currentPlanStatus.value === 'PENDING' || currentPlanStatus.value === 'DISTRIBUTED') {
           await preloadApprovalWorkflowDetail()
         }
@@ -2946,88 +2961,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       return taskA.localeCompare(taskB)
     })
   })
-
-  // #82 头部「异动状态」与「上报状态」列一致性：
-  // 聚合当前计划可见指标的最新一次非草稿填报审批态，口径与 ReportStatusCell 完全一致
-  // （同取 fills[0]：approved→已上报 / submitted→审批中 / rejected→已回退）。
-  // useIndicatorFills 内部按 indicatorId 缓存 Promise，与表格单元格共享同一请求，不增加网络开销。
-  const currentPlanFillApprovalSummary = ref<{
-    loaded: boolean
-    hasSubmitted: boolean
-    hasRejected: boolean
-    submittedStepName: string
-  }>({
-    loaded: false,
-    hasSubmitted: false,
-    hasRejected: false,
-    submittedStepName: ''
-  })
-
-  let fillApprovalSummaryRequestId = 0
-
-  async function refreshCurrentPlanFillApprovalSummary(): Promise<void> {
-    const rows = indicators.value
-    const requestId = ++fillApprovalSummaryRequestId
-
-    if (rows.length === 0) {
-      currentPlanFillApprovalSummary.value = {
-        loaded: true,
-        hasSubmitted: false,
-        hasRejected: false,
-        submittedStepName: ''
-      }
-      return
-    }
-
-    try {
-      const fillsPerIndicator = await Promise.all(rows.map(row => useIndicatorFills(row.id)))
-      // 丢弃过期响应，避免快速切换部门/计划时旧数据覆盖新数据
-      if (requestId !== fillApprovalSummaryRequestId) {
-        return
-      }
-
-      let hasSubmitted = false
-      let hasRejected = false
-      let submittedStepName = ''
-
-      fillsPerIndicator.forEach(fills => {
-        const latest = fills[0]
-        if (!latest) {
-          return
-        }
-        if (latest.status === 'submitted') {
-          hasSubmitted = true
-          if (!submittedStepName) {
-            submittedStepName = String(latest.currentStepName || '').trim()
-          }
-        } else if (latest.status === 'rejected') {
-          hasRejected = true
-        }
-      })
-
-      currentPlanFillApprovalSummary.value = {
-        loaded: true,
-        hasSubmitted,
-        hasRejected,
-        submittedStepName
-      }
-    } catch (error) {
-      // 拉取失败时保持既有计划级语义，不阻塞页面渲染
-      logger.warn('[StrategicTaskView] 聚合指标填报审批态失败:', { error })
-    }
-  }
-
-  watch(
-    () =>
-      [
-        currentPlan.value?.id ?? '',
-        indicators.value.map(indicator => indicator.id).join(',')
-      ].join('|'),
-    () => {
-      void refreshCurrentPlanFillApprovalSummary()
-    },
-    { immediate: true }
-  )
 
   watch(
     () => currentIndicator.value?.id,
@@ -4746,6 +4679,99 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       })
   })
 
+  // #82 头部「异动状态」与二级学院页签「上报状态」列一致性：
+  // 「上报状态」列只存在于学院页签表格（数据源即 collegeTableIndicators），且学院链路
+  // 查看的是「职能部门→学院」的上报（collegeScope），因此聚合只在该页签激活时进行，
+  // 数据源与 ReportStatusCell 严格同批行。口径与 ReportStatusCell 完全一致
+  // （同取 fills[0]：approved→已上报 / submitted→审批中 / rejected→已回退）。
+  const collegeFillStatusScope = ref(false)
+
+  const currentPlanFillApprovalSummary = ref<{
+    loaded: boolean
+    hasSubmitted: boolean
+    hasRejected: boolean
+    submittedStepName: string
+  }>({
+    loaded: false,
+    hasSubmitted: false,
+    hasRejected: false,
+    submittedStepName: ''
+  })
+
+  let fillApprovalSummaryRequestId = 0
+
+  async function refreshCurrentPlanFillApprovalSummary(): Promise<void> {
+    // 只在学院页签聚合：职能部门页签没有逐指标状态列，不存在该矛盾，保持原有计划级语义
+    const rows = collegeFillStatusScope.value ? collegeTableIndicators.value : []
+    const requestId = ++fillApprovalSummaryRequestId
+
+    if (rows.length === 0) {
+      currentPlanFillApprovalSummary.value = {
+        loaded: true,
+        hasSubmitted: false,
+        hasRejected: false,
+        submittedStepName: ''
+      }
+      return
+    }
+
+    try {
+      // 先统一失效再重取：useIndicatorFills 缓存按 indicatorId 长期驻留，
+      // 不失效则审批流转后拿到的仍是首屏旧响应，头部会卡在旧状态直到整页重载。
+      invalidateIndicatorFills()
+      const fillsPerIndicator = await Promise.all(rows.map(row => useIndicatorFills(row.id)))
+      // 丢弃过期响应，避免快速切换学院/部门时旧数据覆盖新数据
+      if (requestId !== fillApprovalSummaryRequestId) {
+        return
+      }
+
+      let hasSubmitted = false
+      let hasRejected = false
+      let submittedStepName = ''
+
+      fillsPerIndicator.forEach(fills => {
+        const latest = fills[0]
+        if (!latest) {
+          return
+        }
+        if (latest.status === 'submitted') {
+          hasSubmitted = true
+          if (!submittedStepName) {
+            submittedStepName = String(latest.currentStepName || '').trim()
+          }
+        } else if (latest.status === 'rejected') {
+          hasRejected = true
+        }
+      })
+
+      currentPlanFillApprovalSummary.value = {
+        loaded: true,
+        hasSubmitted,
+        hasRejected,
+        submittedStepName
+      }
+
+      // 缓存已重填，广播让「上报状态」单元格直接重读：两端同源同鲜度，且不产生重复请求
+      notifyIndicatorFillsRefresh()
+    } catch (error) {
+      // 拉取失败时保持既有计划级语义，不阻塞页面渲染
+      logger.warn('[StrategicTaskView] 聚合指标填报审批态失败:', { error })
+    }
+  }
+
+  watch(
+    () =>
+      [
+        collegeFillStatusScope.value ? 'college' : 'functional',
+        selectedCollege.value,
+        collegeTableIndicators.value.map(indicator => indicator.id).join(',')
+      ].join('|'),
+    () => {
+      void refreshCurrentPlanFillApprovalSummary()
+    },
+    { immediate: true }
+  )
+
   // 二级学院 tab：核心指标列合并单元格元数据（同属一个核心指标的行首行 rowspan=组内行数）
   const collegeSpanMetaMap = computed(() => {
     const meta = new Map<number, { rowspan: number; colspan: number }>()
@@ -6150,6 +6176,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     selectedCollege,
     selectCollege,
     collegeTableIndicators,
+    collegeFillStatusScope,
     collegeDepartmentsScoped,
     indicatorById,
     collegeSpanMethod,

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import type { IndicatorFill } from '@/shared/types'
-import { useIndicatorFills } from '../model/useIndicatorFills'
+import { useIndicatorFills, onIndicatorFillsRefresh } from '../model/useIndicatorFills'
 
 // 2026-10-13 用户隔离测试发现：上报状态列此前误用后端 hasCurrentMonthFill
 // （该字段语义是"本月是否还有可编辑的填报轮次"，APPROVED/REJECTED 被故意排除），
@@ -39,10 +39,26 @@ const tagType = () => {
   }
 }
 
-onMounted(async () => {
+async function reloadLatestFill(): Promise<void> {
   const fills = await useIndicatorFills(props.indicatorId)
   latest.value = fills[0] ?? null
   loaded.value = true
+}
+
+// #82 填报刷新信号（审批流转等）到达后重读：信号发出方已先失效并重填缓存，
+// 这里直接重读即可拿到新数据，与头部「异动状态」聚合保持同源同鲜度。
+let unsubscribeFillsRefresh: (() => void) | null = null
+
+onMounted(async () => {
+  await reloadLatestFill()
+  unsubscribeFillsRefresh = onIndicatorFillsRefresh(() => {
+    void reloadLatestFill()
+  })
+})
+
+onUnmounted(() => {
+  unsubscribeFillsRefresh?.()
+  unsubscribeFillsRefresh = null
 })
 </script>
 
