@@ -177,6 +177,7 @@ const {
   collegeTableIndicators,
   collegeDepartmentsScoped,
   collegeAddMode,
+  collegeFillStatusScope,
   collegeParentIndicatorOptions,
   indicatorById,
   collegeSpanMethod,
@@ -338,7 +339,10 @@ const handleAddNewRow = () => {
 // 2026-10-19 修复：切 tab 时按对应链路重新拉取上报摘要——
 // 二级学院 tab 用「职能部门→学院」的 FUNC_TO_COLLEGE 计划/组织查询，
 // 否则学院链路的自评等级与进度说明列读不到数据（恒为空）。
+// 2026-10-25 #82：同时告知 model 头部「异动状态」的填报审批态聚合范围——
+// 「上报状态」列只存在于学院页签，聚合也只在该页签进行，避免读错表（职能部门列表）。
 watch(activeTaskTabName, tab => {
+  collegeFillStatusScope.value = tab === 'college'
   if (tab === 'college') {
     if (selectedCollege.value) {
       void syncCurrentPlanReportSummaries({ force: true, collegeScope: true })
@@ -1188,7 +1192,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                 class="approval-status-tag"
                 @click.stop="handleOpenApproval"
               >
-                审批状态: {{ approvalFlowStatusMeta.label }}
+                异动状态: {{ approvalFlowStatusMeta.label }}
               </el-tag>
             </template>
 

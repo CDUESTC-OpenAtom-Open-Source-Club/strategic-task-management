@@ -737,7 +737,7 @@ const handleDistributionImportCommitted = async () => {
                     style="cursor: pointer"
                     @click.stop="handleOpenApproval"
                   >
-                    审批状态: {{ approvalFlowStatusMeta.label }}
+                    异动状态: {{ approvalFlowStatusMeta.label }}
                   </el-tag>
                 </template>
 
