@@ -38,6 +38,10 @@ import { useAuthStore } from '@/features/auth/model/store'
 import { useAuditLogStore } from '@/features/admin/model/auditLog'
 import { logger } from '@/shared/lib/utils/logger'
 import orgApi from '@/features/organization/api/org'
+import {
+  filterRolesForOrg,
+  COLLEGE_VICE_PRESIDENT_ERROR_MESSAGE
+} from '@/features/admin/model/collegeRoleRestriction'
 
 const authStore = useAuthStore()
 const auditLogStore = useAuditLogStore()
@@ -652,6 +656,32 @@ const resetUserForm = () => {
 }
 
 // 保存用户
+// 2026-10-25 用户定案（角色创建限制）：二级学院不设「分管校领导」——
+// 学院 leadership 是院长/学院领导，不是分管校领导。战略发展部创建账号时，
+// 若所属组织为学院且勾选了「分管校领导」角色，立即拒绝并提示（与权限体系一致：
+// 分管校领导席位只归属战略发展部/职能部门，数据库结构与预置角色名不变）。
+const filterVicePresidentFromCollege = (): boolean => {
+  const result = filterRolesForOrg(
+    userForm.value.roles,
+    getOrganizationTypeById(userForm.value.orgId)
+  )
+  if (!result.removed) {
+    return false
+  }
+  userForm.value.roles = result.roles
+  return true
+}
+
+watch(
+  () => [userForm.value.orgId, [...userForm.value.roles].join(',')],
+  () => {
+    if (filterVicePresidentFromCollege()) {
+      ElMessage.error(COLLEGE_VICE_PRESIDENT_ERROR_MESSAGE)
+    }
+  },
+  { immediate: true }
+)
+
 const handleSave = async () => {
   if (!userFormRef.value) {
     return
@@ -661,6 +691,12 @@ const handleSave = async () => {
     await userFormRef.value.validate()
   } catch {
     ElMessage.warning('请完善表单信息')
+    return
+  }
+
+  // 互斥硬校验：学院 + 分管校领导 → 拒绝提交
+  if (filterVicePresidentFromCollege()) {
+    ElMessage.error(COLLEGE_VICE_PRESIDENT_ERROR_MESSAGE)
     return
   }
 
@@ -1160,6 +1196,7 @@ onMounted(() => {
             v-model="userForm.orgId"
             :data="organizationTree"
             :props="{ label: 'name', children: 'children' }"
+            node-key="id"
             value-key="id"
             placeholder="请选择所属组织"
             :loading="organizationLoading"
