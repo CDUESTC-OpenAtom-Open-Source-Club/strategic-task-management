@@ -87,7 +87,7 @@ import { useAuthStore } from '@/features/auth/model/store'
 import { APPROVAL_STATE_REFRESH_EVENT, notifyApprovalStateRefresh } from '@/features/approval/lib'
 import { resolveApprovalRoute } from '@/features/approval/lib/approvalNotifications'
 import { usePlanStore } from '@/features/plan/model/store'
-import { useStrategicStore } from '@/features/task/model/store'
+import { useStrategicStore } from '@/features/task/model/strategic'
 import { useTimeContextStore } from '@/shared/lib/timeContext'
 import { logger } from '@/shared/lib/utils/logger'
 import { getMyPendingTasks } from '@/features/workflow/api/queries'
@@ -336,6 +336,7 @@ export function useApprovalProgressDrawer(
 
   /** 权重显示：数字原样，字符串去空白，空值回落 '--' */
   function formatWeightValue(value: unknown): string {
+    logger.warn('[weight-debug] raw value:', value)
     if (typeof value === 'number' && Number.isFinite(value)) {
       return String(value)
     }
@@ -955,6 +956,12 @@ export function useApprovalProgressDrawer(
   // 缺陷修复：PLAN_REPORT（月报审批）/ INDICATOR 待办来自 /workflows/my-tasks，
   // 本就是分配给当前登录人的任务，不受「当前计划」实体范围过滤——
   // 此前被计划范围过滤掉，导致部门审核人/院长在审批中心看不到月报待办（无 UI 入口）。
+  /**
+   * 2026-10-26：独立拉取「上报待办」（PLAN_REPORT）——
+   * 直接调 /workflows/my-tasks 并筛出 entityType=PLAN_REPORT 的条目，
+   * 不依赖任何中间状态，保证学院审核人等角色一定能拿到本学院上报的审批卡。 */
+  const reportTodoItems = ref<Record<string, any>[]>([])
+
   const externalWorkflowTodoItems = computed<Record<string, any>[]>(() => {
     // 优先用独立加载的上报待办；为空时回退到 pendingPlanApprovals 里的上报实例
     if (reportTodoItems.value.length > 0) {
@@ -3359,12 +3366,6 @@ export function useApprovalProgressDrawer(
       }
     }
   )
-
-  /**
-   * 2026-10-26：独立拉取「上报待办」（PLAN_REPORT）——
-   * 直接调 /workflows/my-tasks 并筛出 entityType=PLAN_REPORT 的条目，
-   * 不依赖任何中间状态，保证学院审核人等角色一定能拿到本学院上报的审批卡。 */
-  const reportTodoItems = ref<Record<string, any>[]>([])
 
   async function loadReportTodoItems(): Promise<void> {
     try {

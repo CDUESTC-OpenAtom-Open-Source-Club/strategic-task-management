@@ -1198,6 +1198,10 @@ export function useApprovalProgressState(
           : '--',
         submittedProgress: '--',
         submittedComment: '',
+        // 2026-10-26 用户反馈：详情卡补「权重」；下发链无自评/鉴定数据，占位显示
+        weight: normalizeDisplayName(String(indicator.weight ?? '')) || '--',
+        submittedSelfRating: '',
+        appraisalLevel: '',
         targetValue: formatIndicatorMetricValue(indicator.targetValue),
         actualValue: formatIndicatorMetricValue(indicator.actualValue),
         unit: normalizeDisplayName(indicator.unit) || '--',
@@ -1276,6 +1280,11 @@ export function useApprovalProgressState(
         isSavingSubmittedProgress: savingPlanReportProgressKey.value === editKey,
         submittedComment: normalizeDisplayName(detail?.comment) || '--',
         submittedSelfRating: normalizeDisplayName(detail?.selfRating) || '',
+        // 2026-10-26 用户反馈：上报详情卡同样补「权重」（指标库行自带）
+        weight:
+          normalizeDisplayName(
+            String((matchedIndicator as { weight?: unknown } | null)?.weight ?? '')
+          ) || '--',
         // 2026-10-24 指标级鉴定：已评定等级随快照带出，详情弹窗展示
         appraisalLevel: normalizeDisplayName(detail?.appraisalLevel) || '',
         targetValue: formatIndicatorMetricValue(matchedIndicator?.targetValue),
