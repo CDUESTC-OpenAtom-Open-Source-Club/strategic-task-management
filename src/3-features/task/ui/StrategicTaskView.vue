@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useLatestIndicatorFill } from '@/features/indicator/model/useLatestIndicatorFill'
 import TaskIndicatorTree from './TaskIndicatorTree.vue'
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
@@ -327,6 +328,10 @@ const {
   reportHistoryOpen,
   currentDetailId
 } = useStrategicTaskView(props)
+
+const { latestFillNote, latestFillAttachments } = useLatestIndicatorFill(
+  computed(() => (currentDetail as any)?.id ?? null)
+)
 
 const activeTaskTabName = ref<'functional' | 'college'>('functional')
 
@@ -2423,6 +2428,13 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <el-descriptions-item label="创建时间" :span="2">{{
             formatDetailDate(currentDetail.createTime)
           }}</el-descriptions-item>
+          <el-descriptions-item label="进度说明" :span="2">{{
+            latestFillNote || '—'
+          }}</el-descriptions-item>
+          <el-descriptions-item label="上报资料" :span="2">
+            <span v-if="!latestFillAttachments.length" style="color: #909399">—</span>
+            <span v-else>{{ latestFillAttachments.map(a => a.fileName).join('、') }}</span>
+          </el-descriptions-item>
           <el-descriptions-item label="下发备注" :span="2">{{
             currentDetail.remark
           }}</el-descriptions-item>
@@ -2611,7 +2623,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
               :rows="4"
               maxlength="500"
               show-word-limit
-              placeholder="请输入提交说明；如果留空，后端会自动生成默认提交文案并落库。"
+              placeholder="请输入提交说明；如果留空，会生成默认提交文案并落库。"
             />
           </el-form-item>
         </el-form>

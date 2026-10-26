@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useLatestIndicatorFill } from '@/features/indicator/model/useLatestIndicatorFill'
 import {
   Plus,
   Promotion,
@@ -257,6 +258,10 @@ const {
   withdrawButtonType,
   withdrawButtonVisible
 } = useIndicatorDistributeView(props)
+
+const { latestFillNote, latestFillAttachments } = useLatestIndicatorFill(
+  computed(() => (currentDetailIndicator as any)?.id ?? null)
+)
 
 type DistributionExportChild = Partial<StrategicIndicator> & {
   id?: string | number
@@ -829,7 +834,7 @@ const handleDistributionImportCommitted = async () => {
               >
                 导入
               </el-button>
-              <!-- 
+              <!--
                 按钮显示逻辑：
                 - 草稿态且暂无指标 → 只显示"新增指标"
                 - 有指标时 → 审批入口始终可见
@@ -1478,6 +1483,13 @@ const handleDistributionImportCommitted = async () => {
           <el-descriptions-item label="创建时间" :span="2">
             {{ formatDetailDate(currentDetailIndicator.createTime) }}
           </el-descriptions-item>
+          <el-descriptions-item label="进度说明" :span="2">{{
+            latestFillNote || '—'
+          }}</el-descriptions-item>
+          <el-descriptions-item label="上报资料" :span="2">
+            <span v-if="!latestFillAttachments.length" style="color: #909399">—</span>
+            <span v-else>{{ latestFillAttachments.map(a => a.fileName).join('、') }}</span>
+          </el-descriptions-item>
           <el-descriptions-item label="下发备注" :span="2">
             {{ currentDetailIndicator.remark || '暂无备注' }}
           </el-descriptions-item>
@@ -1598,7 +1610,7 @@ const handleDistributionImportCommitted = async () => {
                 :rows="4"
                 maxlength="500"
                 show-word-limit
-                placeholder="请输入提交说明；如果留空，后端会自动生成默认提交文案并落库。"
+                placeholder="请输入提交说明；如果留空，会生成默认提交文案并落库。"
               />
             </el-form-item>
           </el-form>
