@@ -679,7 +679,12 @@ export function useApprovalProgressState(
   const reportWorkflowDetail = ref<WorkflowInstanceDetailResponse | null>(null)
   const reportWorkflowDetailLoading = ref(false)
   watch(
-    () => String(selectedReportInstance.value?.instanceId ?? selectedReportInstance.value?.workflowInstanceId ?? ''),
+    () =>
+      String(
+        selectedReportInstance.value?.instanceId ??
+          selectedReportInstance.value?.workflowInstanceId ??
+          ''
+      ),
     async instanceKey => {
       if (!instanceKey) {
         reportWorkflowDetail.value = null
@@ -1151,7 +1156,7 @@ export function useApprovalProgressState(
   })
 
   const displayedBusinessCommentLabel = computed(() => {
-    return displayedBusinessSectionMode.value === 'report' ? '填报说明' : '下发说明'
+    return displayedBusinessSectionMode.value === 'report' ? '进度说明' : '下发备注'
   })
 
   const displayedBusinessAttachmentLabel = computed(() => {
@@ -2416,21 +2421,28 @@ export function useApprovalProgressState(
     if (selectedReport) {
       const detail = reportWorkflowDetail.value
       const detailTasks = Array.isArray(detail?.tasks) ? detail!.tasks : []
-      const sourceTasks = detailTasks.length > 0
-        ? detailTasks
-        : [{
-            taskId: String(selectedReport.taskId || selectedReport.instanceId || 'report-current'),
-            taskName: String(selectedReport.currentStepName || '当前审批环节'),
-            currentStepName: String(selectedReport.currentStepName || ''),
-            status: 'PENDING',
-            assigneeId: selectedReport.assigneeId,
-            assigneeName: selectedReport.assigneeName,
-            approvedAt: undefined,
-            comment: undefined
-          } as WorkflowTaskResponse]
+      const sourceTasks =
+        detailTasks.length > 0
+          ? detailTasks
+          : [
+              {
+                taskId: String(
+                  selectedReport.taskId || selectedReport.instanceId || 'report-current'
+                ),
+                taskName: String(selectedReport.currentStepName || '当前审批环节'),
+                currentStepName: String(selectedReport.currentStepName || ''),
+                status: 'PENDING',
+                assigneeId: selectedReport.assigneeId,
+                assigneeName: selectedReport.assigneeName,
+                approvedAt: undefined,
+                comment: undefined
+              } as WorkflowTaskResponse
+            ]
       return sourceTasks.map(task => {
         const isPending =
-          String(task.status || '').trim().toUpperCase() === 'PENDING'
+          String(task.status || '')
+            .trim()
+            .toUpperCase() === 'PENDING'
         return {
           id: String(task.taskId || task.taskKey || task.currentStepName || task.taskName),
           name:
@@ -3100,7 +3112,12 @@ export function useApprovalProgressState(
       const response = await getWorkflowDefinitionPreviewByCode(flowCode)
       const steps = Array.isArray(response.data?.steps) ? response.data.steps : []
       const approvalSteps = steps
-        .filter(step => String(step.stepType || 'APPROVAL').trim().toUpperCase() === 'APPROVAL')
+        .filter(
+          step =>
+            String(step.stepType || 'APPROVAL')
+              .trim()
+              .toUpperCase() === 'APPROVAL'
+        )
         .sort((left, right) => (left.stepOrder ?? 0) - (right.stepOrder ?? 0))
       const lastApproval = approvalSteps[approvalSteps.length - 1]
       defId = Number.isFinite(lastApproval?.stepDefId) ? Number(lastApproval?.stepDefId) : null
@@ -3145,14 +3162,18 @@ export function useApprovalProgressState(
     if (!Number.isFinite(instanceId) || instanceId <= 0) {
       return false
     }
-    let flowCode = String(item?.flowCode || '').trim().toUpperCase()
+    let flowCode = String(item?.flowCode || '')
+      .trim()
+      .toUpperCase()
     let pendingDefId = pendingStepDefIdOfItem(item)
     if (!flowCode.startsWith('PLAN_APPROVAL') || pendingDefId === null) {
       try {
         const { getWorkflowInstanceDetail } = await import('@/features/workflow/api/queries')
         const response = await getWorkflowInstanceDetail(String(instanceId))
         if (response.success && response.data) {
-          flowCode = String(response.data.flowCode || '').trim().toUpperCase()
+          flowCode = String(response.data.flowCode || '')
+            .trim()
+            .toUpperCase()
           const pendingTask = Array.isArray(response.data.tasks)
             ? response.data.tasks.find(
                 task => String(task?.status || '').toUpperCase() === 'PENDING'

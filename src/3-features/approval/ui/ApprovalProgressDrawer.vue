@@ -73,7 +73,9 @@ const {
   currentUserRoleCodes,
   detailDialogStatusTag,
   displayedBusinessAttachmentLabel,
+  displayedBusinessCommentLabel,
   displayedBusinessEmptyAttachmentText,
+  displayedBusinessEmptyCommentText,
   displayedBusinessIndicatorItems,
   displayedBusinessSectionSubtitle,
   displayedBusinessSectionTitle,
@@ -733,6 +735,19 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 <div class="snapshot-field">
                   <span class="snapshot-field-label">责任部门</span>
                   <span class="snapshot-field-value">{{ indicator.responsibleDept }}</span>
+                </div>
+                <div class="snapshot-field">
+                  <span class="snapshot-field-label">权重</span>
+                  <span class="snapshot-field-value snapshot-field-value--strong">{{
+                    indicator.weight === '--' ? '--' : `${indicator.weight} 分`
+                  }}</span>
+                </div>
+              </div>
+
+              <div class="snapshot-section">
+                <div class="snapshot-section-title">{{ displayedBusinessCommentLabel }}</div>
+                <div class="snapshot-section-content">
+                  {{ indicator.submittedComment || displayedBusinessEmptyCommentText }}
                 </div>
               </div>
 

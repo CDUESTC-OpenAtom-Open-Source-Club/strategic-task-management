@@ -87,6 +87,7 @@ import { useAuthStore } from '@/features/auth/model/store'
 import { APPROVAL_STATE_REFRESH_EVENT, notifyApprovalStateRefresh } from '@/features/approval/lib'
 import { resolveApprovalRoute } from '@/features/approval/lib/approvalNotifications'
 import { usePlanStore } from '@/features/plan/model/store'
+import { useStrategicStore } from '@/features/task/model/store'
 import { useTimeContextStore } from '@/shared/lib/timeContext'
 import { logger } from '@/shared/lib/utils/logger'
 import { getMyPendingTasks } from '@/features/workflow/api/queries'
@@ -200,6 +201,7 @@ export function useApprovalProgressDrawer(
   const router = useRouter()
   const authStore = useAuthStore()
   const planStore = usePlanStore()
+  const strategicStore = useStrategicStore()
   const timeContext = useTimeContextStore()
   const canLookupWorkflowUsers = computed(() => {
     const roles = currentUserRoleCodes.value
@@ -317,6 +319,30 @@ export function useApprovalProgressDrawer(
 
   function normalizeDisplayName(value: unknown): string {
     return typeof value === 'string' ? value.trim() : ''
+  }
+
+  /** 从指标行对象中按 /weight/i 匹配权重字段（后端各接口字段名不统一：weight / weightPercent） */
+  function pickWeightValue(row: unknown): unknown {
+    if (!row || typeof row !== 'object') {
+      return undefined
+    }
+    for (const [key, value] of Object.entries(row as Record<string, unknown>)) {
+      if (/weight/i.test(key) && value !== null && value !== undefined && value !== '') {
+        return value
+      }
+    }
+    return undefined
+  }
+
+  /** 权重显示：数字原样，字符串去空白，空值回落 '--' */
+  function formatWeightValue(value: unknown): string {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value)
+    }
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim()
+    }
+    return '--'
   }
 
   function isGenericPlanDisplayName(value: unknown): boolean {
@@ -2353,7 +2379,7 @@ export function useApprovalProgressDrawer(
   })
 
   const displayedBusinessCommentLabel = computed(() => {
-    return displayedBusinessSectionMode.value === 'report' ? '填报说明' : '下发说明'
+    return displayedBusinessSectionMode.value === 'report' ? '进度说明' : '下发备注'
   })
 
   const displayedBusinessAttachmentLabel = computed(() => {
@@ -2417,6 +2443,11 @@ export function useApprovalProgressDrawer(
           : '--',
         submittedProgress: '--',
         submittedComment: '',
+        // 2026-10-26 用户反馈：详情卡补「权重」与「下发备注」（下发审批需要看到）
+        weight: formatWeightValue(pickWeightValue(resolvedIndicator as Record<string, unknown>)),
+        dispatchRemark:
+          normalizeDisplayName((resolvedIndicator as { remark?: unknown }).remark) || '',
+        submittedSelfRating: '',
         targetValue: hasExplicitMetric
           ? formatIndicatorMetricValue(targetValueRaw)
           : Number.isFinite(currentProgressNumber)
@@ -2560,6 +2591,24 @@ export function useApprovalProgressDrawer(
         canEditSubmittedProgress: false,
         isSavingSubmittedProgress: savingPlanReportProgressKey.value === editKey,
         submittedComment: normalizeDisplayName(detail?.comment) || '未填写说明',
+        // 2026-10-26 用户反馈：详情卡补「权重」（上报详情同样需要看到指标权重）
+        weight: formatWeightValue(
+          pickWeightValue(matchedIndicator) ??
+            pickWeightValue(
+              availablePlanIndicators.value.find(
+                candidate =>
+                  String(candidate.id) === String(indicatorId) ||
+                  (matchedIndicator as { id?: unknown } | null)?.id === candidate.id
+              )
+            ) ??
+            pickWeightValue(
+              (strategicStore.indicators as unknown[]).find(
+                indicator =>
+                  String((indicator as { id?: unknown } | null)?.id) === String(indicatorId)
+              )
+            )
+        ),
+        dispatchRemark: '',
         submittedSelfRating:
           normalizeDisplayName((detail as { selfRating?: string } | null)?.selfRating) || '',
         // 2026-10-24 指标级鉴定：已评定等级随快照带出，详情弹窗展示
