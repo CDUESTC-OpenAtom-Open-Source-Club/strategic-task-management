@@ -105,6 +105,7 @@ const {
   handleAddNode,
   handleApplyTemplate,
   handleApproveMutation,
+  canCurrentUserHandleReportTodo,
   handleApprovePlanBatch,
   planAppraisalLevel,
   handleClose,

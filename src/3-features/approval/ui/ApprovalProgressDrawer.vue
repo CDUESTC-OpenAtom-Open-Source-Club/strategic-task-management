@@ -85,6 +85,7 @@ const {
   ensureWorkflowRelatedAvatarsLoaded,
   ensureWorkflowUserAvatarLoaded,
   expectedWorkflowCodes,
+  canCurrentUserHandleReportTodo,
   externalWorkflowTodoItems,
   formatStayDuration,
   formatTime,
