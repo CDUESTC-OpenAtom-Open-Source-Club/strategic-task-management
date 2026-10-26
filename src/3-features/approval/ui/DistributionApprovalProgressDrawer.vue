@@ -86,10 +86,7 @@ const {
   currentUserRoleCodes,
   detailDialogStatusTag,
   displayedBusinessAttachmentLabel,
-  displayedBusinessCommentLabel,
   displayedBusinessEmptyAttachmentText,
-  displayedBusinessEmptyCommentText,
-  displayedBusinessProgressLabel,
   displayedBusinessSectionSubtitle,
   displayedBusinessSectionTitle,
   displayedDistributionIndicatorItems,
@@ -293,7 +290,9 @@ const openReportApprovalDetails = (item: Record<string, any>) => {
 // 「Plan审批流程（二级学院）」易与计划汇总卡混淆——展示层统一转译。
 /** 上报卡的流程标签：按 flowCode 转译为上报语义，不透传 Plan 审批字样 */
 const resolveReportFlowLabel = (item: Record<string, any>): string => {
-  const flowCode = String(item?.flowCode || '').trim().toUpperCase()
+  const flowCode = String(item?.flowCode || '')
+    .trim()
+    .toUpperCase()
   if (flowCode === 'PLAN_APPROVAL_COLLEGE') {
     return '上报审批流程（二级学院 → 职能部门）'
   }
@@ -548,8 +547,8 @@ const displayedCurrentPlanApprovalName = computed(() => {
                    「待战略发展部终审人审批」时审批中心却是空的。 -->
               <div
                 v-for="item in pendingReportApprovalItems"
-                data-card-kind="report-todo-card"
                 :key="`report-pending-${item.instanceId || item.taskId}`"
+                data-card-kind="report-todo-card"
                 class="approval-card"
               >
                 <div class="card-header">
@@ -602,8 +601,8 @@ const displayedCurrentPlanApprovalName = computed(() => {
               </div>
               <div
                 v-if="showPlanPendingCard && currentPlanApprovalSummary"
-                data-card-kind="plan-summary-card"
                 :key="currentPlanApprovalSummary.key"
+                data-card-kind="plan-summary-card"
                 class="approval-card"
               >
                 <div class="card-header">
@@ -718,10 +717,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
         <el-tab-pane name="workflow" label="审批流程">
           <!-- 2026-10-24 用户定案：多条进行中实例时顶部选择栏——
                列出每条实例（标题+当前环节），点选切换展开渲染对应流程 -->
-          <div
-            v-if="reportWorkflowInstances.length > 1"
-            class="workflow-instance-selector"
-          >
+          <div v-if="reportWorkflowInstances.length > 1" class="workflow-instance-selector">
             <button
               v-for="(instance, idx) in reportWorkflowInstances"
               :key="String(instance.instanceId || idx)"
@@ -731,14 +727,18 @@ const displayedCurrentPlanApprovalName = computed(() => {
               @click="selectedReportInstanceIdx = idx"
             >
               <span class="option-index">实例{{ idx + 1 }}</span>
-              <span class="option-title">{{ instance.routeTitle || instance.title || `审批实例${idx + 1}` }}</span>
-              <span v-if="instance.currentStepName" class="option-step">{{ instance.currentStepName }}</span>
+              <span class="option-title">{{
+                instance.routeTitle || instance.title || `审批实例${idx + 1}`
+              }}</span>
+              <span v-if="instance.currentStepName" class="option-step">{{
+                instance.currentStepName
+              }}</span>
             </button>
           </div>
           <el-empty
             v-if="
               (showArchivedPlanWorkflowEmptyState || workflowNodes.length === 0) &&
-                reportWorkflowInstances.length === 0
+              reportWorkflowInstances.length === 0
             "
             description="暂无审批数据"
             :image-size="120"
@@ -913,10 +913,6 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 <span class="detail-label">完成时间：</span>
                 <span class="detail-value">{{ formatTime(item.completedAt) }}</span>
               </div>
-              <div v-if="item.entityId" class="detail-meta-row">
-                <span class="detail-label">关联业务编号：</span>
-                <span class="detail-value">{{ item.entityId }}</span>
-              </div>
             </div>
             <!-- 2026-10-21：异动审批必须能看到「改了哪些内容」——逐字段展示 before→after -->
             <div
@@ -981,40 +977,16 @@ const displayedCurrentPlanApprovalName = computed(() => {
                   <span class="snapshot-field-label">责任部门</span>
                   <span class="snapshot-field-value">{{ indicator.responsibleDept }}</span>
                 </div>
-                <div class="snapshot-field">
-                  <span class="snapshot-field-label">当前实际进度</span>
-                  <span class="snapshot-field-value">{{ indicator.currentProgress }}</span>
-                </div>
-                <div class="snapshot-field">
-                  <span class="snapshot-field-label">{{ displayedBusinessProgressLabel }}</span>
-                  <!-- 会议定案：审批人不可修改下级填报内容，仅保留只读展示 -->
-                  <span class="snapshot-field-value snapshot-field-value--strong">{{
-                    indicator.submittedProgress
-                  }}</span>
-                </div>
-                <div class="snapshot-field">
-                  <span class="snapshot-field-label">目标值 / 实际值 / 单位</span>
-                  <span class="snapshot-field-value"
-                    >{{ indicator.targetValue }} / {{ indicator.actualValue }} /
-                    {{ indicator.unit }}</span
-                  >
-                </div>
-              </div>
-
-              <div class="snapshot-section">
-                <div class="snapshot-section-title">{{ displayedBusinessCommentLabel }}</div>
-                <div class="snapshot-section-content">
-                  {{ indicator.submittedComment || displayedBusinessEmptyCommentText }}
-                </div>
               </div>
 
               <!-- D3：自评进度等级徽标（对齐主审批抽屉） -->
-              <div v-if="indicator.submittedSelfRating" class="snapshot-section">
+              <div class="snapshot-section">
                 <div class="snapshot-section-title">自评等级</div>
                 <div class="snapshot-section-content">
-                  <ElTag size="small" type="info">{{
+                  <ElTag v-if="indicator.submittedSelfRating" size="small" type="info">{{
                     formatAppraisalLevel(indicator.submittedSelfRating)
                   }}</ElTag>
+                  <span v-else class="snapshot-section-empty">未填报</span>
                 </div>
               </div>
 

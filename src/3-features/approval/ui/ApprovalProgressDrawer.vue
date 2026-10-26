@@ -73,11 +73,8 @@ const {
   currentUserRoleCodes,
   detailDialogStatusTag,
   displayedBusinessAttachmentLabel,
-  displayedBusinessCommentLabel,
   displayedBusinessEmptyAttachmentText,
-  displayedBusinessEmptyCommentText,
   displayedBusinessIndicatorItems,
-  displayedBusinessProgressLabel,
   displayedBusinessSectionSubtitle,
   displayedBusinessSectionTitle,
   displayedBusinessSummaryComment,
@@ -698,10 +695,6 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 <span class="detail-label">完成时间：</span>
                 <span class="detail-value">{{ formatTime(item.completedAt) }}</span>
               </div>
-              <div v-if="item.entityId" class="detail-meta-row">
-                <span class="detail-label">关联业务编号：</span>
-                <span class="detail-value">{{ item.entityId }}</span>
-              </div>
             </div>
           </div>
         </div>
@@ -741,39 +734,15 @@ const displayedCurrentPlanApprovalName = computed(() => {
                   <span class="snapshot-field-label">责任部门</span>
                   <span class="snapshot-field-value">{{ indicator.responsibleDept }}</span>
                 </div>
-                <div class="snapshot-field">
-                  <span class="snapshot-field-label">当前实际进度</span>
-                  <span class="snapshot-field-value">{{ indicator.currentProgress }}</span>
-                </div>
-                <div class="snapshot-field">
-                  <span class="snapshot-field-label">{{ displayedBusinessProgressLabel }}</span>
-                  <!-- 会议定案：审批人不可修改下级填报内容，仅保留只读展示 -->
-                  <span class="snapshot-field-value snapshot-field-value--strong">{{
-                    indicator.submittedProgress
-                  }}</span>
-                </div>
-                <div class="snapshot-field">
-                  <span class="snapshot-field-label">目标值 / 实际值 / 单位</span>
-                  <span class="snapshot-field-value"
-                    >{{ indicator.targetValue }} / {{ indicator.actualValue }} /
-                    {{ indicator.unit }}</span
-                  >
-                </div>
               </div>
 
               <div class="snapshot-section">
-                <div class="snapshot-section-title">{{ displayedBusinessCommentLabel }}</div>
-                <div class="snapshot-section-content">
-                  {{ indicator.submittedComment || displayedBusinessEmptyCommentText }}
-                </div>
-              </div>
-
-              <div v-if="indicator.submittedSelfRating" class="snapshot-section">
                 <div class="snapshot-section-title">自评等级</div>
                 <div class="snapshot-section-content">
-                  <ElTag size="small" type="info">{{
+                  <ElTag v-if="indicator.submittedSelfRating" size="small" type="info">{{
                     formatAppraisalLevel(indicator.submittedSelfRating)
                   }}</ElTag>
+                  <span v-else class="snapshot-section-empty">未填报</span>
                 </div>
               </div>
 
