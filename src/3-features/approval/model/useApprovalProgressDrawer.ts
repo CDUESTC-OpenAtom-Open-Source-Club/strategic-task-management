@@ -89,6 +89,8 @@ import { resolveApprovalRoute } from '@/features/approval/lib/approvalNotificati
 import { usePlanStore } from '@/features/plan/model/store'
 import { useTimeContextStore } from '@/shared/lib/timeContext'
 import { logger } from '@/shared/lib/utils/logger'
+import { getMyPendingTasks } from '@/features/workflow/api/queries'
+import { useApprovalStore } from '@/features/approval/model/store'
 import {
   getWorkflowDefinitionPreviewByCode,
   getWorkflowInstanceDetail,
@@ -927,9 +929,13 @@ export function useApprovalProgressDrawer(
   // 缺陷修复：PLAN_REPORT（月报审批）/ INDICATOR 待办来自 /workflows/my-tasks，
   // 本就是分配给当前登录人的任务，不受「当前计划」实体范围过滤——
   // 此前被计划范围过滤掉，导致部门审核人/院长在审批中心看不到月报待办（无 UI 入口）。
-  const externalWorkflowTodoItems = computed<Record<string, any>[]>(() =>
-    pendingPlanApprovals.value.filter(instance => isExternalWorkflowTodo(instance))
-  )
+  const externalWorkflowTodoItems = computed<Record<string, any>[]>(() => {
+    // 优先用独立加载的上报待办；为空时回退到 pendingPlanApprovals 里的上报实例
+    if (reportTodoItems.value.length > 0) {
+      return reportTodoItems.value
+    }
+    return pendingPlanApprovals.value.filter(instance => isExternalWorkflowTodo(instance))
+  })
 
   const scopedPlanApprovals = computed(() => {
     const dedupeByTaskKey = (items: Record<string, any>[]) => {
@@ -3232,9 +3238,18 @@ export function useApprovalProgressDrawer(
     }
 
     planApprovalsLoading.value = true
+    // 2026-10-26：先拉 store 待办（/workflows/my-tasks，字段最全），
+    // 保证「上报待办」这类独立业务实例一定有卡可渲染；随后再并入接口结果。
+    void loadStorePendingApprovals()
+    void loadReportTodoItems()
     try {
+      // 2026-10-26 修复：待办加载不能被 planStore.loadPlans() 阻塞——
+      // 计划列表加载慢/失败时会导致上报待办永远拿不到（学院审核人看不到审批卡）。
+      // 改为并行加载，计划加载失败不阻断待办。
       if (props.departmentName) {
-        await planStore.loadPlans()
+        void planStore.loadPlans().catch(error => {
+          logger.warn('[ApprovalProgressDrawer] 加载计划列表失败（不影响待办加载）:', error)
+        })
       }
 
       const userId = authStore.user?.userId || authStore.user?.id || 1
@@ -3251,12 +3266,129 @@ export function useApprovalProgressDrawer(
       if (response.message) {
         ElMessage.error(response.message)
       }
+      fallbackToStorePendingApprovals()
     } catch (error: any) {
       pendingPlanApprovals.value = []
       logger.error('[ApprovalProgressDrawer] 加载待审批列表失败:', error)
-      ElMessage.error(error?.message || '加载待审批列表失败')
+      fallbackToStorePendingApprovals()
     } finally {
       planApprovalsLoading.value = false
+    }
+  }
+
+  /**
+   * 2026-10-26：上报待办（PLAN_REPORT）是否可由当前用户审批——
+   * 判定依据是「待办的指派人 = 当前用户」（最直接的证据），
+   * 或当前用户具备审批类角色。学院审核人没有「当前计划工作流」上下文，
+   * 不能沿用 canCurrentUserHandlePlanApproval。
+   */
+  const canCurrentUserHandleReportTodo = computed(() => {
+    const items = externalWorkflowTodoItems.value
+    if (items.length === 0) {
+      return false
+    }
+    const userId = currentUserId.value
+    if (userId > 0) {
+      const assigned = items.some(item => {
+        const assigneeId = toPositiveNumber(item.assigneeId ?? item.currentApproverId)
+        return assigneeId > 0 && assigneeId === userId
+      })
+      if (assigned) {
+        return true
+      }
+    }
+    return hasAnyPlanApprovalRole.value
+  })
+
+  // 2026-10-26：上报待办到达后，若当前停在其它页签则切到「计划审批」——
+  // 否则用户打开抽屉只看到历史/流程页签，以为没有待办。
+  watch(
+    () => reportTodoItems.value.length,
+    count => {
+      if (count > 0 && props.modelValue && props.showPlanApprovals) {
+        activeTab.value = 'pending-plans'
+      }
+    }
+  )
+
+  /**
+   * 2026-10-26：独立拉取「上报待办」（PLAN_REPORT）——
+   * 直接调 /workflows/my-tasks 并筛出 entityType=PLAN_REPORT 的条目，
+   * 不依赖任何中间状态，保证学院审核人等角色一定能拿到本学院上报的审批卡。 */
+  const reportTodoItems = ref<Record<string, any>[]>([])
+
+  async function loadReportTodoItems(): Promise<void> {
+    try {
+      const response = await getMyPendingTasks(1)
+      const page = (response.data as unknown as { items?: Record<string, any>[] }) || {}
+      const items = Array.isArray(page.items) ? page.items : []
+      reportTodoItems.value = items.filter(item => {
+        const entityType = String(item.entityType ?? '').toUpperCase()
+        return entityType === 'PLAN_REPORT'
+      })
+      logger.info('[ApprovalProgressDrawer] 上报待办已加载，数量:', reportTodoItems.value.length)
+    } catch (error) {
+      logger.warn('[ApprovalProgressDrawer] 上报待办加载失败:', error)
+    }
+  }
+
+  /** 2026-10-26：从 approvalStore 拉待办（/workflows/my-tasks）并写入本抽屉 */
+  async function loadStorePendingApprovals(): Promise<void> {
+    try {
+      const store = useApprovalStore()
+      await store.loadPendingApprovals()
+      const storeItems = store.pendingApprovals
+      if (!Array.isArray(storeItems) || storeItems.length === 0) {
+        return
+      }
+      const mapped = storeItems.map((item: Record<string, any>) => ({
+        ...item,
+        entityType: item.entityType ?? 'PLAN',
+        instanceId: String(item.instanceId ?? ''),
+        currentStepName: item.currentStepName ?? item.currentStep ?? ''
+      }))
+      // 与已有结果按 instanceId 去重合并
+      const merged = new Map<string, Record<string, any>>()
+      ;[...pendingPlanApprovals.value, ...mapped].forEach(item => {
+        const key = String(item.instanceId || item.taskId || '')
+        if (key) {
+          merged.set(key, item)
+        }
+      })
+      pendingPlanApprovals.value = [...merged.values()]
+      logger.info(
+        '[ApprovalProgressDrawer] store 待办已并入，数量:',
+        pendingPlanApprovals.value.length
+      )
+    } catch (error) {
+      logger.warn('[ApprovalProgressDrawer] store 待办加载失败:', error)
+    }
+  }
+
+  /**
+   * 2026-10-26 兜底：/approval/instances/my-pending 不可用或返回空时，
+   * 复用 approvalStore 已加载的待办（来源 /workflows/my-tasks，字段一致）。
+   * 否则学院审核人等「只有待办、没有当前计划上下文」的角色会看不到任何审批卡。
+   */
+  function fallbackToStorePendingApprovals(): void {
+    try {
+      const store = useApprovalStore()
+      const storeItems = store.pendingApprovals
+      if (!Array.isArray(storeItems) || storeItems.length === 0) {
+        return
+      }
+      pendingPlanApprovals.value = storeItems.map((item: Record<string, any>) => ({
+        ...item,
+        entityType: item.entityType ?? 'PLAN',
+        instanceId: String(item.instanceId ?? ''),
+        currentStepName: item.currentStepName ?? item.currentStep ?? ''
+      }))
+      logger.info(
+        '[ApprovalProgressDrawer] 已用 store 待办兜底，数量:',
+        pendingPlanApprovals.value.length
+      )
+    } catch (error) {
+      logger.warn('[ApprovalProgressDrawer] store 待办兜底失败:', error)
     }
   }
 
@@ -3505,7 +3637,12 @@ export function useApprovalProgressDrawer(
       const response = await getWorkflowDefinitionPreviewByCode(flowCode)
       const steps = Array.isArray(response.data?.steps) ? response.data.steps : []
       const approvalSteps = steps
-        .filter(step => String(step.stepType || 'APPROVAL').trim().toUpperCase() === 'APPROVAL')
+        .filter(
+          step =>
+            String(step.stepType || 'APPROVAL')
+              .trim()
+              .toUpperCase() === 'APPROVAL'
+        )
         .sort((left, right) => (left.stepOrder ?? 0) - (right.stepOrder ?? 0))
       const lastApproval = approvalSteps[approvalSteps.length - 1]
       defId = Number.isFinite(lastApproval?.stepDefId) ? Number(lastApproval?.stepDefId) : null
@@ -3519,7 +3656,9 @@ export function useApprovalProgressDrawer(
 
   /** A 卡当前待办是否处于上报链末级审批节点（上级部门鉴定环节） */
   const isCurrentPlanAppraisalStep = computed(() => {
-    const flowCode = String(planWorkflowDetail.value?.flowCode || '').trim().toUpperCase()
+    const flowCode = String(planWorkflowDetail.value?.flowCode || '')
+      .trim()
+      .toUpperCase()
     if (!flowCode.startsWith('PLAN_APPROVAL')) {
       return false
     }
@@ -3555,7 +3694,9 @@ export function useApprovalProgressDrawer(
       return match ? Number(match[1]) : null
     }
 
-    let flowCode = String(cachedDetail?.flowCode || '').trim().toUpperCase()
+    let flowCode = String(cachedDetail?.flowCode || '')
+      .trim()
+      .toUpperCase()
     let pendingDefId = readPendingDefId(cachedDetail)
     if (!flowCode.startsWith('PLAN_APPROVAL') || pendingDefId === null) {
       if (!currentPlanTaskId.value) {
@@ -3564,7 +3705,9 @@ export function useApprovalProgressDrawer(
       try {
         const response = await getWorkflowInstanceDetail(String(currentPlanTaskId.value))
         if (response.success && response.data) {
-          flowCode = String(response.data.flowCode || '').trim().toUpperCase()
+          flowCode = String(response.data.flowCode || '')
+            .trim()
+            .toUpperCase()
           pendingDefId = readPendingDefId(response.data)
         }
       } catch (error) {
@@ -4649,6 +4792,8 @@ export function useApprovalProgressDrawer(
     confirmAppraisalDialogApproval,
     filteredPlanApprovalItems,
     externalWorkflowTodoItems,
+    reportTodoItems,
+    canCurrentUserHandleReportTodo,
     resolveExternalTodoSubmitterName,
     formatAppraisalLevel,
     formatInstanceNo,
@@ -4690,6 +4835,7 @@ export function useApprovalProgressDrawer(
     parsePositiveUserId,
     pendingCount,
     pendingPlanApprovalPreviewItems,
+    externalWorkflowTodoItems,
     pendingPlanApprovals,
     planDetailContentLoading,
     planApprovalsLoading,
