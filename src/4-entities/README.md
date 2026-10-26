@@ -1,3 +1,5 @@
+> **[历史标注 2026-10-26]** 2026-05 架构重构期产物。文中指向后端实体目录与 API 文档的跨仓库链接已失效。
+
 # Entities Layer
 
 The entities layer contains domain models that represent core business entities in the FSD (Feature-Sliced Design) architecture.
@@ -5,6 +7,7 @@ The entities layer contains domain models that represent core business entities 
 ## Purpose
 
 Entities are:
+
 - **Domain models**: Represent fundamental business concepts
 - **Shared across features**: Used by multiple features and pages
 - **Type definitions**: Provide TypeScript interfaces and types
@@ -34,6 +37,7 @@ entities/
 Strategic performance indicators with hierarchical structure and workflow support.
 
 **Key Types:**
+
 - `Indicator` - Core indicator entity
 - `IndicatorStatus` - Lifecycle status (DRAFT, PENDING_REVIEW, DISTRIBUTED, ARCHIVED)
 - `IndicatorLevel` - Hierarchy level (FIRST, SECOND)
@@ -41,6 +45,7 @@ Strategic performance indicators with hierarchical structure and workflow suppor
 - `ProgressApprovalStatus` - Progress approval states
 
 **Usage:**
+
 ```typescript
 import { Indicator, IndicatorStatus, IndicatorLevel } from '@/entities/indicator'
 
@@ -51,7 +56,7 @@ const indicator: Indicator = {
   level: IndicatorLevel.FIRST,
   taskId: 10,
   ownerOrgId: 1,
-  targetOrgId: 5,
+  targetOrgId: 5
   // ...
 }
 ```
@@ -61,12 +66,14 @@ const indicator: Indicator = {
 Strategic performance plans that group indicators into assessment cycles.
 
 **Key Types:**
+
 - `StrategicPlan` - Core plan entity
 - `PlanStatus` - Lifecycle status
 - `PlanLevel` - Distribution level
 - `AssessmentCycle` - Time period for assessment
 
 **Usage:**
+
 ```typescript
 import { StrategicPlan, PlanStatus, PlanLevel } from '@/entities/plan'
 
@@ -75,7 +82,7 @@ const plan: StrategicPlan = {
   cycleId: 1,
   targetOrgId: 5,
   planLevel: PlanLevel.STRAT_TO_FUNC,
-  status: PlanStatus.DRAFT,
+  status: PlanStatus.DRAFT
   // ...
 }
 ```
@@ -120,6 +127,7 @@ export const IndicatorStatus = {
 ```
 
 This provides:
+
 - Type safety with string literal types
 - Enum-like usage: `IndicatorStatus.DRAFT`
 - Compatibility with `erasableSyntaxOnly` mode
@@ -130,8 +138,8 @@ Use `?` for optional fields that may not always be present:
 
 ```typescript
 interface Indicator {
-  id: number           // Required
-  name: string         // Required
+  id: number // Required
+  name: string // Required
   description?: string // Optional
 }
 ```
@@ -143,7 +151,7 @@ Provide aliases for fields with different names in frontend vs backend:
 ```typescript
 interface Indicator {
   id: number
-  indicatorId?: number  // Alias for id
+  indicatorId?: number // Alias for id
   name: string
   indicatorDesc?: string // Alias for name
 }
@@ -160,6 +168,6 @@ interface Indicator {
 
 ## Related Documentation
 
-- [FSD Architecture](../README.md)
-- [API Documentation](../../../sism-backend/docs/API接口文档.md)
-- [Backend Entities](../../../sism-backend/src/main/java/com/sism/entity/)
+- ~~FSD Architecture~~（目标已不存在）
+- ~~API Documentation~~（目标已不存在）
+- ~~Backend Entities~~（目标已不存在）

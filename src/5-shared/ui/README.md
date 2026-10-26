@@ -1,3 +1,5 @@
+> **[历史标注 2026-10-26]** 2026-05 架构重构期产物。文中 .kiro 引用已失效。
+
 # Shared UI Components
 
 共享 UI 组件库，遵循 FSD (Feature-Sliced Design) 架构规范。
@@ -25,12 +27,14 @@ shared/ui/
 **位置**: `shared/ui/table/DataTable.vue`
 
 **功能**:
+
 - 统一的表格样式
 - 支持分页、排序、筛选
 - 支持加载状态和空状态
 - 支持自定义列和插槽
 
 **使用示例**:
+
 ```vue
 <script setup lang="ts">
 import { DataTable } from '@/shared/ui'
@@ -45,8 +49,8 @@ const data = ref([])
 </script>
 
 <template>
-  <DataTable 
-    :data="data" 
+  <DataTable
+    :data="data"
     :columns="columns"
     :loading="loading"
     :pagination="{ page: 1, pageSize: 10, total: 100 }"
@@ -63,6 +67,7 @@ const data = ref([])
 **位置**: `shared/ui/display/StatusBadge.vue`
 
 **功能**:
+
 - 显示状态标签
 - 支持多种状态类型 (success, info, warning, danger, primary, default)
 - 支持不同尺寸 (small, default, large)
@@ -70,6 +75,7 @@ const data = ref([])
 - 支持圆点样式
 
 **使用示例**:
+
 ```vue
 <script setup lang="ts">
 import { StatusBadge } from '@/shared/ui'
@@ -78,13 +84,13 @@ import { StatusBadge } from '@/shared/ui'
 <template>
   <!-- 基础用法 -->
   <StatusBadge text="已完成" type="success" />
-  
+
   <!-- 带圆点 -->
   <StatusBadge text="进行中" type="primary" dot />
-  
+
   <!-- 自定义颜色 -->
   <StatusBadge text="自定义" color="#ff6b6b" />
-  
+
   <!-- 不同尺寸 -->
   <StatusBadge text="小号" size="small" />
   <StatusBadge text="默认" size="default" />
@@ -97,12 +103,14 @@ import { StatusBadge } from '@/shared/ui'
 **位置**: `shared/ui/feedback/ConfirmDialog.vue`
 
 **功能**:
+
 - 统一的确认对话框
 - 支持异步操作
 - 提供预设的删除、提交、审批确认
 - 支持输入验证
 
 **使用示例**:
+
 ```vue
 <script setup lang="ts">
 import { showConfirm, showDeleteConfirm, useConfirmDialog } from '@/shared/ui'
@@ -152,12 +160,14 @@ async function handleCustom() {
 **位置**: `shared/ui/layout/PageHeader.vue`
 
 **功能**:
+
 - 显示页面标题和描述
 - 提供面包屑导航
 - 提供操作按钮区域
 - 支持返回按钮
 
 **使用示例**:
+
 ```vue
 <script setup lang="ts">
 import { PageHeader } from '@/shared/ui'
@@ -171,23 +181,18 @@ const breadcrumb: BreadcrumbItem[] = [
 </script>
 
 <template>
-  <PageHeader
-    title="指标详情"
-    description="查看和编辑指标信息"
-    :breadcrumb="breadcrumb"
-    show-back
-  >
+  <PageHeader title="指标详情" description="查看和编辑指标信息" :breadcrumb="breadcrumb" show-back>
     <!-- 标题旁的额外内容 -->
     <template #extra>
       <StatusBadge text="已发布" type="success" />
     </template>
-    
+
     <!-- 操作按钮 -->
     <template #actions>
       <el-button type="primary">编辑</el-button>
       <el-button>删除</el-button>
     </template>
-    
+
     <!-- 底部扩展区域 -->
     <template #footer>
       <el-tabs v-model="activeTab">
@@ -226,22 +231,25 @@ import { DataTable } from '@/components/common'
 如果你的代码中使用了旧的导入路径，建议按以下步骤迁移：
 
 1. **查找旧的导入**:
+
    ```typescript
    // 旧的导入方式
    import { DataTable } from '@/components/common/DataTable.vue'
    ```
 
 2. **替换为新的导入**:
+
    ```typescript
    // 新的导入方式
    import { DataTable } from '@/shared/ui'
    ```
 
 3. **更新类型导入**:
+
    ```typescript
    // 旧的类型导入
    import type { TableColumn } from '@/components/common/DataTable.vue'
-   
+
    // 新的类型导入
    import type { TableColumn } from '@/shared/ui'
    ```
@@ -341,6 +349,6 @@ describe('StatusBadge', () => {
 
 ## 相关文档
 
-- [FSD 架构文档](../../.kiro/specs/architecture-refactoring/design.md)
-- [前端开发规范](../../.kiro/frontend-development.md)
+- ~~FSD 架构文档~~（目标已不存在）
+- ~~前端开发规范~~（目标已不存在）
 - [Element Plus 文档](https://element-plus.org/)

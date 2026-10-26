@@ -1,3 +1,5 @@
+> **[历史标注 2026-10-26]** 2026-05 架构重构期产物。文中 .kiro 引用与部分迁移链接已失效；迁移记录见同目录 MIGRATION.md。
+
 # Shared Library Module
 
 The `shared/lib` module contains reusable utility functions and helpers following the Feature-Sliced Design (FSD) architecture.
@@ -43,6 +45,7 @@ const short = truncate('Long text...', 10)
 ```
 
 **Available functions:**
+
 - Date: `formatDate`, `formatDateTime`, `formatDateChinese`, `getRelativeTime`, etc.
 - Number: `formatNumber`, `formatCurrency`, `formatPercentage`, `formatFileSize`
 - String: `capitalize`, `truncate`, `toKebabCase`, `toCamelCase`, etc.
@@ -59,6 +62,7 @@ const hasAccess = canAccess(permissions, roles, ['view'], ['admin'])
 ```
 
 **Available functions:**
+
 - `hasPermission` - Check single permission
 - `hasAnyPermission` - Check any of multiple permissions
 - `hasAllPermissions` - Check all permissions
@@ -85,6 +89,7 @@ const token = sessionStorage.getItem<string>('token')
 ```
 
 **Features:**
+
 - Type-safe with generics
 - Automatic JSON serialization/deserialization
 - Error handling with console warnings
@@ -179,9 +184,7 @@ const sorted = sortBy(original, 'asc') // original is unchanged
 Functions can be easily composed:
 
 ```typescript
-const formatted = formatCurrency(
-  roundTo(calculateTotal(items), 2)
-)
+const formatted = formatCurrency(roundTo(calculateTotal(items), 2))
 ```
 
 ### 4. Type Safety
@@ -240,7 +243,7 @@ export function formatDuration(ms: number): string {
 
 ## Related Documentation
 
-- [FSD Architecture Design](../../../.kiro/specs/architecture-refactoring/design.md)
-- [Frontend Development Guide](../../../docs/frontend-development.md)
+- ~~FSD Architecture Design~~（目标已不存在）
+- ~~Frontend Development Guide~~（目标已不存在）
 - [API Documentation](./api/README.md)
 - [Migration Guide](./MIGRATION.md)

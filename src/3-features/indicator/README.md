@@ -1,3 +1,5 @@
+> **[历史标注 2026-10-26]** 2026-05 架构重构期产物。文中引用的 .kiro 规格目录、sism-backend API 文档路径与 entities/shared 迁移说明均可能已失效；当前分层以 1-app/2-pages/3-features/4-entities/5-shared 为准。
+
 # Strategic Indicator Feature
 
 战略指标管理功能模块，基于 FSD (Feature-Sliced Design) 架构设计。
@@ -401,7 +403,7 @@ npm run test features/strategic-indicator
 
 ## 相关文档
 
-- [API 接口文档](../../../../../sism-backend/docs/API接口文档.md)
-- [FSD 架构设计](../../../.kiro/specs/architecture-refactoring/design.md)
-- [实体层文档](../../entities/README.md)
-- [共享层文档](../../shared/README.md)
+- ~~API 接口文档~~（目标已不存在）
+- ~~FSD 架构设计~~（目标已不存在）
+- ~~实体层文档~~（目标已不存在）
+- ~~共享层文档~~（目标已不存在）
