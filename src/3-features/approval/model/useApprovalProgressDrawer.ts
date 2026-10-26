@@ -3300,6 +3300,16 @@ export function useApprovalProgressDrawer(
     return hasAnyPlanApprovalRole.value
   })
 
+  /**
+   * 2026-10-26：独立拉取「上报待办」（PLAN_REPORT）——
+   * 直接调 /workflows/my-tasks 并筛出 entityType=PLAN_REPORT 的条目，
+   * 不依赖任何中间状态，保证学院审核人等角色一定能拿到本学院上报的审批卡。
+   *
+   * 注意：必须在下方 watch 之前声明。watch 创建时会立即执行一次 source getter
+   * 收集依赖，若此时 reportTodoItems 尚未初始化会触发 TDZ
+   * （开发模式不易发现，生产构建必现 Cannot access ... before initialization）。 */
+  const reportTodoItems = ref<Record<string, any>[]>([])
+
   // 2026-10-26：上报待办到达后，若当前停在其它页签则切到「计划审批」——
   // 否则用户打开抽屉只看到历史/流程页签，以为没有待办。
   watch(
@@ -3310,12 +3320,6 @@ export function useApprovalProgressDrawer(
       }
     }
   )
-
-  /**
-   * 2026-10-26：独立拉取「上报待办」（PLAN_REPORT）——
-   * 直接调 /workflows/my-tasks 并筛出 entityType=PLAN_REPORT 的条目，
-   * 不依赖任何中间状态，保证学院审核人等角色一定能拿到本学院上报的审批卡。 */
-  const reportTodoItems = ref<Record<string, any>[]>([])
 
   async function loadReportTodoItems(): Promise<void> {
     try {
