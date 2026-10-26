@@ -4841,7 +4841,6 @@ export function useApprovalProgressDrawer(
     resolveIsAppraisalForCurrentTodo,
     confirmAppraisalDialogApproval,
     filteredPlanApprovalItems,
-    externalWorkflowTodoItems,
     reportTodoItems,
     canCurrentUserHandleReportTodo,
     resolveExternalTodoSubmitterName,

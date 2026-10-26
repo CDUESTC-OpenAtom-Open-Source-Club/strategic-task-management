@@ -49,22 +49,6 @@ export interface UsePermissionReturn {
   canDeleteIndicatorFill: (fill: IndicatorFill) => boolean
 }
 
-// Legacy compatibility shim:
-// permission codes are no longer the source of truth for core business actions.
-const PERMISSION_ROLE_MAP: Record<PermissionCode, string[]> = {
-  [PermissionCode.PLAN_CREATE]: ['strategic_dept', 'functional_dept'],
-  [PermissionCode.PLAN_VIEW]: ['strategic_dept', 'functional_dept', 'secondary_college'],
-  [PermissionCode.PLAN_EDIT]: ['strategic_dept', 'functional_dept'],
-  [PermissionCode.PLAN_DELETE]: ['strategic_dept'],
-  [PermissionCode.PLAN_SUBMIT]: ['strategic_dept', 'functional_dept', 'secondary_college'],
-  [PermissionCode.INDICATOR_VIEW]: ['strategic_dept', 'functional_dept', 'secondary_college'],
-  [PermissionCode.INDICATOR_FILL]: ['strategic_dept', 'functional_dept', 'secondary_college'],
-  [PermissionCode.INDICATOR_EDIT]: ['strategic_dept', 'functional_dept'],
-  [PermissionCode.TASK_CREATE]: ['strategic_dept', 'functional_dept'],
-  [PermissionCode.TASK_EDIT]: ['strategic_dept', 'functional_dept'],
-  [PermissionCode.TASK_DELETE]: ['strategic_dept']
-}
-
 export function usePermission(): UsePermissionReturn {
   const authStore = useAuthStore()
 
@@ -84,21 +68,21 @@ export function usePermission(): UsePermissionReturn {
   const isFunctionalDept = computed(() => userRole.value === 'functional_dept')
   const isSecondaryCollege = computed(() => userRole.value === 'secondary_college')
 
+  /**
+   * 权限判断：只消费后端下发的 permissions（后端按「角色 + 组织作用域」计算）。
+   * 2026-10-26 权限模型改造：删除按组织类别硬编码的 PERMISSION_ROLE_MAP，
+   * 并移除「战略部直接全放行」的短路；按钮权限以权限码为准。
+   */
   const hasPermission = (permission: PermissionCode | PermissionCode[]): boolean => {
-    if (!userRole.value) {
+    const rawPermissions = (authStore.user as { permissions?: unknown[] } | null)?.permissions
+    const codes = Array.isArray(rawPermissions)
+      ? rawPermissions.map(item => String(item)).filter(Boolean)
+      : []
+    if (codes.length === 0) {
       return false
     }
-
-    const permissions = Array.isArray(permission) ? permission : [permission]
-
-    if (isStrategicDept.value) {
-      return true
-    }
-
-    return permissions.some(code => {
-      const allowedRoles = PERMISSION_ROLE_MAP[code] || []
-      return userRole.value ? allowedRoles.includes(userRole.value) : false
-    })
+    const requested = Array.isArray(permission) ? permission : [permission]
+    return requested.some(code => codes.includes(String(code)))
   }
 
   const canAccessOrg = (orgId: number | string | null | undefined): boolean => {

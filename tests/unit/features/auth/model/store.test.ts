@@ -252,33 +252,37 @@ describe('Auth Store', () => {
   })
 
   describe('Permission System', () => {
+    // 2026-10-27 权限模型改造：hasPermission 只消费后端下发的权限码
+    const backendPermissions = [
+      'PAGE_STRATEGY_TASK',
+      'BTN_STRATEGY_TASK_DISPATCH_APPROVE',
+      'PAGE_INDICATOR_DISPATCH'
+    ]
+
     beforeEach(() => {
-      authStore.user = mockUser
+      authStore.user = { ...mockUser, permissions: backendPermissions } as unknown as User
     })
 
-    it('should check permissions for strategic_dept role', () => {
-      expect(authStore.hasPermission('strategic_tasks', 'create')).toBe(true)
-      expect(authStore.hasPermission('indicators', 'read')).toBe(true)
-      expect(authStore.hasPermission('approvals', 'approve')).toBe(false)
+    it('should check permissions from backend-provided codes', () => {
+      expect(authStore.hasPermission('PAGE_STRATEGY_TASK')).toBe(true)
+      expect(authStore.hasPermission('BTN_STRATEGY_TASK_DISPATCH_APPROVE')).toBe(true)
+      expect(authStore.hasPermission('BTN_SYSTEM_ADMIN_CONSOLE')).toBe(false)
     })
 
     it('should deny permissions for unauthenticated user', () => {
       authStore.user = null
-      expect(authStore.hasPermission('strategic_tasks', 'create')).toBe(false)
+      expect(authStore.hasPermission('PAGE_STRATEGY_TASK')).toBe(false)
     })
 
-    it('should handle functional_dept permissions', () => {
-      authStore.user = { ...mockUser, role: 'functional_dept' }
-
-      expect(authStore.hasPermission('indicators', 'read')).toBe(true)
-      expect(authStore.hasPermission('strategic_tasks', 'create')).toBe(false)
+    it('should deny permissions when backend returns no permission codes', () => {
+      authStore.user = { ...mockUser, permissions: [] } as unknown as User
+      expect(authStore.hasPermission('PAGE_STRATEGY_TASK')).toBe(false)
     })
 
-    it('should handle secondary_college permissions', () => {
-      authStore.user = { ...mockUser, role: 'secondary_college' }
-
-      expect(authStore.hasPermission('reports', 'create')).toBe(true)
-      expect(authStore.hasPermission('indicators', 'create')).toBe(false)
+    it('should only match exact permission codes', () => {
+      // 旧 resource:action 语义已移除，不再按组织类别推断
+      expect(authStore.hasPermission('strategic_tasks')).toBe(false)
+      expect(authStore.hasPermission('indicators')).toBe(false)
     })
   })
 

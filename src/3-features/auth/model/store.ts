@@ -397,37 +397,17 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  const hasPermission = (resource: string, action: string) => {
+  /**
+   * 权限判断：只消费后端下发的 permissions。
+   * 2026-10-26 权限模型改造：删除按组织类别硬编码的映射表；
+   * 有效权限 = 角色 + 组织作用域，由后端计算后随登录/me 下发。
+   */
+  const hasPermission = (permissionCode: string) => {
     if (!user.value) {
       return false
     }
-
-    const explicitPermissionCode = `${resource}:${action}`
-    // Legacy compatibility shim:
-    // runtime authorization now follows role/org/business rules, not backend permission codes.
-    const permissions = {
-      strategic_dept: [
-        'strategic_tasks:create',
-        'strategic_tasks:read',
-        'strategic_tasks:update',
-        'strategic_tasks:delete',
-        'indicators:create',
-        'indicators:read',
-        'indicators:update',
-        'indicators:delete'
-      ],
-      functional_dept: [
-        'indicators:read',
-        'indicators:update',
-        'reports:create',
-        'reports:read',
-        'reports:update'
-      ],
-      secondary_college: ['reports:create', 'reports:read', 'reports:update']
-    }
-
-    const rolePermissions = permissions[user.value.role] || []
-    return rolePermissions.includes(explicitPermissionCode)
+    const codes = Array.isArray(user.value.permissions) ? user.value.permissions : []
+    return codes.includes(permissionCode)
   }
 
   const initializeAuth = async () => {

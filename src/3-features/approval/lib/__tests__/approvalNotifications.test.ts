@@ -15,7 +15,7 @@ describe('approvalNotifications', () => {
         currentDepartmentName: '继续教育部'
       })
     ).toBe(
-      '/indicators?openApproval=1&approvalEntityType=PLAN_REPORT&approvalEntityId=123&approvalInstanceId=456&approvalDepartment=%E7%BB%A7%E7%BB%AD%E6%95%99%E8%82%B2%E9%83%A8'
+      '/distribution?openApproval=1&approvalEntityType=PLAN_REPORT&approvalEntityId=123&approvalInstanceId=456&approvalDepartment=%E7%BB%A7%E7%BB%AD%E6%95%99%E8%82%B2%E9%83%A8&approvalSourceOrg=%E6%88%98%E7%95%A5%E5%8F%91%E5%B1%95%E9%83%A8&approvalTargetOrg=%E7%BB%A7%E7%BB%AD%E6%95%99%E8%82%B2%E9%83%A8'
     )
   })
 
@@ -32,7 +32,7 @@ describe('approvalNotifications', () => {
         currentDepartmentName: '继续教育部'
       })
     ).toBe(
-      '/distribution?openApproval=1&approvalEntityType=PLAN_REPORT&approvalEntityId=321&approvalInstanceId=654&approvalDepartment=%E8%AE%A1%E7%AE%97%E6%9C%BA%E5%AD%A6%E9%99%A2'
+      '/distribution?openApproval=1&approvalEntityType=PLAN_REPORT&approvalEntityId=321&approvalInstanceId=654&approvalDepartment=%E8%AE%A1%E7%AE%97%E6%9C%BA%E5%AD%A6%E9%99%A2&approvalSourceOrg=%E7%BB%A7%E7%BB%AD%E6%95%99%E8%82%B2%E9%83%A8&approvalTargetOrg=%E8%AE%A1%E7%AE%97%E6%9C%BA%E5%AD%A6%E9%99%A2'
     )
   })
 
@@ -75,7 +75,7 @@ describe('approvalNotifications', () => {
         currentDepartmentName: '继续教育部'
       })
     ).toBe(
-      '/indicators?approvalInstanceId=456&openApproval=1&approvalEntityType=PLAN_REPORT&approvalEntityId=123&approvalDepartment=%E7%BB%A7%E7%BB%AD%E6%95%99%E8%82%B2%E9%83%A8'
+      '/distribution?approvalInstanceId=456&openApproval=1&approvalEntityType=PLAN_REPORT&approvalEntityId=123&approvalDepartment=%E7%BB%A7%E7%BB%AD%E6%95%99%E8%82%B2%E9%83%A8&approvalSourceOrg=%E6%88%98%E7%95%A5%E5%8F%91%E5%B1%95%E9%83%A8&approvalTargetOrg=%E7%BB%A7%E7%BB%AD%E6%95%99%E8%82%B2%E9%83%A8'
     )
   })
 })
