@@ -1,3 +1,5 @@
+> **[历史标注 2026-10-26]** 2026-05 架构重构期迁移记录（历史留档）。
+
 # Utility Functions Migration Guide
 
 This guide helps you migrate from the old `src/utils/formatters.ts` to the new FSD `shared/lib` structure.
@@ -5,6 +7,7 @@ This guide helps you migrate from the old `src/utils/formatters.ts` to the new F
 ## Overview
 
 Utility functions have been reorganized into the following modules:
+
 - `shared/lib/format/` - Date, number, and string formatting
 - `shared/lib/storage/` - localStorage and sessionStorage utilities
 - `shared/lib/permissions/` - Permission checking functions
@@ -15,6 +18,7 @@ Utility functions have been reorganized into the following modules:
 ### Date Formatting
 
 **Before:**
+
 ```typescript
 import { formatDate, formatDateTime, formatDateChinese } from '@/utils/formatters'
 
@@ -24,6 +28,7 @@ const chinese = formatDateChinese(new Date())
 ```
 
 **After:**
+
 ```typescript
 import { formatDate, formatDateTime, formatDateChinese } from '@/shared/lib/format'
 
@@ -35,6 +40,7 @@ const chinese = formatDateChinese(new Date())
 ### Number Formatting
 
 **Before:**
+
 ```typescript
 import { formatNumber, formatCurrency, formatPercentage } from '@/utils/formatters'
 
@@ -44,6 +50,7 @@ const percent = formatPercentage(75.5)
 ```
 
 **After:**
+
 ```typescript
 import { formatNumber, formatCurrency, formatPercentage } from '@/shared/lib/format'
 
@@ -55,6 +62,7 @@ const percent = formatPercentage(75.5)
 ### String Formatting
 
 **Before:**
+
 ```typescript
 import { truncateText, highlightText } from '@/utils/formatters'
 
@@ -63,6 +71,7 @@ const highlighted = highlightText('text', 'search')
 ```
 
 **After:**
+
 ```typescript
 import { truncate, highlightText } from '@/shared/lib/format'
 
@@ -73,6 +82,7 @@ const highlighted = highlightText('text', 'search')
 ### Storage Utilities
 
 **Before:**
+
 ```typescript
 import { storage } from '@/utils/formatters'
 
@@ -82,6 +92,7 @@ storage.remove('key')
 ```
 
 **After:**
+
 ```typescript
 import { localStorage } from '@/shared/lib/storage'
 
@@ -93,6 +104,7 @@ localStorage.removeItem('key')
 ### Permission Checking
 
 **Before:**
+
 ```typescript
 // From composables or stores
 const hasPermission = (permission: string) => {
@@ -101,6 +113,7 @@ const hasPermission = (permission: string) => {
 ```
 
 **After:**
+
 ```typescript
 import { hasPermission, hasAnyPermission, canAccess } from '@/shared/lib/permissions'
 
@@ -113,12 +126,12 @@ const hasAccess = canAccess(userPermissions, userRoles, ['view'], ['admin'])
 
 Some functions have been renamed for consistency:
 
-| Old Name | New Name | Module |
-|----------|----------|--------|
-| `truncateText` | `truncate` | `format/string` |
-| `storage.get` | `localStorage.getItem` | `storage` |
-| `storage.set` | `localStorage.setItem` | `storage` |
-| `storage.remove` | `localStorage.removeItem` | `storage` |
+| Old Name         | New Name                  | Module          |
+| ---------------- | ------------------------- | --------------- |
+| `truncateText`   | `truncate`                | `format/string` |
+| `storage.get`    | `localStorage.getItem`    | `storage`       |
+| `storage.set`    | `localStorage.setItem`    | `storage`       |
+| `storage.remove` | `localStorage.removeItem` | `storage`       |
 
 ## Import Path Changes
 
@@ -135,6 +148,7 @@ import { formatDate } from '@/shared/lib/format'
 ## Available Functions
 
 ### Date Formatting (`shared/lib/format`)
+
 - `formatDate(date, format?)` - Format date with custom format
 - `formatDateShort(date)` - Format as YYYY-MM-DD
 - `formatDateTime(date, format?)` - Format datetime
@@ -147,6 +161,7 @@ import { formatDate } from '@/shared/lib/format'
 - `getDateRange(start, end)` - Get array of dates between range
 
 ### Number Formatting (`shared/lib/format`)
+
 - `formatNumber(value, decimals?)` - Format with thousand separators
 - `formatCurrency(value, currency?)` - Format as currency
 - `formatPercentage(value, decimals?)` - Format as percentage
@@ -156,6 +171,7 @@ import { formatDate } from '@/shared/lib/format'
 - `roundTo(value, decimals)` - Round to decimal places
 
 ### String Formatting (`shared/lib/format`)
+
 - `capitalize(str)` - Capitalize first letter
 - `toTitleCase(str)` - Convert to Title Case
 - `truncate(str, maxLength, suffix?)` - Truncate with ellipsis
@@ -168,6 +184,7 @@ import { formatDate } from '@/shared/lib/format'
 - `randomString(length)` - Generate random string
 
 ### Storage (`shared/lib/storage`)
+
 - `localStorage.getItem<T>(key)` - Get from localStorage
 - `localStorage.setItem<T>(key, value)` - Set in localStorage
 - `localStorage.removeItem(key)` - Remove from localStorage
@@ -178,6 +195,7 @@ import { formatDate } from '@/shared/lib/format'
 - `sessionStorage.clear()` - Clear all sessionStorage
 
 ### Permissions (`shared/lib/permissions`)
+
 - `hasPermission(userPermissions, permission)` - Check single permission
 - `hasAnyPermission(userPermissions, permissions)` - Check any permission
 - `hasAllPermissions(userPermissions, permissions)` - Check all permissions
@@ -224,6 +242,7 @@ npm run test
 ## Questions?
 
 If you have questions about the migration, please refer to:
+
 - [Shared Library README](./README.md)
-- [Format Module Documentation](./format/README.md)
-- [Architecture Design Document](../../../.kiro/specs/architecture-refactoring/design.md)
+- ~~Format Module Documentation~~（目标已不存在）
+- ~~Architecture Design Document~~（目标已不存在）

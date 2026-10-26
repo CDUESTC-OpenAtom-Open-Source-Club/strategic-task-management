@@ -1,3 +1,5 @@
+> **[历史标注 2026-10-26]** 2026-05 架构重构期产物。文中引用的 .kiro 目录已不存在；分层说明以当前实际代码为准。
+
 # Shared Layer (FSD Architecture)
 
 This directory contains the shared layer following Feature-Sliced Design (FSD) architecture principles.
@@ -160,5 +162,5 @@ The following directories contain legacy code that will be gradually migrated:
 ## Related Documentation
 
 - [FSD Architecture Guide](https://feature-sliced.design/)
-- [Frontend Development Standards](/.kiro/frontend-development.md)
-- [Architecture Refactoring Spec](/.kiro/specs/architecture-refactoring/)
+- ~~Frontend Development Standards~~（目标已不存在）
+- ~~Architecture Refactoring Spec~~（目标已不存在）

@@ -154,19 +154,19 @@ git push origin feature/your-feature-name
 
 ### Type 类型
 
-| Type | 说明 | 示例 |
-|------|------|------|
-| `feat` | 新功能 | `feat: add dashboard charts` |
-| `fix` | Bug 修复 | `fix: resolve login validation issue` |
-| `docs` | 文档更新 | `docs: update component usage guide` |
-| `style` | 代码格式或 UI 样式 | `style: improve mobile responsive layout` |
-| `refactor` | 重构（不是新功能也不是修复） | `refactor: extract common API logic` |
-| `perf` | 性能优化 | `perf: optimize chart rendering` |
-| `test` | 测试相关 | `test: add unit tests for auth store` |
-| `build` | 构建系统或依赖更新 | `build: upgrade Vue to 3.5.1` |
-| `ci` | CI/CD 配置 | `ci: add GitHub Actions workflow` |
-| `chore` | 其他杂项 | `chore: update .gitignore` |
-| `revert` | 回滚提交 | `revert: revert commit abc123` |
+| Type       | 说明                         | 示例                                      |
+| ---------- | ---------------------------- | ----------------------------------------- |
+| `feat`     | 新功能                       | `feat: add dashboard charts`              |
+| `fix`      | Bug 修复                     | `fix: resolve login validation issue`     |
+| `docs`     | 文档更新                     | `docs: update component usage guide`      |
+| `style`    | 代码格式或 UI 样式           | `style: improve mobile responsive layout` |
+| `refactor` | 重构（不是新功能也不是修复） | `refactor: extract common API logic`      |
+| `perf`     | 性能优化                     | `perf: optimize chart rendering`          |
+| `test`     | 测试相关                     | `test: add unit tests for auth store`     |
+| `build`    | 构建系统或依赖更新           | `build: upgrade Vue to 3.5.1`             |
+| `ci`       | CI/CD 配置                   | `ci: add GitHub Actions workflow`         |
+| `chore`    | 其他杂项                     | `chore: update .gitignore`                |
+| `revert`   | 回滚提交                     | `revert: revert commit abc123`            |
 
 ### Scope 范围（可选）
 
@@ -281,16 +281,16 @@ const userName = ref('')
 const isLoading = ref(false)
 
 // 函数：小驼峰
-const fetchUserData = async () => { }
-const handleSubmit = () => { }
+const fetchUserData = async () => {}
+const handleSubmit = () => {}
 
 // 常量：全大写，下划线分隔
 const MAX_RETRY_COUNT = 3
 const API_BASE_URL = import.meta.env.VITE_API_TARGET
 
 // 类型：大驼峰
-interface UserProfile { }
-type ApiResponse<T> = { }
+interface UserProfile {}
+type ApiResponse<T> = {}
 ```
 
 #### 组件结构
@@ -396,15 +396,15 @@ import type { User } from '@/types'
 export function useAuth() {
   const user = ref<User | null>(null)
   const isAuthenticated = computed(() => user.value !== null)
-  
+
   const login = async (username: string, password: string) => {
     // 登录逻辑
   }
-  
+
   const logout = () => {
     user.value = null
   }
-  
+
   return {
     user,
     isAuthenticated,
@@ -422,14 +422,12 @@ import request from '@/utils/request'
 import type { User, ApiResponse } from '@/types'
 
 export const userApi = {
-  getUser: (id: number) => 
-    request.get<ApiResponse<User>>(`/users/${id}`),
-  
+  getUser: (id: number) => request.get<ApiResponse<User>>(`/users/${id}`),
+
   updateUser: (id: number, data: Partial<User>) =>
     request.put<ApiResponse<User>>(`/users/${id}`, data),
-  
-  deleteUser: (id: number) =>
-    request.delete<ApiResponse<void>>(`/users/${id}`)
+
+  deleteUser: (id: number) => request.delete<ApiResponse<void>>(`/users/${id}`)
 }
 ```
 
@@ -440,10 +438,14 @@ export const userApi = {
 /* 使用 scoped 避免样式污染 */
 
 /* 使用 BEM 命名规范 */
-.user-profile { }
-.user-profile__header { }
-.user-profile__content { }
-.user-profile--active { }
+.user-profile {
+}
+.user-profile__header {
+}
+.user-profile__content {
+}
+.user-profile--active {
+}
 
 /* 使用 CSS 变量 */
 .button {
@@ -488,7 +490,7 @@ docs: update component guide
 
 ### PR 描述模板
 
-```markdown
+````markdown
 ## 📝 变更说明
 
 简要描述这个 PR 做了什么。
@@ -530,16 +532,15 @@ npm run test:e2e
 2. 访问仪表板页面
 3. 验证图表正确显示
 ```
+````
 
 ## 📸 截图
 
 如果有 UI 变更，请添加截图：
 
 ### 桌面端
-![Desktop](./screenshots/desktop.png)
 
 ### 移动端
-![Mobile](./screenshots/mobile.png)
 
 ## ⚠️ 破坏性变更
 
@@ -559,7 +560,8 @@ npm run test:e2e
 - [ ] 提交消息遵循规范
 - [ ] 代码遵循项目规范
 - [ ] UI 在桌面端和移动端都正常显示
-```
+
+````
 
 ### PR 审查流程
 
@@ -601,7 +603,7 @@ npm run test -- auth.test.ts
 
 # 生成测试覆盖率报告
 npm run test:coverage
-```
+````
 
 ### 测试命名规范
 
@@ -610,18 +612,18 @@ describe('useAuth', () => {
   it('should login successfully with valid credentials', async () => {
     // Arrange
     const { login } = useAuth()
-    
+
     // Act
     await login('user@example.com', 'password123')
-    
+
     // Assert
     expect(isAuthenticated.value).toBe(true)
   })
-  
+
   it('should throw error with invalid credentials', async () => {
     // Arrange
     const { login } = useAuth()
-    
+
     // Act & Assert
     await expect(login('invalid', 'wrong')).rejects.toThrow()
   })
@@ -639,19 +641,19 @@ describe('useAuth', () => {
   beforeEach(() => {
     // 重置状态
   })
-  
+
   it('should initialize with no user', () => {
     const { user, isAuthenticated } = useAuth()
-    
+
     expect(user.value).toBeNull()
     expect(isAuthenticated.value).toBe(false)
   })
-  
+
   it('should login successfully', async () => {
     const { login, user, isAuthenticated } = useAuth()
-    
+
     await login('test@example.com', 'password123')
-    
+
     expect(user.value).not.toBeNull()
     expect(isAuthenticated.value).toBe(true)
   })

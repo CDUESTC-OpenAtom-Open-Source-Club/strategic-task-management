@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { ElCard, ElSelect, ElOption, ElIcon, ElEmpty, ElMessage } from 'element-plus'
+import { ElCard, ElSelect, ElOption, ElIcon, ElEmpty, ElMessage, ElTooltip } from 'element-plus'
 import { Check, Close, Loading, Clock, Edit } from '@element-plus/icons-vue'
 import type { WorkflowNode, WorkflowNodeAttachment } from '@/shared/types'
 import AppAvatar from '@/shared/ui/avatar/AppAvatar.vue'
@@ -148,6 +148,14 @@ const getOrSignLabel = (node: WorkflowNode) => {
   return shouldShowCandidateList(node) ? '或签' : ''
 }
 
+// 2026-10-26 用户反馈：领导不理解「或签」——鼠标悬浮标识给出一句大白话解释。
+// 未来若新增其他签署类型标识，在此映射表补一行即可。
+const SIGN_MODE_TOOLTIPS: Record<string, string> = {
+  或签: '这个环节有多位审批人，其中任意一人通过即可，不用每个人都签。'
+}
+
+const getSignModeTooltip = (label: string): string => SIGN_MODE_TOOLTIPS[label] ?? label
+
 const getCandidateSummary = (node: WorkflowNode) => {
   const total = node.approverCandidates?.length || 0
   if (total <= 0) {
@@ -193,9 +201,15 @@ const getCandidateSummary = (node: WorkflowNode) => {
                 <div class="node-title-row">
                   <span class="node-step">步骤 {{ index + 1 }}</span>
                   <span class="node-name">{{ node.name }}</span>
-                  <span v-if="getOrSignLabel(node)" class="node-sign-mode">
-                    {{ getOrSignLabel(node) }}
-                  </span>
+                  <ElTooltip
+                    v-if="getOrSignLabel(node)"
+                    :content="getSignModeTooltip(getOrSignLabel(node))"
+                    placement="top"
+                  >
+                    <span class="node-sign-mode">
+                      {{ getOrSignLabel(node) }}
+                    </span>
+                  </ElTooltip>
                 </div>
 
                 <!-- 当前节点标识 -->

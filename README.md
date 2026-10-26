@@ -98,7 +98,7 @@ npm run dev
 
 > **注意**: 需要先启动后端服务 (sism-backend)，前端才能正常工作。
 >
-> **推荐**: 新环境首次启动前，先阅读后端仓库的 [`../sism-backend/README.md`](../sism-backend/README.md)、[`../sism-backend/docs/workflow-test-guide.md`](../sism-backend/docs/workflow-test-guide.md) 和 [`../sism-backend/docs/用户账号密码文档.md`](../sism-backend/docs/用户账号密码文档.md)。
+> **推荐**: 新环境首次启动前，先阅读后端仓库的 [`../sism-backend/README.md`](../sism-backend/README.md)、[`../sism-backend/docs/` 下的 4 份 PLAN\_\* 前端测试清单](../sism-backend/docs/PLAN_APPROVAL_COLLEGE-前端测试清单.md) 和 [`../sism-backend/docs/用户账号密码文档.md`](../sism-backend/docs/用户账号密码文档.md)。
 
 ---
 
@@ -163,7 +163,7 @@ import { DataTable, DataForm, EmptyState, SkeletonLoader } from '@/components/co
 
 1. 启动后端后先检查 [`../sism-backend/README.md`](../sism-backend/README.md) 中的健康检查、Swagger 和 OpenAPI 入口是否可访问。
 2. 使用 `admin` 或 `zlb_admin` 登录，确认前端能从 `/login` 进入 `/strategic-tasks`，主链页面和核心接口正常。
-3. 再按 [`../sism-backend/docs/workflow-test-guide.md`](../sism-backend/docs/workflow-test-guide.md) 和 4 份 `PLAN_*` 前端测试清单跑至少 1 条审批链。
+3. 再按 [`../sism-backend/docs/` 下的 4 份 PLAN\_\* 前端测试清单](../sism-backend/docs/PLAN_APPROVAL_COLLEGE-前端测试清单.md) 和 4 份 `PLAN_*` 前端测试清单跑至少 1 条审批链。
 4. 至少补测 1 个职能部门账号和 1 个二级学院账号，确认它们登录后默认进入 `/dashboard`，而不是战略发展部专属页面。
 
 ### 推荐审批链速查
@@ -178,7 +178,7 @@ import { DataTable, DataForm, EmptyState, SkeletonLoader } from '@/components/co
 ### 账号和数据从哪里看
 
 - 完整测试账号矩阵：[`../sism-backend/docs/用户账号密码文档.md`](../sism-backend/docs/用户账号密码文档.md)
-- 审批流程与步骤预期：[`../sism-backend/docs/workflow-test-guide.md`](../sism-backend/docs/workflow-test-guide.md)
+- 审批流程与步骤预期：[`../sism-backend/docs/` 下的 4 份 PLAN\_\* 前端测试清单](../sism-backend/docs/PLAN_APPROVAL_COLLEGE-前端测试清单.md)
 - clean seed 总入口：[`../sism-backend/database/seeds/reset-and-load-clean-seeds.sql`](../sism-backend/database/seeds/reset-and-load-clean-seeds.sql)
 - seed 审阅顺序：[`../sism-backend/database/seeds/seed-review-order.md`](../sism-backend/database/seeds/seed-review-order.md)
 - 审批人解析规则速记：职能部门流程里的“分管校领导”优先看发起部门自己的 `_leader / _audit2`；学院流程最后一步看 Plan 对应上级职能部门的 `_audit1`
@@ -189,12 +189,11 @@ import { DataTable, DataForm, EmptyState, SkeletonLoader } from '@/components/co
 
 ## 文档中心
 
-| 文档                                                   | 说明                               |
-| ------------------------------------------------------ | ---------------------------------- |
-| [CLAUDE.md](CLAUDE.md)                                 | 项目开发指南 (供 Claude Code 使用) |
-| [文档目录](docs/README.md)                             | 当前保留文档、归档规则与阅读顺序   |
-| [项目治理手册](docs/PROJECT_HISTORY_AND_GOVERNANCE.md) | 前端目录规范、历史归档与验证门禁   |
-| [环境配置指南](docs/ENV_CONFIG_GUIDE.md)               | 当前环境变量与联调配置说明         |
+| 文档                                                   | 说明                             |
+| ------------------------------------------------------ | -------------------------------- |
+| [文档目录](docs/README.md)                             | 当前保留文档、归档规则与阅读顺序 |
+| [项目治理手册](docs/PROJECT_HISTORY_AND_GOVERNANCE.md) | 前端目录规范、历史归档与验证门禁 |
+| [环境配置指南](docs/ENV_CONFIG_GUIDE.md)               | 当前环境变量与联调配置说明       |
 
 ---
 

@@ -2,7 +2,7 @@
 
 ### Bug Fixes
 
-- **状态管理**: 修复指标生命周期状态与进度审批状态混淆问题 ([#指标状态Bug修复](docs/INDICATOR-STATUS-FIX-SUMMARY.md))
+- **状态管理**: 修复指标生命周期状态与进度审批状态混淆问题 ([#指标状态Bug修复](#))
   - 分离生命周期状态（DRAFT/PENDING/DISTRIBUTED）和进度审批状态（NONE/PENDING/APPROVED/REJECTED）
   - 状态标签只显示生命周期状态，审批状态通过独立徽章显示
   - 有待审批进度时自动禁用下发按钮并显示警告提示
