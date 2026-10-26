@@ -2420,7 +2420,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       // 2026-09-27 用户反馈：提交成功立即关闭弹窗，重刷新链后台异步执行，
       // 不让用户对着确认框等全量刷新跑完。
       handleCloseApprovalSetupDialog()
-      ElMessage.success('已发起整体计划审批')
+      // 2026-10-26 用户反馈：底层 planStore.submitPlanForApproval 已弹「已提交审批」，
+      // 这里不再重复弹第二条成功提示（此前页面会同时出现两条堆叠消息）。
       // 只刷新消息铃铛（message 域）；不做全量广播——提交瞬间回源只会拉回
       // 尚未回写的旧审批状态，把乐观补丁冲回「已回退」。
       requestGlobalDataRefresh({
