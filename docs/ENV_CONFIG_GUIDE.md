@@ -184,4 +184,4 @@ VITE_API_TARGET=http://192.168.1.100:8080
 ## 相关文档
 
 - [Vite 环境变量文档](https://vitejs.dev/guide/env-and-mode.html)
-- [项目 CLAUDE.md](../CLAUDE.md)
+- [项目治理文档](PROJECT_HISTORY_AND_GOVERNANCE.md)

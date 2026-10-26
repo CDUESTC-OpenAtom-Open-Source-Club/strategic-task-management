@@ -449,6 +449,47 @@ const displayedCurrentPlanApprovalName = computed(() => {
                    同一次填报会同时出现在 A 卡（上报审批 · 部门 -> 上级）与本 B 卡
                    （202601 XX月报）中，属同一实例的重复展示，且 B 卡提交人显示错误、
                    还带不该出现的鉴定进度等级下拉。统一只走 A 卡，与战略发展部审批中心对齐。 -->
+
+              <!-- 2026-10-26 修复（学院审核人看不到本学院上报待办）：
+                   PLAN_REPORT 上报待办独立于「当前计划」实体范围（实体是月报不是计划），
+                   此前既无独立卡渲染、也被计划范围过滤挡掉。学院侧审核人因此无法审批
+                   本学院上报。现在按「上报审批」独立成卡，与分发页审批中心口径一致。 -->
+              <div
+                v-for="item in externalWorkflowTodoItems"
+                :key="`external-todo-${item.instanceId || item.taskId}`"
+                class="approval-card"
+                data-card-kind="report-todo-card"
+              >
+                <div class="card-header">
+                  <div class="plan-info">
+                    <el-icon class="plan-icon"><Document /></el-icon>
+                    <div class="info-text">
+                      <div class="plan-name">
+                        {{ item.routeTitle || item.title || '上报审批' }}
+                      </div>
+                      <div class="plan-year">{{ item.currentStepName || '审批中' }}</div>
+                    </div>
+                  </div>
+                  <ElTag type="warning" size="small">审批中</ElTag>
+                </div>
+                <div class="card-actions">
+                  <ElButton @click="openPlanApprovalDetails">查看详情</ElButton>
+                  <ElButton
+                    v-if="canCurrentUserHandleReportTodo"
+                    type="success"
+                    @click="handleApprovePlanBatch"
+                  >
+                    审批通过
+                  </ElButton>
+                  <ElButton
+                    v-if="canCurrentUserHandleReportTodo"
+                    type="danger"
+                    @click="handleRejectPlanBatch"
+                  >
+                    审批驳回
+                  </ElButton>
+                </div>
+              </div>
             </div>
           </div>
         </ElTabPane>

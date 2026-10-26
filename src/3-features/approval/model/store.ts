@@ -12,11 +12,7 @@ import type { ApprovalInstance, ApprovalHistory } from './types'
 import { useAuthStore } from '@/features/auth/model/store'
 import { logger } from '@/shared/lib/utils/logger'
 import { ElMessage } from 'element-plus'
-import {
-  getMyPendingTasks,
-  getWorkflowInstanceDetail,
-  decideTask
-} from '@/features/workflow/api'
+import { getMyPendingTasks, getWorkflowInstanceDetail, decideTask } from '@/features/workflow/api'
 import type { WorkflowTaskResponse, WorkflowInstanceDetailResponse } from '@/features/workflow/api'
 
 export const useApprovalStore = defineStore('approval', () => {
@@ -108,27 +104,45 @@ export const useApprovalStore = defineStore('approval', () => {
       const response = await getMyPendingTasks(1)
 
       if (response.success && response.data) {
-        const pageResult = response.data as unknown as { items: WorkflowTaskResponse[]; total: number }
+        const pageResult = response.data as unknown as {
+          items: WorkflowTaskResponse[]
+          total: number
+        }
         // Convert WorkflowTaskResponse to ApprovalInstance format
-        pendingApprovals.value = pageResult.items.map(task => ({
-          instanceId: Number(task.instanceId ?? task.taskId),
-          entityType: task.entityType || 'TASK',
-          entityId: task.entityId || 0,
-          status: task.status === 'PENDING' ? 'PENDING' : 'APPROVED',
-          currentStepName: task.taskName,
-          currentStepOrder: 0,
-          applicant: { id: userId, name: task.assigneeName || 'Unknown' },
-          pendingApprovers: task.assigneeId ? [task.assigneeId] : [],
-          approvedApprovers: [],
-          rejectedApprovers: [],
-          submitterDeptId: 0,
-          directSupervisorId: 0,
-          level2SupervisorId: 0,
-          superiorDeptId: 0,
-          initiatedBy: userId,
-          initiatedAt: task.createdTime || new Date().toISOString(),
-          completedAt: undefined
-        } as unknown as ApprovalInstance))
+        pendingApprovals.value = pageResult.items.map(
+          task =>
+            ({
+              instanceId: Number(task.instanceId ?? task.taskId),
+              entityType: task.entityType || 'TASK',
+              entityId: task.entityId || 0,
+              status: task.status === 'PENDING' ? 'PENDING' : 'APPROVED',
+              // 2026-10-26 修复：保留流程码与组织上下文——审批中心据此区分
+              // 「计划下发 / 上报审批 / 异动审批」并判断卡片与当前部门是否相关；
+              // 缺这些字段时上报待办会被整体过滤（学院审核人看不到本学院上报卡）
+              flowCode: task.flowCode,
+              // 2026-10-26：审批权限判定依赖「待办指派人 = 当前用户」，保留顶层字段
+              assigneeId: task.assigneeId,
+              currentApproverId: task.assigneeId,
+              sourceOrgId: task.sourceOrgId,
+              sourceOrgName: task.sourceOrgName,
+              targetOrgId: task.targetOrgId,
+              targetOrgName: task.targetOrgName,
+              approverOrgId: task.approverOrgId,
+              currentStepName: task.taskName,
+              currentStepOrder: 0,
+              applicant: { id: userId, name: task.assigneeName || 'Unknown' },
+              pendingApprovers: task.assigneeId ? [task.assigneeId] : [],
+              approvedApprovers: [],
+              rejectedApprovers: [],
+              submitterDeptId: 0,
+              directSupervisorId: 0,
+              level2SupervisorId: 0,
+              superiorDeptId: 0,
+              initiatedBy: userId,
+              initiatedAt: task.createdTime || new Date().toISOString(),
+              completedAt: undefined
+            }) as unknown as ApprovalInstance
+        )
         logger.info('[Approval Store] Loaded', pendingApprovals.value.length, 'pending approvals')
       } else {
         pendingApprovals.value = []

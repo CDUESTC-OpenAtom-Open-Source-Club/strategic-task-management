@@ -11,6 +11,13 @@ export interface ApprovalInstance {
   instanceId: number
   instanceNo: string
   flowName: string
+  /** 2026-10-26 修复：保留流程码与组织上下文——审批中心据此区分流程类型与部门归属 */
+  flowCode?: string
+  sourceOrgId?: number | string | null
+  sourceOrgName?: string | null
+  targetOrgId?: number | string | null
+  targetOrgName?: string | null
+  approverOrgId?: number | string | null
   entityType: string
   entityId: string
   entityTitle: string
