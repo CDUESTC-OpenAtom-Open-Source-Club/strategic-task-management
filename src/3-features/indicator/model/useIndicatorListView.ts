@@ -3841,6 +3841,27 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }
   }
 
+  /**
+   * 2026-10-26 用户反馈：详情抽屉「相关上报资料」点击不能下载——
+   * 此前仅双击触发（且预览类文件走新标签页，用户感知为"点不动"）。
+   * 现在：单击 = 直接下载（走 /attachments/{id}/download 通道），
+   * 双击 = 保留原预览行为。
+   */
+  const downloadDisplayAttachmentItem = async (item: DisplayAttachmentItem) => {
+    const attachmentId = Number(item.attachmentId ?? 0)
+    if (!Number.isFinite(attachmentId) || attachmentId <= 0) {
+      // 无 attachmentId（如导入的历史记录只有 url）→ 回退到原打开逻辑
+      await openDisplayAttachmentItem(item)
+      return
+    }
+    try {
+      await apiClient.download(`/attachments/${attachmentId}/download`, item.name || 'download')
+    } catch (error) {
+      logger.warn('[IndicatorListView] 附件下载失败:', error)
+      ElMessage.error('附件下载失败，请稍后重试')
+    }
+  }
+
   const openDisplayAttachmentItem = async (item: DisplayAttachmentItem) => {
     try {
       const targetUrl = String(item.url || '').trim()
@@ -5132,6 +5153,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     normalizedCurrentPlanStatus,
     normalizedCurrentPlanWorkflowStatus,
     openBlobInNewTab,
+    downloadDisplayAttachmentItem,
     openDisplayAttachmentItem,
     openLocalAttachmentFile,
     openRemoteAttachmentFile,

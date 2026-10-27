@@ -951,7 +951,52 @@ export function useApprovalProgressDrawer(
     const entityType = normalizeWorkflowEntityType(
       instance.entityType ?? (instance as { businessEntityType?: unknown }).businessEntityType
     )
-    return entityType === 'PLAN_REPORT' || entityType === 'INDICATOR'
+    // 2026-10-27：任务改名异动（TASK）与指标异动（INDICATOR）同口径——
+    // 都是独立业务实例，必须各自成卡；漏掉 TASK 会让任务异动实例
+    // 在「无当前实体上下文」的入口（铃铛/审批中心直开）整张丢失。
+    return entityType === 'PLAN_REPORT' || entityType === 'INDICATOR' || entityType === 'TASK'
+  }
+
+  /**
+   * 2026-10-27 用户反馈：异动实例掉进「上报待办」简卡后，标题字段缺失
+   * 退化成「上报审批」占位文案。这里把异动条目归一成有意义的卡片：
+   * 标题 = 实体名（后端 enrichInstanceOrgContext 已回填 planName），
+   * routeTitle = 「指标/任务异动审批 · 源 -> 目标」，与上报卡格式一致；
+   * 当前打开的实体已由完整卡展示，同一条异动不再重复出简卡。
+   */
+  function resolveExternalTodoCard(instance: Record<string, any>): Record<string, any> {
+    const entityType = normalizeWorkflowEntityType(instance.entityType)
+    if (entityType !== 'INDICATOR' && entityType !== 'TASK') {
+      return instance
+    }
+
+    const contextEntityType = normalizeWorkflowEntityType(props.workflowEntityType)
+    const contextEntityId = toPositiveNumber(props.workflowEntityId)
+    if (
+      entityType === contextEntityType &&
+      contextEntityId > 0 &&
+      toPositiveNumber(instance.entityId) === contextEntityId
+    ) {
+      return { ...instance, __suppressTodoCard: true }
+    }
+
+    const routeDisplay = resolvePendingApprovalRouteDisplay(instance)
+    const mutationLabel = entityType === 'TASK' ? '任务异动审批' : '指标异动审批'
+    const routeTitle =
+      routeDisplay && routeDisplay !== '流向待补充'
+        ? `${mutationLabel} · ${routeDisplay}`
+        : mutationLabel
+    const entityTitle =
+      normalizeDisplayName(instance.planName) ||
+      normalizeDisplayName(instance.entityTitle) ||
+      normalizeDisplayName(instance.title) ||
+      ''
+
+    return {
+      ...instance,
+      routeTitle,
+      title: entityTitle || routeTitle
+    }
   }
 
   // 缺陷修复：PLAN_REPORT（月报审批）/ INDICATOR 待办来自 /workflows/my-tasks，
@@ -968,7 +1013,10 @@ export function useApprovalProgressDrawer(
     if (reportTodoItems.value.length > 0) {
       return reportTodoItems.value
     }
-    return pendingPlanApprovals.value.filter(instance => isExternalWorkflowTodo(instance))
+    return pendingPlanApprovals.value
+      .filter(instance => isExternalWorkflowTodo(instance))
+      .map(resolveExternalTodoCard)
+      .filter(instance => instance.__suppressTodoCard !== true)
   })
 
   const scopedPlanApprovals = computed(() => {

@@ -39,6 +39,7 @@ const props = withDefaults(defineProps<DistributionApprovalProgressDrawerProps>(
   secondaryWorkflowEntityId: undefined,
   mutationWorkflowEntities: () => [],
   mutationPendingApprovals: () => [],
+  relatedWorkflowEntities: () => [],
   routeTarget: ''
 })
 
@@ -121,6 +122,8 @@ const {
   hasAnyPlanApprovalRole,
   hasPlanWorkflowData,
   hasWorkflowTabContent,
+  workflowFocusCandidates,
+  workflowFocusIdx,
   historicalPlanApprovalItems,
   historyInstanceDetailCache,
   historyTargets,
@@ -720,22 +723,20 @@ const displayedCurrentPlanApprovalName = computed(() => {
         <el-tab-pane name="workflow" label="审批流程">
           <!-- 2026-10-24 用户定案：多条进行中实例时顶部选择栏——
                列出每条实例（标题+当前环节），点选切换展开渲染对应流程 -->
-          <div v-if="reportWorkflowInstances.length > 1" class="workflow-instance-selector">
+          <!-- 2026-10-26 用户定案：候选扩展为全量可查看流程（主流程直显 + 进行中上报/异动
+               + 历史终态实例含学院上报链），单条时隐藏选择栏 -->
+          <div v-if="workflowFocusCandidates.length > 1" class="workflow-instance-selector">
             <button
-              v-for="(instance, idx) in reportWorkflowInstances"
-              :key="String(instance.instanceId || idx)"
+              v-for="(instance, idx) in workflowFocusCandidates"
+              :key="instance.key"
               type="button"
               class="workflow-instance-option"
-              :class="{ active: idx === selectedReportInstanceIdx }"
-              @click="selectedReportInstanceIdx = idx"
+              :class="{ active: idx === workflowFocusIdx }"
+              @click="workflowFocusIdx = idx"
             >
-              <span class="option-index">实例{{ idx + 1 }}</span>
-              <span class="option-title">{{
-                instance.routeTitle || instance.title || `审批实例${idx + 1}`
-              }}</span>
-              <span v-if="instance.currentStepName" class="option-step">{{
-                instance.currentStepName
-              }}</span>
+              <span class="option-index">{{ idx === 0 ? '主流程' : `实例${idx}` }}</span>
+              <span class="option-title">{{ instance.label }}</span>
+              <span v-if="instance.step" class="option-step">{{ instance.step }}</span>
             </button>
           </div>
           <el-empty
@@ -1118,60 +1119,6 @@ const displayedCurrentPlanApprovalName = computed(() => {
 </template>
 
 <style scoped src="./DistributionApprovalProgressDrawer.css">
-/* 2026-10-24：审批流程页签的多实例选择栏 */
-.workflow-instance-selector {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-.workflow-instance-option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  background: #fff;
-  cursor: pointer;
-  font-size: 13px;
-  color: #475569;
-  transition:
-    border-color 0.2s ease,
-    box-shadow 0.2s ease;
-}
-
-.workflow-instance-option:hover {
-  border-color: #93c5fd;
-}
-
-.workflow-instance-option.active {
-  border-color: #2563eb;
-  background: #eff6ff;
-  color: #1d4ed8;
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.12);
-}
-
-.workflow-instance-option .option-index {
-  flex-shrink: 0;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: #f1f5f9;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.workflow-instance-option.active .option-index {
-  background: #dbeafe;
-}
-
-.workflow-instance-option .option-title {
-  font-weight: 600;
-}
-
-.workflow-instance-option .option-step {
-  color: #94a3b8;
-  font-size: 12px;
-}
+/* 选择栏样式在此文件的 <style scoped src> 指向的 CSS 内——
+   带 src 的 style 块会忽略内联内容，勿在此处写规则 */
 </style>

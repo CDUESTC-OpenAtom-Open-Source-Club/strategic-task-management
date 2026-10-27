@@ -2,6 +2,7 @@
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
 import { computed, ref } from 'vue'
+import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
 import { useLatestIndicatorFill } from '@/features/indicator/model/useLatestIndicatorFill'
 import {
   Plus,
@@ -215,6 +216,7 @@ const {
   normalizedCurrentPlanStatus,
   normalizedCurrentPlanWorkflowStatus,
   openBlobInNewTab,
+  downloadDisplayAttachmentItem,
   openDisplayAttachmentItem,
   openLocalAttachmentFile,
   openRemoteAttachmentFile,
@@ -287,7 +289,10 @@ const {
 } = useIndicatorListView(props)
 
 const { latestFillNote, latestFillAttachments } = useLatestIndicatorFill(
-  computed(() => (currentDetail as any)?.id ?? null)
+  computed(() => (currentDetail as any)?.value?.id ?? null),
+  // 实时值：按 id 从当前行数组取**最新**行对象（行对象加载后会被替换，
+  // 打开抽屉那一刻的旧引用里的 pendingRemark 是空值）
+  (id: string | number) => indicators.value.find(item => String(item.id) === String(id)) as any
 )
 
 const indicatorListExporting = ref(false)
@@ -746,18 +751,14 @@ const handleExportIndicatorList = async () => {
                   </el-tooltip>
                 </template>
               </el-table-column>
+              <!-- 2026-10-26 用户定案：上报资料列悬浮显示附件卡片（序号+文件名+类型），
+                   点击文件名直接下载；与指标分发页同构（ReportMaterialsCell）。 -->
               <el-table-column label="上报资料" width="104" align="center">
                 <template #default="{ row }">
-                  <div
-                    v-if="
-                      (row.attachments?.length || row.pendingAttachmentDetails?.length || 0) > 0
-                    "
-                  >
-                    <el-button link type="primary" size="small" @click="handleViewDetail(row)">
-                      {{ row.attachments?.length || row.pendingAttachmentDetails?.length || 0 }} 个
-                    </el-button>
-                  </div>
-                  <div v-else style="color: #909399">—</div>
+                  <ReportMaterialsCell
+                    :indicator-id="row.id"
+                    :attachments="row.pendingAttachmentDetails || row.attachments"
+                  />
                 </template>
               </el-table-column>
               <el-table-column prop="remark" label="下发备注" width="132">
@@ -785,17 +786,16 @@ const handleExportIndicatorList = async () => {
                       >
                       <!-- 2026-10-24 用户定案：填报/编辑按钮只属于填报人角色——
                            此前只判 !isStrategicDept，导致职能部门/学院的审核人也能看到并进入填报。 -->
+                      <!-- 2026-10-26 用户定案：提交审批后填报内容仍可实时编辑保存
+                           （updateReport 实时更新，审批详情同步可见）；锁定的只是
+                           「发起审批」（一键提交按钮 draft 态才显示 + 后端 409 兜底）。
+                           故填报按钮不再按 report-lock 锁死，仅保留角色与只读期限制。 -->
                       <el-button
                         v-if="!isStrategicDept && isCurrentUserReporter"
-                        v-show="!isCurrentPlanReportLocked"
                         link
                         :type="hasReportContent(row) ? 'info' : 'success'"
                         size="small"
-                        :disabled="
-                          isApprovalStatus(row, 'PENDING') ||
-                          isCurrentPlanReportLocked ||
-                          timeContext.isReadOnly
-                        "
+                        :disabled="timeContext.isReadOnly"
                         @click="handleOpenReportDialog(row)"
                         >{{
                           isApprovalStatus(row, 'REJECTED')
@@ -970,10 +970,6 @@ const handleExportIndicatorList = async () => {
           <el-descriptions-item label="进度说明" :span="2">{{
             latestFillNote || '—'
           }}</el-descriptions-item>
-          <el-descriptions-item label="上报资料" :span="2">
-            <span v-if="!latestFillAttachments.length" style="color: #909399">—</span>
-            <span v-else>{{ latestFillAttachments.map(a => a.fileName).join('、') }}</span>
-          </el-descriptions-item>
           <el-descriptions-item label="下发备注" :span="2">{{
             currentDetail.remark || '暂无备注'
           }}</el-descriptions-item>
@@ -983,12 +979,15 @@ const handleExportIndicatorList = async () => {
           <div class="divider"></div>
           <h4>相关上报资料</h4>
           <div class="detail-attachments__list">
+            <!-- 2026-10-26 用户反馈：单击即下载（此前仅双击可打开，用户以为点不动）。
+                 双击保留预览（图片/PDF 走新标签页），下载走 attachmentId 通道。 -->
             <button
               v-for="(attachment, index) in currentDetailAttachmentItems"
               :key="`${attachment.attachmentId || attachment.url}-${index}`"
               type="button"
               class="detail-attachments__item"
-              :title="`双击打开 ${attachment.name}`"
+              :title="`点击下载 ${attachment.name}（双击可预览）`"
+              @click.prevent.stop="downloadDisplayAttachmentItem(attachment)"
               @dblclick.prevent.stop="openDisplayAttachmentItem(attachment)"
             >
               {{ attachment.name }}

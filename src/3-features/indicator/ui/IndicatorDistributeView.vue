@@ -259,7 +259,14 @@ const {
 } = useIndicatorDistributeView(props)
 
 const { latestFillNote, latestFillAttachments } = useLatestIndicatorFill(
-  computed(() => (currentDetailIndicator as any)?.id ?? null)
+  computed(() => (currentDetailIndicator as any)?.value?.id ?? null),
+  // 实时值：按 id 从当前学院表格数据取**最新**子指标对象
+  // （表格 data 是 collegeTableData，child 来自 strategicStore.indicators，
+  //   其中带 pendingRemark —— 学院未提交的填报内容在此实时可见）
+  (id: string | number) =>
+    collegeTableData.value.find(
+      item => item.type === 'child' && String(item.child?.id) === String(id)
+    )?.child as any
 )
 
 type DistributionExportChild = Partial<StrategicIndicator> & {
@@ -1484,10 +1491,6 @@ const handleDistributionImportCommitted = async () => {
           <el-descriptions-item label="进度说明" :span="2">{{
             latestFillNote || '—'
           }}</el-descriptions-item>
-          <el-descriptions-item label="上报资料" :span="2">
-            <span v-if="!latestFillAttachments.length" style="color: #909399">—</span>
-            <span v-else>{{ latestFillAttachments.map(a => a.fileName).join('、') }}</span>
-          </el-descriptions-item>
           <el-descriptions-item label="下发备注" :span="2">
             {{ currentDetailIndicator.remark || '暂无备注' }}
           </el-descriptions-item>

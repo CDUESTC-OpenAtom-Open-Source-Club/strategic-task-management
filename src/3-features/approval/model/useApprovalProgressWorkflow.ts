@@ -1239,6 +1239,23 @@ export function useApprovalProgressWorkflow({
     await loadPlanWorkflowHistoryCards()
   }
 
+  // 2026-10-26：部门计划族实体（relatedWorkflowEntities）由页面异步构造，
+  // 晚于抽屉打开时的首次历史加载——实体就绪后重拉审批历史，否则
+  // 「学院 → 本部门」的上报历史卡片在首次打开时不出现。
+  watch(
+    () => props.relatedWorkflowEntities,
+    async (next, prev) => {
+      if (!props.modelValue || !props.showPlanApprovals) {
+        return
+      }
+      if (JSON.stringify(next ?? []) === JSON.stringify(prev ?? [])) {
+        return
+      }
+      await loadPlanWorkflowHistoryCards()
+    },
+    { deep: true }
+  )
+
   const handleApprovalStateRefresh = (event?: Event) => {
     if (!props.modelValue || !props.showPlanApprovals) {
       return

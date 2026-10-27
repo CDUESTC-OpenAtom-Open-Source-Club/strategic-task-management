@@ -927,6 +927,11 @@ export function useApprovalProgressState(
     for (const mutation of props.mutationWorkflowEntities ?? []) {
       appendTarget(mutation.entityType ?? 'INDICATOR', mutation.entityId)
     }
+    // 2026-10-26：部门计划族（子计划 PLAN + 各自学院上报 PLAN_REPORT）纳入审批历史，
+    // 使战略任务页部门卡片的审批历史能看到「学院 → 本部门」的上报链
+    for (const related of props.relatedWorkflowEntities ?? []) {
+      appendTarget(related.entityType, related.entityId)
+    }
 
     return targets
   })
@@ -2421,8 +2426,132 @@ export function useApprovalProgressState(
     }
   })
 
+  // 2026-10-26 用户定案：「审批流程」页签顶部选择栏的候选扩展为全量可查看流程——
+  // 主流程（默认焦点，直显）+ 进行中上报 + 进行中异动 + 历史终态实例（含学院上报链）。
+  // 仅一条候选时选择栏隐藏，行为与旧版一致。
+  // reportWorkflowInstances 只保留「进行中上报」语义（A/B 卡去重消费它），不改。
+  interface WorkflowFocusCandidate {
+    key: string
+    instanceId?: number | string
+    label: string
+    step?: string
+    kind: 'plan' | 'report' | 'mutation' | 'history'
+  }
+  const workflowFocusIdx = ref(0)
+  const workflowFocusCandidates = computed<WorkflowFocusCandidate[]>(() => {
+    const items: WorkflowFocusCandidate[] = [
+      {
+        key: 'plan:current',
+        label:
+          normalizeDisplayName(props.planName) ||
+          normalizeDisplayName(props.departmentName) ||
+          '主流程',
+        kind: 'plan'
+      }
+    ]
+    for (const report of reportWorkflowInstances.value) {
+      const instanceId = report.workflowInstanceId || report.instanceId
+      if (!instanceId) {
+        continue
+      }
+      items.push({
+        key: `report:${instanceId}`,
+        instanceId,
+        label: normalizeDisplayName(report.routeTitle || report.title) || '上报审批',
+        step: normalizeDisplayName(report.currentStepName) || undefined,
+        kind: 'report'
+      })
+    }
+    for (const mutation of pendingMutationApprovalItems.value) {
+      if (!mutation.instanceId) {
+        continue
+      }
+      items.push({
+        key: `mutation:${mutation.instanceId}`,
+        instanceId: mutation.instanceId,
+        label: normalizeDisplayName(mutation.routeTitle || mutation.title) || '异动审批',
+        step: normalizeDisplayName(mutation.currentStepName) || undefined,
+        kind: 'mutation'
+      })
+    }
+    for (const history of historicalPlanApprovalItems.value) {
+      if (!history.instanceId) {
+        continue
+      }
+      items.push({
+        key: `history:${history.instanceId}`,
+        instanceId: history.instanceId,
+        label: normalizeDisplayName(history.routeTitle || history.title) || '历史审批',
+        step: normalizeDisplayName(history.currentStepName) || undefined,
+        kind: 'history'
+      })
+    }
+    return items
+  })
+  const workflowFocusInstance = computed<WorkflowFocusCandidate | null>(() => {
+    const items = workflowFocusCandidates.value
+    if (items.length === 0) {
+      return null
+    }
+    return items[Math.min(workflowFocusIdx.value, items.length - 1)] || items[0]
+  })
+  const focusWorkflowDetail = ref<WorkflowInstanceDetailResponse | null>(null)
+  watch(
+    () => String(workflowFocusInstance.value?.instanceId ?? ''),
+    async instanceKey => {
+      if (!instanceKey) {
+        focusWorkflowDetail.value = null
+        return
+      }
+      try {
+        const response = await getWorkflowInstanceDetail(instanceKey)
+        focusWorkflowDetail.value = response?.success && response.data ? response.data : null
+      } catch (error) {
+        logger.warn('[ApprovalProgress] 加载流程焦点实例详情失败:', error)
+        focusWorkflowDetail.value = null
+      }
+    },
+    { immediate: true }
+  )
+
   // ============ 审批流程节点数据 ============
   const workflowNodes = computed<WorkflowNode[]>(() => {
+    // 2026-10-26 用户定案：选择栏点选了非主流程候选（进行中上报/异动、历史终态实例，
+    // 含学院上报链）时，优先渲染该实例的流程步骤链。主流程候选与无详情时落回原有分支。
+    const focusCandidate = workflowFocusInstance.value
+    const focusDetail = focusCandidate?.kind !== 'plan' ? focusWorkflowDetail.value : null
+    if (focusCandidate && focusCandidate.kind !== 'plan' && focusDetail) {
+      const focusTasks = Array.isArray(focusDetail.tasks) ? focusDetail.tasks : []
+      if (focusTasks.length > 0) {
+        return focusTasks.map(task => {
+          const isPending =
+            String(task.status || '')
+              .trim()
+              .toUpperCase() === 'PENDING'
+          return {
+            id: String(task.taskId || task.taskKey || task.currentStepName || task.taskName),
+            name:
+              normalizeDisplayName(task.currentStepName) ||
+              normalizeDisplayName(task.taskName) ||
+              '审批节点',
+            status: isPending ? 'current' : mapWorkflowTaskStatusToNodeStatus(task),
+            operatorName: resolveWorkflowTaskOperatorName(task),
+            operatorAvatar: task.assigneeId
+              ? workflowUserAvatarCache.value[String(task.assigneeId)] || undefined
+              : undefined,
+            approverCandidates: resolveTaskCandidateApprovers(task),
+            operateTime: task.approvedAt
+              ? new Date(task.approvedAt)
+              : task.createdTime
+                ? new Date(task.createdTime)
+                : undefined,
+            comment:
+              typeof task.comment === 'string' && task.comment.trim() ? task.comment : undefined
+          } satisfies WorkflowNode
+        })
+      }
+    }
+
     // 2026-10-24 用户定案：审批进行中的上报实例（PLAN_REPORT）也要在「审批流程」
     // 页签渲染——选中哪条实例就渲染哪条的步骤链（多实例时由页签顶部选择栏切换）。
     // 此前该页签只接了 PLAN 流程与异动流程，上报审批进行中时永远「暂无审批数据」。
@@ -3831,6 +3960,8 @@ export function useApprovalProgressState(
     reportWorkflowInstances,
     selectedReportInstanceIdx,
     selectedReportInstance,
+    workflowFocusCandidates,
+    workflowFocusIdx,
     reportWorkflowDetailLoading,
     workflowOrgRoleCandidateCache,
     workflowUserAvatarCache
