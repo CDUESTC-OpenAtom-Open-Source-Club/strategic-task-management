@@ -12,3 +12,34 @@
   padding-right: 2px !important;
   white-space: nowrap !important;
 }
+
+/* 2026-10-27 用户定案：新增子指标的「关联指标」下拉里，战略任务分组标题
+   右侧加「任务」小标签——与下面指标行的 定量/定性 标签区分开，
+   一眼能看出哪一行是任务、哪几行是该任务下的指标。 */
+/* 下拉本体限宽：超长指标名会被 name 的省略号截断（scoped 样式已有），
+   不限宽时 popper 被撑到视口外，右侧所有标签都看不见 */
+.parent-indicator-select-popper {
+  max-width: min(860px, calc(100vw - 360px));
+}
+
+/* 分组标题 = 战略任务行：名称居左（超宽硬截断），「任务」标签钉在右缘 */
+.parent-indicator-select-popper .el-select-group__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.parent-indicator-select-popper .el-select-group__title::after {
+  content: '任务';
+  flex-shrink: 0;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #909399;
+  background: #f4f4f5;
+  border: 1px solid #e9e9eb;
+}

@@ -715,8 +715,16 @@ export const useStrategicStore = defineStore('strategic', () => {
     year: number,
     options: { force?: boolean; background?: boolean } = {}
   ) {
+    // 2026-10-27 修复：force 刷新必须拿到最新数据。
+    // 此前只要有同年份的加载在途就直接复用那个旧 promise，即使传了 force=true，
+    // 结果是「删除/复制指标后立刻刷新」拿到的是删除前的列表——界面上残留已删的
+    // 旧行，只有整页刷新（全新加载）才会更正。
+    // 改为：force 时先等在途请求跑完，再发起一次真正的强制拉取。
     if (loadingYearPromise.value && loadingYear.value === year) {
-      return loadingYearPromise.value
+      if (!options.force) {
+        return loadingYearPromise.value
+      }
+      await loadingYearPromise.value.catch(() => undefined)
     }
 
     // background=true：静默刷新，不翻转 loading 状态，避免看板等页面铺骨架屏（2026-10-07 异步局部刷新）

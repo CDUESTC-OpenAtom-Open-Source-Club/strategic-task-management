@@ -131,7 +131,9 @@ export function matchesInvalidationTags(
     return false
   }
 
-  const normalized = new Set(tagsOrKeys.map(item => (typeof item === 'string' ? item : serializeQueryKey(item))))
+  const normalized = new Set(
+    tagsOrKeys.map(item => (typeof item === 'string' ? item : serializeQueryKey(item)))
+  )
   return candidate.some(item => normalized.has(item))
 }
 
@@ -544,7 +546,6 @@ export class CacheManager {
         this.memory.delete(key)
       }
     })
-
     ;(['session', 'local'] as const).forEach(scope => {
       const storage = getStorage(scope)
       if (!storage) {
@@ -577,7 +578,13 @@ export class CacheManager {
 
   public getStats(): {
     size: number
-    entries: Array<{ key: string; expiresIn: number; hasEtag: boolean; tags: string[]; scope: QueryScope }>
+    entries: Array<{
+      key: string
+      expiresIn: number
+      hasEtag: boolean
+      tags: string[]
+      scope: QueryScope
+    }>
     counters: QueryCacheStats
   } {
     const now = Date.now()
@@ -841,7 +848,11 @@ export async function fetchWithCache<T>({
     return cached.data
   }
 
-  const pending = cacheManager.getPendingRequest<T>(serializedKey)
+  // 2026-10-27 修复：force 必须真正发起新请求。
+  // 此前 force 只跳过了「已缓存结果」，但仍会命中 pending 请求去重——
+  // 复用那个尚未包含最新数据的老 promise。结果是「删除/复制指标后立刻刷新」
+  // 拿到的是操作前的列表，界面上残留旧行，只有整页刷新才会更正。
+  const pending = force ? undefined : cacheManager.getPendingRequest<T>(serializedKey)
   if (pending && Date.now() - pending.startedAt < (policy.dedupeWindowMs ?? 0)) {
     cacheManager.markDedupedRequest()
     return pending.promise

@@ -90,6 +90,7 @@ const {
   collegeOverallStatus,
   collegeTableData,
   collegeTotalWeight,
+  collegeTotalWeightStable,
   canEditChildManualAlert,
   childManualAlertEditable,
   childManualAlertLockHint,
@@ -146,6 +147,7 @@ const {
   distributionApprovalButtonType,
   distributionRecordCount,
   distributionSubmitButtonDisabledReason,
+  distributionSubmitButtonStableDisabledReason,
   distributionSubmitButtonText,
   distributionSubmitButtonType,
   editingChildField,
@@ -812,16 +814,16 @@ const handleDistributionImportCommitted = async () => {
               </el-popover>
               <el-tag
                 :type="
-                  collegeTotalWeight > 100
+                  collegeTotalWeightStable > 100
                     ? 'danger'
-                    : collegeTotalWeight === 100
+                    : collegeTotalWeightStable === 100
                       ? 'success'
                       : 'info'
                 "
-                :class="{ 'weight-tag--overlimit': collegeTotalWeight > 100 }"
+                :class="{ 'weight-tag--overlimit': collegeTotalWeightStable > 100 }"
                 size="default"
               >
-                基础性权重合计: {{ collegeTotalWeight }} / 100
+                基础性权重合计: {{ collegeTotalWeightStable }} / 100
               </el-tag>
             </div>
             <div class="header-actions">
@@ -874,9 +876,11 @@ const handleDistributionImportCommitted = async () => {
                     <el-button
                       :type="distributionSubmitButtonType"
                       :loading="isBatchDistributing"
-                      :aria-disabled="Boolean(distributionSubmitButtonDisabledReason)"
-                      :class="{ 'is-disabled': Boolean(distributionSubmitButtonDisabledReason) }"
-                      :title="distributionSubmitButtonDisabledReason"
+                      :aria-disabled="Boolean(distributionSubmitButtonStableDisabledReason)"
+                      :class="{
+                        'is-disabled': Boolean(distributionSubmitButtonStableDisabledReason)
+                      }"
+                      :title="distributionSubmitButtonStableDisabledReason"
                       @click="handleBatchDistribute(selectedCollege)"
                     >
                       <el-icon><Promotion /></el-icon>
@@ -1281,9 +1285,9 @@ const handleDistributionImportCommitted = async () => {
                         <template #label><span class="required-asterisk">*</span>关联指标</template>
                         <el-select
                           v-model="newIndicatorForm.parentIndicatorId"
-                          filterable
                           placeholder="选择关联的核心指标"
                           style="width: 100%"
+                          popper-class="parent-indicator-select-popper"
                           @change="handleParentIndicatorChange"
                         >
                           <el-option-group

@@ -789,11 +789,15 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       return reportWorkflowStatus
     }
 
-    if (reportWorkflowStatus === 'DRAFT') {
+    // 2026-10-27 用户反馈：已下发是稳定终态。学院上报 summary 在学院未填报时恒为
+    // DRAFT，不能把职能部门视角拉回草稿态——否则「新增指标 / 发起下发审批」
+    // 在计划已下发后仍然显示（status tag 显示「已下发」、按钮却是草稿态的错位）。
+    const planStatus = normalizedSelectedCollegePlanStatus.value
+
+    if (reportWorkflowStatus === 'DRAFT' && planStatus !== 'DISTRIBUTED') {
       return 'DRAFT'
     }
 
-    const planStatus = normalizedSelectedCollegePlanStatus.value
     if (['DRAFT', 'RETURNED', 'DISTRIBUTED'].includes(planStatus)) {
       return planStatus
     }
@@ -985,7 +989,9 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     // （抽屉「计划审批」页签空白）。上报实体深链恒带上学院上报链。
     if (
       effectiveRouteApprovalEntityType.value === 'PLAN_REPORT' ||
-      String(props.workflowEntityType || '').trim().toUpperCase() === 'PLAN_REPORT'
+      String(props.workflowEntityType || '')
+        .trim()
+        .toUpperCase() === 'PLAN_REPORT'
     ) {
       return ['PLAN_APPROVAL_COLLEGE', currentDispatchWorkflowCode.value]
     }
@@ -1083,14 +1089,23 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   // 当前用户名下存在待办审批（如本部门上报审批停在「职能部门审批人审批」）时，
   // 红点、黄色按钮与审批状态 chip 都要点亮，与审批中心待办一致。
   const myPendingApprovalTasks = ref<
-    Array<{ taskId: string; currentStepName?: string; entityType?: string; entityId?: number | string }>
+    Array<{
+      taskId: string
+      currentStepName?: string
+      entityType?: string
+      entityId?: number | string
+    }>
   >([])
   const loadMyPendingApprovalTasks = async () => {
     try {
       const response = await getMyPendingTasks(1)
       const items = response.success && response.data ? response.data.items : []
       myPendingApprovalTasks.value = (items || []).filter(task =>
-        ['PENDING', 'RUNNING'].includes(String(task.status || '').trim().toUpperCase())
+        ['PENDING', 'RUNNING'].includes(
+          String(task.status || '')
+            .trim()
+            .toUpperCase()
+        )
       )
     } catch (error) {
       logger.warn('[IndicatorDistributeView] 加载我的待办审批失败:', error)
@@ -1561,8 +1576,24 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   })
 
   const distributionSubmitButtonType = computed(() => {
-    return distributionSubmitButtonDisabledReason.value ? 'info' : 'success'
+    return distributionSubmitButtonStableDisabledReason.value ? 'info' : 'success'
   })
+
+  // 2026-10-27 用户反馈：双击编辑保存后的强制刷新会让 store 指标短暂清空，
+  // 权重合计瞬间归零，把「发起下发审批」按钮在 可下发(绿)/不可下发(灰) 之间
+  // 打闪。刷新期间冻结按钮判定，沿用上一次稳定结论。
+  const isRefreshingDistribution = ref(false)
+  const lastStableSubmitDisabledReason = ref('')
+  watch(distributionSubmitButtonDisabledReason, reason => {
+    if (!isRefreshingDistribution.value) {
+      lastStableSubmitDisabledReason.value = reason
+    }
+  })
+  const distributionSubmitButtonStableDisabledReason = computed(() =>
+    isRefreshingDistribution.value
+      ? lastStableSubmitDisabledReason.value
+      : distributionSubmitButtonDisabledReason.value
+  )
 
   const distributionSubmitButtonText = computed(() => {
     return '发起下发审批'
@@ -1737,12 +1768,21 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   }
 
   const refreshDistributionData = async () => {
+    // 2026-10-27 修复：并发刷新不能只复用进行中的那次。
+    // 复制/批量下发这类「先删后建」的操作会中途触发数据变更广播，广播处理器
+    // 立刻发起一次刷新（fire-and-forget）；等操作结束再调 refreshDistributionData 时，
+    // 之前只是 await 那个「进行中」的 promise —— 而它恰好在「删完、还没建」的窗口
+    // 返回，把中间态写进 store，界面于是残留旧行/缺新行，只有整页刷新才正确。
+    // 改为：有刷新在跑时，排队等它结束后【再跑一次】，保证最终状态是最新数据。
     if (refreshDistributionPromise.value) {
       await refreshDistributionPromise.value
-      return
+      if (refreshDistributionPromise.value) {
+        await refreshDistributionPromise.value
+      }
     }
 
     refreshDistributionPromise.value = (async () => {
+      isRefreshingDistribution.value = true
       invalidateQueries([
         'indicator.list',
         'task.list',
@@ -1791,6 +1831,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       await loadCurrentCollegePlanReportSummary()
       await preloadCurrentCollegeWorkflowDetail()
       lastEditTime.value = new Date().toLocaleString()
+      isRefreshingDistribution.value = false
     })()
 
     try {
@@ -1969,7 +2010,10 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
           routeDepartmentName = payloadTarget
         }
       } catch (directionError) {
-        logger.warn('[IndicatorDistributeView] 上报方向解析失败，降级用 department:', directionError)
+        logger.warn(
+          '[IndicatorDistributeView] 上报方向解析失败，降级用 department:',
+          directionError
+        )
       }
     }
 
@@ -2566,14 +2610,16 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     }
 
     copySourceCollege.value = copySourceCollegeOptions.value[0]?.value || ''
-    copyClearExisting.value = false
+    // 2026-10-27 用户反馈：复制策略的选择不该每次打开对话框都被重置。
+    // 此前固定重置为 false，用户勾上「复制前清空」后若对话框被重开（切学院、
+    // 关闭再打开），勾选会悄悄丢失 → 变成「仅追加」，当前学院旧指标留在界面上，
+    // 看起来像"清空没生效"。改为保留用户上一次的选择。
     copyIndicatorDialogVisible.value = true
   }
 
   const closeCopyIndicatorsDialog = () => {
     copyIndicatorDialogVisible.value = false
     copySourceCollege.value = ''
-    copyClearExisting.value = false
   }
 
   // 取消添加指标
@@ -2803,8 +2849,18 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       if (copyClearExisting.value) {
         cancelAddIndicator()
         clearLocalDraftRowsForCollege(targetCollege)
+        // 2026-10-27 修复：清空复制时逐条删除，单条失败不中断整批。
+        // 此前任一条删除抛错会跳出 try，剩余旧指标留在后端与界面上，
+        // 表现为"勾了清空、旧行却还在"（后端已软删一部分、前端残留另一部分）。
         for (const indicator of currentIndicators) {
-          await strategicStore.deleteIndicator(String(indicator.id))
+          try {
+            await strategicStore.deleteIndicator(String(indicator.id))
+          } catch (deleteError) {
+            logger.warn('[IndicatorDistributeView] 清空复制时删除指标失败，继续处理其余指标', {
+              indicatorId: indicator.id,
+              error: deleteError
+            })
+          }
         }
       }
 
@@ -3848,6 +3904,19 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       .reduce((sum, indicator) => sum + Number(indicator.weight || 0), 0)
   })
 
+  // 2026-10-27 用户反馈：编辑保存后的强制刷新会让指标短暂清空，权重合计
+  // 瞬间跳到 0/100 再跳回——「基础性权重合计」tag 跟着闪。与下发按钮同款
+  // 冻结：刷新期间沿用上一次稳定值。
+  const lastStableCollegeTotalWeight = ref(0)
+  watch(collegeTotalWeight, value => {
+    if (!isRefreshingDistribution.value) {
+      lastStableCollegeTotalWeight.value = value
+    }
+  })
+  const collegeTotalWeightStable = computed(() =>
+    isRefreshingDistribution.value ? lastStableCollegeTotalWeight.value : collegeTotalWeight.value
+  )
+
   // 下发/撤销统一处理函数
   const _handleDistributeOrWithdraw = (command: string) => {
     if (!selectedCollege.value) {
@@ -4454,6 +4523,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     collegeOverallStatus,
     collegeTableData,
     collegeTotalWeight,
+    collegeTotalWeightStable,
     // ===== 子指标进度等级（与战略任务管理页同一后端能力；写权限后续按角色放开）=====
     canEditChildManualAlert,
     childManualAlertEditable,
@@ -4512,6 +4582,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     distributionApprovalButtonType,
     distributionRecordCount,
     distributionSubmitButtonDisabledReason,
+    distributionSubmitButtonStableDisabledReason,
     distributionSubmitButtonText,
     distributionSubmitButtonType,
     editingChildField,
