@@ -1,23 +1,16 @@
 name: Build and Push Frontend Image
 
+# 拓扑定死：GitHub 只负责构建 + 产出 artifact + 推 GHCR。
+# 禁止在本仓库任何 workflow 里下载产物到服务器、或触发部署。
+# 落服一律走本地：download-offline-release.sh → upload-offline-release.sh → install-offline-release.sh
 on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      delivery_target:
-        description: Delivery target
-        required: false
-        default: artifact-only
-        type: choice
-        options:
-          - artifact-only
-          - test-server
 
 permissions:
   contents: read
   packages: write
-  actions: read
 
 concurrency:
   group: frontend-image-${{ github.ref }}
@@ -151,75 +144,3 @@ jobs:
           retention-days: 7
           compression-level: 0
           overwrite: true
-
-  stage-on-server:
-    name: Stage Image on Server Runner
-    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.delivery_target == 'test-server' }}
-    needs: build-and-push
-    runs-on: [self-hosted, Linux, X64, frontend, production]
-
-    steps:
-      - name: Normalize image name
-        id: image
-        run: |
-          OWNER="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
-          echo "image=ghcr.io/${OWNER}/strategic-task-management:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-
-      - name: Verify self-hosted runner
-        run: |
-          set -euo pipefail
-          [[ "${RUNNER_ENVIRONMENT}" == "self-hosted" ]]
-          sudo -n true
-          sudo docker info >/dev/null
-
-      - name: Download frontend image artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: frontend-image-${{ github.sha }}
-          path: ${{ runner.temp }}/frontend-image-${{ github.run_id }}
-
-      - name: Validate deployment host
-        env:
-          ARTIFACT_DIR: ${{ runner.temp }}/frontend-image-${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          bash "${ARTIFACT_DIR}/scripts/deployment/validate-runner-host.sh" \
-            /opt/sism-stack/production
-
-      - name: Load frontend image on server runner
-        env:
-          FRONTEND_IMAGE: ${{ steps.image.outputs.image }}
-          ARTIFACT_DIR: ${{ runner.temp }}/frontend-image-${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          gzip -t "${ARTIFACT_DIR}/frontend-image.tar.gz"
-          gzip -dc "${ARTIFACT_DIR}/frontend-image.tar.gz" | sudo docker load
-          sudo docker image inspect "${FRONTEND_IMAGE}" >/dev/null
-
-      - name: Trigger backend system deployment
-        env:
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-        run: |
-          set -euo pipefail
-          : "${GHCR_TOKEN:?Missing GHCR_TOKEN secret}"
-          curl -fsS -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${GHCR_TOKEN}" \
-            https://api.github.com/repos/CDUESTC-OpenAtom-Open-Source-Club/sism-backend/actions/workflows/build-and-push-image.yml/dispatches \
-            -d @- <<EOF
-          {
-            "ref": "main",
-            "inputs": {
-              "deploy_mode": "frontend-only",
-              "delivery_target": "test-server",
-              "frontend_tag": "${GITHUB_SHA}",
-              "target_env": "production"
-            }
-          }
-          EOF
-
-      - name: Remove downloaded frontend artifact
-        if: ${{ always() }}
-        env:
-          ARTIFACT_DIR: ${{ runner.temp }}/frontend-image-${{ github.run_id }}
-        run: rm -rf "${ARTIFACT_DIR}"
