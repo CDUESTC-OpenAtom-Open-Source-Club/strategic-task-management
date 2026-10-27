@@ -4,7 +4,6 @@ import { useLatestIndicatorFill } from '@/features/indicator/model/useLatestIndi
 import TaskIndicatorTree from './TaskIndicatorTree.vue'
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
-import ReportHistoryBadge from '@/features/indicator/ui/ReportHistoryBadge.vue'
 import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
 import ReportStatusCell from '@/features/indicator/ui/ReportStatusCell.vue'
 import {
@@ -125,6 +124,7 @@ const {
   currentApprovalWorkflowStatus,
   currentDepartmentOrgId,
   currentDetail,
+  departmentMutationPendingApprovals,
   currentDistributeGroup,
   currentDistributeItem,
   currentIndicator,
@@ -483,7 +483,6 @@ const departmentMutationWorkflowEntities = ref<
 >([])
 // 2026-10-21：审批中（IN_REVIEW）的异动实例 → 审批中心「计划审批」看板，
 // 让发起人和部门视角都能看到自己发起的异动（此前看板只列"我是审批人"的实例）
-const departmentMutationPendingApprovals = ref<Array<Record<string, any>>>([])
 const loadDepartmentMutationWorkflowEntities = async () => {
   try {
     const orgId = resolveDepartmentIdByName(selectedDepartment.value)
@@ -2058,7 +2057,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         <div v-if="row.id" class="indicator-cell-footer">
                           <MutationBadgePopover :indicator-id="row.id" />
                           <!-- 上报历史小标（每次上报更新，不走异动链，悬停看历次上报+资料） -->
-                          <ReportHistoryBadge :indicator-id="row.id" />
                         </div>
                       </div>
                     </template>
