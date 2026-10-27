@@ -216,6 +216,7 @@ const {
   normalizedCurrentPlanStatus,
   normalizedCurrentPlanWorkflowStatus,
   openBlobInNewTab,
+  downloadDisplayAttachmentItem,
   openDisplayAttachmentItem,
   openLocalAttachmentFile,
   openRemoteAttachmentFile,
@@ -288,7 +289,10 @@ const {
 } = useIndicatorListView(props)
 
 const { latestFillNote, latestFillAttachments } = useLatestIndicatorFill(
-  computed(() => (currentDetail as any)?.id ?? null)
+  computed(() => (currentDetail as any)?.value?.id ?? null),
+  // 实时值：按 id 从当前行数组取**最新**行对象（行对象加载后会被替换，
+  // 打开抽屉那一刻的旧引用里的 pendingRemark 是空值）
+  (id: string | number) => indicators.value.find(item => String(item.id) === String(id)) as any
 )
 
 const indicatorListExporting = ref(false)
@@ -975,12 +979,15 @@ const handleExportIndicatorList = async () => {
           <div class="divider"></div>
           <h4>相关上报资料</h4>
           <div class="detail-attachments__list">
+            <!-- 2026-10-26 用户反馈：单击即下载（此前仅双击可打开，用户以为点不动）。
+                 双击保留预览（图片/PDF 走新标签页），下载走 attachmentId 通道。 -->
             <button
               v-for="(attachment, index) in currentDetailAttachmentItems"
               :key="`${attachment.attachmentId || attachment.url}-${index}`"
               type="button"
               class="detail-attachments__item"
-              :title="`双击打开 ${attachment.name}`"
+              :title="`点击下载 ${attachment.name}（双击可预览）`"
+              @click.prevent.stop="downloadDisplayAttachmentItem(attachment)"
               @dblclick.prevent.stop="openDisplayAttachmentItem(attachment)"
             >
               {{ attachment.name }}
