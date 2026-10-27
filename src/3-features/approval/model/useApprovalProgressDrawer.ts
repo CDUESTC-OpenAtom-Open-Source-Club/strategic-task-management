@@ -971,28 +971,53 @@ export function useApprovalProgressDrawer(
   const reportTodoItems = ref<Record<string, any>[]>([])
 
   const externalWorkflowTodoItems = computed<Record<string, any>[]>(() => {
-    // 优先用独立加载的上报待办；为空时回退到 pendingPlanApprovals 里的上报实例
-    if (reportTodoItems.value.length > 0) {
-      return reportTodoItems.value
+    const items = (() => {
+      // 优先用独立加载的上报待办；为空时回退到 pendingPlanApprovals 里的上报实例
+      if (reportTodoItems.value.length > 0) {
+        return reportTodoItems.value
+      }
+      return pendingPlanApprovals.value
+        .filter(instance => isExternalWorkflowTodo(instance))
+        .map(resolveExternalTodoCard)
+        .filter(instance => instance.__suppressTodoCard !== true)
+    })()
+
+    // 2026-10-27 用户定案（一条消息 = 一条审批内容）：从具体消息/计划上下文打开
+    // 审批盒时，计划审批页签只保留该消息对应实体的卡片（按 workflowEntityId 精确
+    // 匹配 entityId），其他待办不在此罗列——处理全量待办走「跳转到对应页面」。
+    // 无上下文（铃铛直开）时保持全量收件箱口径。
+    const contextEntityId = toPositiveNumber(props.workflowEntityId)
+    if (contextEntityId > 0) {
+      return items.filter(instance => toPositiveNumber(instance.entityId) === contextEntityId)
     }
-    return pendingPlanApprovals.value
-      .filter(instance => isExternalWorkflowTodo(instance))
-      .map(resolveExternalTodoCard)
-      .filter(instance => instance.__suppressTodoCard !== true)
+    return items
   })
 
   /**
    * 2026-10-27 用户定案（与分发页审批抽屉同步）：
    * 「审批流程」页签顶部的实例选择栏只承载「当前正在审批的实例」——
    * 已完成（已通过/已驳回/已撤回）的实例属于审批历史，不在这里出现。
-   * 候选来源 = 分配给当前用户的在审待办（/workflows/my-tasks、my-pending）。
-   * 只有一条 → 整栏隐藏；多条 → 统一编号 实例1、实例2…
+   * 2026-10-27 用户定案（按上下文收窄，对齐任务管理/下发页实现）：
+   * 从具体消息/计划上下文打开审批盒时，选择栏只列「该上下文实体」的在审实例
+   * （按 workflowEntityId 匹配，标签优先用计划名），不再罗列当前登录人的
+   * 全量待办——无关实例混在栏里分不清归属。上下文里没有在审实例（实例已撤回/
+   * 已走完/待办在别人名下）时整栏不显示，流程视图回落到该计划自身的流程链；
+   * 仅无上下文（铃铛直开）时回退全量清单充当多实例切换器。
    */
   const workflowFocusCandidates = computed<WorkflowFocusCandidate[]>(() => {
     const seen = new Set<string>()
     const items: WorkflowFocusCandidate[] = []
 
-    pendingPlanApprovals.value.forEach(instance => {
+    const contextEntityId = toPositiveNumber(props.workflowEntityId)
+    let source = pendingPlanApprovals.value
+    if (contextEntityId > 0) {
+      // 与计划审批页签同口径：按消息实体 ID 精确匹配，一条消息只带出一条审批链
+      source = pendingPlanApprovals.value.filter(
+        instance => toPositiveNumber(instance.entityId) === contextEntityId
+      )
+    }
+
+    source.forEach(instance => {
       const instanceId = instance.instanceId ?? instance.workflowInstanceId
       if (!instanceId) {
         return
@@ -1004,10 +1029,13 @@ export function useApprovalProgressDrawer(
       seen.add(key)
       const entityType = normalizeWorkflowEntityType(instance.entityType)
       const mutation = isMutationEntityType(entityType)
+      const planScopedLabel =
+        normalizeDisplayName(props.planName) || normalizeDisplayName(props.departmentName) || ''
       items.push({
         key: `${entityType || 'PLAN'}:${key}`,
         instanceId: instance.instanceId ?? instance.workflowInstanceId,
         label:
+          (!mutation && entityType !== 'PLAN_REPORT' ? planScopedLabel : '') ||
           normalizeDisplayName(instance.routeTitle) ||
           normalizeDisplayName(instance.planName) ||
           normalizeDisplayName(instance.entityTitle) ||
@@ -4192,6 +4220,25 @@ export function useApprovalProgressDrawer(
     const indicatorLevels = collectPlanIndicatorAppraisalLevels(
       Number.isFinite(reportId) ? reportId : null
     )
+    // 2026-10-27 用户定案：上报链末节点通过前，全部指标的鉴定等级必须已评定。
+    // 前端预检先行拦截（后端 approveTask 亦有权威校验，双保险）。
+    const indicatorIds = Number.isFinite(reportId)
+      ? (planWorkflowDetail.value?.indicators || [])
+          .map((item: { indicatorId?: number | string | null }) => Number(item.indicatorId))
+          .filter((id: number) => Number.isFinite(id) && id > 0)
+      : []
+    if (indicatorIds.length > 0) {
+      const missing = indicatorIds.filter(id => {
+        const level = indicatorLevels[id]
+        return !level || !['AHEAD', 'NORMAL', 'DELAYED'].includes(level)
+      })
+      if (missing.length > 0) {
+        ElMessage.warning(
+          `存在未评定的鉴定进度等级（指标 ${missing.join('、')}），请完成全部指标的鉴定后再通过`
+        )
+        return
+      }
+    }
     const loadingInstance = ElLoading.service({
       lock: true,
       text: '正在提交审批与鉴定等级...',
@@ -4657,7 +4704,9 @@ export function useApprovalProgressDrawer(
       if (val) {
         const retainedDetail = getRetainedWorkflowDetail()
         planWorkflowDetail.value = retainedDetail ?? props.initialPlanWorkflowDetail ?? null
-        // 打开时重置到工作流标签页
+        // 打开时重置到工作流标签页；焦点实例索引一并复位——
+        // 上次打开选到「实例2」时，换个上下文再开不能默认还停在最后一条。
+        workflowFocusIdx.value = 0
         activeTab.value = props.showPlanApprovals
           ? isPlanPendingApproval.value
             ? 'pending-plans'
