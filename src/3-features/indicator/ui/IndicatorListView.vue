@@ -2,6 +2,7 @@
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
 import { computed, ref } from 'vue'
+import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
 import { useLatestIndicatorFill } from '@/features/indicator/model/useLatestIndicatorFill'
 import {
   Plus,
@@ -746,18 +747,14 @@ const handleExportIndicatorList = async () => {
                   </el-tooltip>
                 </template>
               </el-table-column>
+              <!-- 2026-10-26 用户定案：上报资料列悬浮显示附件卡片（序号+文件名+类型），
+                   点击文件名直接下载；与指标分发页同构（ReportMaterialsCell）。 -->
               <el-table-column label="上报资料" width="104" align="center">
                 <template #default="{ row }">
-                  <div
-                    v-if="
-                      (row.attachments?.length || row.pendingAttachmentDetails?.length || 0) > 0
-                    "
-                  >
-                    <el-button link type="primary" size="small" @click="handleViewDetail(row)">
-                      {{ row.attachments?.length || row.pendingAttachmentDetails?.length || 0 }} 个
-                    </el-button>
-                  </div>
-                  <div v-else style="color: #909399">—</div>
+                  <ReportMaterialsCell
+                    :indicator-id="row.id"
+                    :attachments="row.pendingAttachmentDetails || row.attachments"
+                  />
                 </template>
               </el-table-column>
               <el-table-column prop="remark" label="下发备注" width="132">
@@ -969,10 +966,6 @@ const handleExportIndicatorList = async () => {
           <el-descriptions-item label="进度说明" :span="2">{{
             latestFillNote || '—'
           }}</el-descriptions-item>
-          <el-descriptions-item label="上报资料" :span="2">
-            <span v-if="!latestFillAttachments.length" style="color: #909399">—</span>
-            <span v-else>{{ latestFillAttachments.map(a => a.fileName).join('、') }}</span>
-          </el-descriptions-item>
           <el-descriptions-item label="下发备注" :span="2">{{
             currentDetail.remark || '暂无备注'
           }}</el-descriptions-item>

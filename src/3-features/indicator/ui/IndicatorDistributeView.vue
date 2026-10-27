@@ -1484,10 +1484,6 @@ const handleDistributionImportCommitted = async () => {
           <el-descriptions-item label="进度说明" :span="2">{{
             latestFillNote || '—'
           }}</el-descriptions-item>
-          <el-descriptions-item label="上报资料" :span="2">
-            <span v-if="!latestFillAttachments.length" style="color: #909399">—</span>
-            <span v-else>{{ latestFillAttachments.map(a => a.fileName).join('、') }}</span>
-          </el-descriptions-item>
           <el-descriptions-item label="下发备注" :span="2">
             {{ currentDetailIndicator.remark || '暂无备注' }}
           </el-descriptions-item>

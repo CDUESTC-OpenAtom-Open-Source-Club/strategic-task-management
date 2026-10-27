@@ -11,13 +11,25 @@ import { logger } from '@/shared/lib/utils/logger'
 // 历次资料经子指标名称右下角的上报历史小标查看。数据来自 plan_report_indicator（含历史）。
 const props = defineProps<{
   indicatorId?: number | string | null
+  /**
+   * 行内附件（当前轮次，含草稿/待提交）。
+   * 2026-10-26：上报资料列需展示「尚未提交」的填报附件——
+   * useIndicatorFills 只返回已提交轮次，草稿附件需由行数据传入。
+   */
+  attachments?: Attachment[] | null
 }>()
 
 const fills = ref<IndicatorFill[]>([])
 const loaded = ref(false)
 const downloadingAttachment = ref<string | null>(null)
 
-const latestAttachments = (): Attachment[] => fills.value[0]?.attachments ?? []
+const latestAttachments = (): Attachment[] => {
+  const inline = Array.isArray(props.attachments) ? props.attachments : []
+  if (inline.length > 0) {
+    return inline
+  }
+  return fills.value[0]?.attachments ?? []
+}
 
 async function downloadAttachment(attachment: Attachment): Promise<void> {
   if (downloadingAttachment.value) {
@@ -44,17 +56,17 @@ onMounted(async () => {
   <el-popover
     v-else-if="latestAttachments().length"
     placement="top"
-    trigger="click"
+    trigger="hover"
     :width="320"
     popper-class="report-materials-popper"
   >
     <template #reference>
-      <el-button link type="primary" size="small">查看资料</el-button>
+      <el-button link type="primary" size="small">{{ latestAttachments().length }} 个</el-button>
     </template>
     <div class="report-materials">
       <div class="report-materials__title">最新上报资料（{{ latestAttachments().length }}）</div>
       <div
-        v-for="attachment in latestAttachments()"
+        v-for="(attachment, index) in latestAttachments()"
         :key="attachment.id"
         class="report-materials__row"
       >
@@ -62,9 +74,16 @@ onMounted(async () => {
           type="button"
           class="report-materials__file"
           :disabled="downloadingAttachment === String(attachment.id)"
+          :title="`点击下载 ${attachment.fileName}`"
           @click.stop="downloadAttachment(attachment)"
         >
-          {{ downloadingAttachment === String(attachment.id) ? '下载中…' : attachment.fileName }}
+          <span class="report-materials__index">{{ index + 1 }}</span>
+          <span class="report-materials__name">{{
+            downloadingAttachment === String(attachment.id) ? '下载中…' : attachment.fileName
+          }}</span>
+          <span v-if="attachment.fileType" class="report-materials__type">{{
+            attachment.fileType
+          }}</span>
         </button>
       </div>
     </div>
@@ -96,7 +115,9 @@ onMounted(async () => {
   padding: 2px 0;
 }
 .report-materials-popper .report-materials__file {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   width: 100%;
   text-align: left;
   border: 1px solid #d9ecff;
@@ -108,6 +129,36 @@ onMounted(async () => {
   cursor: pointer;
   word-break: break-all;
   white-space: normal;
+}
+.report-materials-popper .report-materials__index {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: #409eff;
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+}
+.report-materials-popper .report-materials__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-all;
+  white-space: normal;
+}
+.report-materials-popper .report-materials__type {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: #e8f1ff;
+  color: #6b8cb8;
+  font-size: 11px;
+  line-height: 16px;
+  text-transform: uppercase;
 }
 .report-materials-popper .report-materials__file:hover {
   background: #d9ecff;
