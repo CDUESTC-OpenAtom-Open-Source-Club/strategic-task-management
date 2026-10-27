@@ -503,7 +503,7 @@ const handleExportIndicatorList = async () => {
                   :type="currentApprovalStatusMeta.type"
                   @click.stop="handleOpenApproval"
                 >
-                  异动状态: {{ currentApprovalStatusMeta.label }}
+                  审批状态: {{ currentApprovalStatusMeta.label }}
                 </el-tag>
               </template>
 
