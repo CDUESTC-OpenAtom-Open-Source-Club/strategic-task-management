@@ -39,43 +39,13 @@ import {
 import { useAuthStore } from '@/features/auth/model/store'
 
 /**
- * H4（2026-09-19 定案）：「最早未填月」从计划下发月起算，不再从当年 1 月起算。
- * 下发月取该计划+组织「首份报告的创建月份」（首份报告必然产生于下发之后）。
- * 实现方式：把起扫点之前的月份全部垫入已填集合，下游扫描逻辑不变。
+ * 2026-10-27 用户定案（重做）：月度填报的起算月 = 「计划下发给该组织的那个月」，
+ * 不再从 1 月起算，也不再用「首份报告的归属月/创建月」推算起扫点。
+ *
+ * 起算月由后端下发到计划详情（dispatchMonth = 计划审批实例完成时刻所在月），
+ * 由调用方传给 findEarliestUnfilledReportMonth 的 startMonth 参数。
+ * 已上报月份集合保持「原样返回」——不再垫任何月份。
  */
-function padMonthsBeforeFirstReport(
-  months: Set<string>,
-  reports: Array<{
-    reportOrgId?: number | string | null
-    reportMonth?: string | null
-    createdAt?: string | null
-  }>,
-  reportOrgId: number
-): Set<string> {
-  const orgReports = reports.filter(
-    report =>
-      Number(report.reportOrgId) === Number(reportOrgId) &&
-      report.isDeleted !== true &&
-      Boolean(report.createdAt)
-  )
-  if (orgReports.length === 0) {
-    return months
-  }
-  const firstMonth = orgReports
-    .map(report => String(report.createdAt).slice(0, 7).replace('-', ''))
-    .sort()[0]
-  if (!firstMonth || !/^\d{6}$/.test(firstMonth)) {
-    return months
-  }
-  const padded = new Set(months)
-  for (let m = 1; m <= 12; m++) {
-    const value = `${String(firstMonth).slice(0, 4)}${String(m).padStart(2, '0')}`
-    if (value < firstMonth) {
-      padded.add(value)
-    }
-  }
-  return padded
-}
 
 export interface SubmitPlanApprovalPayload {
   workflowCode: string
@@ -323,6 +293,11 @@ function convertBackendPlanToPlan(
     ...('cycleId' in raw ? { cycleId: raw.cycleId } : {}),
     ...(inferredYear != null ? { year: inferredYear } : {}),
     ...('planLevel' in raw ? { planLevel: raw.planLevel } : {}),
+    // 2026-10-27：下发月（月度填报的起算月）——白名单必须显式放行，
+    // 否则后端返回的 dispatchMonth 会在字段重建时丢失，导致前端仍从 1 月起算。
+    ...(typeof raw.dispatchMonth === 'string' && /^\d{6}$/.test(raw.dispatchMonth.trim())
+      ? { dispatchMonth: raw.dispatchMonth.trim() }
+      : {}),
     ...('workflowInstanceId' in raw
       ? { workflowInstanceId: Number(raw.workflowInstanceId) || undefined }
       : {}),
@@ -2610,6 +2585,53 @@ export const indicatorFillApi = {
   },
 
   /**
+   * 2026-10-27 用户定案：该组织在该计划下是否已有「审批通过」的报告轮次。
+   *
+   * 用于填报页的审批状态章：只要有一轮上报走完（APPROVED）就显示「已上报」，
+   * 而不因当前存在同月的新一轮草稿（草稿优先是填报入口的语义）把状态显示成
+   * 「查看流程」。取该组织全部轮次的最大状态结论：
+   * 有 APPROVED → 已上报；有 REJECTED/WITHDRAWN 且无 APPROVED → 已回退；
+   * 仅有在审轮次 → 审批中。
+   */
+  async getReportApprovalSummary(
+    planId: number | string,
+    reportOrgId: number
+  ): Promise<{ status: string | null; approved: boolean }> {
+    try {
+      const reports = await loadPlanReportsByPlanId(Number(planId))
+      const orgReports = reports.filter(
+        report => Number(report.reportOrgId) === Number(reportOrgId) && report.isDeleted !== true
+      )
+      if (orgReports.length === 0) {
+        return { status: null, approved: false }
+      }
+      const statuses = orgReports.map(report => getNormalizedReportStatus(report.status))
+      const approved = statuses.includes('APPROVED')
+      if (approved) {
+        return { status: 'APPROVED', approved: true }
+      }
+      if (
+        statuses.includes('PENDING') ||
+        statuses.includes('IN_REVIEW') ||
+        statuses.includes('SUBMITTED')
+      ) {
+        return { status: 'IN_REVIEW', approved: false }
+      }
+      if (
+        statuses.includes('REJECTED') ||
+        statuses.includes('WITHDRAWN') ||
+        statuses.includes('CANCELLED')
+      ) {
+        return { status: 'REJECTED', approved: false }
+      }
+      return { status: statuses[0] || null, approved: false }
+    } catch (error) {
+      logger.warn('[indicatorFillApi] 加载报告审批汇总失败:', error)
+      return { status: null, approved: false }
+    }
+  },
+
+  /**
    * 获取该组织「未提交草稿报告」的归属月份（2026-10-07 裁决）。
    * 存在 DRAFT 草稿时，填报弹窗必须继续锁定在该月编辑草稿——
    * 后端在草稿未提交前禁止新建其他月份报告（409），否则用户会撞资源冲突。
@@ -2650,9 +2672,14 @@ export const indicatorFillApi = {
   },
 
   /**
-   * 获取指定计划下某组织已存在上报的报告月份集合（YYYYMM）。
+   * 获取指定计划下某组织「已结清」的报告月份集合（YYYYMM）。
    * 用于「归属月份只能选最早未填报月」的前端锁定（B6 会议定案）。
    * 加载失败时返回 null（与「确实没有上报记录」的空集合区分开），由调用方降级处理。
+   *
+   * 说明：这里的「已填」是防跳月语义（该月已有记录就不必重开一轮），
+   * DRAFT 草稿也计入——同月第一个指标存草稿后，第二个指标仍应锁在同月
+   * （见 tests/unit/indicator-fill-months-indicator-granularity.spec.ts）。
+   * 「本月是否还有草稿待提交」由状态章单独判断（openDraftReportMonth），不靠这里。
    */
 
   async getExistingReportMonths(
@@ -2663,11 +2690,12 @@ export const indicatorFillApi = {
       const reports = await loadPlanReportsByPlanId(Number(planId))
       const months = new Set<string>()
       reports.forEach(report => {
-        if (Number(report.reportOrgId) === Number(reportOrgId) && report.reportMonth) {
-          months.add(String(report.reportMonth))
+        if (Number(report.reportOrgId) !== Number(reportOrgId) || !report.reportMonth) {
+          return
         }
+        months.add(String(report.reportMonth))
       })
-      return Array.from(padMonthsBeforeFirstReport(months, reports, reportOrgId))
+      return Array.from(months)
     } catch (error) {
       logger.warn('[indicatorFillApi] 加载计划已上报月份集合失败:', error)
       return null
@@ -2702,7 +2730,7 @@ export const indicatorFillApi = {
           months.add(String(report.reportMonth))
         }
       })
-      return Array.from(padMonthsBeforeFirstReport(months, reports, reportOrgId))
+      return Array.from(months)
     } catch (error) {
       logger.warn('[indicatorFillApi] 加载指标已上报月份集合失败:', error)
       return null

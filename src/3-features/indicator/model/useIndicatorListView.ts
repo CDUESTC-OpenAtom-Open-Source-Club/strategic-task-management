@@ -708,6 +708,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       currentPlanReportSummary.value = null
       latestPlanReportSummary.value = null
       planReportEntryLockState.value = null
+      reportApprovalSummaryState.value = null
       return
     }
 
@@ -722,6 +723,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       currentPlanReportSummary.value = null
       latestPlanReportSummary.value = null
       planReportEntryLockState.value = null
+      reportApprovalSummaryState.value = null
       return
     }
 
@@ -792,6 +794,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       reportOrgId <= 0
     ) {
       planReportEntryLockState.value = null
+      reportApprovalSummaryState.value = null
       return
     }
 
@@ -802,11 +805,13 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       )
       const earliestUnfilledMonth = findEarliestUnfilledReportMonth(
         existingMonths,
-        new Date().getFullYear()
+        new Date().getFullYear(),
+        currentDispatchMonth.value
       )
       if (earliestUnfilledMonth === null) {
         // 已上报月份集合不可得（加载失败）→ 交由旧口径降级判断
         planReportEntryLockState.value = null
+        reportApprovalSummaryState.value = null
         return
       }
 
@@ -825,8 +830,20 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       }
 
       planReportEntryLockState.value = { earliestUnfilledMonth, targetMonthReportStatus }
+
+      // 2026-10-27：顺带取该组织的上报审批汇总（是否已有走完的一轮），
+      // 供审批状态章显示「已上报 / 审批中 / 已回退」。
+      const approvalSummary = await indicatorFillApi.getReportApprovalSummary(
+        resolvedPlanId,
+        reportOrgId
+      )
+      reportApprovalSummaryState.value = {
+        status: approvalSummary.status,
+        approved: approvalSummary.approved
+      }
     } catch (error) {
       planReportEntryLockState.value = null
+      reportApprovalSummaryState.value = null
       logger.warn('[IndicatorListView] 刷新填报入口锁定状态失败:', {
         planId: resolvedPlanId,
         reportOrgId,
@@ -1022,6 +1039,31 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     return matchedPlan || collegePlanCandidates.value[0] || null
   })
 
+  /**
+   * 2026-10-27 用户定案：月度填报的起算月 = 「计划下发给该组织的那个月」。
+   * 例如 2 月下发到某学院的计划，该学院从 2 月开始填报，不会被要求补 1 月。
+   *
+   * 取值来源：计划详情里的 dispatchMonth（后端按计划审批实例完成时刻所在月计算）。
+   * 学院视角取「下发给本学院的那个计划」，职能部门视角取当前计划。
+   */
+  const currentDispatchMonth = computed(() => {
+    const dispatchMonth = (plan: Plan | null | undefined): string => {
+      const raw = String(plan?.dispatchMonth || '').trim()
+      return /^\d{6}$/.test(raw) ? raw : ''
+    }
+
+    if (isSecondaryCollege.value) {
+      const collegePlan = selectedCollegePlan.value
+      const cached = collegePlan
+        ? (collegePlanDetailsMap.value[String(collegePlan.id)] as Plan | undefined)
+        : undefined
+      return dispatchMonth(cached) || dispatchMonth(collegePlan)
+    }
+
+    const fallback = dispatchMonth(currentPlanDetails.value as Plan | null)
+    return fallback
+  })
+
   // 初始化来源部门筛选（默认选中第一个）
   const initOwnerDeptFilter = () => {
     if (
@@ -1199,6 +1241,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   const latestPlanReportSummary = ref<{ id: number } | null>(null)
   // 填报入口锁定状态：基于「最早未填报月」的报告状态（null = 月份数据不可得，降级为当前月口径）
   const planReportEntryLockState = ref<PlanReportEntryLockState | null>(null)
+  // 2026-10-27：该组织在该计划下的上报审批汇总（是否已有走完的一轮 → 「已上报」）
+  const reportApprovalSummaryState = ref<{ status: string | null; approved: boolean } | null>(null)
+
   const pendingPlanReportUiState = ref<null | 'submitted' | 'withdrawn'>(readPlanReportUiState())
 
   const SUBMITTED_FALLBACK_STATUSES = ['DRAFT', 'WITHDRAWN', 'CANCELLED', 'REJECTED', 'RETURNED']
@@ -2605,8 +2650,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   /**
    * 2026-10-26 用户定案（修订 10-19 口径）：状态章按「从下发月起逐月推进，
    * 封顶在当前自然月」展示——
-   * - 未填到当前月 → 「7月未上报」→「8月未上报」→…逐月推进
-   * - 当前月已填报（含审批中/已通过）→ 「10月已上报」；当前月未结束不显示下一个月
+   * - 未填到当前月 → 「7月未填报」→「8月未填报」→…逐月推进
+   * - 当前月已填报（含审批中/已通过）→ 「10月已填报」；当前月未结束不显示下一个月
    * - 当前月报告被驳回 → 「已回退」（保留 danger 提醒，需重报）
    * - 12 个月全部填完 → 「各月份已上报完毕」
    */
@@ -2632,8 +2677,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }
 
     // 显示月封顶在当前自然月：
-    // - earliest ≤ 当前月（含历史欠账）→ 按 earliest 显示「N月未上报」
-    // - earliest > 当前月 或 earliest 为空但计划年=当年 → 当前月已填报 → 「N月已上报」
+    // - earliest ≤ 当前月（含历史欠账）→ 按 earliest 显示「N月未填报」
+    // - earliest > 当前月 或 earliest 为空但计划年=当年 → 当前月已填报 → 「N月已填报」
+    //   （当前月未结束，不会跳到下一个月）
     // - 计划年为非当年（未来年/往年）→ 不做当前月封顶，按 earliest 原样
     const planYear = Number(timeContext.currentYear)
     const now = new Date()
@@ -2646,17 +2692,16 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
     if (currentMonthValue !== null && earliestNum !== null && earliestNum > currentMonthValue) {
       return {
-        label: `${currentMonthValue.toString().slice(4).replace(/^0/, '')}月已上报`,
+        label: `${currentMonthValue.toString().slice(4).replace(/^0/, '')}月已填报`,
         type: 'success' as StatusTagType
       }
     }
 
-    // 有明确的待填月（≤ 当前月）→ 「N月未上报」
+    // 有明确的待填月（≤ 当前月）→ 「N月未填报」
     if (earliest.length === 6) {
       const month = Number(earliest.slice(4, 6))
       if (Number.isFinite(month) && month >= 1 && month <= 12) {
-        void hasReportThisMonth
-        return { label: `${month}月未上报`, type: 'info' as StatusTagType }
+        return { label: `${month}月未填报`, type: 'info' as StatusTagType }
       }
     }
 
@@ -2805,6 +2850,49 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     const approverName = currentApprovalApproverName.value
     const candidateNames = currentApprovalCandidateNames.value
 
+    // 2026-10-27 用户定案：填报页的审批状态说的是「本部门上报审批」，只有两态——
+    // 草稿（还没报）和已上报（上报审批已通过）。计划下发审批（已完成审批/审批中等）
+    // 是下发链的状态，不占用这个章。
+    if (usePlanReportFlow.value) {
+      const reportSummary = approvalWorkflowReportSummary.value
+      if (reportSummary?.id) {
+        const reportWorkflowStatus = String(
+          reportSummary.workflowStatus || reportSummary.status || ''
+        )
+          .trim()
+          .toUpperCase()
+        if (['APPROVED', 'COMPLETED', 'FINISHED', 'DISTRIBUTED'].includes(reportWorkflowStatus)) {
+          return {
+            label: '已上报',
+            type: 'success' as const,
+            description: '本部门上报审批已通过。'
+          }
+        }
+        if (['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(reportWorkflowStatus)) {
+          return {
+            label: '审批中',
+            type: 'warning' as const,
+            description: '本部门上报审批进行中。'
+          }
+        }
+        if (['REJECTED', 'RETURNED'].includes(reportWorkflowStatus)) {
+          return {
+            label: '已回退',
+            type: 'danger' as const,
+            description: '本部门上报审批已回退，需重新上报。'
+          }
+        }
+      }
+      // 上报链还没有已提交的轮次 → 草稿
+      if (currentPlanReportActionState.value === 'draft') {
+        return {
+          label: '草稿',
+          type: 'info' as const,
+          description: '本部门尚未提交上报审批。'
+        }
+      }
+    }
+
     if (
       workflowStatus === 'APPROVED' ||
       workflowStatus === 'COMPLETED' ||
@@ -2849,6 +2937,36 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }
 
     if (hasPagePlanWorkflowData.value || approvalWorkflowReportSummary.value?.id) {
+      // 2026-10-27 用户定案：填报页的审批状态说的是「本部门上报审批」的进度。
+      // 上报已走完一轮 → 「已上报」（不是含糊的「查看流程」）。
+      // 取该组织全部轮次的汇总结论：有一轮 APPROVED 即为「已上报」，
+      // 不因当前存在同月的新草稿轮次（草稿优先是填报入口的语义）而误判。
+      const approvalSummaryStatus = String(reportApprovalSummaryState.value?.status || '')
+        .trim()
+        .toUpperCase()
+      // 2026-10-27：当前待提交轮次是草稿时，状态应描述「这一轮」而非历史那轮——
+      // 页面上的「一键提交」指向的就是这份草稿，状态章不能还说「已上报」。
+      if (approvalSummaryStatus === 'APPROVED') {
+        return {
+          label: '已上报',
+          type: 'success' as const,
+          description: '本部门上报审批已通过。'
+        }
+      }
+      if (['REJECTED', 'RETURNED', 'WITHDRAWN', 'CANCELLED'].includes(approvalSummaryStatus)) {
+        return {
+          label: '已回退',
+          type: 'danger' as const,
+          description: '本部门上报审批已回退，需重新上报。'
+        }
+      }
+      if (['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(approvalSummaryStatus)) {
+        return {
+          label: formatPendingApprovalLabel(currentApprovalStepName.value),
+          type: 'warning' as const,
+          description: '本部门上报审批进行中。'
+        }
+      }
       return {
         label: '查看流程',
         type: 'info' as const,
@@ -3572,7 +3690,13 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         : await indicatorFillApi.getExistingReportMonths(planId, reportOrgId)
 
     // null = 已上报月份集合不可得（加载失败），交由调用方降级为当前月
-    return findEarliestUnfilledReportMonth(existingMonths, new Date().getFullYear()) ?? ''
+    return (
+      findEarliestUnfilledReportMonth(
+        existingMonths,
+        new Date().getFullYear(),
+        currentDispatchMonth.value
+      ) ?? ''
+    )
   }
 
   const reportForm = ref({

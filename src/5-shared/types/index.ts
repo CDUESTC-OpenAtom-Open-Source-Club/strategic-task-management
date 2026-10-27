@@ -546,6 +546,11 @@ export interface Plan {
   submittedByName?: string
   submittedAt?: string
   lastRejectReason?: string
+  /**
+   * 下发月份（YYYYMM）——月度填报的起算月。
+   * 2026-10-27 用户定案：填报从「计划下发给该组织的那个月」开始，不是从 1 月开始。
+   */
+  dispatchMonth?: string
   workflowHistory?: Array<{
     taskId?: number
     stepName?: string
