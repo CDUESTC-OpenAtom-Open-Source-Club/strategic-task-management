@@ -2238,18 +2238,55 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     () => orgStore.loading && !orgStore.loaded && colleges.value.length === 0
   )
 
-  // 获取学院的子指标数量（只统计当前部门下发的）
-  const getCollegeChildCount = (college: string) => {
-    return strategicStore.indicators.filter(i => {
-      if (i.isStrategic) {
-        return false
+  // ================== 单一事实源：按学院分组的子指标 ==================
+  // 2026-10-27 缺陷修复：左侧「N 个子指标」计数与右侧表格口径不一致——
+  // 计数遍历「本部门下发 + 责任部门=该学院」的全部子指标，表格却要求子指标必须
+  // 挂在「本部门可见的根父指标」下；父指标被软删 / 非根 / 不属于本部门时，
+  // 计数仍为 1 而表格 No Data。现在两侧共用这一份数据：计数取 Map 长度，表格取 Map 明细。
+  const collegeChildIndicators = computed<Map<string, StrategicIndicator[]>>(() => {
+    const grouped = new Map<string, StrategicIndicator[]>()
+
+    strategicStore.indicators.forEach(indicator => {
+      if (indicator.isStrategic) {
+        return
       }
       // 只统计当前部门下发的指标
-      if (!isSameDepartment(i.ownerDept, currentDept.value)) {
-        return false
+      if (!isSameDepartment(indicator.ownerDept, currentDept.value)) {
+        return
       }
-      return matchesDepartment(i.responsibleDept, college)
-    }).length
+
+      // responsibleDept 运行时可能是字符串或字符串数组，逐项归一化后按学院分组
+      const rawDept = indicator.responsibleDept as string | string[] | undefined
+      const deptValues: string[] = Array.isArray(rawDept) ? rawDept : rawDept ? [rawDept] : []
+
+      const collegeKeys = new Set<string>()
+      deptValues.forEach(dept => {
+        const normalized = normalizeDepartmentName(dept)
+        if (normalized) {
+          collegeKeys.add(normalized)
+        }
+      })
+
+      collegeKeys.forEach(collegeKey => {
+        const bucket = grouped.get(collegeKey)
+        if (bucket) {
+          bucket.push(indicator)
+          return
+        }
+        grouped.set(collegeKey, [indicator])
+      })
+    })
+
+    return grouped
+  })
+
+  // 获取学院的子指标数量（与右侧表格同源，保证「计数 = 表格行数」）
+  const getCollegeChildCount = (college: string) => {
+    const collegeKey = normalizeDepartmentName(college)
+    if (!collegeKey) {
+      return 0
+    }
+    return collegeChildIndicators.value.get(collegeKey)?.length ?? 0
   }
 
   // 获取选中学院的所有子指标（按父指标分组，只显示当前部门下发的）
@@ -4226,7 +4263,8 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   interface TableRowData {
     type: 'child' | 'new-child' | 'indicator-only' // indicator-only 表示没有子指标的父指标
     taskTitle: string
-    indicator: StrategicIndicator // 父指标
+    // 父指标；孤儿子指标（父指标被软删 / 非根 / 不属于本部门）无可见父指标时为空
+    indicator?: StrategicIndicator | undefined
     child?: StrategicIndicator | NewChildIndicator // 子指标
     parentIndicatorId: string
     rowIndex?: number // 新增子指标的索引
@@ -4234,29 +4272,68 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
   // ================== 学院视图数据 ==================
 
-  // 学院视图表格数据
-  const collegeTableData = computed(() => {
+  // 2026-10-27 用户定案（草稿隔离 + 三列同源）：下发页的自评等级/进度说明/上报资料列
+  // 与战略任务管理页同一数据源——报告列表接口返回的「当期轮次」明细覆盖到子指标行。
+  // 不再直接展示计划详情内嵌的 pending 字段：草稿期那会外泄学院未提交的填报内容，
+  // 且审批全部通过后计划详情当期上下文为空会导致三列整列空白。
+  const collegeReportDetailByIndicatorId = computed(() => {
+    const map = new Map<string, Record<string, unknown>>()
+    const details = currentCollegePlanReportSummary.value?.indicatorDetails
+    if (Array.isArray(details)) {
+      details.forEach((detail: Record<string, unknown>) => {
+        const indicatorId = detail?.indicatorId
+        if (indicatorId !== undefined && indicatorId !== null) {
+          map.set(String(indicatorId), detail)
+        }
+      })
+    }
+    return map
+  })
+
+  const applyCollegeReportDetailOverlay = (child: StrategicIndicator): StrategicIndicator => {
+    const detail = collegeReportDetailByIndicatorId.value.get(String(child.id))
+    if (!detail) {
+      return child
+    }
+    const remark = String(detail.description ?? detail.comment ?? '').trim()
+    const attachments = detail.attachments
+    return {
+      ...child,
+      selfRating: (detail.selfRating as string | null) || child.selfRating,
+      pendingRemark: remark || child.pendingRemark || null,
+      pendingAttachments: Array.isArray(attachments)
+        ? attachments
+            .map((attachment: { fileName?: unknown; url?: unknown }) =>
+              String(attachment?.fileName || attachment?.url || '')
+            )
+            .filter(Boolean)
+        : child.pendingAttachments,
+      pendingAttachmentDetails: Array.isArray(attachments)
+        ? (attachments as StrategicIndicator['pendingAttachmentDetails'])
+        : child.pendingAttachmentDetails
+    }
+  }
+
+  // 学院视图表格数据（与左侧「N 个子指标」计数同源）
+  const collegeTableData = computed<TableRowData[]>(() => {
     if (!selectedCollege.value) {
       return []
     }
 
     const data: TableRowData[] = []
     const indicators = collegeIndicators.value
+    // 单一事实源：按学院归一化名取子指标集合（计数与表格用同一份数据）
+    const collegeKey = normalizeDepartmentName(selectedCollege.value)
+    const collegeChildren = collegeChildIndicators.value.get(collegeKey) ?? []
+    const renderedChildIds = new Set<string>()
 
     indicators.forEach(indicator => {
-      const indicatorId = indicator.id.toString()
+      const indicatorId = String(indicator.id)
 
-      // 获取下发给该学院的子指标（支持字符串或数组格式）
-      const children = strategicStore.indicators.filter(i => {
-        if (i.parentIndicatorId !== indicatorId || i.isStrategic) {
-          return false
-        }
-        // 支持字符串或数组格式的 responsibleDept
-        if (Array.isArray(i.responsibleDept)) {
-          return i.responsibleDept.includes(selectedCollege.value!)
-        }
-        return i.responsibleDept === selectedCollege.value
-      })
+      // 获取下发给该学院的子指标（父指标可见时，按父指标归组）
+      const children = collegeChildren.filter(
+        child => String(child.parentIndicatorId ?? '') === indicatorId
+      )
 
       // 获取新增的子指标（只显示分配给当前学院的）
       const newChildren = (newChildIndicators[indicatorId] || []).filter(nc =>
@@ -4265,11 +4342,12 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
       // 仅显示真实存在的子指标和正在新增的子指标，不再为“尚未分解”的父指标补空占位行
       children.forEach(child => {
+        renderedChildIds.add(String(child.id))
         data.push({
           type: 'child',
           taskTitle: indicator.taskContent || '',
           indicator,
-          child,
+          child: applyCollegeReportDetailOverlay(child),
           parentIndicatorId: indicatorId
         })
       })
@@ -4287,6 +4365,22 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
           parentIndicatorId: indicatorId,
           rowIndex: originalIdx >= 0 ? originalIdx : newIdx
         })
+      })
+    })
+
+    // 孤儿子指标兜底（2026-10-27）：父指标不可见（被软删 / 非根 / 不属于本部门）时，
+    // 子指标仍要成行渲染，否则会出现「左侧计数 1、右侧表格 No Data」。
+    collegeChildren.forEach(child => {
+      const childId = String(child.id)
+      if (renderedChildIds.has(childId)) {
+        return
+      }
+      data.push({
+        type: 'child',
+        taskTitle: child.taskContent || '',
+        indicator: undefined,
+        child: applyCollegeReportDetailOverlay(child),
+        parentIndicatorId: String(child.parentIndicatorId ?? '')
       })
     })
 

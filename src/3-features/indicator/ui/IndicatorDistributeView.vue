@@ -263,8 +263,8 @@ const {
 const { latestFillNote, latestFillAttachments } = useLatestIndicatorFill(
   computed(() => (currentDetailIndicator as any)?.value?.id ?? null),
   // 实时值：按 id 从当前学院表格数据取**最新**子指标对象
-  // （表格 data 是 collegeTableData，child 来自 strategicStore.indicators，
-  //   其中带 pendingRemark —— 学院未提交的填报内容在此实时可见）
+  // （表格 data 是 collegeTableData，child 已按 2026-10-27 草稿隔离口径
+  //   用报告列表「当期轮次」明细覆盖——未提交前展示上一版快照，不含草稿）
   (id: string | number) =>
     collegeTableData.value.find(
       item => item.type === 'child' && String(item.child?.id) === String(id)
