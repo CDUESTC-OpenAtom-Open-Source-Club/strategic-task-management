@@ -259,7 +259,9 @@ const {
 } = useIndicatorDistributeView(props)
 
 const { latestFillNote, latestFillAttachments } = useLatestIndicatorFill(
-  computed(() => (currentDetailIndicator as any)?.id ?? null)
+  computed(() => (currentDetailIndicator as any)?.value?.id ?? null),
+  // 实时值：当前轮次（含草稿/待提交）的进度说明与上报资料
+  computed(() => (currentDetailIndicator as any) ?? null)
 )
 
 type DistributionExportChild = Partial<StrategicIndicator> & {
