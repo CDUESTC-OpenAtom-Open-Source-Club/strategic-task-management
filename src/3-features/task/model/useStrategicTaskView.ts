@@ -3653,12 +3653,19 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     flush: 'sync'
   })
 
-  const hasMutationDraft = computed(
-    () =>
-      mutationDrafts.value.length > 0 ||
+  const hasMutationDraft = computed(() => {
+    // 2026-10-26 修复：脏草稿壳（changes 空、labels 空、未请求删除）不再计入——
+    // 此前 unchanged 失焦会先 push 空壳再清字段，时序上壳可能残留，
+    // 导致「没修改任何内容也出现发起异动按钮」（用户实测反馈）。
+    const hasRealMutationDraft = mutationDrafts.value.some(
+      draft => draft.deleteRequested || Object.keys(draft.changes || {}).length > 0
+    )
+    return (
+      hasRealMutationDraft ||
       taskNameDrafts.value.length > 0 ||
       pendingCreatedIndicatorIds.value.length > 0
-  )
+    )
+  })
 
   const MUTATION_FIELD_MAP: Record<
     string,
@@ -3787,14 +3794,22 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         : String(originalValue).trim() === String(nextValue)
 
     let draft = mutationDrafts.value.find(item => String(item.indicatorId) === String(row.id))
+    if (unchanged) {
+      // 2026-10-26 修复：无变化时不创建/保留空壳草稿
+      if (draft) {
+        delete draft.changes[mapping.payloadKey]
+        draft.labels = draft.labels.filter(label => label !== mapping.label)
+        if (draft.labels.length === 0 && !draft.deleteRequested) {
+          mutationDrafts.value = mutationDrafts.value.filter(item => item !== draft)
+        }
+      }
+      return true
+    }
     if (!draft) {
       draft = { indicatorId: row.id, changes: {}, labels: [] }
       mutationDrafts.value.push(draft)
     }
-    if (unchanged) {
-      delete draft.changes[mapping.payloadKey]
-      draft.labels = draft.labels.filter(label => label !== mapping.label)
-    } else {
+    {
       draft.changes[mapping.payloadKey] = nextValue
       if (!draft.labels.includes(mapping.label)) {
         draft.labels.push(mapping.label)
@@ -6405,6 +6420,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     handleIndicatorDblClick,
     openMutationDialogForField,
     hasMutationDraft,
+    mutationDrafts,
+    taskNameDrafts,
+    pendingCreatedIndicatorIds,
     submitMutationDraft,
     cancelMutationDraft,
     handleOpenApproval,
