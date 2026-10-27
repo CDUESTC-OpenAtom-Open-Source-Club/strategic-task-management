@@ -4863,6 +4863,83 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const departmentMutationPendingApprovals = ref<Array<Record<string, any>>>([])
   const collegeFillStatusScope = ref(false)
 
+  // 2026-10-10：异动审批实例 → 审批中心「审批历史」卡片（P1 修复：异动链不缺失前端）
+  // 2026-10-21：任务改名异动（entity_type=TASK）与指标异动并列，需按各自类型取历史
+  // 2026-10-26：loader 从 UI 组件下沉到 model——handleApprovalRefresh（本文件）此前
+  // 跨作用域引用 UI 本地函数，运行时审批后刷新链在这里 ReferenceError 断裂
+  const departmentMutationWorkflowEntities = ref<
+    Array<{ entityId: number; entityType?: 'INDICATOR' | 'TASK' }>
+  >([])
+  const loadDepartmentMutationWorkflowEntities = async () => {
+    try {
+      const orgId = resolveDepartmentIdByName(selectedDepartment.value)
+      if (!orgId) {
+        departmentMutationWorkflowEntities.value = []
+        departmentMutationPendingApprovals.value = []
+        return
+      }
+      const { mutationApi } = await import('@/features/indicator/api/mutationApi')
+      const response = await mutationApi.approvals(orgId)
+      const items = Array.isArray(response.data) ? response.data : []
+      departmentMutationWorkflowEntities.value = items
+        .map(item => ({
+          entityId: Number(item.indicator_id),
+          entityType:
+            String(item.entity_type || 'INDICATOR').toUpperCase() === 'TASK'
+              ? ('TASK' as const)
+              : ('INDICATOR' as const)
+        }))
+        .filter(item => Number.isFinite(item.entityId) && item.entityId > 0)
+      departmentMutationPendingApprovals.value = items
+        .filter(item => String(item.status || '').toUpperCase() === 'IN_REVIEW')
+        .map(item => ({
+          instanceId: item.instance_id,
+          entityId: Number(item.indicator_id),
+          entityType:
+            String(item.entity_type || 'INDICATOR').toUpperCase() === 'TASK'
+              ? ('TASK' as const)
+              : ('INDICATOR' as const),
+          flowCode: item.flow_code || 'PLAN_MUTATION_STRATEGY',
+          status: 'IN_REVIEW',
+          title: item.indicator_desc,
+          currentStepName: item.current_step_name,
+          approverOrgId: item.approver_org_id,
+          sourceOrgId: item.source_org_id,
+          sourceOrgName: item.source_org_name,
+          targetOrgId: item.target_org_id,
+          targetOrgName: item.target_org_name,
+          // 2026-10-21：批次号与字段变更明细，供看板聚合与详情弹窗逐字段展示
+          batchId: item.batch_id || null,
+          changedFields: item.changed_fields || null,
+          // 提交人取后端真实发起人（audit_instance.requester 的姓名）
+          submitterName: item.submitter_name,
+          createdAt: item.created_at
+        }))
+
+      // 2026-10-21：异动本身也是一条审批流程，「审批流程」页签要能显示它走到哪一步。
+      // 按实例取流程详情挂到对应条目上（与计划审批同一套 getWorkflowInstanceDetail 接口）。
+      const { getWorkflowInstanceDetail } = await import('@/features/workflow/api/queries')
+      departmentMutationPendingApprovals.value = await Promise.all(
+        departmentMutationPendingApprovals.value.map(async entry => {
+          try {
+            const detail = await getWorkflowInstanceDetail(String(entry.instanceId))
+            return detail?.success && detail.data
+              ? { ...entry, workflowDetail: detail.data }
+              : entry
+          } catch (error) {
+            logger.warn('[StrategicTaskView] 加载异动流程详情失败:', {
+              instanceId: entry.instanceId,
+              error
+            })
+            return entry
+          }
+        })
+      )
+    } catch (error) {
+      logger.warn('[StrategicTaskView] 加载异动审批实例失败:', error)
+    }
+  }
+
   // 2026-10-24 用户定案（异动/上报互斥）：同一学院链上「上报审批在途」与「异动审批在途」
   // 二选一——上报在审时异动发起入口锁定；异动在审时上报提交被锁（另一方向同理）。
   // 信号源：当前部门上下文的上报审批摘要（workflowStatus 处于在途态即视为上报在审）。
@@ -5300,6 +5377,77 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
   }
 
+  // ==================== 2026-10-26 部门计划族补充历史实体 ====================
+  // 战略任务页部门卡片抽屉锚定主计划（战略部→本部门），而「本部门→学院」的
+  // FUNC_TO_COLLEGE 子计划与各自学院上报（PLAN_REPORT）挂在子计划实体上，
+  // 不在锚定范围内，审批历史因此缺「学院→本部门」的上报链。
+  // 按当前部门构造：子计划 PLAN + 各自 latestReport 的 PLAN_REPORT 实体 id，
+  // 经 relatedWorkflowEntities prop 传给审批中心抽屉。
+  const departmentPlanFamilyWorkflowEntities = ref<
+    Array<{ entityType: 'PLAN' | 'PLAN_REPORT'; entityId: number }>
+  >([])
+  const departmentPlanFamilyLoadKey = ref('')
+  const loadDepartmentPlanFamilyWorkflowEntities = async () => {
+    const orgId = resolveDepartmentIdByName(selectedDepartment.value)
+    const loadKey = `${orgId ?? ''}:${timeContext.currentYear}`
+    if (!orgId) {
+      departmentPlanFamilyWorkflowEntities.value = []
+      departmentPlanFamilyLoadKey.value = loadKey
+      return
+    }
+    // planStore 尚未加载完成时不写缓存 key——部门 watch 是 immediate 的，
+    // 若此刻 plans 为空就固化 key，后续永不重试，学院上报历史将一直缺失
+    if (!Array.isArray(planStore.plans) || planStore.plans.length === 0) {
+      return
+    }
+    if (loadKey === departmentPlanFamilyLoadKey.value) {
+      return
+    }
+    departmentPlanFamilyLoadKey.value = loadKey
+    const anchoredPlanId = Number(currentPlan.value?.id ?? NaN)
+    const familyPlans = planStore.plans.filter(p => {
+      const planAny = p as Record<string, unknown>
+      const createdByOrgId = Number(planAny.createdByOrgId ?? planAny.created_by_org_id ?? NaN)
+      const planLevel = String(planAny.planLevel || planAny.plan_level || '')
+        .trim()
+        .toUpperCase()
+      return (
+        createdByOrgId === orgId &&
+        planLevel === 'FUNC_TO_COLLEGE' &&
+        resolvePlanYear(planAny) === timeContext.currentYear &&
+        Number(planAny.id ?? NaN) !== anchoredPlanId
+      )
+    })
+    const entities: Array<{ entityType: 'PLAN' | 'PLAN_REPORT'; entityId: number }> = []
+    await Promise.all(
+      familyPlans.map(async plan => {
+        const planAny = plan as Record<string, unknown>
+        const planId = Number(planAny.id ?? NaN)
+        if (!Number.isFinite(planId) || planId <= 0) {
+          return
+        }
+        entities.push({ entityType: 'PLAN', entityId: planId })
+        const reportOrgId = Number(planAny.targetOrgId ?? planAny.org_id ?? planAny.orgId ?? NaN)
+        if (!(Number.isFinite(reportOrgId) && reportOrgId > 0)) {
+          return
+        }
+        try {
+          const summaries = await indicatorFillApi.getCurrentMonthPlanReportSummaries(
+            planId,
+            reportOrgId
+          )
+          const reportId = Number(summaries?.latestReport?.id ?? NaN)
+          if (Number.isFinite(reportId) && reportId > 0) {
+            entities.push({ entityType: 'PLAN_REPORT', entityId: reportId })
+          }
+        } catch (error) {
+          logger.warn('[StrategicTaskView] 加载子计划上报摘要失败:', { planId, error })
+        }
+      })
+    )
+    departmentPlanFamilyWorkflowEntities.value = entities
+  }
+
   // 审批后刷新
   const handleApprovalRefresh = async () => {
     // 使用统一的变更后刷新逻辑，确保指标列表、计划详情、上报摘要、待办数量全部同步
@@ -5308,6 +5456,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     // 异动卡片的数据源是父组件按部门拉取的（经 prop 传入抽屉），
     // 审批/撤回后必须重新拉一次，否则卡片仍停留在旧状态。
     await loadDepartmentMutationWorkflowEntities()
+    // 学院上报有新终态时，部门计划族的上报实体也会变，同步刷新
+    departmentPlanFamilyLoadKey.value = ''
+    await loadDepartmentPlanFamilyWorkflowEntities()
 
     // 额外刷新 planStore 的详情（与 strategicStore 不同步）
     const planId = currentPlan.value?.id
@@ -6409,6 +6560,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     groupIndicatorsByTask,
     handleAddIndicatorToTask,
     handleApprovalRefresh,
+    departmentMutationWorkflowEntities,
+    loadDepartmentMutationWorkflowEntities,
+    departmentPlanFamilyWorkflowEntities,
+    loadDepartmentPlanFamilyWorkflowEntities,
     handleApprovalStatusPopoverShow,
     handleApproveCurrentIndicatorWorkflow,
     handleCancelAssignment,

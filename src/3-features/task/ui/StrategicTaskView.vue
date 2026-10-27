@@ -212,6 +212,10 @@ const {
   groupIndicatorsByTask,
   handleAddIndicatorToTask,
   handleApprovalRefresh,
+  departmentMutationWorkflowEntities,
+  loadDepartmentMutationWorkflowEntities,
+  departmentPlanFamilyWorkflowEntities,
+  loadDepartmentPlanFamilyWorkflowEntities,
   handleApprovalStatusPopoverShow,
   handleApproveCurrentIndicatorWorkflow,
   handleCancelAssignment,
@@ -478,92 +482,27 @@ const mutationApiLoading = ref(false)
 
 // 2026-10-10：异动审批实例 → 审批中心「审批历史」卡片（P1 修复：异动链不缺失前端）
 // 2026-10-21：任务改名异动（entity_type=TASK）与指标异动并列，需按各自类型取历史
-const departmentMutationWorkflowEntities = ref<
-  Array<{ entityId: number; entityType?: 'INDICATOR' | 'TASK' }>
->([])
-// 2026-10-21：审批中（IN_REVIEW）的异动实例 → 审批中心「计划审批」看板，
-// 让发起人和部门视角都能看到自己发起的异动（此前看板只列"我是审批人"的实例）
-const loadDepartmentMutationWorkflowEntities = async () => {
-  try {
-    const orgId = resolveDepartmentIdByName(selectedDepartment.value)
-    if (!orgId) {
-      departmentMutationWorkflowEntities.value = []
-      departmentMutationPendingApprovals.value = []
-      return
-    }
-    const { mutationApi } = await import('@/features/indicator/api/mutationApi')
-    const response = await mutationApi.approvals(orgId)
-    const items = Array.isArray(response.data) ? response.data : []
-    departmentMutationWorkflowEntities.value = items
-      .map(item => ({
-        entityId: Number(item.indicator_id),
-        entityType:
-          String(item.entity_type || 'INDICATOR').toUpperCase() === 'TASK'
-            ? ('TASK' as const)
-            : ('INDICATOR' as const)
-      }))
-      .filter(item => Number.isFinite(item.entityId) && item.entityId > 0)
-    departmentMutationPendingApprovals.value = items
-      .filter(item => String(item.status || '').toUpperCase() === 'IN_REVIEW')
-      .map(item => ({
-        instanceId: item.instance_id,
-        entityId: Number(item.indicator_id),
-        entityType:
-          String(item.entity_type || 'INDICATOR').toUpperCase() === 'TASK'
-            ? ('TASK' as const)
-            : ('INDICATOR' as const),
-        flowCode: item.flow_code || 'PLAN_MUTATION_STRATEGY',
-        status: 'IN_REVIEW',
-        title: item.indicator_desc,
-        currentStepName: item.current_step_name,
-        approverOrgId: item.approver_org_id,
-        sourceOrgId: item.source_org_id,
-        sourceOrgName: item.source_org_name,
-        targetOrgId: item.target_org_id,
-        targetOrgName: item.target_org_name,
-        // 2026-10-21：批次号与字段变更明细，供看板聚合与详情弹窗逐字段展示
-        batchId: item.batch_id || null,
-        changedFields: item.changed_fields || null,
-        // 提交人取后端真实发起人（audit_instance.requester 的姓名）
-        submitterName: item.submitter_name,
-        createdAt: item.created_at
-      }))
-
-    // 2026-10-21：异动本身也是一条审批流程，「审批流程」页签要能显示它走到哪一步。
-    // 按实例取流程详情挂到对应条目上（与计划审批同一套 getWorkflowInstanceDetail 接口）。
-    const { getWorkflowInstanceDetail } = await import('@/features/workflow/api/queries')
-    departmentMutationPendingApprovals.value = await Promise.all(
-      departmentMutationPendingApprovals.value.map(async entry => {
-        try {
-          const detail = await getWorkflowInstanceDetail(String(entry.instanceId))
-          return detail?.success && detail.data ? { ...entry, workflowDetail: detail.data } : entry
-        } catch (error) {
-          logger.warn('[StrategicTaskView] 加载异动流程详情失败:', {
-            instanceId: entry.instanceId,
-            error
-          })
-          return entry
-        }
-      })
-    )
-  } catch (error) {
-    logger.warn('[StrategicTaskView] 加载异动审批实例失败:', error)
-  }
-}
+// 2026-10-26：departmentMutationWorkflowEntities 与 loader 下沉 model 层
+// （handleApprovalRefresh 在 model 内引用它，UI 本地定义导致跨作用域悬空）
+// 2026-10-26：部门计划族（FUNC_TO_COLLEGE 子计划 + 学院上报）经 relatedWorkflowEntities
+// 传入审批中心，使部门卡片审批历史兼容「学院 → 本部门」的上报链
 // 部门切换即预载（抽屉打开时数据已就绪，避免晚于历史卡片加载的时序问题）
 watch(
   () => selectedDepartment.value,
   () => {
     void loadDepartmentMutationWorkflowEntities()
+    void loadDepartmentPlanFamilyWorkflowEntities()
   },
   { immediate: true }
 )
-// 抽屉每次打开都重新拉一次：审批推进后异动的当前节点与流程详情都会变
+// 抽屉每次打开都重新拉一次：审批推进后异动的当前节点与流程详情都会变；
+// 部门计划族同样重试（planStore 晚就绪时首次部门 watch 可能空手而归）
 watch(
   () => taskApprovalVisible?.value,
   visible => {
     if (visible) {
       void loadDepartmentMutationWorkflowEntities()
+      void loadDepartmentPlanFamilyWorkflowEntities()
     }
   }
 )
@@ -1467,24 +1406,15 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
+                  <!-- 2026-10-26 用户定案：上报资料列统一用 ReportMaterialsCell——
+                       悬浮即列出附件卡片（序号+文件名+类型），点击文件名下载，
+                       与指标填报页/指标分发页完全同构。 -->
                   <el-table-column label="上报资料" width="112" align="center">
                     <template #default="{ row }">
-                      <span
-                        v-if="
-                          (row.attachments?.length || row.pendingAttachmentDetails?.length || 0) > 0
-                        "
-                      >
-                        <el-button
-                          link
-                          type="primary"
-                          size="small"
-                          @click="viewIndicatorDetail(row as StrategicIndicator)"
-                        >
-                          {{ row.attachments?.length || row.pendingAttachmentDetails?.length || 0 }}
-                          个附件
-                        </el-button>
-                      </span>
-                      <span v-else style="color: #909399">—</span>
+                      <ReportMaterialsCell
+                        :indicator-id="row.id"
+                        :attachments="row.pendingAttachmentDetails || row.attachments"
+                      />
                     </template>
                   </el-table-column>
                   <el-table-column label="进度说明" min-width="130">
@@ -2103,8 +2033,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   </el-table-column>
                   <el-table-column label="上报资料" width="96">
                     <template #default="{ row }">
-                      <!-- 只展示当前最新一次上报提交的资料；历次经右下角上报小标查看 -->
-                      <ReportMaterialsCell :indicator-id="row.id" />
+                      <!-- 当前轮次附件（含草稿）；历次经上报记录查看 -->
+                      <ReportMaterialsCell
+                        :indicator-id="row.id"
+                        :attachments="row.pendingAttachmentDetails || row.attachments"
+                      />
                     </template>
                   </el-table-column>
                   <el-table-column label="上报状态" width="100" align="center">
@@ -2429,10 +2362,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <el-descriptions-item label="进度说明" :span="2">{{
             latestFillNote || '—'
           }}</el-descriptions-item>
-          <el-descriptions-item label="上报资料" :span="2">
-            <span v-if="!latestFillAttachments.length" style="color: #909399">—</span>
-            <span v-else>{{ latestFillAttachments.map(a => a.fileName).join('、') }}</span>
-          </el-descriptions-item>
           <el-descriptions-item label="下发备注" :span="2">{{
             currentDetail.remark
           }}</el-descriptions-item>
@@ -2663,6 +2592,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
       :secondary-workflow-entity-id="secondaryApprovalWorkflowEntityId"
       :mutation-workflow-entities="departmentMutationWorkflowEntities"
       :mutation-pending-approvals="departmentMutationPendingApprovals"
+      :related-workflow-entities="departmentPlanFamilyWorkflowEntities"
       approval-type="submission"
       @close="taskApprovalVisible = false"
       @refresh="handleApprovalRefresh"

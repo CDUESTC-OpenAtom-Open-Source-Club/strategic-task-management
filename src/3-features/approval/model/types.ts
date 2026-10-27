@@ -186,6 +186,17 @@ export interface DistributionApprovalProgressDrawerProps {
   mutationWorkflowEntities?: Array<{ entityId: number | string; entityType?: 'INDICATOR' | 'TASK' }>
   /** 2026-10-21：审批中的异动实例（「计划审批」看板数据源），使发起人/部门视角可见异动 */
   mutationPendingApprovals?: Array<Record<string, any>>
+  /**
+   * 2026-10-26：部门计划族补充历史实体——
+   * 部门卡片抽屉锚定的是本部门主计划（如 战略发展部→教务处），而
+   * 「教务处→学院」子计划与其学院上报（PLAN_REPORT）挂在子计划实体上，
+   * 不在主计划锚定范围内，导致战略任务页审批历史看不到学院→部门的上报链。
+   * 由页面按当前部门构造（子计划 PLAN + 各自 latestReport PLAN_REPORT）传入。
+   */
+  relatedWorkflowEntities?: Array<{
+    entityType: 'PLAN' | 'PLAN_REPORT'
+    entityId: number | string
+  }>
 }
 
 export interface DistributionApprovalProgressDrawerEmit {
