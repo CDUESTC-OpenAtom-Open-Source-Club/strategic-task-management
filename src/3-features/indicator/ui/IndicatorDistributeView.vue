@@ -30,7 +30,6 @@ import { DistributionApprovalProgressDrawer } from '@/features/approval'
 import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
 import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
-import ReportHistoryBadge from '@/features/indicator/ui/ReportHistoryBadge.vue'
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import {
   useIndicatorDistributeView,
@@ -763,7 +762,7 @@ const handleDistributionImportCommitted = async () => {
                     style="cursor: pointer"
                     @click.stop="handleOpenApproval"
                   >
-                    异动状态: {{ approvalFlowStatusMeta.label }}
+                    审批状态: {{ approvalFlowStatusMeta.label }}
                   </el-tag>
                 </template>
 
@@ -954,7 +953,6 @@ const handleDistributionImportCommitted = async () => {
                           </FullTextPanel>
                         </el-tooltip>
                         <!-- 上报历史小标（每次上报更新，不走异动链，悬停看历次上报+资料） -->
-                        <ReportHistoryBadge v-if="row.child?.id" :indicator-id="row.child.id" />
                       </div>
                     </template>
                     <!-- 新增子指标行 -->
