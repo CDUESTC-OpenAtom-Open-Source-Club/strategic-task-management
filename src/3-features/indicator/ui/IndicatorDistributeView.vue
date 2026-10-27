@@ -260,8 +260,13 @@ const {
 
 const { latestFillNote, latestFillAttachments } = useLatestIndicatorFill(
   computed(() => (currentDetailIndicator as any)?.value?.id ?? null),
-  // 实时值：当前轮次（含草稿/待提交）的进度说明与上报资料
-  computed(() => (currentDetailIndicator as any) ?? null)
+  // 实时值：按 id 从当前学院表格数据取**最新**子指标对象
+  // （表格 data 是 collegeTableData，child 来自 strategicStore.indicators，
+  //   其中带 pendingRemark —— 学院未提交的填报内容在此实时可见）
+  (id: string | number) =>
+    collegeTableData.value.find(
+      item => item.type === 'child' && String(item.child?.id) === String(id)
+    )?.child as any
 )
 
 type DistributionExportChild = Partial<StrategicIndicator> & {

@@ -334,7 +334,10 @@ const {
 } = useStrategicTaskView(props)
 
 const { latestFillNote, latestFillAttachments } = useLatestIndicatorFill(
-  computed(() => (currentDetail as any)?.id ?? null)
+  computed(() => (currentDetail as any)?.value?.id ?? null),
+  // 实时值：按 id 从当前行数组取**最新**行对象（行对象异步加载后会被替换，
+  // 打开抽屉那一刻的旧引用里的 pendingRemark 是空值）
+  (id: string | number) => indicators.value.find(item => String(item.id) === String(id)) as any
 )
 
 const activeTaskTabName = ref<'functional' | 'college'>('functional')
