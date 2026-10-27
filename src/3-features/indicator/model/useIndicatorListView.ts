@@ -287,6 +287,10 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     ])
 
     await loadCollegePlanDetails()
+    // 2026-10-27 用户定案：鉴定等级是审批人对「指标」的评定，新一个月的填报轮次
+    // 应沿用最近一轮已上报通过时的评定显示，而不是回到「未评定」。
+    // 手动设置的等级（若有）优先，此处只做鉴定结果的兜底回显。
+    void hydrateAppraisalLevelsFromLastApprovedRound()
     restartPlanApprovalPolling()
     if (typeof window !== 'undefined') {
       window.addEventListener(
@@ -1106,6 +1110,53 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     const rawUserOrgId = Number(authStore.user?.orgId ?? NaN)
     return Number.isFinite(rawUserOrgId) && rawUserOrgId > 0 ? rawUserOrgId : null
   })
+
+  /**
+   * 2026-10-27 用户定案：用「最近一轮已上报通过」的鉴定进度等级回显到列表行。
+   * 行数据里 manualAlertSeverity 为空（从未手动设置）时，用审批人最近一轮
+   * 的鉴定结果补位——同一个指标的鉴定等级不会因为开了新一月填报而归零。
+   */
+  async function hydrateAppraisalLevelsFromLastApprovedRound(): Promise<void> {
+    const planId = getCurrentPlanId()
+    const reportOrgId = Number(currentViewingOrgId.value ?? NaN)
+    if (
+      !Number.isFinite(planId) ||
+      planId <= 0 ||
+      !Number.isFinite(reportOrgId) ||
+      reportOrgId <= 0
+    ) {
+      return
+    }
+    try {
+      const levels = await indicatorFillApi.getLatestApprovedAppraisalLevels(planId, reportOrgId)
+      const entries = Object.entries(levels)
+      if (entries.length === 0) {
+        return
+      }
+      const threeTier = ['AHEAD', 'NORMAL', 'DELAYED']
+      const normalized = entries
+        .map(([indicatorId, level]) => {
+          const upper = String(level || '')
+            .trim()
+            .toUpperCase()
+          const normalizedLevel = threeTier.includes(upper)
+            ? (upper as 'AHEAD' | 'NORMAL' | 'DELAYED')
+            : null
+          return [indicatorId, normalizedLevel] as const
+        })
+        .filter(([, level]) => level !== null)
+      strategicStore.indicators.forEach(indicator => {
+        const match = normalized.find(
+          ([indicatorId]) => String(indicator.id) === String(indicatorId)
+        )
+        if (match && (indicator.manualAlertSeverity ?? null) === null) {
+          indicator.manualAlertSeverity = match[1]
+        }
+      })
+    } catch (error) {
+      logger.warn('[IndicatorListView] 回显最近一轮鉴定等级失败:', error)
+    }
+  }
 
   async function loadCollegePlanDetails(options: { force?: boolean } = {}): Promise<void> {
     if (!isSecondaryCollege.value || collegePlanCandidates.value.length === 0) {
@@ -2335,9 +2386,14 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         if (type2A !== type2B) {
           return type2A === '发展性' ? -1 : 1
         }
-        const taskA = a.taskContent || ''
-        const taskB = b.taskContent || ''
-        return taskA.localeCompare(taskB)
+        // 2026-10-27 用户定案：组内按下发顺序（sort_order + id）对齐，
+        // 与战略任务管理页/学院视图保持同一顺序
+        const orderA = Number(a.sortOrder ?? 0) || 0
+        const orderB = Number(b.sortOrder ?? 0) || 0
+        if (orderA !== orderB) {
+          return orderA - orderB
+        }
+        return Number(a.id) - Number(b.id)
       })
     }
 
@@ -2433,7 +2489,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       list = list.filter(i => i.ownerDept === filterOwnerDept.value)
     }
 
-    // 先按 type2（任务类型）排序，再按 taskContent（战略任务）排序
+    // 先按 type2（任务类型）排序，再按下发顺序对齐（与战略任务管理页一致）
     return list.sort((a, b) => {
       const type2A = a.type2 || ''
       const type2B = b.type2 || ''
@@ -2441,9 +2497,12 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         // 发展性排在前面
         return type2A === '发展性' ? -1 : 1
       }
-      const taskA = a.taskContent || ''
-      const taskB = b.taskContent || ''
-      return taskA.localeCompare(taskB)
+      const orderA = Number(a.sortOrder ?? 0) || 0
+      const orderB = Number(b.sortOrder ?? 0) || 0
+      if (orderA !== orderB) {
+        return orderA - orderB
+      }
+      return Number(a.id) - Number(b.id)
     })
   })
 
@@ -2995,6 +3054,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     return (
       showPlanBatchActions.value &&
       allIndicatorsFilled.value &&
+      !isCurrentPlanReportLocked.value &&
       (!usePlanReportFlow.value || currentPlanReportActionState.value === 'draft')
     )
   })
@@ -3806,6 +3866,12 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
   // 打开填报弹窗
   const handleOpenReportDialog = async (row: StrategicIndicator) => {
+    // 2026-10-27 用户定案：本月已上报通过 → 本月锁定，不允许再编辑当月内容
+    // （否则会开出新一轮草稿，状态章与「一键提交」随之混乱）。
+    if (isCurrentPlanReportLocked.value) {
+      ElMessage.warning('本月已上报，请于下月填报下月进度')
+      return
+    }
     const latestIndicator = await refreshReportIndicatorSnapshot(row)
     const persistedDraft = readPersistedIndicatorDraft(row.id)
     const reportedProgress = getDisplayedReportedProgress(row)
@@ -4816,7 +4882,27 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     // 填报入口都没有了（填报弹窗本身已支持锁定到最早未填月）。
     const lockState = planReportEntryLockState.value
     if (lockState) {
-      return resolvePlanReportEntryLock({ usePlanReportFlow: true, lockState })
+      if (resolvePlanReportEntryLock({ usePlanReportFlow: true, lockState })) {
+        return true
+      }
+      // 2026-10-27 用户定案：当前月的报告已上报通过且无更早欠账 → 本月锁定。
+      // （10 月批准后，10 月不再提供填报/再提交入口；11 月到来后填报 11 月。）
+      // 此前只锁「最早未填月在审/已批」，本月批准后还能再编辑当月内容、
+      // 开出新一轮草稿，页面上「一键提交」也随之复活，状态互相矛盾。
+      const planYear = Number(timeContext.currentYear)
+      const now = new Date()
+      if (planYear === now.getFullYear() && reportApprovalSummaryState.value?.approved === true) {
+        const currentMonthValue = Number(
+          `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
+        )
+        const earliestNum = /^\d{6}$/.test(lockState.earliestUnfilledMonth)
+          ? Number(lockState.earliestUnfilledMonth)
+          : null
+        if (earliestNum === null || earliestNum > currentMonthValue) {
+          return true
+        }
+      }
+      return false
     }
 
     // 「已上报月份」数据不可得（加载失败/上下文缺失）→ 降级沿用旧口径：

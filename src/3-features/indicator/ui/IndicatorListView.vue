@@ -795,7 +795,15 @@ const handleExportIndicatorList = async () => {
                         link
                         :type="hasReportContent(row) ? 'info' : 'success'"
                         size="small"
-                        :disabled="timeContext.isReadOnly"
+                        :disabled="
+                          timeContext.isReadOnly ||
+                          (isCurrentPlanReportLocked && hasReportContent(row))
+                        "
+                        :title="
+                          isCurrentPlanReportLocked && hasReportContent(row)
+                            ? '本月已上报，请于下月填报下月进度'
+                            : undefined
+                        "
                         @click="handleOpenReportDialog(row)"
                         >{{
                           isApprovalStatus(row, 'REJECTED')

@@ -32,7 +32,9 @@ export const StrategicIndicatorSchema = z.object({
   year: z.number(),
   statusAudit: z.array(z.unknown()),
   manualAlertSeverity: z.enum(['INFO', 'WARNING', 'CRITICAL']).nullable().optional(),
-  parentIndicatorId: z.union([z.string(), z.number()]).optional()
+  parentIndicatorId: z.union([z.string(), z.number()]).optional(),
+  /** 2026-10-27：下发顺序——各页面指标排序统一按它对齐 */
+  sortOrder: z.number().nullable().optional()
 })
 
 export const LoginCredentialsSchema = z.object({

@@ -285,6 +285,8 @@ export function toStrategicIndicator(raw: unknown): StrategicIndicator {
   const parsedYear = Number(getString(item, 'year'))
   const year =
     Number.isFinite(parsedYear) && parsedYear > 0 ? parsedYear : new Date(createdAt).getFullYear()
+  // 2026-10-27：下发顺序（sort_order）透传——各页面指标排序统一按它对齐
+  const sortOrderValue = Number(item.sortOrder ?? item.sort_order ?? 0)
   const level = getString(item, 'level')
   const status = getString(item, 'status').toUpperCase() || 'DRAFT'
   const isStrategic = getBoolean(item, 'isStrategic')
@@ -338,6 +340,7 @@ export function toStrategicIndicator(raw: unknown): StrategicIndicator {
     ),
     year,
     parentIndicatorId: parentIndicatorId || undefined,
+    sortOrder: Number.isFinite(sortOrderValue) ? sortOrderValue : 0,
     progressApprovalStatus: getString(item, 'progressApprovalStatus').toUpperCase() || 'NONE',
     pendingProgress: getOptionalNumber(item, 'pendingProgress'),
     pendingRemark: getString(item, 'pendingRemark') || null,

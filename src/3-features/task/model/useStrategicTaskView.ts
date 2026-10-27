@@ -48,10 +48,7 @@ import {
 } from '@/shared/lib/utils/indicatorStatus'
 import { getPlanStatusDisplay, normalizePlanStatus } from '@/features/task/lib'
 import { ApprovalProgressDrawer } from '@/features/approval'
-import {
-  canCurrentUserHandleWorkflowApproval,
-  notifyApprovalStateRefresh
-} from '@/features/approval/lib'
+import { notifyApprovalStateRefresh } from '@/features/approval/lib'
 import { useApprovalRouteAutopen } from '@/features/approval/lib'
 import { useApprovalStore } from '@/features/approval/model/store'
 import { indicatorApi } from '@/features/indicator/api'
@@ -1962,25 +1959,42 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     )
   })
 
+  // 判定当前用户是否具备处理「计划当前待审节点」的权限。
+  // 2026-10-27 缺陷修复（填报人点「发起审批」后瞬时闪成「处理审批」+ 红点）：
+  // 提交成功后 applyLocalPlanWorkflowUiPatch 会把计划置为 PENDING 并清空
+  // preloadedPlanWorkflowDetail，但当前步骤名尚未回填；
+  // 旧实现经由 canCurrentUserHandleWorkflowApproval 的兜底（期望角色为空即放行）
+  // 得出「我是审批人」，导致按钮/红点在详情回来前误判，约 40ms~数秒后才恢复。
+  // 现在改为 fail-closed：解析不出当前节点的期望角色/期望组织就不做审批人推断。
   const hasCurrentPlanApprovalPermission = computed(() => {
     const workflowStatus = currentApprovalWorkflowStatus.value
     const isPendingApproval = ['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(workflowStatus)
+    if (!isPendingApproval) {
+      return false
+    }
 
-    return canCurrentUserHandleWorkflowApproval({
-      currentUserId: currentUserId.value,
-      currentUserOrgId: currentUserOrgId.value,
-      currentUserRoleCodes: currentUserRoleCodes.value,
-      hasApprovalPermission: true,
-      isPendingApproval,
-      expectedApproverRoleCodes: resolveExpectedApproverRoleCodesForCurrentPlan(),
-      expectedApproverOrgId: resolveExpectedApproverOrgIdForCurrentPlan()
-    })
+    const expectedRoleCodes = resolveExpectedApproverRoleCodesForCurrentPlan()
+    if (expectedRoleCodes.length === 0) {
+      return false
+    }
+
+    const currentRoleCodes = currentUserRoleCodes.value
+    if (!expectedRoleCodes.some(roleCode => currentRoleCodes.includes(roleCode))) {
+      return false
+    }
+
+    const expectedApproverOrgId = resolveExpectedApproverOrgIdForCurrentPlan()
+    if (!expectedApproverOrgId) {
+      return false
+    }
+
+    return Number(currentUserOrgId.value) === Number(expectedApproverOrgId)
   })
 
   const canHandleCurrentPlanApproval = computed(() => {
     const workflowStatus = currentApprovalWorkflowStatus.value
     const isPendingApproval = ['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(workflowStatus)
-    if (!isPendingApproval || !hasCurrentPlanApprovalPermission.value) {
+    if (!isPendingApproval) {
       return false
     }
 
@@ -2014,10 +2028,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       }
     }
 
-    // 工具栏按钮与审批中心保持一致：
-    // 只要当前用户具备处理当前待审节点的权限，就显示“处理审批”与红点，
-    // 不再强依赖 currentTask/assignee 字段必须已经完整回填到首页状态。
-    return true
+    // 兜底不再「无条件 true」：必须能解析出期望角色与期望组织并匹配，
+    // 与抽屉侧 canCurrentUserHandlePlanApproval 的终局 false 保持一致。
+    return hasCurrentPlanApprovalPermission.value
   })
 
   // @requirement: Plan-centric status - 使用 Plan 状态判断待审批数量
@@ -3023,9 +3036,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         }
         return rank(taskTypeA) - rank(taskTypeB)
       }
-      const taskA = a.taskContent || ''
-      const taskB = b.taskContent || ''
-      return taskA.localeCompare(taskB)
+      // 2026-10-27 用户定案：组内按下发顺序（sort_order + id）对齐——
+      // 与指标填报页/学院视图保持同一顺序
+      const orderA = Number(a.sortOrder ?? 0) || 0
+      const orderB = Number(b.sortOrder ?? 0) || 0
+      if (orderA !== orderB) {
+        return orderA - orderB
+      }
+      return Number(a.id) - Number(b.id)
     })
   })
 
