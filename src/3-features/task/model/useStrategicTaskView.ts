@@ -3517,6 +3517,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const editingIndicatorId = ref<number | null>(null)
   const editingIndicatorField = ref<string | null>(null)
   const editingIndicatorValue = ref<Record<string, unknown> | null>(null)
+  // 2026-10-26 修复：进入编辑时记录原值快照——失焦比对用快照而不是 row[field]。
+  // 此前用 row 字段当原值，在合并单元格表格下 row 引用错位会读到 undefined，
+  // 被 applyMutationDraftChange 误判为「有变化」→ 没改内容也入异动草稿、按钮误现。
+  const editingIndicatorOriginal = ref<unknown>(null)
   const isSavingIndicatorEdit = ref(false)
   const savingIndicatorId = ref<number | null>(null)
   const savingIndicatorField = ref<string | null>(null)
@@ -3752,10 +3756,31 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       nextValue = text
     }
 
-    const originalValue =
+    // 2026-10-26 修复：原值取「进入编辑时的快照」，不取 row 现值——
+    // 合并单元格表格下 row 引用可能错位（读到 undefined 被误判为有变化）。
+    // 快照也为空时回退到全局指标库行（strategicStore.indicators 按主键匹配），
+    // 保证「没改内容就不算异动」的判定永远有可靠的原值可比。
+    let originalValue =
       mapping.payloadKey === 'weight_percent'
-        ? Number(row.weight ?? 0)
-        : String((row[field as keyof StrategicIndicator] as string | number | undefined) ?? '')
+        ? Number(editingIndicatorOriginal.value ?? 0)
+        : String((editingIndicatorOriginal.value as string | number | undefined) ?? '')
+    if (
+      (mapping.payloadKey === 'weight_percent' && originalValue === '0') ||
+      (mapping.payloadKey !== 'weight_percent' && originalValue === '')
+    ) {
+      const authoritative = strategicStore.indicators.find(
+        item => String(item.id) === String(row.id)
+      )
+      if (authoritative) {
+        if (mapping.payloadKey === 'weight_percent') {
+          originalValue = Number(authoritative.weight ?? 0)
+        } else if (field === 'name') {
+          originalValue = String(authoritative.name ?? '')
+        } else if (field === 'remark') {
+          originalValue = String(authoritative.remark ?? '')
+        }
+      }
+    }
     const unchanged =
       mapping.payloadKey === 'weight_percent'
         ? Number(originalValue) === nextValue
@@ -3813,7 +3838,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       return false
     }
 
-    const currentName = normalizeEditableText(row.taskContent)
+    const currentName = normalizeEditableText(editingIndicatorOriginal.value ?? row.taskContent)
     const existing = taskNameDrafts.value.find(item => String(item.taskId) === String(taskId))
     const originalName = existing ? existing.before : currentName
 
@@ -3975,6 +4000,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       editingIndicatorId.value = row.id
       editingIndicatorField.value = field
       editingIndicatorValue.value = row[field as keyof StrategicIndicator]
+      editingIndicatorOriginal.value = row[field as keyof StrategicIndicator]
       return
     }
     if (savingIndicatorId.value === row.id) {
@@ -3983,6 +4009,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     editingIndicatorId.value = row.id
     editingIndicatorField.value = field
     editingIndicatorValue.value = row[field as keyof StrategicIndicator]
+    editingIndicatorOriginal.value = row[field as keyof StrategicIndicator]
   }
 
   /**
@@ -4190,6 +4217,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     editingIndicatorId.value = null
     editingIndicatorField.value = null
     editingIndicatorValue.value = null
+    editingIndicatorOriginal.value = null
   }
 
   // 全局点击事件处理 - 点击编辑区域外退出编辑
@@ -4814,6 +4842,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 查看的是「职能部门→学院」的上报（collegeScope），因此聚合只在该页签激活时进行，
   // 数据源与 ReportStatusCell 严格同批行。口径与 ReportStatusCell 完全一致
   // （同取 fills[0]：approved→已上报 / submitted→审批中 / rejected→已回退）。
+  // 2026-10-26 修复：异动待办 ref 从 UI 组件上提到 model 层单例——
+  // 此前学院 chip 与互斥锁在 model 层引用 UI 组件的本地 ref（未定义），
+  // 渲染期间抛 ReferenceError 导致整页白屏/表格清空。
+  const departmentMutationPendingApprovals = ref<Array<Record<string, any>>>([])
   const collegeFillStatusScope = ref(false)
 
   // 2026-10-24 用户定案（异动/上报互斥）：同一学院链上「上报审批在途」与「异动审批在途」
