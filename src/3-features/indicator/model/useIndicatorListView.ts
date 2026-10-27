@@ -2603,11 +2603,12 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   })
 
   /**
-   * 2026-10-19 用户定案：列表右上角状态章改为「按月份顺序推进」口径——
-   * 不再出现「本月」字样。起点为计划下发后的首个可填月，随上报完成自动推进：
-   * - 有未填月 → 「5月未上报」/「6月未上报」…
+   * 2026-10-26 用户定案（修订 10-19 口径）：状态章按「从下发月起逐月推进，
+   * 封顶在当前自然月」展示——
+   * - 未填到当前月 → 「7月未上报」→「8月未上报」→…逐月推进
+   * - 当前月已填报（含审批中/已通过）→ 「10月已上报」；当前月未结束不显示下一个月
+   * - 当前月报告被驳回 → 「已回退」（保留 danger 提醒，需重报）
    * - 12 个月全部填完 → 「各月份已上报完毕」
-   * - 当前待填月报告在审批中/已通过 → 沿用审批态（审批中/已审批/已回退）
    */
   const monthlySequenceStatusMeta = computed(() => {
     if (!usePlanReportFlow.value || !hasCurrentUserPlanData.value) {
@@ -2622,24 +2623,39 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return { label: '各月份已上报完毕', type: 'success' as StatusTagType }
     }
 
-    // 该待填月已有报告（审批中/已通过/已回退）→ 沿用审批态
+    // 当前月报告被驳回 → 保留 danger 提醒（需重报）
     const targetStatus = String(lockState?.targetMonthReportStatus || '')
       .trim()
       .toUpperCase()
-    if (targetStatus === 'APPROVED') {
-      return { label: '已审批', type: 'success' as StatusTagType }
-    }
     if (targetStatus === 'REJECTED') {
       return { label: '已回退', type: 'danger' as StatusTagType }
     }
-    if (['SUBMITTED', 'IN_REVIEW', 'PENDING'].includes(targetStatus)) {
-      return { label: '审批中', type: 'warning' as StatusTagType }
+
+    // 显示月封顶在当前自然月：
+    // - earliest ≤ 当前月（含历史欠账）→ 按 earliest 显示「N月未上报」
+    // - earliest > 当前月 或 earliest 为空但计划年=当年 → 当前月已填报 → 「N月已上报」
+    // - 计划年为非当年（未来年/往年）→ 不做当前月封顶，按 earliest 原样
+    const planYear = Number(timeContext.currentYear)
+    const now = new Date()
+    const isCurrentYear = planYear === now.getFullYear()
+    const currentMonthValue = isCurrentYear
+      ? Number(`${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`)
+      : null
+
+    const earliestNum = /^\d{6}$/.test(earliest) ? Number(earliest) : null
+
+    if (currentMonthValue !== null && earliestNum !== null && earliestNum > currentMonthValue) {
+      return {
+        label: `${currentMonthValue.toString().slice(4).replace(/^0/, '')}月已上报`,
+        type: 'success' as StatusTagType
+      }
     }
 
-    // 有明确的待填月 → 「N月未上报」
+    // 有明确的待填月（≤ 当前月）→ 「N月未上报」
     if (earliest.length === 6) {
       const month = Number(earliest.slice(4, 6))
       if (Number.isFinite(month) && month >= 1 && month <= 12) {
+        void hasReportThisMonth
         return { label: `${month}月未上报`, type: 'info' as StatusTagType }
       }
     }
