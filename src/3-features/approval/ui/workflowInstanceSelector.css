@@ -1,0 +1,59 @@
+/* 2026-10-27：审批流程页签的「在审实例选择栏」样式——
+   分发页审批抽屉（DistributionApprovalProgressDrawer）与消息中心审批抽屉
+   （ApprovalProgressDrawer）共用，保证两个入口视觉与交互完全一致。 */
+
+.workflow-instance-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.workflow-instance-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  color: #475569;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.workflow-instance-option:hover {
+  border-color: #93c5fd;
+}
+
+.workflow-instance-option.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.12);
+}
+
+.workflow-instance-option .option-index {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.workflow-instance-option.active .option-index {
+  background: #dbeafe;
+}
+
+.workflow-instance-option .option-title {
+  font-weight: 600;
+}
+
+.workflow-instance-option .option-step {
+  color: #94a3b8;
+  font-size: 12px;
+}

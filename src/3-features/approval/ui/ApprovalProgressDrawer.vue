@@ -202,6 +202,8 @@ const {
   timeContext,
   workflowDefinitionPreview,
   workflowNodes,
+  workflowFocusCandidates,
+  workflowFocusIdx,
   workflowUserAvatarCache
 } = useApprovalProgressDrawer(props, emit)
 
@@ -500,6 +502,23 @@ const displayedCurrentPlanApprovalName = computed(() => {
           name="workflow"
           label="审批流程"
         >
+          <!-- 2026-10-27（与分发页审批抽屉同步）：多条在审实例时顶部选择栏——
+               只列「当前正在审批的实例」，已完成的实例归「审批历史」页签；
+               单条在审实例时整栏隐藏，多条时统一编号 实例1、实例2… -->
+          <div v-if="workflowFocusCandidates.length > 1" class="workflow-instance-selector">
+            <button
+              v-for="(instance, idx) in workflowFocusCandidates"
+              :key="instance.key"
+              type="button"
+              class="workflow-instance-option"
+              :class="{ active: idx === workflowFocusIdx }"
+              @click="workflowFocusIdx = idx"
+            >
+              <span class="option-index">实例{{ idx + 1 }}</span>
+              <span class="option-title">{{ instance.label }}</span>
+              <span v-if="instance.step" class="option-step">{{ instance.step }}</span>
+            </button>
+          </div>
           <ElEmpty
             v-if="showArchivedPlanWorkflowEmptyState || (!hasApprovalData && !hasPlanWorkflowData)"
             description="暂无审批数据"
@@ -872,4 +891,5 @@ const displayedCurrentPlanApprovalName = computed(() => {
   </ElDrawer>
 </template>
 
+<style scoped src="./workflowInstanceSelector.css"></style>
 <style scoped src="./ApprovalProgressDrawer.css"></style>

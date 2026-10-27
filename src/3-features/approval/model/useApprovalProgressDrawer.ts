@@ -87,6 +87,12 @@ import { useAuthStore } from '@/features/auth/model/store'
 import { APPROVAL_STATE_REFRESH_EVENT, notifyApprovalStateRefresh } from '@/features/approval/lib'
 import { resolveApprovalRoute } from '@/features/approval/lib/approvalNotifications'
 import { toPositiveNumber } from '@/features/approval/lib/approval-utils'
+import {
+  isMutationEntityType,
+  normalizeApprovalEntityType,
+  resolveExternalTodoCard as resolveExternalTodoCardShared
+} from '@/features/approval/model/approvalEntityTypes'
+import type { WorkflowFocusCandidate } from '@/features/approval/model/workflowFocusCandidates'
 import { usePlanStore } from '@/features/plan/model/store'
 import { useStrategicStore } from '@/features/task/model/strategic'
 import { useTimeContextStore } from '@/shared/lib/timeContext'
@@ -433,27 +439,11 @@ export function useApprovalProgressDrawer(
     return expectedWorkflowCodes.value.includes(normalizeWorkflowCode(workflowCode))
   }
 
+  // 2026-10-27：类型归一化统一到共享模块，与分发页审批抽屉口径一致
   function normalizeWorkflowEntityType(
     value: unknown
   ): 'PLAN' | 'PLAN_REPORT' | 'INDICATOR' | 'TASK' | '' {
-    const normalized = String(value || '')
-      .trim()
-      .toUpperCase()
-    if (normalized === 'PLAN_REPORT') {
-      return 'PLAN_REPORT'
-    }
-    if (normalized === 'PLAN') {
-      return 'PLAN'
-    }
-    // 异动审批（PLAN_MUTATION_STRATEGY）挂在指标实体上
-    if (normalized === 'INDICATOR') {
-      return 'INDICATOR'
-    }
-    // 2026-10-21：战略任务改名异动（entity_type=TASK）同链
-    if (normalized === 'TASK') {
-      return 'TASK'
-    }
-    return ''
+    return normalizeApprovalEntityType(value)
   }
 
   function parsePositiveEntityId(value: unknown): number | null {
@@ -959,44 +949,16 @@ export function useApprovalProgressDrawer(
 
   /**
    * 2026-10-27 用户反馈：异动实例掉进「上报待办」简卡后，标题字段缺失
-   * 退化成「上报审批」占位文案。这里把异动条目归一成有意义的卡片：
-   * 标题 = 实体名（后端 enrichInstanceOrgContext 已回填 planName），
-   * routeTitle = 「指标/任务异动审批 · 源 -> 目标」，与上报卡格式一致；
-   * 当前打开的实体已由完整卡展示，同一条异动不再重复出简卡。
+   * 退化成「上报审批」占位文案。归一逻辑统一到共享模块
+   * （approvalEntityTypes.ts），与分发页审批抽屉口径一致。
    */
   function resolveExternalTodoCard(instance: Record<string, any>): Record<string, any> {
-    const entityType = normalizeWorkflowEntityType(instance.entityType)
-    if (entityType !== 'INDICATOR' && entityType !== 'TASK') {
-      return instance
-    }
-
-    const contextEntityType = normalizeWorkflowEntityType(props.workflowEntityType)
-    const contextEntityId = toPositiveNumber(props.workflowEntityId)
-    if (
-      entityType === contextEntityType &&
-      contextEntityId > 0 &&
-      toPositiveNumber(instance.entityId) === contextEntityId
-    ) {
-      return { ...instance, __suppressTodoCard: true }
-    }
-
-    const routeDisplay = resolvePendingApprovalRouteDisplay(instance)
-    const mutationLabel = entityType === 'TASK' ? '任务异动审批' : '指标异动审批'
-    const routeTitle =
-      routeDisplay && routeDisplay !== '流向待补充'
-        ? `${mutationLabel} · ${routeDisplay}`
-        : mutationLabel
-    const entityTitle =
-      normalizeDisplayName(instance.planName) ||
-      normalizeDisplayName(instance.entityTitle) ||
-      normalizeDisplayName(instance.title) ||
-      ''
-
-    return {
-      ...instance,
-      routeTitle,
-      title: entityTitle || routeTitle
-    }
+    return resolveExternalTodoCardShared({
+      instance,
+      contextEntityType: props.workflowEntityType,
+      contextEntityId: toPositiveNumber(props.workflowEntityId),
+      normalizeDisplayName
+    }) as Record<string, any>
   }
 
   // 缺陷修复：PLAN_REPORT（月报审批）/ INDICATOR 待办来自 /workflows/my-tasks，
@@ -1018,6 +980,80 @@ export function useApprovalProgressDrawer(
       .map(resolveExternalTodoCard)
       .filter(instance => instance.__suppressTodoCard !== true)
   })
+
+  /**
+   * 2026-10-27 用户定案（与分发页审批抽屉同步）：
+   * 「审批流程」页签顶部的实例选择栏只承载「当前正在审批的实例」——
+   * 已完成（已通过/已驳回/已撤回）的实例属于审批历史，不在这里出现。
+   * 候选来源 = 分配给当前用户的在审待办（/workflows/my-tasks、my-pending）。
+   * 只有一条 → 整栏隐藏；多条 → 统一编号 实例1、实例2…
+   */
+  const workflowFocusCandidates = computed<WorkflowFocusCandidate[]>(() => {
+    const seen = new Set<string>()
+    const items: WorkflowFocusCandidate[] = []
+
+    pendingPlanApprovals.value.forEach(instance => {
+      const instanceId = instance.instanceId ?? instance.workflowInstanceId
+      if (!instanceId) {
+        return
+      }
+      const key = String(instanceId)
+      if (seen.has(key)) {
+        return
+      }
+      seen.add(key)
+      const entityType = normalizeWorkflowEntityType(instance.entityType)
+      const mutation = isMutationEntityType(entityType)
+      items.push({
+        key: `${entityType || 'PLAN'}:${key}`,
+        instanceId: instance.instanceId ?? instance.workflowInstanceId,
+        label:
+          normalizeDisplayName(instance.routeTitle) ||
+          normalizeDisplayName(instance.planName) ||
+          normalizeDisplayName(instance.entityTitle) ||
+          (mutation
+            ? entityType === 'TASK'
+              ? '任务异动审批'
+              : '指标异动审批'
+            : entityType === 'PLAN_REPORT'
+              ? '上报审批'
+              : '计划审批'),
+        step: normalizeDisplayName(instance.currentStepName) || undefined,
+        kind: entityType === 'PLAN_REPORT' ? 'report' : mutation ? 'mutation' : 'plan'
+      })
+    })
+
+    return items
+  })
+
+  const workflowFocusIdx = ref(0)
+  const workflowFocusInstance = computed<WorkflowFocusCandidate | null>(() => {
+    const items = workflowFocusCandidates.value
+    if (items.length === 0) {
+      return null
+    }
+    return items[Math.min(workflowFocusIdx.value, items.length - 1)] || items[0]
+  })
+
+  // 焦点实例（选择栏选中的那条）的流程详情——用于渲染它的步骤链
+  const focusWorkflowDetail = ref<WorkflowInstanceDetailResponse | null>(null)
+  watch(
+    () => String(workflowFocusInstance.value?.instanceId ?? ''),
+    async instanceKey => {
+      if (!instanceKey) {
+        focusWorkflowDetail.value = null
+        return
+      }
+      try {
+        const response = await getWorkflowInstanceDetail(instanceKey)
+        focusWorkflowDetail.value = response?.success && response.data ? response.data : null
+      } catch (error) {
+        logger.warn('[ApprovalProgressDrawer] 加载焦点实例详情失败:', error)
+        focusWorkflowDetail.value = null
+      }
+    },
+    { immediate: true }
+  )
 
   const scopedPlanApprovals = computed(() => {
     const dedupeByTaskKey = (items: Record<string, any>[]) => {
@@ -3075,6 +3111,44 @@ export function useApprovalProgressDrawer(
 
   // ============ 审批流程节点数据 ============
   const workflowNodes = computed<WorkflowNode[]>(() => {
+    // 2026-10-27（与分发页审批抽屉同步）：选择栏选中了某条在审实例时，
+    // 优先渲染那条实例的步骤链；未选或无详情时落回原有分支。
+    const focusCandidate = workflowFocusInstance.value
+    const focusDetail = focusWorkflowDetail.value
+    if (focusCandidate && focusDetail) {
+      const focusTasks = Array.isArray(focusDetail.tasks) ? focusDetail.tasks : []
+      if (focusTasks.length > 0) {
+        return focusTasks.map(
+          task =>
+            ({
+              id: String(task.taskId || task.taskKey || task.currentStepName || task.taskName),
+              name:
+                normalizeDisplayName(task.currentStepName) ||
+                normalizeDisplayName(task.taskName) ||
+                '审批节点',
+              status:
+                String(task.status || '')
+                  .trim()
+                  .toUpperCase() === 'PENDING'
+                  ? ('current' as const)
+                  : mapWorkflowTaskStatusToNodeStatus(task),
+              operatorName: resolveWorkflowTaskOperatorName(task),
+              operatorAvatar: task.assigneeId
+                ? workflowUserAvatarCache.value[String(task.assigneeId)] || undefined
+                : undefined,
+              approverCandidates: resolveTaskCandidateApprovers(task),
+              operateTime: task.approvedAt
+                ? new Date(task.approvedAt)
+                : task.createdTime
+                  ? new Date(task.createdTime)
+                  : undefined,
+              comment:
+                typeof task.comment === 'string' && task.comment.trim() ? task.comment : undefined
+            }) satisfies WorkflowNode
+        )
+      }
+    }
+
     if (isPlanHistoryOnlyMode.value) {
       return []
     }
@@ -4986,6 +5060,9 @@ export function useApprovalProgressDrawer(
     timeContext,
     workflowDefinitionPreview,
     workflowNodes,
+    workflowFocusCandidates,
+    workflowFocusIdx,
+    workflowFocusInstance,
     workflowUserAvatarCache
   }
 }

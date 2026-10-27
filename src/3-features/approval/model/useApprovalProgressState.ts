@@ -35,6 +35,11 @@ import {
   shouldDisplayWorkflowHistoryItem,
   toPositiveNumber
 } from '@/features/approval/lib'
+import {
+  buildWorkflowFocusCandidates,
+  type WorkflowFocusCandidate
+} from '@/features/approval/model/workflowFocusCandidates'
+import { normalizeApprovalEntityType } from '@/features/approval/model/approvalEntityTypes'
 import { usePlanStore } from '@/features/plan/model/store'
 import type {
   DistributionApprovalProgressDrawerEmit,
@@ -711,27 +716,11 @@ export function useApprovalProgressState(
     routeTarget: string
   }
 
+  // 2026-10-27：类型归一化统一到共享模块，与消息中心审批抽屉口径一致
   function normalizeWorkflowEntityType(
     value: unknown
   ): 'PLAN' | 'PLAN_REPORT' | 'INDICATOR' | 'TASK' | undefined {
-    const normalized = String(value || '')
-      .trim()
-      .toUpperCase()
-    if (normalized === 'PLAN_REPORT') {
-      return 'PLAN_REPORT'
-    }
-    if (normalized === 'PLAN') {
-      return 'PLAN'
-    }
-    // 异动审批（PLAN_MUTATION_STRATEGY）挂在指标实体上
-    if (normalized === 'INDICATOR') {
-      return 'INDICATOR'
-    }
-    // 2026-10-21：战略任务改名异动同样走 PLAN_MUTATION_STRATEGY，实体类型为 TASK
-    if (normalized === 'TASK') {
-      return 'TASK'
-    }
-    return undefined
+    return normalizeApprovalEntityType(value) || undefined
   }
 
   function resolvePendingApprovalRouteDisplay(instance: Record<string, any>): string {
@@ -2426,68 +2415,30 @@ export function useApprovalProgressState(
     }
   })
 
-  // 2026-10-26 用户定案：「审批流程」页签顶部选择栏的候选扩展为全量可查看流程——
-  // 主流程（默认焦点，直显）+ 进行中上报 + 进行中异动 + 历史终态实例（含学院上报链）。
-  // 仅一条候选时选择栏隐藏，行为与旧版一致。
-  // reportWorkflowInstances 只保留「进行中上报」语义（A/B 卡去重消费它），不改。
-  interface WorkflowFocusCandidate {
-    key: string
-    instanceId?: number | string
-    label: string
-    step?: string
-    kind: 'plan' | 'report' | 'mutation' | 'history'
-  }
+  // 2026-10-27 用户定案（重做）：「审批流程」页签顶部的实例选择栏
+  // 只承载「当前正在审批的实例」——已完成（已通过/已驳回/已撤回）的实例属于
+  // 审批历史，不在这里出现。规则与实现见 workflowFocusCandidates.ts。
   const workflowFocusIdx = ref(0)
-  const workflowFocusCandidates = computed<WorkflowFocusCandidate[]>(() => {
-    const items: WorkflowFocusCandidate[] = [
-      {
-        key: 'plan:current',
-        label:
-          normalizeDisplayName(props.planName) ||
-          normalizeDisplayName(props.departmentName) ||
-          '主流程',
-        kind: 'plan'
-      }
-    ]
-    for (const report of reportWorkflowInstances.value) {
-      const instanceId = report.workflowInstanceId || report.instanceId
-      if (!instanceId) {
-        continue
-      }
-      items.push({
-        key: `report:${instanceId}`,
-        instanceId,
-        label: normalizeDisplayName(report.routeTitle || report.title) || '上报审批',
-        step: normalizeDisplayName(report.currentStepName) || undefined,
-        kind: 'report'
-      })
-    }
-    for (const mutation of pendingMutationApprovalItems.value) {
-      if (!mutation.instanceId) {
-        continue
-      }
-      items.push({
-        key: `mutation:${mutation.instanceId}`,
+  const workflowFocusCandidates = computed<WorkflowFocusCandidate[]>(() =>
+    buildWorkflowFocusCandidates({
+      isPlanPending: isPlanPendingApproval.value,
+      planLabel: normalizeDisplayName(props.planName) || normalizeDisplayName(props.departmentName),
+      departmentName: normalizeDisplayName(props.departmentName),
+      reports: reportWorkflowInstances.value.map(report => {
+        const instanceId = report.workflowInstanceId || report.instanceId
+        return {
+          instanceId,
+          label: normalizeDisplayName(report.routeTitle || report.title) || '上报审批',
+          step: normalizeDisplayName(report.currentStepName) || undefined
+        }
+      }),
+      mutations: pendingMutationApprovalItems.value.map(mutation => ({
         instanceId: mutation.instanceId,
         label: normalizeDisplayName(mutation.routeTitle || mutation.title) || '异动审批',
-        step: normalizeDisplayName(mutation.currentStepName) || undefined,
-        kind: 'mutation'
-      })
-    }
-    for (const history of historicalPlanApprovalItems.value) {
-      if (!history.instanceId) {
-        continue
-      }
-      items.push({
-        key: `history:${history.instanceId}`,
-        instanceId: history.instanceId,
-        label: normalizeDisplayName(history.routeTitle || history.title) || '历史审批',
-        step: normalizeDisplayName(history.currentStepName) || undefined,
-        kind: 'history'
-      })
-    }
-    return items
-  })
+        step: normalizeDisplayName(mutation.currentStepName) || undefined
+      }))
+    })
+  )
   const workflowFocusInstance = computed<WorkflowFocusCandidate | null>(() => {
     const items = workflowFocusCandidates.value
     if (items.length === 0) {

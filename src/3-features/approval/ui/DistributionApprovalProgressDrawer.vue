@@ -12,6 +12,7 @@ import {
   resolvePlanApprovalTypeLabel,
   showAppraisalLevelForFlow
 } from '@/features/approval/lib/approval-utils'
+import { resolveWorkflowInstanceIndexLabel } from '@/features/approval/model/workflowFocusCandidates'
 import {
   useDistributionApprovalProgressDrawer,
   type DistributionApprovalProgressDrawerEmit,
@@ -723,8 +724,9 @@ const displayedCurrentPlanApprovalName = computed(() => {
         <el-tab-pane name="workflow" label="审批流程">
           <!-- 2026-10-24 用户定案：多条进行中实例时顶部选择栏——
                列出每条实例（标题+当前环节），点选切换展开渲染对应流程 -->
-          <!-- 2026-10-26 用户定案：候选扩展为全量可查看流程（主流程直显 + 进行中上报/异动
-               + 历史终态实例含学院上报链），单条时隐藏选择栏 -->
+          <!-- 2026-10-27 用户定案：选择栏只承载「当前正在审批的实例」。
+               已完成（已通过/已驳回/已撤回）的实例归「审批历史」页签，不在这里出现；
+               只有一条在审实例时整栏隐藏，多条时统一编号 实例1、实例2、实例3…。 -->
           <div v-if="workflowFocusCandidates.length > 1" class="workflow-instance-selector">
             <button
               v-for="(instance, idx) in workflowFocusCandidates"
@@ -734,7 +736,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
               :class="{ active: idx === workflowFocusIdx }"
               @click="workflowFocusIdx = idx"
             >
-              <span class="option-index">{{ idx === 0 ? '主流程' : `实例${idx}` }}</span>
+              <span class="option-index">{{ resolveWorkflowInstanceIndexLabel(idx) }}</span>
               <span class="option-title">{{ instance.label }}</span>
               <span v-if="instance.step" class="option-step">{{ instance.step }}</span>
             </button>
@@ -1122,3 +1124,4 @@ const displayedCurrentPlanApprovalName = computed(() => {
 /* 选择栏样式在此文件的 <style scoped src> 指向的 CSS 内——
    带 src 的 style 块会忽略内联内容，勿在此处写规则 */
 </style>
+<style scoped src="./workflowInstanceSelector.css"></style>
