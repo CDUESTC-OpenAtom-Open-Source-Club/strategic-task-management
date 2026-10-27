@@ -785,17 +785,16 @@ const handleExportIndicatorList = async () => {
                       >
                       <!-- 2026-10-24 用户定案：填报/编辑按钮只属于填报人角色——
                            此前只判 !isStrategicDept，导致职能部门/学院的审核人也能看到并进入填报。 -->
+                      <!-- 2026-10-26 用户定案：提交审批后填报内容仍可实时编辑保存
+                           （updateReport 实时更新，审批详情同步可见）；锁定的只是
+                           「发起审批」（一键提交按钮 draft 态才显示 + 后端 409 兜底）。
+                           故填报按钮不再按 report-lock 锁死，仅保留角色与只读期限制。 -->
                       <el-button
                         v-if="!isStrategicDept && isCurrentUserReporter"
-                        v-show="!isCurrentPlanReportLocked"
                         link
                         :type="hasReportContent(row) ? 'info' : 'success'"
                         size="small"
-                        :disabled="
-                          isApprovalStatus(row, 'PENDING') ||
-                          isCurrentPlanReportLocked ||
-                          timeContext.isReadOnly
-                        "
+                        :disabled="timeContext.isReadOnly"
                         @click="handleOpenReportDialog(row)"
                         >{{
                           isApprovalStatus(row, 'REJECTED')
