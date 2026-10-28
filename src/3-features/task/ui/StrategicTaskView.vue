@@ -368,7 +368,6 @@ const {
   canAppraise: canAppraiseIndicator,
   getLevel: getIndicatorAppraisalLevel,
   getLockHint: getIndicatorAppraisalLockHint,
-  savingId: savingAppraisalIndicatorId,
   save: saveIndicatorAppraisalLevel
 } = useIndicatorAppraisal()
 
@@ -635,6 +634,11 @@ const handleAppraisalChange = async (
       ElMessage.error(error instanceof Error ? error.message : '调整鉴定进度等级失败')
     }
   }
+}
+
+/** 锁定状态点击只提示一次（不再用悬停提示，避免两套文案重复） */
+const handleAppraisalTagClick = (row: { id: string | number }) => {
+  ElMessage.info(getIndicatorAppraisalLockHint(row.id) || '上报期间才能解锁鉴定进度等级')
 }
 
 const allStrategicExportDepartmentsSelected = computed({
@@ -1626,32 +1630,12 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   >
                     <template #default="{ row }">
                       <div class="manual-alert-cell">
-                        <template v-if="canAppraiseIndicator(row.id)">
-                          <el-select
-                            :model-value="
-                              getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity) || ''
-                            "
-                            size="small"
-                            class="manual-alert-select"
-                            :loading="savingAppraisalIndicatorId === String(row.id)"
-                            :disabled="savingAppraisalIndicatorId === String(row.id)"
-                            @change="
-                              value => handleAppraisalChange(row, value as ManualAlertSelectValue)
-                            "
-                          >
-                            <el-option
-                              v-for="option in manualAlertOptions"
-                              :key="option.value || 'NONE'"
-                              :label="option.label"
-                              :value="option.value"
-                            />
-                          </el-select>
-                        </template>
-                        <el-tooltip
-                          v-else
-                          :content="getIndicatorAppraisalLockHint(row.id)"
-                          :disabled="!getIndicatorAppraisalLockHint(row.id)"
-                          placement="top"
+                        <el-dropdown
+                          v-if="canAppraiseIndicator(row.id)"
+                          trigger="click"
+                          @command="
+                            value => handleAppraisalChange(row, value as ManualAlertSelectValue)
+                          "
                         >
                           <el-tag
                             :type="
@@ -1665,6 +1649,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                               )
                             "
                             size="small"
+                            class="manual-alert-tag--clickable"
                           >
                             {{
                               getManualAlertLabel(
@@ -1672,7 +1657,40 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                               )
                             }}
                           </el-tag>
-                        </el-tooltip>
+                          <template #dropdown>
+                            <el-dropdown-menu>
+                              <el-dropdown-item
+                                v-for="option in manualAlertOptions"
+                                :key="option.value || 'NONE'"
+                                :command="option.value"
+                              >
+                                {{ option.label }}
+                              </el-dropdown-item>
+                            </el-dropdown-menu>
+                          </template>
+                        </el-dropdown>
+                        <el-tag
+                          v-else
+                          :type="
+                            getManualAlertTagType(
+                              getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
+                            )
+                          "
+                          :style="
+                            getProgressLevelTagStyle(
+                              getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
+                            )
+                          "
+                          size="small"
+                          class="manual-alert-tag--locked"
+                          @click="handleAppraisalTagClick(row)"
+                        >
+                          {{
+                            getManualAlertLabel(
+                              getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
+                            )
+                          }}
+                        </el-tag>
                       </div>
                     </template>
                   </el-table-column>
@@ -2320,32 +2338,12 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   >
                     <template #default="{ row }">
                       <div class="manual-alert-cell">
-                        <template v-if="canAppraiseIndicator(row.id)">
-                          <el-select
-                            :model-value="
-                              getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity) || ''
-                            "
-                            size="small"
-                            class="manual-alert-select"
-                            :loading="savingAppraisalIndicatorId === String(row.id)"
-                            :disabled="savingAppraisalIndicatorId === String(row.id)"
-                            @change="
-                              value => handleAppraisalChange(row, value as ManualAlertSelectValue)
-                            "
-                          >
-                            <el-option
-                              v-for="option in manualAlertOptions"
-                              :key="option.value || 'NONE'"
-                              :label="option.label"
-                              :value="option.value"
-                            />
-                          </el-select>
-                        </template>
-                        <el-tooltip
-                          v-else
-                          :content="getIndicatorAppraisalLockHint(row.id)"
-                          :disabled="!getIndicatorAppraisalLockHint(row.id)"
-                          placement="top"
+                        <el-dropdown
+                          v-if="canAppraiseIndicator(row.id)"
+                          trigger="click"
+                          @command="
+                            value => handleAppraisalChange(row, value as ManualAlertSelectValue)
+                          "
                         >
                           <el-tag
                             :type="
@@ -2359,6 +2357,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                               )
                             "
                             size="small"
+                            class="manual-alert-tag--clickable"
                           >
                             {{
                               getManualAlertLabel(
@@ -2366,7 +2365,40 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                               )
                             }}
                           </el-tag>
-                        </el-tooltip>
+                          <template #dropdown>
+                            <el-dropdown-menu>
+                              <el-dropdown-item
+                                v-for="option in manualAlertOptions"
+                                :key="option.value || 'NONE'"
+                                :command="option.value"
+                              >
+                                {{ option.label }}
+                              </el-dropdown-item>
+                            </el-dropdown-menu>
+                          </template>
+                        </el-dropdown>
+                        <el-tag
+                          v-else
+                          :type="
+                            getManualAlertTagType(
+                              getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
+                            )
+                          "
+                          :style="
+                            getProgressLevelTagStyle(
+                              getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
+                            )
+                          "
+                          size="small"
+                          class="manual-alert-tag--locked"
+                          @click="handleAppraisalTagClick(row)"
+                        >
+                          {{
+                            getManualAlertLabel(
+                              getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
+                            )
+                          }}
+                        </el-tag>
                       </div>
                     </template>
                   </el-table-column>
@@ -2968,6 +3000,16 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
 /* 计划未正式下发时锁定鉴定等级 */
 .manual-alert-select-wrapper--locked {
   cursor: not-allowed;
+}
+
+/* 2026-10-28：可点击的鉴定标签——点击才解锁下拉，悬停只显示提示 */
+.manual-alert-tag--clickable {
+  cursor: pointer;
+}
+
+/* 锁定状态：点击弹出一次提示，不用悬停提示 */
+.manual-alert-tag--locked {
+  cursor: help;
 }
 
 /* 2026-10-24：单次上报详情弹窗（从上报记录卡点开） */
