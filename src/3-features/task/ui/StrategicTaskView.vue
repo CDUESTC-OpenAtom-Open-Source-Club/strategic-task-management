@@ -1271,12 +1271,13 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             @show="handleApprovalStatusPopoverShow"
           >
             <template #reference>
-              <!-- 2026-10-28：点击仅展开流程状态浮层（会议要求由悬停改点击）；跳转审批中心请点浮层内卡片 -->
+              <!-- 2026-10-28 修复：恢复状态章点击打开审批中心（PR#92 实现 M1 时误删，
+                   历史行为 = 点击自动打开对应审批中心）；浮层仍由点击展开供快速预览 -->
               <el-tag
                 :type="approvalFlowStatusMeta.tagType"
                 effect="light"
                 class="approval-status-tag"
-                @click.stop
+                @click.stop="handleOpenApproval"
               >
                 {{ activeTaskTabName === 'college' ? '审批状况' : '审批状态' }}:
                 {{ approvalFlowStatusMeta.label }}
