@@ -296,6 +296,20 @@ export function buildAttachmentCell(input: unknown): Cell {
     .join('\n')
 }
 
+/**
+ * 2026-10-28：附件本体打进 zip 后，Excel 里只列文件名，
+ * 由「附件目录」列给出包内相对路径，避免单元格里塞长 URL。
+ */
+export function buildAttachmentNameCell(input: unknown): Cell {
+  const attachments = normalizeExportAttachments(input)
+
+  if (attachments.length === 0) {
+    return '-'
+  }
+
+  return attachments.map(attachment => attachment.name).join('\n')
+}
+
 function parseAttachmentString(value: string): unknown {
   const trimmed = value.trim()
   if (!trimmed) {
