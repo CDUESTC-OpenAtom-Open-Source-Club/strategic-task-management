@@ -3505,7 +3505,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         throw new Error('后端返回的子指标缺少有效 ID')
       }
       pendingCreatedIndicatorIds.value = [...pendingCreatedIndicatorIds.value, createdId]
-      ElMessage.info('子指标已新增；请确认学院指标权重合计为 100 后点顶部「发起异动」提交审批')
+      ElMessage.info('子指标已新增；请确认计划内权重合计为 100 后点顶部「发起异动」提交审批')
       logger.info('[StrategicTaskView] 学院 tab 新增子指标:', {
         createdId,
         parentIndicatorId,

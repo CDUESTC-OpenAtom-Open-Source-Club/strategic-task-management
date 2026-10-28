@@ -1019,7 +1019,7 @@ const handleDistributionImportCommitted = async () => {
                   </template>
                   <template #default="{ row }">
                     <template v-if="row.type === 'indicator-only'">
-                      <span class="weight-text">-</span>
+                      <span class="weight-text">—</span>
                     </template>
                     <template v-else-if="row.type === 'child'">
                       <div class="weight-cell" @dblclick="handleChildDblClick(row.child, 'weight')">

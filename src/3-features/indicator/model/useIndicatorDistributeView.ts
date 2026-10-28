@@ -3948,7 +3948,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   })
 
   // 2026-10-27 用户反馈：编辑保存后的强制刷新会让指标短暂清空，权重合计
-  // 瞬间跳到 0/100 再跳回——「基础性权重合计」tag 跟着闪。与下发按钮同款
+  // 瞬间跳到 0/100 再跳回——「权重合计」tag 跟着闪。与下发按钮同款
   // 冻结：刷新期间沿用上一次稳定值。
   const lastStableCollegeTotalWeight = ref(0)
   watch(collegeTotalWeight, value => {
