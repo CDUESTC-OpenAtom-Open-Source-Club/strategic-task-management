@@ -276,7 +276,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
         <div class="stats-tags">
           <ElPopover
             v-if="showPlanApprovals && scopedPendingPlanCount > 0"
-            trigger="hover"
+            trigger="click"
             placement="bottom-end"
             :width="320"
             popper-class="pending-plan-approval-popper"

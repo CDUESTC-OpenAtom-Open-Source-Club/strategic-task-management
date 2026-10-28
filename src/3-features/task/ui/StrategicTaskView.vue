@@ -48,6 +48,7 @@ import {
   canEditManualAlertLevel
 } from '@/features/task/lib/warning-level'
 import { truncateText } from '@/shared/lib/utils/formatters'
+import { formatWeightPercent } from '@/shared/lib/format'
 import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
 import type { ImportCommitResponse } from '@/features/import/api/businessImport'
 
@@ -1129,17 +1130,18 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
         <div class="toolbar-right">
           <el-popover
             placement="top-end"
-            trigger="hover"
+            trigger="click"
             :width="320"
             popper-class="approval-status-popper"
             @show="handleApprovalStatusPopoverShow"
           >
             <template #reference>
+              <!-- 2026-10-28：点击仅展开流程状态浮层（会议要求由悬停改点击）；跳转审批中心请点浮层内卡片 -->
               <el-tag
                 :type="approvalFlowStatusMeta.tagType"
                 effect="light"
                 class="approval-status-tag"
-                @click.stop="handleOpenApproval"
+                @click.stop
               >
                 {{ activeTaskTabName === 'college' ? '审批状况' : '审批状态' }}:
                 {{ approvalFlowStatusMeta.label }}
@@ -1195,7 +1197,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             size="small"
             style="margin-right: 12px"
           >
-            基础性权重合计: {{ departmentTotalWeight }} / 100
+            权重合计: {{ departmentTotalWeight }} / 100
           </el-tag>
           <el-tag v-if="isReadOnly" type="warning" size="small" style="margin-right: 12px">
             历史快照 (只读)
@@ -1364,7 +1366,15 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="weight" label="权重" width="80" align="center">
+                  <el-table-column prop="weight" width="96" align="center">
+                    <template #header>
+                      <el-tooltip
+                        content="同一战略任务下各指标的权重，合计为 100%；不同任务各自独立"
+                        placement="top"
+                      >
+                        <span class="weight-header">权重（%）</span>
+                      </el-tooltip>
+                    </template>
                     <template #default="{ row }">
                       <div class="weight-cell" @dblclick="handleIndicatorDblClick(row, 'weight')">
                         <el-input
@@ -1382,7 +1392,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         >
                           保存中...
                         </span>
-                        <span v-else class="weight-text">{{ row.weight }}</span>
+                        <span v-else class="weight-text">{{
+                          formatWeightPercent(row.weight)
+                        }}</span>
                       </div>
                     </template>
                   </el-table-column>
@@ -1994,7 +2006,15 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="weight" label="权重" width="80" align="center">
+                  <el-table-column prop="weight" width="96" align="center">
+                    <template #header>
+                      <el-tooltip
+                        content="同一战略任务下各指标的权重，合计为 100%；不同任务各自独立"
+                        placement="top"
+                      >
+                        <span class="weight-header">权重（%）</span>
+                      </el-tooltip>
+                    </template>
                     <template #default="{ row }">
                       <div class="weight-cell" @dblclick="handleIndicatorDblClick(row, 'weight')">
                         <el-input
@@ -2012,7 +2032,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         >
                           保存中...
                         </span>
-                        <span v-else class="weight-text">{{ row.weight }}</span>
+                        <span v-else class="weight-text">{{
+                          formatWeightPercent(row.weight)
+                        }}</span>
                       </div>
                     </template>
                   </el-table-column>

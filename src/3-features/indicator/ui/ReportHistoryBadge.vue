@@ -87,7 +87,7 @@ onMounted(load)
   <el-popover
     v-if="hasEntity && count > 0"
     placement="top"
-    trigger="hover"
+    trigger="click"
     :width="340"
     :show-after="120"
     :hide-after="60"

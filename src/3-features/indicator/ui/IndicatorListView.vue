@@ -29,6 +29,7 @@ import {
 import { ApprovalProgressDrawer } from '@/features/approval'
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import { truncateText } from '@/shared/lib/utils/formatters'
+import { formatWeightPercent } from '@/shared/lib/format'
 import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
 import {
   useIndicatorListView,
@@ -496,17 +497,18 @@ const handleExportIndicatorList = async () => {
             </el-tag>
             <el-popover
               placement="top-start"
-              trigger="hover"
+              trigger="click"
               :width="320"
               popper-class="approval-status-popper"
               @show="handleApprovalStatusPopoverShow"
             >
               <template #reference>
+                <!-- 2026-10-28：点击仅展开流程状态浮层（会议要求由悬停改点击）；跳转审批中心请点浮层内卡片 -->
                 <el-tag
                   size="small"
                   class="overall-status-tag overall-status-tag--clickable"
                   :type="currentApprovalStatusMeta.type"
-                  @click.stop="handleOpenApproval"
+                  @click.stop
                 >
                   审批状态: {{ currentApprovalStatusMeta.label }}
                 </el-tag>
@@ -693,7 +695,15 @@ const handleExportIndicatorList = async () => {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column prop="weight" label="权重" width="76" align="center">
+              <el-table-column prop="weight" width="92" align="center">
+                <template #header>
+                  <el-tooltip
+                    content="同一战略任务下各指标的权重，合计为 100%；不同任务各自独立"
+                    placement="top"
+                  >
+                    <span class="weight-header">权重（%）</span>
+                  </el-tooltip>
+                </template>
                 <template #default="{ row }">
                   <div class="weight-cell">
                     <el-input
@@ -704,7 +714,7 @@ const handleExportIndicatorList = async () => {
                       style="width: 50px"
                       @blur="saveIndicatorEdit(row, 'weight')"
                     />
-                    <span v-else class="weight-text">{{ row.weight }}</span>
+                    <span v-else class="weight-text">{{ formatWeightPercent(row.weight) }}</span>
                   </div>
                 </template>
               </el-table-column>

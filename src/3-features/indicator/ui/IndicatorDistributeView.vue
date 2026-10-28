@@ -16,6 +16,7 @@ import { ElMessage } from 'element-plus'
 import type { StrategicIndicator } from '@/shared/types'
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import { truncateText } from '@/shared/lib/utils/formatters'
+import { formatWeightPercent } from '@/shared/lib/format'
 import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
 import {
   buildAttachmentCell,
@@ -759,17 +760,18 @@ const handleDistributionImportCommitted = async () => {
               </el-tag>
               <el-popover
                 placement="top-start"
-                trigger="hover"
+                trigger="click"
                 :width="320"
                 popper-class="approval-status-popper"
                 @show="handleApprovalStatusPopoverShow"
               >
                 <template #reference>
+                  <!-- 2026-10-28：点击仅展开流程状态浮层（会议要求由悬停改点击）；跳转审批中心请点浮层内卡片 -->
                   <el-tag
                     :type="approvalFlowStatusMeta.tagType"
                     size="default"
                     style="cursor: pointer"
-                    @click.stop="handleOpenApproval"
+                    @click.stop
                   >
                     审批状态: {{ approvalFlowStatusMeta.label }}
                   </el-tag>
@@ -1002,12 +1004,19 @@ const handleDistributionImportCommitted = async () => {
 
                 <!-- 权重列 -->
                 <el-table-column
-                  label="权重"
-                  width="58"
+                  width="78"
                   align="center"
                   class-name="weight-column-header"
                   label-class-name="weight-column-header"
                 >
+                  <template #header>
+                    <el-tooltip
+                      content="同一核心指标下各学院子指标的权重，合计为 100%"
+                      placement="top"
+                    >
+                      <span>权重（%）</span>
+                    </el-tooltip>
+                  </template>
                   <template #default="{ row }">
                     <template v-if="row.type === 'indicator-only'">
                       <span class="weight-text">-</span>
@@ -1035,12 +1044,14 @@ const handleDistributionImportCommitted = async () => {
                           保存中...
                         </span>
                         <span v-else class="weight-text editable">{{
-                          row.child?.weight ?? '-'
+                          formatWeightPercent(row.child?.weight)
                         }}</span>
                       </div>
                     </template>
                     <template v-else-if="row.type === 'new-child'">
-                      <span class="weight-text">{{ row.child?.weight ?? 10 }}</span>
+                      <span class="weight-text">{{
+                        formatWeightPercent(row.child?.weight ?? 10)
+                      }}</span>
                     </template>
                   </template>
                 </el-table-column>

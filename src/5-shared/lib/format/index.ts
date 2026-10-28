@@ -1,6 +1,6 @@
 /**
  * Format Module
- * 
+ *
  * Exports all formatting utilities
  */
 
@@ -23,6 +23,7 @@ export {
   formatNumber,
   formatCurrency,
   formatPercentage,
+  formatWeightPercent,
   formatFileSize,
   parseNumber,
   clamp,

@@ -56,7 +56,7 @@ onMounted(async () => {
   <el-popover
     v-else-if="latestAttachments().length"
     placement="top"
-    trigger="hover"
+    trigger="click"
     :width="320"
     popper-class="report-materials-popper"
   >

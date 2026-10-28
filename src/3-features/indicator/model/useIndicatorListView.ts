@@ -79,6 +79,10 @@ import {
 } from '@/features/plan/lib/indicatorWorkflow'
 import { filterIndicatorsForViewerRole } from '@/features/indicator/lib/scope'
 import {
+  collectExistingAttachmentIds,
+  resolveBatchSelfRating
+} from '@/features/indicator/lib/reportBatch'
+import {
   isCollegePlanCandidate,
   listCollegePlanSourceDepts,
   resolveCollegePlanSourceDept
@@ -4409,7 +4413,16 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
             indicator_name: item.name,
             progress: Number(reportProgress),
             content: reportRemark,
-            attachment_ids: isCurrentIndicator ? attachmentIds : []
+            // 2026-10-28（Issue #91 P1-1）：只有当前指标用表单里的自评等级，
+            // 其余指标沿用各自已保存的值，避免整批被当前值覆盖
+            selfRating: resolveBatchSelfRating({
+              isCurrentIndicator,
+              formSelfRating: reportForm.value.selfRating,
+              itemSelfRating: (item as { selfRating?: string }).selfRating
+            }),
+            // 2026-10-28（Issue #91 P0-2）：非当前指标必须保留其已关联的附件 id，
+            // 否则后端按全量覆盖保存时，先前保存的附件关联会被清空
+            attachment_ids: isCurrentIndicator ? attachmentIds : collectExistingAttachmentIds(item)
           }
         })
         .filter(Boolean)
@@ -4423,10 +4436,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         reportMonth: reportForm.value.reportMonth || undefined,
         attachments: [],
         // Attachments are uploaded first and linked by attachment_ids in batch_items.
-        batch_items: batchItems.map(item => ({
-          ...item,
-          selfRating: reportForm.value.selfRating || undefined
-        }))
+        batch_items: batchItems
       })
 
       persistIndicatorDraft(indicator.id, {
