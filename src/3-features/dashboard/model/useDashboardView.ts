@@ -127,10 +127,10 @@ export function useDashboardView(props: DashboardViewProps) {
   const collegeRankingMonth = ref(previousMonthNumber) // 分院排名选中月份（默认上月）
   const selectedOwnerDeptFilter = ref<string>('all') // 职能部门筛选（战略发展部用）
 
-  // 状态颜色配置
+  // 状态颜色配置（2026-10-28：超前与正常都用绿，但超前更深，便于区分）
   const statusColors = {
-    ahead: '#67C23A', // 绿色 - 超前完成
-    normal: '#409EFF', // 蓝色 - 正常
+    ahead: '#1A7F37', // 深绿 - 超前完成
+    normal: '#67C23A', // 绿色 - 正常
     warning: '#E6A23C', // 黄色 - 预警
     delayed: '#F56C6C' // 红色 - 延期
   }

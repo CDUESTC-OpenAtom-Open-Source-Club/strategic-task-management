@@ -13,6 +13,7 @@ import {
   showAppraisalLevelForFlow
 } from '@/features/approval/lib/approval-utils'
 import { resolveWorkflowInstanceIndexLabel } from '@/features/approval/model/workflowFocusCandidates'
+import { getProgressLevelTagStyle } from '@/shared/lib/constants/progressLevel'
 import {
   useDistributionApprovalProgressDrawer,
   type DistributionApprovalProgressDrawerEmit,
@@ -76,13 +77,6 @@ const {
   currentUserId,
   pendingMutationApprovalItems,
   pendingReportApprovalItems,
-  // 2026-10-24 指标级鉴定
-  isAppraisalApprovalItem,
-  isAppraisalInstanceId,
-  appraisalDialogActive,
-  getPlanIndicatorAppraisalLevel,
-  setPlanIndicatorAppraisalLevel,
-  confirmAppraisalDialogApproval,
   currentUserOrgId,
   currentUserPermissionCodes,
   currentUserRoleCodes,
@@ -109,7 +103,6 @@ const {
   handleApproveMutation,
   canCurrentUserHandleReportTodo,
   handleApprovePlanBatch,
-  planAppraisalLevel,
   handleClose,
   handlePlanReportAttachmentOpen,
   handleRejectMutation,
@@ -1009,35 +1002,13 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 </div>
               </div>
 
-              <!-- 2026-10-24 指标级鉴定：末级审批节点（上级部门鉴定环节）逐指标评定；
-                   其余节点只读展示已评定结果 -->
+              <!-- 2026-10-28 用户定案：审批卡片不提供鉴定下拉——
+                   鉴定只在三个表格页的指标行内完成，这里只读展示当前等级。 -->
               <div class="snapshot-section">
                 <div class="snapshot-section-title">鉴定进度等级</div>
                 <div class="snapshot-section-content">
-                  <el-select
-                    v-if="appraisalDialogActive"
-                    :model-value="
-                      getPlanIndicatorAppraisalLevel(indicator.reportId, indicator.indicatorId)
-                    "
-                    size="small"
-                    clearable
-                    placeholder="未评定"
-                    style="width: 140px"
-                    @update:model-value="
-                      value =>
-                        setPlanIndicatorAppraisalLevel(
-                          indicator.reportId,
-                          indicator.indicatorId,
-                          String(value ?? '')
-                        )
-                    "
-                  >
-                    <el-option label="超前完成" value="AHEAD" />
-                    <el-option label="正常" value="NORMAL" />
-                    <el-option label="延期" value="DELAYED" />
-                  </el-select>
                   <ElTag
-                    v-else-if="indicator.appraisalLevel"
+                    v-if="indicator.appraisalLevel"
                     size="small"
                     :type="
                       indicator.appraisalLevel === 'DELAYED'
@@ -1046,6 +1017,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
                           ? 'success'
                           : 'info'
                     "
+                    :style="getProgressLevelTagStyle(indicator.appraisalLevel)"
                   >
                     {{ formatAppraisalLevel(indicator.appraisalLevel) }}
                   </ElTag>
@@ -1107,14 +1079,6 @@ const displayedCurrentPlanApprovalName = computed(() => {
 
       <template #footer>
         <el-button @click="planDetailDialogVisible = false">关闭</el-button>
-        <!-- 2026-10-24 指标级鉴定：上级部门在详情里逐指标评定后确认通过 -->
-        <el-button
-          v-if="appraisalDialogActive"
-          type="success"
-          @click="confirmAppraisalDialogApproval"
-        >
-          确认通过
-        </el-button>
       </template>
     </el-dialog>
   </el-drawer>

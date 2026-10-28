@@ -27,6 +27,7 @@ import {
   type ExcelExportSheet,
   type ExcelRowTone
 } from '@/shared/lib/export/excel'
+import { getProgressLevelTagStyle } from '@/shared/lib/constants/progressLevel'
 import {
   buildAttachmentRelativeDir,
   collectAttachmentGroups,
@@ -796,9 +797,17 @@ const handleExportIndicatorList = async () => {
                 label-class-name="manual-level-header"
               >
                 <template #default="{ row }">
-                  <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
+                  <!-- 2026-10-28：未评定统一显示「—」（与自评等级/进度说明等空值同风格）；
+                       已评定保留彩色 tag（深绿/绿/橙视觉口径） -->
+                  <el-tag
+                    v-if="row.manualAlertSeverity"
+                    :type="getManualAlertTagType(row.manualAlertSeverity)"
+                    :style="getProgressLevelTagStyle(row.manualAlertSeverity)"
+                    size="small"
+                  >
                     {{ getManualAlertLabel(row.manualAlertSeverity) }}
                   </el-tag>
+                  <span v-else style="color: #909399">—</span>
                 </template>
               </el-table-column>
               <!-- 2026-10-20 用户定案：进度说明不占太大位置——固定宽度，
@@ -1027,7 +1036,11 @@ const handleExportIndicatorList = async () => {
             <span v-else style="color: #909399">—</span>
           </el-descriptions-item>
           <el-descriptions-item label="鉴定进度等级">
-            <el-tag :type="getManualAlertTagType(currentDetail.manualAlertSeverity)" size="small">
+            <el-tag
+              :type="getManualAlertTagType(currentDetail.manualAlertSeverity)"
+              :style="getProgressLevelTagStyle(currentDetail.manualAlertSeverity)"
+              size="small"
+            >
               {{ getManualAlertLabel(currentDetail.manualAlertSeverity) }}
             </el-tag>
           </el-descriptions-item>
@@ -1133,7 +1146,7 @@ const handleExportIndicatorList = async () => {
               multiple
               :limit="5"
               :disabled="isUploadingReportFiles || isSavingReport"
-              accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+              accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.txt"
               :on-change="handleReportFileChange"
               :on-remove="handleReportFileRemove"
               :before-upload="beforeReportUpload"
@@ -1141,7 +1154,7 @@ const handleExportIndicatorList = async () => {
               <el-button size="small" type="primary" plain>选择文件</el-button>
               <template #tip>
                 <div class="upload-tip">
-                  支持 PDF、Word、Excel、图片格式，单个文件不超过
+                  支持 PDF、Word、Excel、图片、TXT 格式，单个文件不超过
                   30MB，最多5个文件。选择后仅暂存，保存时才会上传并关联。双击文件名可预览或下载。
                 </div>
               </template>

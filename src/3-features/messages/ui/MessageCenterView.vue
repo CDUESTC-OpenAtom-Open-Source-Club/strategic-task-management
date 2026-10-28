@@ -632,6 +632,16 @@ function resolveMessageRouteTarget(message?: Message | null): string | null {
   }
 
   if (message.actionUrl) {
+    // 2026-10-28 兼容映射：存量催办通知的 action_url 是 /indicators/{id}（非有效路由），
+    // 统一补 /progress 跳到该指标的填报进度页；/announcements/{id} 无独立详情页，
+    // 公告全文已在详情抽屉展示，回消息中心即可
+    const legacyIndicatorMatch = message.actionUrl.match(/^\/indicators\/(\d+)$/)
+    if (legacyIndicatorMatch) {
+      return `/indicators/${legacyIndicatorMatch[1]}/progress`
+    }
+    if (message.actionUrl.startsWith('/announcements/')) {
+      return '/messages'
+    }
     return message.actionUrl
   }
 
@@ -654,7 +664,10 @@ function canOpenApprovalCenter(message?: Message | null): boolean {
 }
 
 function canOpenMessageRoute(message?: Message | null): boolean {
-  return Boolean(message && isApprovalMessage(message) && resolveMessageRouteTarget(message))
+  // 2026-10-28 迭代计划（跳转矩阵）：去掉 isApprovalMessage 限制——
+  // 催办/系统/业务通知的 action_url（如 /indicators/{id}、/announcements/{id}）
+  // 同样可路由，此前被审批类前置条件挡住，详情抽屉里没有跳转入口（死胡同）
+  return Boolean(message && resolveMessageRouteTarget(message))
 }
 
 function resolveMessageAction(

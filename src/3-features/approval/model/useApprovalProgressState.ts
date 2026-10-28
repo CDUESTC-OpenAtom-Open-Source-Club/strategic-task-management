@@ -1170,9 +1170,9 @@ export function useApprovalProgressState(
       return []
     }
 
-    if (
-      !(isDistributionFlow(currentDetailFlowCode.value) || props.approvalType === 'distribution')
-    ) {
+    if (!(
+      isDistributionFlow(currentDetailFlowCode.value) || props.approvalType === 'distribution'
+    )) {
       return []
     }
 
@@ -3111,202 +3111,6 @@ export function useApprovalProgressState(
     }
   }
 
-  /**
-   * 本次审批通过时选定的鉴定进度等级（P1）：AHEAD/NORMAL/DELAYED；空=不评定。
-   *
-   * @deprecated 2026-10-24 用户定案：整体鉴定废弃，改用 planIndicatorAppraisalLevels 逐指标评定。
-   */
-  const planAppraisalLevel = ref<string>('')
-
-  // ------------------------------------------------------------------
-  // 2026-10-24 用户定案（指标级鉴定）：
-  // - 鉴定等级按指标逐条评定，入口在审批详情弹窗的指标卡片上；
-  // - 只有流程定义里的「末级审批节点」（上级部门鉴定环节）出现评定 UI，
-  //   学院/部门内部环节只通过、驳回；
-  // - 通过时把选定的 逐指标 随 decideTask 提交，后端只在实例到达终态时投影。
-  // ------------------------------------------------------------------
-  const planIndicatorAppraisalLevels = ref<Record<string, string>>({})
-
-  function setPlanIndicatorAppraisalLevel(
-    reportId: number | string | null | undefined,
-    indicatorId: number | string | null | undefined,
-    level: string
-  ) {
-    const rid = Number(reportId)
-    const iid = Number(indicatorId)
-    if (!Number.isFinite(rid) || !Number.isFinite(iid)) {
-      return
-    }
-    const key = `${rid}:${iid}`
-    if (level) {
-      planIndicatorAppraisalLevels.value[key] = level
-    } else {
-      delete planIndicatorAppraisalLevels.value[key]
-    }
-  }
-
-  function getPlanIndicatorAppraisalLevel(
-    reportId: number | string | null | undefined,
-    indicatorId: number | string | null | undefined
-  ): string {
-    const rid = Number(reportId)
-    const iid = Number(indicatorId)
-    if (!Number.isFinite(rid) || !Number.isFinite(iid)) {
-      return ''
-    }
-    return planIndicatorAppraisalLevels.value[`${rid}:${iid}`] || ''
-  }
-
-  function collectPlanIndicatorAppraisalLevels(
-    reportId: number | string | null | undefined
-  ): Record<number, string> {
-    const rid = Number(reportId)
-    if (!Number.isFinite(rid)) {
-      return {}
-    }
-    const prefix = `${rid}:`
-    const result: Record<number, string> = {}
-    for (const [key, level] of Object.entries(planIndicatorAppraisalLevels.value)) {
-      if (!key.startsWith(prefix) || !level) {
-        continue
-      }
-      const indicatorId = Number(key.slice(prefix.length))
-      if (Number.isFinite(indicatorId) && indicatorId > 0) {
-        result[indicatorId] = level
-      }
-    }
-    return result
-  }
-
-  /** 审批提交成功后清空本单的逐指标选择，避免残留影响下一单 */
-  function clearPlanIndicatorAppraisalLevels() {
-    planIndicatorAppraisalLevels.value = {}
-  }
-
-  /** 上报链各流程「末级审批节点」的 step_def_id 缓存（flowCode → defId/null） */
-  const appraisalStepDefIdByFlow = ref<Record<string, number | null>>({})
-
-  async function ensureAppraisalStepDefId(flowCodeRaw?: string | null): Promise<number | null> {
-    const flowCode = String(flowCodeRaw || '').trim()
-    if (!flowCode) {
-      return null
-    }
-    const cached = appraisalStepDefIdByFlow.value[flowCode]
-    if (cached !== undefined) {
-      return cached
-    }
-    let defId: number | null = null
-    try {
-      const { getWorkflowDefinitionPreviewByCode } = await import('@/features/workflow/api/queries')
-      const response = await getWorkflowDefinitionPreviewByCode(flowCode)
-      const steps = Array.isArray(response.data?.steps) ? response.data.steps : []
-      const approvalSteps = steps
-        .filter(
-          step =>
-            String(step.stepType || 'APPROVAL')
-              .trim()
-              .toUpperCase() === 'APPROVAL'
-        )
-        .sort((left, right) => (left.stepOrder ?? 0) - (right.stepOrder ?? 0))
-      const lastApproval = approvalSteps[approvalSteps.length - 1]
-      defId = Number.isFinite(lastApproval?.stepDefId) ? Number(lastApproval?.stepDefId) : null
-    } catch (error) {
-      logger.warn('[ApprovalState] 加载流程定义判定鉴定节点失败:', { flowCode, error })
-      defId = null
-    }
-    appraisalStepDefIdByFlow.value[flowCode] = defId
-    return defId
-  }
-
-  /** 从待办条目取当前 PENDING 节点的 step_def_id（my-tasks 的 taskKey 形如 step_12） */
-  function pendingStepDefIdOfItem(item: Record<string, any>): number | null {
-    const pendingTask = Array.isArray(item?.workflowDetail?.tasks)
-      ? (item.workflowDetail.tasks as Array<Record<string, any>>).find(
-          task => String(task?.status || '').toUpperCase() === 'PENDING'
-        )
-      : null
-    const rawKey = String(pendingTask?.taskKey || item?.taskKey || item?.currentTaskKey || '')
-    const match = rawKey.match(/^step_(\d+)$/)
-    return match ? Number(match[1]) : null
-  }
-
-  /** 实例 → 是否鉴定节点 的判定缓存（模板同步读取，后台回填） */
-  const appraisalInstanceFlags = ref<Record<number, boolean>>({})
-  /** 详情弹窗当前是否处于「上级部门鉴定」模式（点击审批通过时显式置位，最可靠） */
-  const appraisalDialogActive = ref(false)
-  /**
-   * 鉴定弹窗打开时快照的实例 ID。不复用全局 selectedHistoryInstanceId——
-   * 弹窗打开触发的审批状态刷新事件会异步清空它（线上实测踩坑：
-   * 「确认通过」时 ID 已被 handleApprovalStateRefresh 置空导致守卫拦下）。
-   */
-  const appraisalDialogInstanceId = ref<number | string | null>(null)
-
-  /**
-   * 权威判定：按实例 ID 直查实例详情，以实例自身 flowCode + PENDING 步骤
-   * step_def_id 对照流程定义末级审批节点。待办条目的 flowCode/taskKey 在
-   * 不同入口（my-tasks/部门看板）装配不一，不能作为唯一依据（线上实测踩坑）。
-   */
-  async function resolveIsAppraisalApprovalItem(item: Record<string, any>): Promise<boolean> {
-    const instanceId = Number(item?.instanceId)
-    if (!Number.isFinite(instanceId) || instanceId <= 0) {
-      return false
-    }
-    let flowCode = String(item?.flowCode || '')
-      .trim()
-      .toUpperCase()
-    let pendingDefId = pendingStepDefIdOfItem(item)
-    if (!flowCode.startsWith('PLAN_APPROVAL') || pendingDefId === null) {
-      try {
-        const { getWorkflowInstanceDetail } = await import('@/features/workflow/api/queries')
-        const response = await getWorkflowInstanceDetail(String(instanceId))
-        if (response.success && response.data) {
-          flowCode = String(response.data.flowCode || '')
-            .trim()
-            .toUpperCase()
-          const pendingTask = Array.isArray(response.data.tasks)
-            ? response.data.tasks.find(
-                task => String(task?.status || '').toUpperCase() === 'PENDING'
-              )
-            : null
-          const match = String(pendingTask?.taskKey || '').match(/^step_(\d+)$/)
-          pendingDefId = match ? Number(match[1]) : null
-        }
-      } catch (error) {
-        logger.warn('[ApprovalState] 判定鉴定节点取实例详情失败:', { instanceId, error })
-      }
-    }
-    let result = false
-    if (flowCode.startsWith('PLAN_APPROVAL') && pendingDefId !== null) {
-      const defId = await ensureAppraisalStepDefId(flowCode)
-      result = defId !== null && pendingDefId === defId
-    }
-    appraisalInstanceFlags.value[instanceId] = result
-    return result
-  }
-
-  /** 按实例 ID 直读鉴定节点判定缓存（弹窗 footer/选择器的同步条件） */
-  function isAppraisalInstanceId(instanceId: number | string | null | undefined): boolean {
-    const id = Number(instanceId)
-    return Number.isFinite(id) && appraisalInstanceFlags.value[id] === true
-  }
-
-  /**
-   * 该待办是否处于「上级部门鉴定」节点（上报链的末级审批节点）。
-   * 同步读缓存；未判定过则后台回填，模板随之自动刷新。
-   */
-  function isAppraisalApprovalItem(item: Record<string, any> | null | undefined): boolean {
-    const instanceId = Number(item?.instanceId)
-    if (!Number.isFinite(instanceId)) {
-      return false
-    }
-    const cached = appraisalInstanceFlags.value[instanceId]
-    if (cached !== undefined) {
-      return cached
-    }
-    void resolveIsAppraisalApprovalItem(item as Record<string, any>)
-    return false
-  }
-
   async function handleApprovePlanBatch() {
     if (!hasPlanApprovalPermission.value && !hasAnyPlanApprovalRole.value) {
       ElMessage.warning('当前角色或组织范围不匹配该审批节点，无法执行审批通过')
@@ -3345,8 +3149,7 @@ export function useApprovalProgressState(
           const response = await approvalApi.approvePlan(
             currentPlanTaskId.value,
             userId,
-            value || '审批通过',
-            planAppraisalLevel.value || undefined
+            value || '审批通过'
           )
           if (!response.success) {
             ElMessage.error(response.message || '审批失败')
@@ -3411,8 +3214,7 @@ export function useApprovalProgressState(
           const response = await approvalApi.approvePlan(
             instance.instanceId,
             userId,
-            value || '审批通过',
-            planAppraisalLevel.value || undefined
+            value || '审批通过'
           )
           if (!response.success) {
             ElMessage.error(response.message || '审批失败')
@@ -3814,18 +3616,6 @@ export function useApprovalProgressState(
     hasDisplayableApprovalContent,
     hasPlanApprovalPermission,
     hasAnyPlanApprovalRole,
-    planAppraisalLevel,
-    // 2026-10-24 指标级鉴定
-    planIndicatorAppraisalLevels,
-    setPlanIndicatorAppraisalLevel,
-    getPlanIndicatorAppraisalLevel,
-    collectPlanIndicatorAppraisalLevels,
-    clearPlanIndicatorAppraisalLevels,
-    isAppraisalApprovalItem,
-    isAppraisalInstanceId,
-    resolveIsAppraisalApprovalItem,
-    appraisalDialogActive,
-    appraisalDialogInstanceId,
     hasRelatedPlanReportActiveWorkflow,
     hasPlanWorkflowData,
     hasWorkflowTabContent,

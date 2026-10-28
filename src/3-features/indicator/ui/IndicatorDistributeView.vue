@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useLatestIndicatorFill } from '@/features/indicator/model/useLatestIndicatorFill'
 import {
   Plus,
@@ -12,7 +12,7 @@ import {
   Download,
   Upload
 } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import type { StrategicIndicator } from '@/shared/types'
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import { truncateText } from '@/shared/lib/utils/formatters'
@@ -26,6 +26,7 @@ import {
   type ExcelExportSheet,
   type ExcelRowTone
 } from '@/shared/lib/export/excel'
+import { getProgressLevelTagStyle } from '@/shared/lib/constants/progressLevel'
 import {
   buildAttachmentRelativeDir,
   collectAttachmentGroups,
@@ -42,6 +43,10 @@ import { DistributionApprovalProgressDrawer } from '@/features/approval'
 import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
 import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
+import {
+  useIndicatorAppraisal,
+  type IndicatorAppraisalLevel
+} from '@/features/indicator/model/useIndicatorAppraisal'
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import {
   useIndicatorDistributeView,
@@ -283,6 +288,28 @@ const { latestFillNote, latestFillAttachments } = useLatestIndicatorFill(
     )?.child as any
 )
 
+// 2026-10-28：审批链行内鉴定——只有当前审批节点负责人可改（后端 canAppraise 判定）
+const {
+  load: loadIndicatorAppraisalContexts,
+  canAppraise: canAppraiseIndicator,
+  getLevel: getIndicatorAppraisalLevel,
+  getLockHint: getIndicatorAppraisalLockHint,
+  save: saveIndicatorAppraisalLevel
+} = useIndicatorAppraisal()
+
+watch(
+  () =>
+    (collegeTableData?.value ?? [])
+      .map(item => (item.type === 'child' ? String(item.child?.id ?? '') : ''))
+      .join(','),
+  () => {
+    void loadIndicatorAppraisalContexts(
+      (collegeTableData?.value ?? []).map(item => (item.type === 'child' ? item.child?.id : null))
+    )
+  },
+  { immediate: true }
+)
+
 type DistributionExportChild = Partial<StrategicIndicator> & {
   id?: string | number
   name?: string
@@ -309,6 +336,52 @@ const manualAlertOptions: Array<{
   { label: '正常', value: 'NORMAL', type: 'success' },
   { label: '延期', value: 'DELAYED', type: 'warning' }
 ]
+
+/**
+ * 2026-10-28：行内调整鉴定等级。
+ * 只有当前审批节点负责人能看到下拉；确认后写报告快照，后端同步 Alert。
+ */
+const handleAppraisalChange = async (
+  child: DistributionExportChild | StrategicIndicator | null | undefined,
+  value: ManualAlertSelectValue
+) => {
+  if (!child?.id) {
+    return
+  }
+  const level: IndicatorAppraisalLevel = value === '' ? null : (value as IndicatorAppraisalLevel)
+  const previous = getIndicatorAppraisalLevel(
+    child.id,
+    (child as { manualAlertSeverity?: ManualAlertSeverity }).manualAlertSeverity ?? null
+  )
+  if (previous === level) {
+    return
+  }
+
+  const label = getChildManualAlertLabel(level)
+  try {
+    await ElMessageBox.confirm(
+      `确认将「${child.name || '该指标'}」的鉴定进度等级调整为「${label}」？`,
+      '调整鉴定进度等级',
+      {
+        confirmButtonText: '确认调整',
+        cancelButtonText: '取消',
+        type: level ? 'warning' : 'info'
+      }
+    )
+    await saveIndicatorAppraisalLevel(child.id, level)
+    strategicStore.patchIndicator(String(child.id), { manualAlertSeverity: level })
+    ElMessage.success('鉴定进度等级已调整')
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(error instanceof Error ? error.message : '调整鉴定进度等级失败')
+    }
+  }
+}
+
+/** 锁定状态点击只提示一次（不再用悬停提示，避免两套文案重复） */
+const handleAppraisalTagClick = (indicatorId: string | number | null | undefined) => {
+  ElMessage.info(getIndicatorAppraisalLockHint(indicatorId) || '上报期间才能解锁鉴定进度等级')
+}
 
 interface DistributionExportRow {
   exportCollege: string
@@ -724,6 +797,7 @@ const distributionImportEnabled = true
 const distributionImportDisabledReason = '导入功能暂不启用'
 
 // 2026-10-24 用户定案：详情抽屉补「鉴定进度等级」展示（只读三档，与战略任务页口径一致）
+// 2026-10-28：未评定空值统一显示「—」（与本页其他空值单元格同风格），已评定保留彩色 tag
 const _getManualAlertLabel = (severity?: string | null): string => {
   const normalized = String(severity || '')
     .trim()
@@ -731,7 +805,7 @@ const _getManualAlertLabel = (severity?: string | null): string => {
   if (normalized === 'AHEAD') return '超前完成'
   if (normalized === 'NORMAL') return '正常'
   if (normalized === 'DELAYED' || normalized === 'WARNING') return '延期'
-  return '未评定'
+  return '—'
 }
 
 const _getManualAlertTagType = (severity?: string | null): 'success' | 'info' | 'warning' => {
@@ -1175,55 +1249,86 @@ const handleDistributionImportCommitted = async () => {
                     </template>
                     <template v-else>
                       <div class="manual-alert-cell">
-                        <template v-if="canEditChildManualAlert">
-                          <el-tooltip
-                            :disabled="childManualAlertEditable"
-                            :content="childManualAlertLockHint"
-                            placement="top"
-                          >
-                            <div
-                              class="manual-alert-select-wrapper"
-                              :class="{
-                                'manual-alert-select-wrapper--locked': !childManualAlertEditable
-                              }"
-                            >
-                              <el-select
-                                :model-value="getChildManualAlertSeverity(row.child)"
-                                size="small"
-                                class="manual-alert-select"
-                                :disabled="
-                                  !childManualAlertEditable ||
-                                  savingChildManualAlertId === String(row.child?.id)
-                                "
-                                :loading="savingChildManualAlertId === String(row.child?.id)"
-                                @change="
-                                  value =>
-                                    handleChildManualAlertChange(
-                                      row.child,
-                                      value as ManualAlertSelectValue
-                                    )
-                                "
-                              >
-                                <el-option
-                                  v-for="option in manualAlertOptions"
-                                  :key="option.value || 'NONE'"
-                                  :label="option.label"
-                                  :value="option.value"
-                                />
-                              </el-select>
-                            </div>
-                          </el-tooltip>
-                        </template>
-                        <template v-else>
+                        <el-dropdown
+                          v-if="canAppraiseIndicator(row.child?.id)"
+                          trigger="click"
+                          @command="
+                            value =>
+                              handleAppraisalChange(row.child, value as ManualAlertSelectValue)
+                          "
+                        >
                           <el-tag
                             :type="
-                              getChildManualAlertTagType(getChildManualAlertSeverity(row.child))
+                              getChildManualAlertTagType(
+                                getIndicatorAppraisalLevel(
+                                  row.child?.id,
+                                  getChildManualAlertSeverity(row.child)
+                                )
+                              )
+                            "
+                            :style="
+                              getProgressLevelTagStyle(
+                                getIndicatorAppraisalLevel(
+                                  row.child?.id,
+                                  getChildManualAlertSeverity(row.child)
+                                )
+                              )
                             "
                             size="small"
+                            class="manual-alert-tag--clickable"
                           >
-                            {{ getChildManualAlertLabel(getChildManualAlertSeverity(row.child)) }}
+                            {{
+                              getChildManualAlertLabel(
+                                getIndicatorAppraisalLevel(
+                                  row.child?.id,
+                                  getChildManualAlertSeverity(row.child)
+                                )
+                              )
+                            }}
                           </el-tag>
-                        </template>
+                          <template #dropdown>
+                            <el-dropdown-menu>
+                              <el-dropdown-item
+                                v-for="option in manualAlertOptions"
+                                :key="option.value || 'NONE'"
+                                :command="option.value"
+                              >
+                                {{ option.label }}
+                              </el-dropdown-item>
+                            </el-dropdown-menu>
+                          </template>
+                        </el-dropdown>
+                        <el-tag
+                          v-else
+                          :type="
+                            getChildManualAlertTagType(
+                              getIndicatorAppraisalLevel(
+                                row.child?.id,
+                                getChildManualAlertSeverity(row.child)
+                              )
+                            )
+                          "
+                          :style="
+                            getProgressLevelTagStyle(
+                              getIndicatorAppraisalLevel(
+                                row.child?.id,
+                                getChildManualAlertSeverity(row.child)
+                              )
+                            )
+                          "
+                          size="small"
+                          class="manual-alert-tag--locked"
+                          @click="handleAppraisalTagClick(row.child?.id)"
+                        >
+                          {{
+                            getChildManualAlertLabel(
+                              getIndicatorAppraisalLevel(
+                                row.child?.id,
+                                getChildManualAlertSeverity(row.child)
+                              )
+                            )
+                          }}
+                        </el-tag>
                       </div>
                     </template>
                   </template>
@@ -1583,12 +1688,16 @@ const handleDistributionImportCommitted = async () => {
             <span v-else style="color: #909399">—</span>
           </el-descriptions-item>
           <el-descriptions-item label="鉴定进度等级">
+            <!-- 2026-10-28：未评定空值统一「—」（与其他空值单元格同风格） -->
             <el-tag
+              v-if="(currentDetailIndicator as any).manualAlertSeverity"
               :type="_getManualAlertTagType((currentDetailIndicator as any).manualAlertSeverity)"
+              :style="getProgressLevelTagStyle((currentDetailIndicator as any).manualAlertSeverity)"
               size="small"
             >
               {{ _getManualAlertLabel((currentDetailIndicator as any).manualAlertSeverity) }}
             </el-tag>
+            <span v-else style="color: #909399">—</span>
           </el-descriptions-item>
           <el-descriptions-item label="责任部门">
             {{ currentDetailIndicator.responsibleDept || '未分配' }}
@@ -1881,5 +1990,15 @@ const handleDistributionImportCommitted = async () => {
 
 .manual-alert-select-wrapper--locked {
   cursor: not-allowed;
+}
+
+/* 2026-10-28：可点击的鉴定标签——点击才解锁下拉，悬停只显示提示 */
+.manual-alert-tag--clickable {
+  cursor: pointer;
+}
+
+/* 锁定状态：点击弹出一次提示，不用悬停提示 */
+.manual-alert-tag--locked {
+  cursor: help;
 }
 </style>
