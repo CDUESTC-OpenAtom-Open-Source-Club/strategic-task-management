@@ -25,15 +25,26 @@ import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
 import type { StrategicIndicator } from '@/shared/types'
 import {
-  buildAttachmentCell,
+  buildAttachmentNameCell,
   buildExportFileName,
   exportRowsToExcel,
-  exportSheetsToExcel,
+  normalizeExportAttachments,
   type ExcelExportColumn,
   type ExcelExportSheet,
   type ExcelRowTone
 } from '@/shared/lib/export/excel'
-import { collectAttachmentRefs, exportDepartmentsAsZip } from '@/shared/lib/export/zipExport'
+import {
+  buildAttachmentRelativeDir,
+  collectAttachmentGroups,
+  countExportAttachments,
+  exportDepartmentsAsZip
+} from '@/shared/lib/export/zipExport'
+import {
+  getAttachmentSummary,
+  loadIndicatorAttachmentSummaryMap,
+  resolveVisibleAttachments,
+  type IndicatorAttachmentSummaryMap
+} from '@/features/indicator/model/indicatorAttachmentSummary'
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import {
   useStrategicTaskView,
@@ -552,8 +563,23 @@ const strategicExportDepartmentsIndeterminate = computed(
 // 导出与界面同构：同一战略任务的多行在「战略任务」列合并为一个单元格。
 // 2026-10-18 用户定案（晚间修订）：导出不含「内部ID」——系统内部主键对导出读者无意义，
 // 行对齐由「序号」承担；回导匹配走「任务名+指标名」名称匹配。
+type StrategicExportAttachmentSource = StrategicExportRow & {
+  pendingAttachments?: unknown
+  pendingAttachmentDetails?: unknown[]
+}
+
+const resolveStrategicExportAttachmentItems = (row: StrategicExportRow) => {
+  const source = row as StrategicExportAttachmentSource
+  return normalizeExportAttachments(
+    source.pendingAttachmentDetails?.length
+      ? source.pendingAttachmentDetails
+      : source.pendingAttachments
+  )
+}
+
 const buildStrategicExportColumns = (
-  rows: StrategicExportRow[]
+  rows: StrategicExportRow[],
+  summaryMap: IndicatorAttachmentSummaryMap | null
 ): ExcelExportColumn<StrategicExportRow>[] => {
   // 计算「战略任务」连续分组的合并行数：仅组首行携带 rowSpan，其余行为被合并的从属行
   const taskSpanByIndex = new Map<number, number>()
@@ -613,16 +639,29 @@ const buildStrategicExportColumns = (
       align: 'center',
       getValue: row => getManualAlertLabel(row.manualAlertSeverity)
     },
+    // 2026-10-28：附件本体打进 zip 后，Excel 只保留「附件目录（相对路径）」+「文件名」，
+    // 避免单元格里塞长 URL；目录名按序号 + 截断指标名生成（见 export/fileName.ts）。
+    // 附件来源由后端按当前登录人可见范围返回，页面看不到的填报不会进导出。
+    {
+      header: '附件目录（包内相对路径）',
+      width: 30,
+      getValue: (row, index) => {
+        const attachments = resolveVisibleAttachments(summaryMap, row.id, () =>
+          resolveStrategicExportAttachmentItems(row)
+        )
+        return attachments.length > 0
+          ? buildAttachmentRelativeDir({ seq: index + 1, indicatorName: row.name || '指标' })
+          : '-'
+      }
+    },
     {
       header: '上报资料（导入忽略）',
       width: 42,
       getValue: row =>
-        buildAttachmentCell(
-          (row as StrategicIndicator & { pendingAttachmentDetails?: unknown[] })
-            .pendingAttachmentDetails?.length
-            ? (row as StrategicIndicator & { pendingAttachmentDetails?: unknown[] })
-                .pendingAttachmentDetails
-            : row.pendingAttachments
+        buildAttachmentNameCell(
+          resolveVisibleAttachments(summaryMap, row.id, () =>
+            resolveStrategicExportAttachmentItems(row)
+          )
         )
     }
   ]
@@ -767,15 +806,35 @@ const getStrategicExportRowTextColor = (row: StrategicExportRow): string | undef
 
 const buildStrategicExportSheet = (
   department: string,
-  rows = getStrategicExportRowsByDepartment(department)
+  rows = getStrategicExportRowsByDepartment(department),
+  summaryMap: IndicatorAttachmentSummaryMap | null = null
 ): ExcelExportSheet<StrategicExportRow> => ({
   sheetName: department || '当前部门',
   rows,
-  columns: buildStrategicExportColumns(rows),
+  columns: buildStrategicExportColumns(rows, summaryMap),
   emptyMessage: '当前部门暂无可导出的战略任务指标',
   getRowTone: getStrategicExportRowTone,
   getRowTextColor: getStrategicExportRowTextColor
 })
+
+const buildStrategicExportAttachmentGroups = (
+  rows: StrategicExportRow[],
+  summaryMap: IndicatorAttachmentSummaryMap | null
+) =>
+  collectAttachmentGroups(
+    rows.map((row, index) => {
+      const summary = getAttachmentSummary(summaryMap, row.id)
+      return {
+        seq: index + 1,
+        indicatorName: row.name || '指标',
+        round: summary?.round,
+        fillDate: summary?.fillDate,
+        attachments: resolveVisibleAttachments(summaryMap, row.id, () =>
+          resolveStrategicExportAttachmentItems(row)
+        )
+      }
+    })
+  )
 
 const handleExportCurrentStrategicDepartment = async () => {
   const department = selectedDepartment.value
@@ -792,11 +851,35 @@ const handleExportCurrentStrategicDepartment = async () => {
 
   strategicExporting.value = true
   try {
-    await exportRowsToExcel(
-      buildStrategicExportSheet(department, rows),
-      buildExportFileName('战略任务指标总表', department)
+    // 2026-10-28：附件可见性由后端判定——填报人可见本人草稿，上级只可见上一轮已上报快照
+    const summaryMap = await loadIndicatorAttachmentSummaryMap(rows.map(row => row.id))
+    const attachmentGroups = buildStrategicExportAttachmentGroups(rows, summaryMap)
+
+    if (attachmentGroups.length === 0) {
+      await exportRowsToExcel(
+        buildStrategicExportSheet(department, rows, summaryMap),
+        buildExportFileName('战略任务指标总表', department)
+      )
+      ElMessage.success('导出成功')
+      return
+    }
+
+    // 2026-10-28：单部门有附件时也走 zip——Excel 与附件同包，避免附件只剩超链接
+    const dateText = new Date().toISOString().slice(0, 10)
+    await exportDepartmentsAsZip(
+      [
+        {
+          department,
+          sheets: [
+            buildStrategicExportSheet(department, rows, summaryMap) as ExcelExportSheet<unknown>
+          ],
+          attachmentGroups
+        }
+      ],
+      `战略任务指标总表_${department}_${dateText}.zip`,
+      { onProgress: text => ElMessage({ message: text, duration: 1200, grouping: true }) }
     )
-    ElMessage.success('导出成功')
+    ElMessage.success('导出成功：Excel 与附件已一并打包')
   } catch {
     ElMessage.error('导出失败，请稍后重试')
   } finally {
@@ -825,17 +908,28 @@ const handleExportSelectedStrategicDepartments = async () => {
       strategicStore.loadIndicatorsByYear(timeContext.currentYear, { force: true })
     ])
 
-    const payloads = await Promise.all(
+    const departmentRows = await Promise.all(
       departments.map(async department => {
         const taskIdSet = await loadStrategicExportTaskIdSetByDepartment(department)
-        const rows = getStrategicExportRowsByDepartment(department, taskIdSet)
         return {
           department,
-          sheets: [buildStrategicExportSheet(department, rows) as ExcelExportSheet<unknown>],
-          attachments: collectAttachmentRefs(rows)
+          rows: getStrategicExportRowsByDepartment(department, taskIdSet)
         }
       })
     )
+
+    // 2026-10-28：一次批量查询所有部门的可见附件（服务端按当前登录人过滤草稿）
+    const summaryMap = await loadIndicatorAttachmentSummaryMap(
+      departmentRows.flatMap(item => item.rows.map(row => row.id))
+    )
+
+    const payloads = departmentRows.map(({ department, rows }) => ({
+      department,
+      sheets: [
+        buildStrategicExportSheet(department, rows, summaryMap) as ExcelExportSheet<unknown>
+      ],
+      attachmentGroups: buildStrategicExportAttachmentGroups(rows, summaryMap)
+    }))
 
     const dateText = new Date().toISOString().slice(0, 10)
     await exportDepartmentsAsZip(
@@ -844,11 +938,17 @@ const handleExportSelectedStrategicDepartments = async () => {
       { onProgress: text => ElMessage({ message: text, duration: 1200, grouping: true }) }
     )
     strategicBatchExportDialogVisible.value = false
-    ElMessage.success(
-      departments.length === 1
-        ? '导出成功（单部门已直接输出 xlsx）'
-        : `导出成功：${departments.length} 个部门各一个 Excel，附件已一并打包`
-    )
+
+    const attachmentCount = countExportAttachments(payloads)
+    if (attachmentCount > 0) {
+      ElMessage.success(
+        `导出成功：${departments.length} 个部门各一个 Excel，${attachmentCount} 个附件已一并打包`
+      )
+    } else if (departments.length === 1) {
+      ElMessage.success('导出成功（单部门无附件，已直接输出 xlsx）')
+    } else {
+      ElMessage.success(`导出成功：${departments.length} 个部门各一个 Excel（无附件）`)
+    }
   } catch {
     ElMessage.error('导出失败，请稍后重试')
   } finally {
@@ -872,8 +972,7 @@ const currentStrategicImportCycleId = computed(() => {
   }
 
   const cycle = timeContext.cycles.find(item => Number(item.year) === timeContext.currentYear) as
-    | { cycleId?: number | string; id?: number | string }
-    | undefined
+    { cycleId?: number | string; id?: number | string } | undefined
   const numericCycleId = Number(cycle?.cycleId ?? cycle?.id)
   return Number.isFinite(numericCycleId) && numericCycleId > 0 ? numericCycleId : null
 })
@@ -2375,7 +2474,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <div class="report-history-title">上报记录（历次填报 / 含被驳回）</div>
           <!-- 2026-10-24 用户定案：点某张上报卡看该轮完整详情——弹窗内聚在
                IndicatorFillHistory 组件内，三个复用页面共同生效 -->
-          <IndicatorFillHistory v-if="currentDetailId" :indicator-id="currentDetailId" />
+          <IndicatorFillHistory
+            v-if="currentDetailId"
+            :indicator-id="currentDetailId"
+            :indicator-name="currentDetail?.name"
+          />
         </div>
       </div>
     </el-drawer>

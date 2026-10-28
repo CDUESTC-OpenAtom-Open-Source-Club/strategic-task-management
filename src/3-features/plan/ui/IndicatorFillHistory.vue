@@ -2,12 +2,27 @@
 import { computed, ref } from 'vue'
 import type { IndicatorFill } from '@/shared/types'
 import type { Attachment } from '@/shared/types'
+import { ElMessage } from 'element-plus'
 import { apiClient } from '@/shared/api/client'
 import { usePlanStore } from '@/features/plan/model/store'
 import { logger } from '@/shared/lib/utils/logger'
+import {
+  buildAttachmentNameCell,
+  buildExportFileName,
+  exportRowsToExcel,
+  type ExcelExportColumn,
+  type ExcelExportSheet
+} from '@/shared/lib/export/excel'
+import {
+  buildAttachmentRelativeDir,
+  collectAttachmentGroups,
+  exportDepartmentsAsZip
+} from '@/shared/lib/export/zipExport'
 
 const props = defineProps<{
   indicatorId: number | string
+  /** 指标名称：用于导出文件名与包内目录名（父级详情页已有，直接传入） */
+  indicatorName?: string
 }>()
 
 const emit = defineEmits<{
@@ -103,7 +118,9 @@ const resolveSelfRatingLabel = (rating?: string | null): string => {
   return SELF_RATING_LABELS[normalized] || normalized
 }
 
-const resolveSelfRatingTone = (rating?: string | null): 'ahead' | 'normal' | 'delayed' | 'unknown' => {
+const resolveSelfRatingTone = (
+  rating?: string | null
+): 'ahead' | 'normal' | 'delayed' | 'unknown' => {
   const normalized = String(rating || '')
     .trim()
     .toUpperCase()
@@ -180,11 +197,128 @@ const resolveSelfRatingText = (rating?: string | null): string => {
   return label || '未填写'
 }
 
+/**
+ * 2026-10-28 用户定案：填报记录也要能导出，且附件随包下载。
+ * 每轮填报一行（按填报日期升序，序号即轮次），附件按轮次放进
+ * `{指标}/附件/{序号}_{指标名}/R{轮次}_{填报日期}_{原文件名}`。
+ *
+ * 可见性口径：`fills.value` 就是页面渲染的那份数据——后端已按登录人过滤，
+ * 填报人可见本人草稿，上级只可见已进入审批流程的轮次。
+ */
+const exporting = ref(false)
+
+const indicatorDisplayName = computed(
+  () => props.indicatorName?.trim() || `指标${props.indicatorId}`
+)
+
+const chronologicalFills = computed(() =>
+  [...fills.value].sort(
+    (left, right) =>
+      new Date(left.fill_date || 0).getTime() - new Date(right.fill_date || 0).getTime()
+  )
+)
+
+const buildFillExportColumns = (rows: IndicatorFill[]): ExcelExportColumn<IndicatorFill>[] => [
+  { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
+  { header: '填报日期', width: 14, getValue: row => formatDate(row.fill_date) },
+  { header: '填报人', width: 14, getValue: row => row.filled_by_name || '-' },
+  { header: '审核状态', width: 10, align: 'center', getValue: row => getStatusLabel(row.status) },
+  {
+    header: '自评等级',
+    width: 12,
+    align: 'center',
+    getValue: row => resolveSelfRatingText(row.selfRating)
+  },
+  { header: '填报说明', width: 36, getValue: row => row.content || '-' },
+  { header: '审核意见', width: 28, getValue: row => row.audit_comment || '-' },
+  {
+    header: '附件目录（包内相对路径）',
+    width: 30,
+    getValue: (row, index) =>
+      row.attachments?.length
+        ? buildAttachmentRelativeDir({
+            seq: index + 1,
+            indicatorName: indicatorDisplayName.value
+          })
+        : '-'
+  },
+  { header: '上报资料', width: 36, getValue: row => buildAttachmentNameCell(row.attachments) }
+]
+
+const handleExportFills = async () => {
+  const rows = chronologicalFills.value
+  if (rows.length === 0) {
+    ElMessage.warning('暂无可导出的填报记录')
+    return
+  }
+
+  exporting.value = true
+  try {
+    const scopeName = indicatorDisplayName.value
+    const sheet: ExcelExportSheet<IndicatorFill> = {
+      sheetName: '填报记录',
+      rows,
+      columns: buildFillExportColumns(rows),
+      emptyMessage: '该指标还没有填报记录'
+    }
+
+    const attachmentGroups = collectAttachmentGroups(
+      rows.map((fill, index) => ({
+        seq: index + 1,
+        indicatorName: scopeName,
+        round: index + 1,
+        fillDate: fill.fill_date ? formatDate(fill.fill_date) : undefined,
+        attachments: fill.attachments
+      }))
+    )
+
+    if (attachmentGroups.length === 0) {
+      await exportRowsToExcel(sheet, buildExportFileName('填报记录', scopeName))
+      ElMessage.success('导出成功')
+      return
+    }
+
+    const dateText = new Date().toISOString().slice(0, 10)
+    await exportDepartmentsAsZip(
+      [
+        {
+          department: scopeName,
+          sheets: [sheet as ExcelExportSheet<unknown>],
+          attachmentGroups
+        }
+      ],
+      `填报记录_${scopeName}_${dateText}.zip`,
+      { onProgress: text => ElMessage({ message: text, duration: 1200, grouping: true }) }
+    )
+    ElMessage.success(`导出成功：${rows.length} 轮填报记录与附件已一并打包`)
+  } catch (error) {
+    logger.error('[IndicatorFillHistory] 导出填报记录失败:', error)
+    ElMessage.error('导出失败，请稍后重试')
+  } finally {
+    exporting.value = false
+  }
+}
+
 void loadHistory()
 </script>
 
 <template>
   <div class="indicator-fill-history">
+    <!-- 2026-10-28：只要能看到填报记录，就提供导出（含附件打包） -->
+    <div class="history-header">
+      <span class="history-title">填报记录（{{ sortedFills.length }}）</span>
+      <el-button
+        size="small"
+        type="primary"
+        plain
+        :loading="exporting"
+        :disabled="sortedFills.length === 0"
+        @click="handleExportFills"
+      >
+        导出填报记录
+      </el-button>
+    </div>
+
     <div v-if="loading" class="state-card">
       <p class="state-text">正在加载填报历史...</p>
     </div>
@@ -343,6 +477,19 @@ void loadHistory()
   flex-direction: column;
   gap: 16px;
   padding: 8px 0;
+}
+
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.history-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
 }
 
 .state-card {

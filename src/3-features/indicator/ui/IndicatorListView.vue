@@ -20,12 +20,24 @@ import {
 import { ElMessage } from 'element-plus'
 import type { StrategicIndicator } from '@/shared/types'
 import {
-  buildAttachmentCell,
+  buildAttachmentNameCell,
   buildExportFileName,
   exportRowsToExcel,
   type ExcelExportColumn,
+  type ExcelExportSheet,
   type ExcelRowTone
 } from '@/shared/lib/export/excel'
+import {
+  buildAttachmentRelativeDir,
+  collectAttachmentGroups,
+  exportDepartmentsAsZip
+} from '@/shared/lib/export/zipExport'
+import {
+  getAttachmentSummary,
+  loadIndicatorAttachmentSummaryMap,
+  resolveVisibleAttachments,
+  type IndicatorAttachmentSummaryMap
+} from '@/features/indicator/model/indicatorAttachmentSummary'
 import { ApprovalProgressDrawer } from '@/features/approval'
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import { truncateText } from '@/shared/lib/utils/formatters'
@@ -299,7 +311,8 @@ const indicatorListExporting = ref(false)
 
 // 2026-10-14 用户定案：与战略任务管理/下发界面同构——同一战略任务多行在「战略任务」列合并；移除「内部ID」列
 const buildIndicatorListExportColumns = (
-  rows: StrategicIndicator[]
+  rows: StrategicIndicator[],
+  summaryMap: IndicatorAttachmentSummaryMap | null
 ): ExcelExportColumn<StrategicIndicator>[] => {
   const taskSpanByIndex = new Map<number, number>()
   rows.forEach((row, index) => {
@@ -348,10 +361,27 @@ const buildIndicatorListExportColumns = (
       getValue: row => getManualAlertLabel(row.manualAlertSeverity)
     },
     { header: '填报说明', width: 28, getValue: row => row.pendingRemark || '-' },
+    // 2026-10-28：附件本体打进 zip 后，Excel 只保留「附件目录（相对路径）」+「文件名」；
+    // 附件来源由后端按当前登录人可见范围返回，页面看不到的填报不会进导出。
+    {
+      header: '附件目录（包内相对路径）',
+      width: 30,
+      getValue: (row, index) => {
+        const attachments = resolveVisibleAttachments(summaryMap, row.id, () =>
+          resolveIndicatorAttachmentItems(row)
+        )
+        return attachments.length > 0
+          ? buildAttachmentRelativeDir({ seq: index + 1, indicatorName: row.name || '指标' })
+          : '-'
+      }
+    },
     {
       header: '上报资料',
       width: 42,
-      getValue: row => buildAttachmentCell(resolveIndicatorAttachmentItems(row))
+      getValue: row =>
+        buildAttachmentNameCell(
+          resolveVisibleAttachments(summaryMap, row.id, () => resolveIndicatorAttachmentItems(row))
+        )
     }
   ]
 }
@@ -414,16 +444,51 @@ const handleExportIndicatorList = async () => {
   indicatorListExporting.value = true
   try {
     const scopeName = effectiveViewingDept.value || authStore.userDepartment || '当前部门'
-    await exportRowsToExcel(
-      {
-        sheetName: scopeName,
-        rows,
-        columns: buildIndicatorListExportColumns(rows),
-        getRowTone: getIndicatorListExportRowTone
-      },
-      buildExportFileName('指标填报与管理', scopeName)
+    // 2026-10-28：附件可见性由后端判定——填报人可见本人草稿，上级只可见上一轮已上报快照
+    const summaryMap = await loadIndicatorAttachmentSummaryMap(rows.map(row => row.id))
+
+    const sheet: ExcelExportSheet<StrategicIndicator> = {
+      sheetName: scopeName,
+      rows,
+      columns: buildIndicatorListExportColumns(rows, summaryMap),
+      getRowTone: getIndicatorListExportRowTone
+    }
+
+    const attachmentGroups = collectAttachmentGroups(
+      rows.map((row, index) => {
+        const summary = getAttachmentSummary(summaryMap, row.id)
+        return {
+          seq: index + 1,
+          indicatorName: row.name || '指标',
+          round: summary?.round,
+          fillDate: summary?.fillDate,
+          attachments: resolveVisibleAttachments(summaryMap, row.id, () =>
+            resolveIndicatorAttachmentItems(row)
+          )
+        }
+      })
     )
-    ElMessage.success('导出成功')
+
+    if (attachmentGroups.length === 0) {
+      await exportRowsToExcel(sheet, buildExportFileName('指标填报与管理', scopeName))
+      ElMessage.success('导出成功')
+      return
+    }
+
+    // 2026-10-28：有附件时改为 zip——Excel 与附件同包，Excel 里用「附件目录」列定位
+    const dateText = new Date().toISOString().slice(0, 10)
+    await exportDepartmentsAsZip(
+      [
+        {
+          department: scopeName,
+          sheets: [sheet as ExcelExportSheet<unknown>],
+          attachmentGroups
+        }
+      ],
+      `指标填报与管理_${scopeName}_${dateText}.zip`,
+      { onProgress: text => ElMessage({ message: text, duration: 1200, grouping: true }) }
+    )
+    ElMessage.success('导出成功：Excel 与附件已一并打包')
   } catch {
     ElMessage.error('导出失败，请稍后重试')
   } finally {
@@ -1009,6 +1074,7 @@ const handleExportIndicatorList = async () => {
           <IndicatorFillHistory
             v-if="reportHistoryOpen?.includes('history') && currentDetailId"
             :indicator-id="currentDetailId"
+            :indicator-name="currentDetail?.name"
           />
         </el-collapse-item>
       </el-collapse>
