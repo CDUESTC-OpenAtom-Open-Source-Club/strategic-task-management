@@ -1551,6 +1551,21 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     return isBatchDistributing.value || Boolean(withdrawButtonDisabledReason.value)
   })
 
+  // 2026-10-28：导入时留空的权重会落「待分配」标记 0.01。
+  // 后端校验对存在待分配项的计划一律拒绝下发，前端按钮禁用口径必须一致。
+  // 写成函数而非 computed：它在下方 computed 的求值路径上被调用，
+  // 而底层过滤函数定义在文件更靠后位置，函数体在调用时才求值，可避免 TDZ。
+  const countCollegePendingWeights = (college: string | null): number => {
+    if (!college) {
+      return 0
+    }
+
+    return getMyCollegeIndicators(college).filter(indicator => {
+      const weight = Number(indicator.weight)
+      return !Number.isFinite(weight) || weight <= 0.01
+    }).length
+  }
+
   const distributionSubmitButtonDisabledReason = computed(() => {
     if (timeContext.isReadOnly) {
       return '历史快照为只读状态'
@@ -1562,6 +1577,10 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
     if (!canCurrentUserSubmitCurrentDepartmentDistribution.value) {
       return '只有当前部门组织下的填报人才可以下发'
+    }
+
+    if (countCollegePendingWeights(selectedCollege.value) > 0) {
+      return '存在未分配的权重，请先调整权重'
     }
 
     if (collegeTotalWeight.value !== 100) {
@@ -3734,6 +3753,16 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       (sum, indicator) => sum + Number(indicator.weight || 0),
       0
     )
+    // 2026-10-28：导入时留空的权重会落「待分配」标记 0.01，后端对存在待分配项的计划
+    // 一律拒绝下发，前端口径必须一致。
+    const childPendingCount = countCollegePendingWeights(college)
+
+    if (childPendingCount > 0) {
+      ElMessage.warning(
+        `当前有 ${childPendingCount} 项权重未分配（导入时留空），请先调整权重后再下发`
+      )
+      return
+    }
 
     // 2026-10-28 口径对齐：与后端 validateFuncToCollegeIndicators 一致，
     // 取该学院全部子指标（跨基础性/发展性任务）合计；按两位小数归整避免浮点尾差。

@@ -788,7 +788,27 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     return Math.round(total * 100) / 100
   })
 
+  // 2026-10-28：导入时留空的权重会落「待分配」标记 0.01。
+  // 后端校验对存在待分配项的计划一律拒绝（否则其余项刚好 100 时会被误放行），
+  // 前端口径必须一致，否则会出现「后端放行、前端按钮禁用」或反之。
+  const departmentPendingWeightCount = computed(() => {
+    if (!selectedDepartment.value) {
+      return 0
+    }
+
+    return indicators.value.filter(indicator => {
+      const weight = Number(indicator.weight)
+      return !Number.isFinite(weight) || weight <= 0.01
+    }).length
+  })
+
   const ensurePlanCanDistribute = (): boolean => {
+    if (departmentPendingWeightCount.value > 0) {
+      ElMessage.warning(
+        `当前有 ${departmentPendingWeightCount.value} 项权重未分配（导入时留空），请先调整权重后再下发`
+      )
+      return false
+    }
     if (departmentTotalWeight.value !== 100) {
       ElMessage.warning(
         `计划内指标权重合计必须为100%（按当前部门全部指标计算），当前为${departmentTotalWeight.value}`
@@ -2290,6 +2310,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
     if (planUiPhase.value === 'draft' && !canCurrentUserSubmitCurrentPlan.value) {
       return '只有当前计划归属部门的填报人才可以发起审批'
+    }
+
+    if (planUiPhase.value === 'draft' && departmentPendingWeightCount.value > 0) {
+      return '存在未分配的权重，请先调整权重'
     }
 
     if (planUiPhase.value === 'draft' && departmentTotalWeight.value !== 100) {
