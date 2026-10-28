@@ -1,5 +1,5 @@
-import { computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { Bell } from '@element-plus/icons-vue'
 import type { Message } from '@/shared/types'
 import { useApprovalCenter } from '@/features/approval/lib/useApprovalCenter'
@@ -15,9 +15,49 @@ function getMessageMetadataValue(message: Message, key: string): string {
 
 export function useNotificationCenter() {
   const router = useRouter()
+  const route = useRoute()
   const messageStore = useMessageStore()
 
-  const unreadCount = computed(() => messageStore.totalCount)
+  // Issue #89 P2：铃铛角标改为与已读状态联动，避免「标为已读后角标恒定不减」。
+  // 此前直接取 summary.totalCount：一旦本地已读状态与摘要口径出现短暂不一致
+  // （标为已读回源窗口、旧构建的摘要缓存等），角标就会卡在旧值。
+  // 消息列表已加载时以本地未读派生值（messageStore.unreadCount.all）为准——
+  // 它直接来自每条消息的 isRead/readState，标记已读后立即响应；
+  // 列表尚未加载完成时才回退到服务端摘要兜底。
+  const unreadCount = computed(() => {
+    if (messageStore.messages.length > 0) {
+      return messageStore.unreadCount.all
+    }
+    return messageStore.totalCount
+  })
+
+  // Issue #89 P4：铃铛下拉改为受控开关。
+  // 此前「查看全部消息」/消息卡片点击只会 router.push('/messages')：
+  // 已停留在 /messages 时是重复导航（无任何视觉变化）且下拉不收起，
+  // 表现为「按钮无响应」。现在点击后先收起下拉，再按需跳转。
+  //
+  // 注意：实测（element-plus 2.13.5）指针停留在弹层内容里时，
+  // 仅靠 v-model:visible=false 无法收起 hover 触发的弹层（内部触发态会回写 true），
+  // 因此额外用 popper-class 的 --hidden 强制隐藏；重新 hover 时可见性恢复，类自动移除。
+  const notificationPreviewVisible = ref(false)
+
+  const closeNotificationPreview = () => {
+    notificationPreviewVisible.value = false
+  }
+
+  const notificationPreviewPopperClass = computed(() =>
+    notificationPreviewVisible.value
+      ? 'notification-preview-popper'
+      : 'notification-preview-popper notification-preview-popper--hidden'
+  )
+
+  const handleViewAllMessages = () => {
+    closeNotificationPreview()
+    if (route.path !== '/messages') {
+      router.push('/messages')
+    }
+  }
+
   // 2026-10-10 测试报告 N7 修复：铃铛悬浮面板改为「全部未读消息」——
   // 此前只显示待审批消息，无待审批时面板空白但角标有数，造成困扰。
   // 排序：待审批（ACTION_REQUIRED）优先置顶，其余未读按时间倒序；前端滚动查看更多。
@@ -61,6 +101,9 @@ export function useNotificationCenter() {
   const authStore = useAuthStore()
 
   const handleNotificationClick = (message?: Message) => {
+    // Issue #89 P4：无论点的是消息卡片还是铃铛本体，先收起下拉再跳转
+    closeNotificationPreview()
+
     if (approvalCenterVisible.value) {
       toggleApprovalCenter(null)
     }
@@ -75,14 +118,19 @@ export function useNotificationCenter() {
 
       if (!hasApprovalContext) {
         // 无审批上下文的纯系统/催办通知：仍进消息中心
-        router.push('/messages')
+        // （Issue #89 P4：已在 /messages 时无需重复导航，收起下拉即可）
+        if (route.path !== '/messages') {
+          router.push('/messages')
+        }
         return
       }
 
       // 2026-10-24（铃铛跳转修复）：上报审批（PLAN_REPORT）的 source/target 是
       // 「下发方向」（教务处 -> 计算机学院），上报是反方向——提交方=targetOrg。
       // departmentName 必须带提交方组织名，/distribution 深链靠它自动选中对应学院。
-      const entityTypeUpper = String(message.entityType || '').trim().toUpperCase()
+      const entityTypeUpper = String(message.entityType || '')
+        .trim()
+        .toUpperCase()
       const sourceOrgName = getMessageMetadataValue(message, 'sourceOrgName') || null
       const targetOrgName = getMessageMetadataValue(message, 'targetOrgName') || null
       const payload = {
@@ -116,7 +164,10 @@ export function useNotificationCenter() {
       return
     }
 
-    router.push('/messages')
+    // Issue #89 P4：已在 /messages 时（如直接点铃铛本体）不再重复导航
+    if (route.path !== '/messages') {
+      router.push('/messages')
+    }
   }
 
   const formatNotificationTime = (date: Date | string) => formatDateTime(date)
@@ -137,8 +188,11 @@ export function useNotificationCenter() {
     unreadPreviewMessages,
     hasUnreadPreviewMessages,
     notificationPreviewLoading,
+    notificationPreviewVisible,
+    notificationPreviewPopperClass,
     handleNotificationHover,
     handleNotificationClick,
+    handleViewAllMessages,
     formatNotificationTime,
     resolveNotificationApprovalRoute,
     Bell

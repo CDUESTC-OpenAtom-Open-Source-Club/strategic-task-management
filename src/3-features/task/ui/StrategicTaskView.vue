@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
+import { TASK_TABLE_COLUMN_WIDTH } from '@/features/task/lib/tableColumns'
 import { useLatestIndicatorFill } from '@/features/indicator/model/useLatestIndicatorFill'
 import TaskIndicatorTree from './TaskIndicatorTree.vue'
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
@@ -25,15 +27,26 @@ import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
 import type { StrategicIndicator } from '@/shared/types'
 import {
-  buildAttachmentCell,
+  buildAttachmentNameCell,
   buildExportFileName,
   exportRowsToExcel,
-  exportSheetsToExcel,
+  normalizeExportAttachments,
   type ExcelExportColumn,
   type ExcelExportSheet,
   type ExcelRowTone
 } from '@/shared/lib/export/excel'
-import { collectAttachmentRefs, exportDepartmentsAsZip } from '@/shared/lib/export/zipExport'
+import {
+  buildAttachmentRelativeDir,
+  collectAttachmentGroups,
+  countExportAttachments,
+  exportDepartmentsAsZip
+} from '@/shared/lib/export/zipExport'
+import {
+  getAttachmentSummary,
+  loadIndicatorAttachmentSummaryMap,
+  resolveVisibleAttachments,
+  type IndicatorAttachmentSummaryMap
+} from '@/features/indicator/model/indicatorAttachmentSummary'
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import {
   useStrategicTaskView,
@@ -294,6 +307,10 @@ const {
   refreshIndicatorWorkflowContext,
   refreshTaskPageAfterIndicatorMutation,
   hasMutationDraft,
+  mutationSubmitBlocked,
+  mutationSubmitBlockedReason,
+  mutationDraftCount,
+  reportMonthLabel,
   submitMutationDraft,
   cancelMutationDraft,
   registerTaskLocally,
@@ -347,6 +364,34 @@ const activeTaskTabName = ref<'functional' | 'college'>('functional')
  * 恢复显示只需把此开关改回 true。
  */
 const SHOW_CARD_VIEW_TOGGLE = false
+
+// 2026-10-28 迭代计划 M6：未提交异动草稿的丢失可感知——
+// ① 刷新/关窗：beforeunload 原生拦截；② 站内路由离开：确认框二次确认。
+const guardActive = computed(() => canEdit.value && mutationDraftCount.value > 0)
+const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+  if (!guardActive.value) {
+    return
+  }
+  event.preventDefault()
+  event.returnValue = ''
+}
+onMounted(() => window.addEventListener('beforeunload', handleBeforeUnload))
+onBeforeUnmount(() => window.removeEventListener('beforeunload', handleBeforeUnload))
+onBeforeRouteLeave(async () => {
+  if (!guardActive.value) {
+    return true
+  }
+  try {
+    await ElMessageBox.confirm(
+      `有 ${mutationDraftCount.value} 项修改尚未发起异动，离开页面将丢失。确定离开吗？`,
+      '未提交的异动草稿',
+      { confirmButtonText: '离开', cancelButtonText: '留下', type: 'warning' }
+    )
+    return true
+  } catch {
+    return false
+  }
+})
 
 /**
  * 2026-10-24 用户定案：从「上报记录」卡点开单次上报详情。
@@ -552,8 +597,23 @@ const strategicExportDepartmentsIndeterminate = computed(
 // 导出与界面同构：同一战略任务的多行在「战略任务」列合并为一个单元格。
 // 2026-10-18 用户定案（晚间修订）：导出不含「内部ID」——系统内部主键对导出读者无意义，
 // 行对齐由「序号」承担；回导匹配走「任务名+指标名」名称匹配。
+type StrategicExportAttachmentSource = StrategicExportRow & {
+  pendingAttachments?: unknown
+  pendingAttachmentDetails?: unknown[]
+}
+
+const resolveStrategicExportAttachmentItems = (row: StrategicExportRow) => {
+  const source = row as StrategicExportAttachmentSource
+  return normalizeExportAttachments(
+    source.pendingAttachmentDetails?.length
+      ? source.pendingAttachmentDetails
+      : source.pendingAttachments
+  )
+}
+
 const buildStrategicExportColumns = (
-  rows: StrategicExportRow[]
+  rows: StrategicExportRow[],
+  summaryMap: IndicatorAttachmentSummaryMap | null
 ): ExcelExportColumn<StrategicExportRow>[] => {
   // 计算「战略任务」连续分组的合并行数：仅组首行携带 rowSpan，其余行为被合并的从属行
   const taskSpanByIndex = new Map<number, number>()
@@ -613,16 +673,29 @@ const buildStrategicExportColumns = (
       align: 'center',
       getValue: row => getManualAlertLabel(row.manualAlertSeverity)
     },
+    // 2026-10-28：附件本体打进 zip 后，Excel 只保留「附件目录（相对路径）」+「文件名」，
+    // 避免单元格里塞长 URL；目录名按序号 + 截断指标名生成（见 export/fileName.ts）。
+    // 附件来源由后端按当前登录人可见范围返回，页面看不到的填报不会进导出。
+    {
+      header: '附件目录（包内相对路径）',
+      width: 30,
+      getValue: (row, index) => {
+        const attachments = resolveVisibleAttachments(summaryMap, row.id, () =>
+          resolveStrategicExportAttachmentItems(row)
+        )
+        return attachments.length > 0
+          ? buildAttachmentRelativeDir({ seq: index + 1, indicatorName: row.name || '指标' })
+          : '-'
+      }
+    },
     {
       header: '上报资料（导入忽略）',
       width: 42,
       getValue: row =>
-        buildAttachmentCell(
-          (row as StrategicIndicator & { pendingAttachmentDetails?: unknown[] })
-            .pendingAttachmentDetails?.length
-            ? (row as StrategicIndicator & { pendingAttachmentDetails?: unknown[] })
-                .pendingAttachmentDetails
-            : row.pendingAttachments
+        buildAttachmentNameCell(
+          resolveVisibleAttachments(summaryMap, row.id, () =>
+            resolveStrategicExportAttachmentItems(row)
+          )
         )
     }
   ]
@@ -767,15 +840,35 @@ const getStrategicExportRowTextColor = (row: StrategicExportRow): string | undef
 
 const buildStrategicExportSheet = (
   department: string,
-  rows = getStrategicExportRowsByDepartment(department)
+  rows = getStrategicExportRowsByDepartment(department),
+  summaryMap: IndicatorAttachmentSummaryMap | null = null
 ): ExcelExportSheet<StrategicExportRow> => ({
   sheetName: department || '当前部门',
   rows,
-  columns: buildStrategicExportColumns(rows),
+  columns: buildStrategicExportColumns(rows, summaryMap),
   emptyMessage: '当前部门暂无可导出的战略任务指标',
   getRowTone: getStrategicExportRowTone,
   getRowTextColor: getStrategicExportRowTextColor
 })
+
+const buildStrategicExportAttachmentGroups = (
+  rows: StrategicExportRow[],
+  summaryMap: IndicatorAttachmentSummaryMap | null
+) =>
+  collectAttachmentGroups(
+    rows.map((row, index) => {
+      const summary = getAttachmentSummary(summaryMap, row.id)
+      return {
+        seq: index + 1,
+        indicatorName: row.name || '指标',
+        round: summary?.round,
+        fillDate: summary?.fillDate,
+        attachments: resolveVisibleAttachments(summaryMap, row.id, () =>
+          resolveStrategicExportAttachmentItems(row)
+        )
+      }
+    })
+  )
 
 const handleExportCurrentStrategicDepartment = async () => {
   const department = selectedDepartment.value
@@ -792,11 +885,35 @@ const handleExportCurrentStrategicDepartment = async () => {
 
   strategicExporting.value = true
   try {
-    await exportRowsToExcel(
-      buildStrategicExportSheet(department, rows),
-      buildExportFileName('战略任务指标总表', department)
+    // 2026-10-28：附件可见性由后端判定——填报人可见本人草稿，上级只可见上一轮已上报快照
+    const summaryMap = await loadIndicatorAttachmentSummaryMap(rows.map(row => row.id))
+    const attachmentGroups = buildStrategicExportAttachmentGroups(rows, summaryMap)
+
+    if (attachmentGroups.length === 0) {
+      await exportRowsToExcel(
+        buildStrategicExportSheet(department, rows, summaryMap),
+        buildExportFileName('战略任务指标总表', department)
+      )
+      ElMessage.success('导出成功')
+      return
+    }
+
+    // 2026-10-28：单部门有附件时也走 zip——Excel 与附件同包，避免附件只剩超链接
+    const dateText = new Date().toISOString().slice(0, 10)
+    await exportDepartmentsAsZip(
+      [
+        {
+          department,
+          sheets: [
+            buildStrategicExportSheet(department, rows, summaryMap) as ExcelExportSheet<unknown>
+          ],
+          attachmentGroups
+        }
+      ],
+      `战略任务指标总表_${department}_${dateText}.zip`,
+      { onProgress: text => ElMessage({ message: text, duration: 1200, grouping: true }) }
     )
-    ElMessage.success('导出成功')
+    ElMessage.success('导出成功：Excel 与附件已一并打包')
   } catch {
     ElMessage.error('导出失败，请稍后重试')
   } finally {
@@ -825,17 +942,28 @@ const handleExportSelectedStrategicDepartments = async () => {
       strategicStore.loadIndicatorsByYear(timeContext.currentYear, { force: true })
     ])
 
-    const payloads = await Promise.all(
+    const departmentRows = await Promise.all(
       departments.map(async department => {
         const taskIdSet = await loadStrategicExportTaskIdSetByDepartment(department)
-        const rows = getStrategicExportRowsByDepartment(department, taskIdSet)
         return {
           department,
-          sheets: [buildStrategicExportSheet(department, rows) as ExcelExportSheet<unknown>],
-          attachments: collectAttachmentRefs(rows)
+          rows: getStrategicExportRowsByDepartment(department, taskIdSet)
         }
       })
     )
+
+    // 2026-10-28：一次批量查询所有部门的可见附件（服务端按当前登录人过滤草稿）
+    const summaryMap = await loadIndicatorAttachmentSummaryMap(
+      departmentRows.flatMap(item => item.rows.map(row => row.id))
+    )
+
+    const payloads = departmentRows.map(({ department, rows }) => ({
+      department,
+      sheets: [
+        buildStrategicExportSheet(department, rows, summaryMap) as ExcelExportSheet<unknown>
+      ],
+      attachmentGroups: buildStrategicExportAttachmentGroups(rows, summaryMap)
+    }))
 
     const dateText = new Date().toISOString().slice(0, 10)
     await exportDepartmentsAsZip(
@@ -844,11 +972,17 @@ const handleExportSelectedStrategicDepartments = async () => {
       { onProgress: text => ElMessage({ message: text, duration: 1200, grouping: true }) }
     )
     strategicBatchExportDialogVisible.value = false
-    ElMessage.success(
-      departments.length === 1
-        ? '导出成功（单部门已直接输出 xlsx）'
-        : `导出成功：${departments.length} 个部门各一个 Excel，附件已一并打包`
-    )
+
+    const attachmentCount = countExportAttachments(payloads)
+    if (attachmentCount > 0) {
+      ElMessage.success(
+        `导出成功：${departments.length} 个部门各一个 Excel，${attachmentCount} 个附件已一并打包`
+      )
+    } else if (departments.length === 1) {
+      ElMessage.success('导出成功（单部门无附件，已直接输出 xlsx）')
+    } else {
+      ElMessage.success(`导出成功：${departments.length} 个部门各一个 Excel（无附件）`)
+    }
   } catch {
     ElMessage.error('导出失败，请稍后重试')
   } finally {
@@ -872,8 +1006,7 @@ const currentStrategicImportCycleId = computed(() => {
   }
 
   const cycle = timeContext.cycles.find(item => Number(item.year) === timeContext.currentYear) as
-    | { cycleId?: number | string; id?: number | string }
-    | undefined
+    { cycleId?: number | string; id?: number | string } | undefined
   const numericCycleId = Number(cycle?.cycleId ?? cycle?.id)
   return Number.isFinite(numericCycleId) && numericCycleId > 0 ? numericCycleId : null
 })
@@ -1083,23 +1216,26 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           </el-button>
           <!-- 2026-10-21 用户定案：全部攒改一起上报；按钮就叫「发起异动」 -->
           <!-- 编辑权只属于填报人：负责人/校领导不产生草稿，也不应看到提交入口 -->
-          <!-- 2026-10-24 用户定案（互斥）：上报在审时异动发起入口锁定；异动在审时草稿区一并锁定 -->
-          <template
-            v-if="
-              canEdit &&
-              hasMutationDraft &&
-              !isReportApprovalInFlight &&
-              !isMutationApprovalInFlight
-            "
-          >
-            <el-button
-              size="small"
-              type="warning"
-              :loading="mutationApiLoading"
-              @click="submitMutationDraft"
+          <!-- 2026-10-28 迭代计划 M5（互斥可见化）：上报/异动在审时按钮置灰 + tooltip 说明，
+               取代此前「直接隐藏」——用户能看出为什么暂时不能发起，而不是入口凭空消失 -->
+          <template v-if="canEdit && hasMutationDraft">
+            <el-tooltip
+              :disabled="!mutationSubmitBlocked"
+              :content="mutationSubmitBlockedReason"
+              placement="top"
             >
-              发起异动
-            </el-button>
+              <span>
+                <el-button
+                  size="small"
+                  type="warning"
+                  :disabled="mutationSubmitBlocked"
+                  :loading="mutationApiLoading"
+                  @click="submitMutationDraft"
+                >
+                  发起异动
+                </el-button>
+              </span>
+            </el-tooltip>
             <el-button size="small" :disabled="mutationApiLoading" @click="cancelMutationDraft">
               取消异动
             </el-button>
@@ -1129,17 +1265,18 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
         <div class="toolbar-right">
           <el-popover
             placement="top-end"
-            trigger="hover"
+            trigger="click"
             :width="320"
             popper-class="approval-status-popper"
             @show="handleApprovalStatusPopoverShow"
           >
             <template #reference>
+              <!-- 2026-10-28：点击仅展开流程状态浮层（会议要求由悬停改点击）；跳转审批中心请点浮层内卡片 -->
               <el-tag
                 :type="approvalFlowStatusMeta.tagType"
                 effect="light"
                 class="approval-status-tag"
-                @click.stop="handleOpenApproval"
+                @click.stop
               >
                 {{ activeTaskTabName === 'college' ? '审批状况' : '审批状态' }}:
                 {{ approvalFlowStatusMeta.label }}
@@ -1195,7 +1332,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             size="small"
             style="margin-right: 12px"
           >
-            基础性权重合计: {{ departmentTotalWeight }} / 100
+            权重合计: {{ departmentTotalWeight }} / 100
+          </el-tag>
+          <!-- 2026-10-28 迭代计划 M2：看板显示填报月份（数据归属周期一目了然） -->
+          <el-tag v-if="reportMonthLabel" type="info" size="small" style="margin-right: 12px">
+            填报月份: {{ reportMonthLabel }}
           </el-tag>
           <el-tag v-if="isReadOnly" type="warning" size="small" style="margin-right: 12px">
             历史快照 (只读)
@@ -1211,6 +1352,21 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
         style="margin: 12px 16px"
       >
         <template #title> 当前计划已进入审批流程，请先完成整体计划审批后再继续下发或编辑 </template>
+      </el-alert>
+
+      <!-- 2026-10-28 迭代计划 M6：未提交异动草稿的可感知提示（刷新/离开即丢） -->
+      <el-alert
+        v-if="canEdit && mutationDraftCount > 0"
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin: 12px 16px"
+      >
+        <template #title>
+          有
+          {{ mutationDraftCount }}
+          项修改待发起异动（刷新或离开页面将丢失），确认后请点顶部「发起异动」提交审批
+        </template>
       </el-alert>
 
       <!-- 任务管理页签：职能部门 / 二级学院（2026-09-17 定案 tabpage 方案） -->
@@ -1364,7 +1520,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="weight" label="权重" width="80" align="center">
+                  <el-table-column prop="weight" label="权重" width="96" align="center">
                     <template #default="{ row }">
                       <div class="weight-cell" @dblclick="handleIndicatorDblClick(row, 'weight')">
                         <el-input
@@ -1386,7 +1542,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column label="自评等级" width="112" align="center">
+                  <el-table-column
+                    label="自评等级"
+                    :width="TASK_TABLE_COLUMN_WIDTH.selfRating"
+                    align="center"
+                  >
                     <template #default="{ row }">
                       <el-tag v-if="row.selfRating" size="small" type="info">
                         {{
@@ -1400,7 +1560,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   <!-- 2026-10-24 用户定案（鉴定等级锁死）：填报看板上的鉴定进度等级
                        一律只读展示——鉴定由上级部门在审批详情里按指标评定（指标级鉴定），
                        看板不再提供行内修改入口，防止绕过审批链直接改等级。 -->
-                  <el-table-column label="鉴定进度等级" width="122" align="center">
+                  <el-table-column
+                    label="鉴定进度等级"
+                    :width="TASK_TABLE_COLUMN_WIDTH.appraisalLevel"
+                    align="center"
+                  >
                     <template #default="{ row }">
                       <div class="manual-alert-cell">
                         <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
@@ -1412,7 +1576,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   <!-- 2026-10-26 用户定案：上报资料列统一用 ReportMaterialsCell——
                        悬浮即列出附件卡片（序号+文件名+类型），点击文件名下载，
                        与指标填报页/指标分发页完全同构。 -->
-                  <el-table-column label="上报资料" width="112" align="center">
+                  <el-table-column
+                    label="上报资料"
+                    :width="TASK_TABLE_COLUMN_WIDTH.reportMaterials"
+                    align="center"
+                  >
                     <template #default="{ row }">
                       <ReportMaterialsCell
                         :indicator-id="row.id"
@@ -1420,7 +1588,10 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       />
                     </template>
                   </el-table-column>
-                  <el-table-column label="进度说明" min-width="130">
+                  <el-table-column
+                    label="进度说明"
+                    :min-width="TASK_TABLE_COLUMN_WIDTH.progressNoteMin"
+                  >
                     <template #default="{ row }">
                       <el-tooltip
                         :content="row.pendingRemark || ''"
@@ -1433,7 +1604,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </el-tooltip>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="remark" label="下发备注" width="130">
+                  <el-table-column
+                    prop="remark"
+                    label="下发备注"
+                    :width="TASK_TABLE_COLUMN_WIDTH.remark"
+                  >
                     <template #default="{ row }">
                       <div
                         class="indicator-name-cell"
@@ -1467,7 +1642,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column label="操作" width="116" align="center">
+                  <el-table-column
+                    label="操作"
+                    :width="TASK_TABLE_COLUMN_WIDTH.actions"
+                    align="center"
+                  >
                     <template #default="{ row }">
                       <div class="action-buttons-inline">
                         <!-- 详情按钮 - 始终显示（2026-10-23 用户定案：查看/详情文案统一为「详情」） -->
@@ -1994,7 +2173,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="weight" label="权重" width="80" align="center">
+                  <el-table-column prop="weight" label="权重" width="96" align="center">
                     <template #default="{ row }">
                       <div class="weight-cell" @dblclick="handleIndicatorDblClick(row, 'weight')">
                         <el-input
@@ -2016,7 +2195,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column label="自评等级" width="110" align="center">
+                  <el-table-column
+                    label="自评等级"
+                    :width="TASK_TABLE_COLUMN_WIDTH.selfRating"
+                    align="center"
+                  >
                     <template #default="{ row }">
                       <el-tag v-if="row.selfRating" size="small" type="info">
                         {{
@@ -2027,14 +2210,21 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       <span v-else>—</span>
                     </template>
                   </el-table-column>
-                  <el-table-column label="鉴定进度等级" width="126" align="center">
+                  <el-table-column
+                    label="鉴定进度等级"
+                    :width="TASK_TABLE_COLUMN_WIDTH.appraisalLevel"
+                    align="center"
+                  >
                     <template #default="{ row }">
                       <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
                         {{ getManualAlertLabel(row.manualAlertSeverity) }}
                       </el-tag>
                     </template>
                   </el-table-column>
-                  <el-table-column label="上报资料" width="96">
+                  <el-table-column
+                    label="上报资料"
+                    :width="TASK_TABLE_COLUMN_WIDTH.reportMaterials"
+                  >
                     <template #default="{ row }">
                       <!-- 当前轮次附件（含草稿）；历次经上报记录查看 -->
                       <ReportMaterialsCell
@@ -2049,7 +2239,10 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       <ReportStatusCell :indicator-id="row.id" />
                     </template>
                   </el-table-column>
-                  <el-table-column label="进度说明" min-width="116">
+                  <el-table-column
+                    label="进度说明"
+                    :min-width="TASK_TABLE_COLUMN_WIDTH.progressNoteMin"
+                  >
                     <template #default="{ row }">
                       <el-tooltip
                         :content="row.pendingRemark || ''"
@@ -2062,7 +2255,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </el-tooltip>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="remark" label="下发备注" width="106">
+                  <el-table-column
+                    prop="remark"
+                    label="下发备注"
+                    :width="TASK_TABLE_COLUMN_WIDTH.remark"
+                  >
                     <template #default="{ row }">
                       <div
                         class="indicator-name-cell"
@@ -2096,7 +2293,12 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column label="操作" width="120" align="center" fixed="right">
+                  <el-table-column
+                    label="操作"
+                    :width="TASK_TABLE_COLUMN_WIDTH.actions"
+                    align="center"
+                    fixed="right"
+                  >
                     <template #default="{ row }">
                       <el-button link type="primary" size="small" @click="handleViewDetail(row)">
                         详情
@@ -2375,7 +2577,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <div class="report-history-title">上报记录（历次填报 / 含被驳回）</div>
           <!-- 2026-10-24 用户定案：点某张上报卡看该轮完整详情——弹窗内聚在
                IndicatorFillHistory 组件内，三个复用页面共同生效 -->
-          <IndicatorFillHistory v-if="currentDetailId" :indicator-id="currentDetailId" />
+          <IndicatorFillHistory
+            v-if="currentDetailId"
+            :indicator-id="currentDetailId"
+            :indicator-name="currentDetail?.name"
+          />
         </div>
       </div>
     </el-drawer>

@@ -132,6 +132,11 @@ import { ElMessage } from 'element-plus'
 import { CircleCheck, CircleClose, Download } from '@element-plus/icons-vue'
 import { auditLogApi, type AuditLogItem } from '@/features/admin/api/auditLogApi'
 import { logger } from '@/shared/lib/utils/logger'
+import {
+  buildExportFileName,
+  exportRowsToExcel,
+  type ExcelExportColumn
+} from '@/shared/lib/export/excel'
 
 // Props
 const props = defineProps<{
@@ -278,18 +283,31 @@ const handleSizeChange = () => {
 }
 
 // 导出日志
+// 2026-10-28：原先依赖 auditLogApi.export（后端无该接口，恒返回 null，按钮实际是坏的）。
+// 改为导出当前已加载的日志列表，走统一导出层；后端补接口后再切换为全量导出。
 const handleExport = async () => {
+  if (logs.value.length === 0) {
+    ElMessage.warning('暂无可导出的日志')
+    return
+  }
+
   exporting.value = true
   try {
-    const blob = await auditLogApi.export(queryParams)
-    const url = window.URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `audit-logs-${new Date().toISOString().split('T')[0]}.xlsx`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    window.URL.revokeObjectURL(url)
+    const columns: ExcelExportColumn<AuditLogItem>[] = [
+      { header: '时间', width: 20, getValue: row => formatDateTime(row.timestamp) },
+      { header: '操作类型', width: 12, getValue: row => getActionText(row.action) },
+      { header: '状态', width: 10, getValue: row => (row.status === 'SUCCESS' ? '成功' : '失败') },
+      { header: '操作人', width: 16, getValue: row => row.userName },
+      { header: '资源', width: 20, getValue: row => row.resource || '-' },
+      { header: '资源ID', width: 12, getValue: row => row.resourceId ?? '-' },
+      { header: '描述', width: 40, getValue: row => row.description || '-' },
+      { header: 'IP', width: 16, getValue: row => row.ip || '-' }
+    ]
+
+    await exportRowsToExcel(
+      { sheetName: '审计日志', rows: logs.value, columns },
+      buildExportFileName('审计日志')
+    )
     ElMessage.success('导出成功')
   } catch (error) {
     logger.error('导出失败:', error)

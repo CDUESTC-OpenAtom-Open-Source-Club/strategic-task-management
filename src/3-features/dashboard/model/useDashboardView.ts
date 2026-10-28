@@ -15,6 +15,11 @@ import { logger } from '@/shared/lib/utils/logger'
 import { buildDashboardSummary, getIndicatorStatusAtMonth } from '@/features/dashboard/lib'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
 import {
+  buildExportFileName,
+  exportRowsToExcel,
+  type ExcelExportColumn
+} from '@/shared/lib/export/excel'
+import {
   GLOBAL_DATA_REFRESH_REQUEST_EVENT,
   shouldRefreshForDomains,
   type GlobalDataRefreshDetail
@@ -33,15 +38,6 @@ export function useDashboardView(props: DashboardViewProps) {
       echarts = await import('echarts')
     }
     return echarts
-  }
-
-  // 动态导入 Excel 导出库，只在导出时加载
-  let excelWriter: typeof import('write-excel-file/browser') | null = null
-  const loadExcelWriter = async () => {
-    if (!excelWriter) {
-      excelWriter = await import('write-excel-file/browser')
-    }
-    return excelWriter
   }
 
   // 帮助提示内容
@@ -1136,7 +1132,8 @@ export function useDashboardView(props: DashboardViewProps) {
     try {
       const role = authStore.user?.role
       let exportData: Record<string, string | number>[]
-      let fileName: string
+      let pageName: string
+      let scopeName: string | undefined
       let sheetName: string
 
       if (role === 'strategic_dept') {
@@ -1161,7 +1158,8 @@ export function useDashboardView(props: DashboardViewProps) {
           状态: item.status === 'success' ? '优秀' : item.status === 'warning' ? '良好' : '需改进'
         }))
 
-        fileName = `职能部门进度对比报表_${new Date().toLocaleDateString()}.xlsx`
+        pageName = '职能部门进度对比报表'
+        scopeName = undefined
         sheetName = '部门对比'
       } else if (role === 'functional_dept') {
         // 职能部门：导出学院任务分配表
@@ -1195,7 +1193,8 @@ export function useDashboardView(props: DashboardViewProps) {
           备注: item.description || ''
         }))
 
-        fileName = `学院任务分配表_${authStore.user?.department}_${new Date().toLocaleDateString()}.xlsx`
+        pageName = '学院任务分配表'
+        scopeName = authStore.user?.department
         sheetName = '学院任务'
       } else {
         // 二级学院：导出承接任务汇总
@@ -1229,24 +1228,24 @@ export function useDashboardView(props: DashboardViewProps) {
           备注: item.description || ''
         }))
 
-        fileName = `承接任务汇总_${authStore.user?.department}_${new Date().toLocaleDateString()}.xlsx`
+        pageName = '承接任务汇总'
+        scopeName = authStore.user?.department
         sheetName = '承接任务'
       }
 
-      const { default: writeXlsxFile } = await loadExcelWriter()
-      const columns = Object.keys(exportData[0] || {}).map(key => {
-        const values = exportData.map(row => row[key])
-        return {
-          header: key,
-          cell: (row: Record<string, string | number>) => row[key],
-          width: Math.max(key.length + 2, ...values.map(value => String(value || '').length))
-        }
-      })
+      // 2026-10-28：仪表盘导出统一走共享导出层——样式、文件名规则与其他页面一致
+      const columns: ExcelExportColumn<Record<string, string | number>>[] = Object.keys(
+        exportData[0] || {}
+      ).map(key => ({
+        header: key,
+        width: Math.max(key.length + 2, ...exportData.map(row => String(row[key] ?? '').length)),
+        getValue: row => row[key]
+      }))
 
-      await writeXlsxFile(exportData, {
-        columns,
-        sheet: sheetName
-      }).toFile(fileName)
+      await exportRowsToExcel(
+        { sheetName, rows: exportData, columns },
+        buildExportFileName(pageName, scopeName)
+      )
 
       ElMessage.success('导出成功')
     } catch (error) {
@@ -1301,8 +1300,7 @@ export function useDashboardView(props: DashboardViewProps) {
       ...filteredCollegeMonthIndicators.value
     ]
     const match = pool.find(item => String(item.id) === String(indicator.id)) as
-      | (typeof filteredDeptIndicators.value)[number]
-      | undefined
+      (typeof filteredDeptIndicators.value)[number] | undefined
     if (!match) {
       return
     }

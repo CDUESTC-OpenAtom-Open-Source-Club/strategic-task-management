@@ -48,15 +48,12 @@ import {
 } from '@/shared/lib/utils/indicatorStatus'
 import { getPlanStatusDisplay, normalizePlanStatus } from '@/features/task/lib'
 import { ApprovalProgressDrawer } from '@/features/approval'
-import {
-  canCurrentUserHandleWorkflowApproval,
-  notifyApprovalStateRefresh
-} from '@/features/approval/lib'
+import { notifyApprovalStateRefresh } from '@/features/approval/lib'
 import { useApprovalRouteAutopen } from '@/features/approval/lib'
 import { useApprovalStore } from '@/features/approval/model/store'
 import { indicatorApi } from '@/features/indicator/api'
 import { usePlanStore } from '@/features/plan/model/store'
-import { indicatorFillApi } from '@/features/plan/api/planApi'
+import { indicatorFillApi, planApi } from '@/features/plan/api/planApi'
 import {
   useIndicatorFills,
   invalidateIndicatorFills,
@@ -775,22 +772,24 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
   )
 
-  // 计算当前选中部门的基础性任务指标权重总和（用于下发验证）
-  // 基础性判定以“后端真实 task_type=BASIC”为准
+  // 计算当前选中部门的指标权重总和（用于下发验证）
+  // 2026-10-28 口径对齐（详见 Issue #91）：后端 BasicTaskWeightValidationService 校验的是
+  // 「计划内全部指标合计 100%」，此前前端只统计基础性任务子集 —— 教务处（基础性 50 / 计划 100）、
+  // 数字校园（基础性 0 / 计划 100）这类部门即使计划合计已等于 100，「发起审批」按钮也会被禁用。
   const departmentTotalWeight = computed(() => {
     if (!selectedDepartment.value) {
       return 0
     }
 
-    const deptIndicators = indicators.value.filter(i => isBasicIndicatorForCurrentRules(i))
-
-    // 计算权重之和
-    return deptIndicators.reduce((sum, i) => sum + Number(i.weight || 0), 0)
+    // 计算权重之和（计划内全部指标）
+    return indicators.value.reduce((sum, i) => sum + Number(i.weight || 0), 0)
   })
 
   const ensurePlanCanDistribute = (): boolean => {
     if (departmentTotalWeight.value !== 100) {
-      ElMessage.warning(`基础性任务指标权重合计必须为100%，当前为${departmentTotalWeight.value}`)
+      ElMessage.warning(
+        `计划内指标权重合计必须为100%（按当前部门全部指标计算），当前为${departmentTotalWeight.value}`
+      )
       return false
     }
     return true
@@ -825,6 +824,37 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     status?: string | null
   } | null>(null)
   const latestPlanReportSummary = ref<{ id: number } | null>(null)
+
+  // 2026-10-28 迭代计划 M2：审批看板显示填报月份——上级看下级数据时能判断数据归属周期。
+  // 数据源 = 计划详情 dispatchMonth（后端按计划审批实例完成时刻所在月计算，1667bac），
+  // 与指标填报页起算月同源，避免前端自算 1/12 月边界算错（计划文档「风险与注意 2」）。
+  const reportMonthLabel = ref('')
+  const reportMonthCache = new Map<string, string>()
+  watch(
+    () => currentPlan.value?.id,
+    async planId => {
+      if (!planId) {
+        reportMonthLabel.value = ''
+        return
+      }
+      const key = String(planId)
+      const cached = reportMonthCache.get(key)
+      if (cached !== undefined) {
+        reportMonthLabel.value = cached
+        return
+      }
+      try {
+        const response = await planApi.getPlanDetails(planId)
+        const raw = String(response.data?.dispatchMonth || '').trim()
+        const label = /^\d{6}$/.test(raw) ? `${raw.slice(0, 4)}年${Number(raw.slice(4, 6))}月` : ''
+        reportMonthCache.set(key, label)
+        reportMonthLabel.value = label
+      } catch (error) {
+        logger.warn('[StrategicTaskView] 填报月份获取失败:', error)
+      }
+    },
+    { immediate: true }
+  )
 
   const approvalWorkflowReportSummary = computed(() => {
     const currentWorkflowInstanceId = Number(
@@ -1333,9 +1363,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       options.collegeScope === true
         ? Number(collegeScope?.orgId ?? NaN)
         : Number(currentDepartmentOrgId.value ?? NaN)
-    if (
-      !(Number.isFinite(planId) && planId > 0 && Number.isFinite(reportOrgId) && reportOrgId > 0)
-    ) {
+    if (!(
+      Number.isFinite(planId) &&
+      planId > 0 &&
+      Number.isFinite(reportOrgId) &&
+      reportOrgId > 0
+    )) {
       currentPlanReportSummary.value = null
       latestPlanReportSummary.value = null
       return
@@ -1962,25 +1995,42 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     )
   })
 
+  // 判定当前用户是否具备处理「计划当前待审节点」的权限。
+  // 2026-10-27 缺陷修复（填报人点「发起审批」后瞬时闪成「处理审批」+ 红点）：
+  // 提交成功后 applyLocalPlanWorkflowUiPatch 会把计划置为 PENDING 并清空
+  // preloadedPlanWorkflowDetail，但当前步骤名尚未回填；
+  // 旧实现经由 canCurrentUserHandleWorkflowApproval 的兜底（期望角色为空即放行）
+  // 得出「我是审批人」，导致按钮/红点在详情回来前误判，约 40ms~数秒后才恢复。
+  // 现在改为 fail-closed：解析不出当前节点的期望角色/期望组织就不做审批人推断。
   const hasCurrentPlanApprovalPermission = computed(() => {
     const workflowStatus = currentApprovalWorkflowStatus.value
     const isPendingApproval = ['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(workflowStatus)
+    if (!isPendingApproval) {
+      return false
+    }
 
-    return canCurrentUserHandleWorkflowApproval({
-      currentUserId: currentUserId.value,
-      currentUserOrgId: currentUserOrgId.value,
-      currentUserRoleCodes: currentUserRoleCodes.value,
-      hasApprovalPermission: true,
-      isPendingApproval,
-      expectedApproverRoleCodes: resolveExpectedApproverRoleCodesForCurrentPlan(),
-      expectedApproverOrgId: resolveExpectedApproverOrgIdForCurrentPlan()
-    })
+    const expectedRoleCodes = resolveExpectedApproverRoleCodesForCurrentPlan()
+    if (expectedRoleCodes.length === 0) {
+      return false
+    }
+
+    const currentRoleCodes = currentUserRoleCodes.value
+    if (!expectedRoleCodes.some(roleCode => currentRoleCodes.includes(roleCode))) {
+      return false
+    }
+
+    const expectedApproverOrgId = resolveExpectedApproverOrgIdForCurrentPlan()
+    if (!expectedApproverOrgId) {
+      return false
+    }
+
+    return Number(currentUserOrgId.value) === Number(expectedApproverOrgId)
   })
 
   const canHandleCurrentPlanApproval = computed(() => {
     const workflowStatus = currentApprovalWorkflowStatus.value
     const isPendingApproval = ['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(workflowStatus)
-    if (!isPendingApproval || !hasCurrentPlanApprovalPermission.value) {
+    if (!isPendingApproval) {
       return false
     }
 
@@ -2014,10 +2064,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       }
     }
 
-    // 工具栏按钮与审批中心保持一致：
-    // 只要当前用户具备处理当前待审节点的权限，就显示“处理审批”与红点，
-    // 不再强依赖 currentTask/assignee 字段必须已经完整回填到首页状态。
-    return true
+    // 兜底不再「无条件 true」：必须能解析出期望角色与期望组织并匹配，
+    // 与抽屉侧 canCurrentUserHandlePlanApproval 的终局 false 保持一致。
+    return hasCurrentPlanApprovalPermission.value
   })
 
   // @requirement: Plan-centric status - 使用 Plan 状态判断待审批数量
@@ -2092,9 +2141,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         return
       }
       retainedRouteApprovalEntityType.value = routeApprovalEntityType.value as
-        | 'PLAN'
-        | 'PLAN_REPORT'
-        | undefined
+        'PLAN' | 'PLAN_REPORT' | undefined
       retainedRouteApprovalEntityId.value = routeApprovalEntityId.value
       try {
         await syncSelectedDepartmentFromRoute()
@@ -3023,9 +3070,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         }
         return rank(taskTypeA) - rank(taskTypeB)
       }
-      const taskA = a.taskContent || ''
-      const taskB = b.taskContent || ''
-      return taskA.localeCompare(taskB)
+      // 2026-10-27 用户定案：组内按下发顺序（sort_order + id）对齐——
+      // 与指标填报页/学院视图保持同一顺序
+      const orderA = Number(a.sortOrder ?? 0) || 0
+      const orderB = Number(b.sortOrder ?? 0) || 0
+      if (orderA !== orderB) {
+        return orderA - orderB
+      }
+      return Number(a.id) - Number(b.id)
     })
   })
 
@@ -4670,7 +4722,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
           '[StrategicTaskView] 已下发计划新增指标，已加入待发起异动列表:',
           createdIndicatorId
         )
-        ElMessage.info('指标已新增；请确认基础性权重合计为 100 后点顶部「发起异动」提交审批')
+        ElMessage.info('指标已新增；请确认计划内权重合计为 100 后点顶部「发起异动」提交审批')
       }
 
       // 统一走“变更后刷新”链路，避免新增后被旧缓存覆盖，导致主页仍显示上一版状态。
@@ -4954,6 +5006,31 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   const isMutationApprovalInFlight = computed(
     () => departmentMutationPendingApprovals.value.length > 0
+  )
+
+  // 2026-10-28 迭代计划 M5（互斥可见化）：「发起异动」不再整体隐藏，改为置灰 + tooltip。
+  // 拦截口径与 submitMutationDraft 的提交守卫一致，只是把「为什么不能点」亮给用户看。
+  const mutationSubmitBlocked = computed(
+    () => isReportApprovalInFlight.value || isMutationApprovalInFlight.value
+  )
+  const mutationSubmitBlockedReason = computed(() => {
+    if (isReportApprovalInFlight.value) {
+      return '当前计划的上报正在审批中，暂不能发起异动；请等上报审批结束或撤回后再操作'
+    }
+    if (isMutationApprovalInFlight.value) {
+      return '当前部门存在进行中的异动审批，暂不能重复发起；请先在审批中心处理完'
+    }
+    return ''
+  })
+
+  // 2026-10-28 迭代计划 M6：草稿丢失可感知——顶部横幅计数 + 离开/刷新前确认。
+  const mutationDraftCount = computed(
+    () =>
+      mutationDrafts.value.filter(
+        draft => draft.deleteRequested || Object.keys(draft.changes || {}).length > 0
+      ).length +
+      taskNameDrafts.value.length +
+      pendingCreatedIndicatorIds.value.length
   )
 
   const currentPlanFillApprovalSummary = ref<{
@@ -6532,6 +6609,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     refreshCurrentPlanFillApprovalSummary,
     isReportApprovalInFlight,
     isMutationApprovalInFlight,
+    mutationSubmitBlocked,
+    mutationSubmitBlockedReason,
+    mutationDraftCount,
+    reportMonthLabel,
     getCategoryColor,
     getCategoryText,
     getCurrentActorUserId,

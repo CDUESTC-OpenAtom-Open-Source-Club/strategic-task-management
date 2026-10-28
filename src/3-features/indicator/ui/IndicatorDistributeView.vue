@@ -18,14 +18,26 @@ import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import { truncateText } from '@/shared/lib/utils/formatters'
 import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
 import {
-  buildAttachmentCell,
+  buildAttachmentNameCell,
   buildExportFileName,
   exportRowsToExcel,
-  exportSheetsToExcel,
+  normalizeExportAttachments,
   type ExcelExportColumn,
   type ExcelExportSheet,
   type ExcelRowTone
 } from '@/shared/lib/export/excel'
+import {
+  buildAttachmentRelativeDir,
+  collectAttachmentGroups,
+  countExportAttachments,
+  exportDepartmentsAsZip
+} from '@/shared/lib/export/zipExport'
+import {
+  getAttachmentSummary,
+  loadIndicatorAttachmentSummaryMap,
+  resolveVisibleAttachments,
+  type IndicatorAttachmentSummaryMap
+} from '@/features/indicator/model/indicatorAttachmentSummary'
 import { DistributionApprovalProgressDrawer } from '@/features/approval'
 import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
@@ -263,8 +275,8 @@ const {
 const { latestFillNote, latestFillAttachments } = useLatestIndicatorFill(
   computed(() => (currentDetailIndicator as any)?.value?.id ?? null),
   // 实时值：按 id 从当前学院表格数据取**最新**子指标对象
-  // （表格 data 是 collegeTableData，child 来自 strategicStore.indicators，
-  //   其中带 pendingRemark —— 学院未提交的填报内容在此实时可见）
+  // （表格 data 是 collegeTableData，child 已按 2026-10-27 草稿隔离口径
+  //   用报告列表「当期轮次」明细覆盖——未提交前展示上一版快照，不含草稿）
   (id: string | number) =>
     collegeTableData.value.find(
       item => item.type === 'child' && String(item.child?.id) === String(id)
@@ -329,8 +341,16 @@ const distributionExportCollegesIndeterminate = computed(
 
 // 2026-10-14 用户定案：导出与界面同构——同一父级核心指标下的多行子指标在「父级核心指标」列
 // 合并为一个单元格；「内部ID」列移除（名称精确匹配即可，导出面向领导阅读）。
+const resolveDistributionExportAttachmentItems = (row: DistributionExportRow) =>
+  normalizeExportAttachments(
+    row.child.pendingAttachmentDetails?.length
+      ? row.child.pendingAttachmentDetails
+      : row.child.pendingAttachments
+  )
+
 const buildDistributionExportColumns = (
-  rows: DistributionExportRow[]
+  rows: DistributionExportRow[],
+  summaryMap: IndicatorAttachmentSummaryMap | null
 ): ExcelExportColumn<DistributionExportRow>[] => {
   const parentSpanByIndex = new Map<number, number>()
   rows.forEach((row, index) => {
@@ -394,14 +414,28 @@ const buildDistributionExportColumns = (
       align: 'center',
       getValue: row => getChildManualAlertLabel(getChildManualAlertSeverity(row.child))
     },
+    // 2026-10-28：附件本体打进 zip 后，Excel 只保留「附件目录（相对路径）」+「文件名」；
+    // 附件来源由后端按当前登录人可见范围返回，页面看不到的填报不会进导出。
+    {
+      header: '附件目录（包内相对路径）',
+      width: 30,
+      getValue: (row, index) => {
+        const attachments = resolveVisibleAttachments(summaryMap, row.child.id, () =>
+          resolveDistributionExportAttachmentItems(row)
+        )
+        return attachments.length > 0
+          ? buildAttachmentRelativeDir({ seq: index + 1, indicatorName: row.child.name || '指标' })
+          : '-'
+      }
+    },
     {
       header: '上报资料',
       width: 42,
       getValue: row =>
-        buildAttachmentCell(
-          row.child.pendingAttachmentDetails?.length
-            ? row.child.pendingAttachmentDetails
-            : row.child.pendingAttachments
+        buildAttachmentNameCell(
+          resolveVisibleAttachments(summaryMap, row.child.id, () =>
+            resolveDistributionExportAttachmentItems(row)
+          )
         )
     }
   ]
@@ -511,15 +545,35 @@ const getDistributionExportRowTextColor = (row: DistributionExportRow): string |
 
 const buildDistributionExportSheet = (
   college: string,
-  rows = getDistributionExportRowsByCollege(college)
+  rows = getDistributionExportRowsByCollege(college),
+  summaryMap: IndicatorAttachmentSummaryMap | null = null
 ): ExcelExportSheet<DistributionExportRow> => ({
   sheetName: college || '当前学院',
   rows,
-  columns: buildDistributionExportColumns(rows),
+  columns: buildDistributionExportColumns(rows, summaryMap),
   emptyMessage: '当前学院暂无可导出的子指标数据',
   getRowTone: getDistributionExportRowTone,
   getRowTextColor: getDistributionExportRowTextColor
 })
+
+const buildDistributionExportAttachmentGroups = (
+  rows: DistributionExportRow[],
+  summaryMap: IndicatorAttachmentSummaryMap | null
+) =>
+  collectAttachmentGroups(
+    rows.map((row, index) => {
+      const summary = getAttachmentSummary(summaryMap, row.child.id)
+      return {
+        seq: index + 1,
+        indicatorName: row.child.name || '指标',
+        round: summary?.round,
+        fillDate: summary?.fillDate,
+        attachments: resolveVisibleAttachments(summaryMap, row.child.id, () =>
+          resolveDistributionExportAttachmentItems(row)
+        )
+      }
+    })
+  )
 
 const handleExportCurrentDistributionCollege = async () => {
   const college = selectedCollege.value
@@ -536,11 +590,35 @@ const handleExportCurrentDistributionCollege = async () => {
 
   distributionExporting.value = true
   try {
-    await exportRowsToExcel(
-      buildDistributionExportSheet(college, rows),
-      buildExportFileName('指标下发与管理', college)
+    // 2026-10-28：附件可见性由后端判定——填报人可见本人草稿，上级只可见上一轮已上报快照
+    const summaryMap = await loadIndicatorAttachmentSummaryMap(rows.map(row => row.child.id))
+    const attachmentGroups = buildDistributionExportAttachmentGroups(rows, summaryMap)
+
+    if (attachmentGroups.length === 0) {
+      await exportRowsToExcel(
+        buildDistributionExportSheet(college, rows, summaryMap),
+        buildExportFileName('指标下发与管理', college)
+      )
+      ElMessage.success('导出成功')
+      return
+    }
+
+    // 2026-10-28：单学院有附件时也走 zip——Excel 与附件同包，避免附件只剩超链接
+    const dateText = new Date().toISOString().slice(0, 10)
+    await exportDepartmentsAsZip(
+      [
+        {
+          department: college,
+          sheets: [
+            buildDistributionExportSheet(college, rows, summaryMap) as ExcelExportSheet<unknown>
+          ],
+          attachmentGroups
+        }
+      ],
+      `指标下发与管理_${college}_${dateText}.zip`,
+      { onProgress: text => ElMessage({ message: text, duration: 1200, grouping: true }) }
     )
-    ElMessage.success('导出成功')
+    ElMessage.success('导出成功：Excel 与附件已一并打包')
   } catch {
     ElMessage.error('导出失败，请稍后重试')
   } finally {
@@ -567,17 +645,44 @@ const handleExportSelectedDistributionColleges = async () => {
       strategicStore.loadIndicatorsByYear(timeContext.currentYear, { force: true })
     ])
 
-    await exportSheetsToExcel(
-      selectedColleges.map(
-        college => buildDistributionExportSheet(college) as ExcelExportSheet<unknown>
-      ),
-      buildExportFileName(
-        '指标下发与管理',
-        selectedColleges.length === 1 ? selectedColleges[0] : '多学院'
-      )
+    // 2026-10-28：全部导出改为「每学院一个 Excel + 附件」的 zip。
+    // 原先多学院塞进一个多 sheet 工作簿，序号跨学院连续、回导对不上，且附件无法随包。
+    const collegeRows = selectedColleges.map(college => ({
+      college,
+      rows: getDistributionExportRowsByCollege(college)
+    }))
+
+    // 一次批量查询所有学院的可见附件（服务端按当前登录人过滤草稿）
+    const summaryMap = await loadIndicatorAttachmentSummaryMap(
+      collegeRows.flatMap(item => item.rows.map(row => row.child.id))
+    )
+
+    const payloads = collegeRows.map(({ college, rows }) => ({
+      department: college,
+      sheets: [
+        buildDistributionExportSheet(college, rows, summaryMap) as ExcelExportSheet<unknown>
+      ],
+      attachmentGroups: buildDistributionExportAttachmentGroups(rows, summaryMap)
+    }))
+
+    const dateText = new Date().toISOString().slice(0, 10)
+    await exportDepartmentsAsZip(
+      payloads,
+      `指标下发与管理_${selectedColleges.length === 1 ? selectedColleges[0] : '多学院'}_${dateText}.zip`,
+      { onProgress: text => ElMessage({ message: text, duration: 1200, grouping: true }) }
     )
     distributionBatchExportDialogVisible.value = false
-    ElMessage.success('导出成功')
+
+    const attachmentCount = countExportAttachments(payloads)
+    if (attachmentCount > 0) {
+      ElMessage.success(
+        `导出成功：${selectedColleges.length} 个学院各一个 Excel，${attachmentCount} 个附件已一并打包`
+      )
+    } else if (selectedColleges.length === 1) {
+      ElMessage.success('导出成功（单学院无附件，已直接输出 xlsx）')
+    } else {
+      ElMessage.success(`导出成功：${selectedColleges.length} 个学院各一个 Excel（无附件）`)
+    }
   } catch {
     ElMessage.error('导出失败，请稍后重试')
   } finally {
@@ -609,8 +714,7 @@ const currentDistributionImportCycleId = computed(() => {
   }
 
   const cycle = timeContext.cycles.find(item => Number(item.year) === timeContext.currentYear) as
-    | { cycleId?: number | string; id?: number | string }
-    | undefined
+    { cycleId?: number | string; id?: number | string } | undefined
   const numericCycleId = Number(cycle?.cycleId ?? cycle?.id)
   return Number.isFinite(numericCycleId) && numericCycleId > 0 ? numericCycleId : null
 })
@@ -1506,6 +1610,7 @@ const handleDistributionImportCommitted = async () => {
           <IndicatorFillHistory
             v-if="reportHistoryOpen?.includes('history') && currentDetailId"
             :indicator-id="currentDetailId"
+            :indicator-name="currentDetailIndicator?.name"
           />
         </el-collapse-item>
       </el-collapse>

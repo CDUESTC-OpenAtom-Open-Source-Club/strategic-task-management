@@ -115,6 +115,26 @@ export interface IndicatorFillVO {
   auditedAt?: string
 }
 
+/**
+ * 2026-10-28：导出专用——服务端按「当前登录人可见范围」返回的指标最新一轮填报附件。
+ * 填报组织本人可见草稿；上级/其他组织只可见非草稿（上一轮已上报快照）。
+ */
+export interface IndicatorLatestAttachmentVO {
+  indicatorId: number
+  reportId: number
+  reportMonth?: string
+  fillDate?: string
+  round?: number
+  status?: string
+  attachments: Array<{
+    id: number
+    fileName: string
+    fileType?: string
+    fileSize?: number
+    url?: string
+  }>
+}
+
 export interface PlanFillVO {
   fillId: number
   planId: number
@@ -725,6 +745,8 @@ interface PlanReportIndicatorDetailResponse {
   selfRating?: string | null
   /** 完成情况描述（与 comment 同源，读侧优先） */
   description?: string | null
+  /** 2026-10-27：审批人鉴定进度等级（上报链末节点评定） */
+  appraisalLevel?: string | null
   attachments?: Attachment[] | null
 }
 
@@ -1077,8 +1099,7 @@ async function resolveIndicatorReportContext(
           // 原判定 `'data' in r.data` 在任务对象恰含 data 字段或结构不符时取到 null，
           // 导致 planId 丢失。改为兼容两种结构：优先取嵌套 data，缺失时回退顶层对象。
           const rawTaskData = taskResponse.data as
-            | (Record<string, unknown> & { data?: Record<string, unknown> })
-            | null
+            (Record<string, unknown> & { data?: Record<string, unknown> }) | null
           const nestedTaskData =
             rawTaskData && typeof rawTaskData === 'object' && rawTaskData.data
               ? rawTaskData.data
@@ -1129,6 +1150,25 @@ async function resolveIndicatorReportContext(
   }
 }
 
+/**
+ * 2026-10-27 修复（填完保存后要刷两次页面才更新）：
+ * 报告列表有 15s 的模块级缓存，保存/提交后立刻读取时命中的还是旧列表，
+ * 状态章/锁状态/一键提交都要等缓存过期才正确。保存与提交成功后调用本函数
+ * 精确失效对应计划的缓存，后续读取即拿到最新数据。
+ */
+function invalidatePlanReportsCache(planId?: number | string): void {
+  if (planId !== undefined && Number.isFinite(Number(planId))) {
+    const cacheKey = String(Number(planId))
+    planReportsByPlanIdCache.delete(cacheKey)
+    planReportsByPlanIdCacheTime.delete(cacheKey)
+    planReportsByPlanIdInFlight.delete(cacheKey)
+    return
+  }
+  planReportsByPlanIdCache.clear()
+  planReportsByPlanIdCacheTime.clear()
+  planReportsByPlanIdInFlight.clear()
+}
+
 async function loadPlanReportsByPlanId(planId: number): Promise<PlanReportSimpleResponse[]> {
   const normalizedPlanId = Number(planId)
   if (!Number.isFinite(normalizedPlanId) || normalizedPlanId <= 0) {
@@ -1141,10 +1181,6 @@ async function loadPlanReportsByPlanId(planId: number): Promise<PlanReportSimple
   const cachedAt = planReportsByPlanIdCacheTime.get(cacheKey) ?? 0
   const cachedReports = planReportsByPlanIdCache.get(cacheKey)
   const now = Date.now()
-
-  if (cachedReports && now - cachedAt < PLAN_REPORTS_CACHE_TTL_MS) {
-    return cachedReports
-  }
 
   const inFlightRequest = planReportsByPlanIdInFlight.get(cacheKey)
   if (inFlightRequest) {
@@ -1180,18 +1216,6 @@ async function loadPlanReportsByPlanId(planId: number): Promise<PlanReportSimple
   } finally {
     planReportsByPlanIdInFlight.delete(cacheKey)
   }
-}
-
-function invalidatePlanReportsCache(planId: number | string): void {
-  const normalizedPlanId = Number(planId)
-  if (!Number.isFinite(normalizedPlanId) || normalizedPlanId <= 0) {
-    return
-  }
-
-  const cacheKey = String(normalizedPlanId)
-  planReportsByPlanIdCache.delete(cacheKey)
-  planReportsByPlanIdCacheTime.delete(cacheKey)
-  planReportsByPlanIdInFlight.delete(cacheKey)
 }
 
 function cleanupExpiredPlanReportCacheEntries(now = Date.now()): void {
@@ -2053,9 +2077,9 @@ export const planApi = {
     return withRetry(async () => {
       const response = await apiClient
         .getAxiosInstance()
-        .post<
-          ApiResponse<Plan>
-        >(`/plans/${planId}/withdraw`, undefined, { timeout: PLAN_WITHDRAW_TIMEOUT_MS })
+        .post<ApiResponse<Plan>>(`/plans/${planId}/withdraw`, undefined, {
+          timeout: PLAN_WITHDRAW_TIMEOUT_MS
+        })
       invalidatePlanReportsCache(planId)
       invalidatePlanCaches(planId)
       invalidateQueries([
@@ -2223,6 +2247,40 @@ export const indicatorFillApi = {
         timestamp: new Date().toISOString()
       }
     }
+  },
+
+  /**
+   * 2026-10-28：导出专用——批量查询「当前登录人可见」的指标最新一轮填报附件。
+   * 可见性由服务端判定（草稿仅填报组织本人可见），前端不要自行拼装。
+   */
+  async getLatestVisibleIndicatorAttachments(
+    indicatorIds: Array<number | string>
+  ): Promise<ApiResponse<IndicatorLatestAttachmentVO[]>> {
+    const normalized = Array.from(
+      new Set(indicatorIds.map(id => Number(id)).filter(id => Number.isFinite(id) && id > 0))
+    )
+    if (normalized.length === 0) {
+      return {
+        code: 200,
+        data: [],
+        message: '无指标',
+        timestamp: new Date().toISOString()
+      }
+    }
+
+    if (USE_MOCK) {
+      return {
+        code: 200,
+        data: [],
+        message: 'mock',
+        timestamp: new Date().toISOString()
+      }
+    }
+
+    return apiClient.post<ApiResponse<IndicatorLatestAttachmentVO[]>>(
+      '/reports/indicator-attachments/latest',
+      { indicatorIds: normalized }
+    )
   },
 
   /**
@@ -2422,6 +2480,9 @@ export const indicatorFillApi = {
       )
     }
     const savedReport = updateResponse.data
+    // 2026-10-27：保存成功即失效报告列表缓存——状态章/锁状态/一键提交随后读取
+    // 时拿到的才是最新数据（此前 15s 缓存导致要刷两次页面）。
+    invalidatePlanReportsCache(context.planId)
 
     return {
       code: 200,
@@ -2632,6 +2693,49 @@ export const indicatorFillApi = {
   },
 
   /**
+   * 2026-10-27 用户定案：取该组织每个指标「最近一轮已上报通过」的鉴定进度等级。
+   * 鉴定等级是审批人在上报审批末节点对指标的评定结果；新一个月的填报轮次
+   * 应沿用最近一轮的评定显示，而不是回到「未评定」。
+   * 同指标多轮时按报告月份降序取最新评定。无已通过轮次的指标不出现在结果中。
+   */
+  async getLatestApprovedAppraisalLevels(
+    planId: number | string,
+    reportOrgId: number
+  ): Promise<Record<string, string>> {
+    try {
+      const reports = await loadPlanReportsByPlanId(Number(planId))
+      const approvedRounds = reports
+        .filter(
+          report =>
+            Number(report.reportOrgId) === Number(reportOrgId) &&
+            report.isDeleted !== true &&
+            String(report.status || '')
+              .trim()
+              .toUpperCase() === 'APPROVED'
+        )
+        .sort((a, b) => String(b.reportMonth || '').localeCompare(String(a.reportMonth || '')))
+
+      const levels: Record<string, string> = {}
+      for (const report of approvedRounds) {
+        const details = Array.isArray(report.indicatorDetails) ? report.indicatorDetails : []
+        details.forEach(detail => {
+          const key = String(detail.indicatorId ?? '')
+          const level = String(detail.appraisalLevel || '')
+            .trim()
+            .toUpperCase()
+          if (key && level && !levels[key]) {
+            levels[key] = level
+          }
+        })
+      }
+      return levels
+    } catch (error) {
+      logger.warn('[indicatorFillApi] 加载最近已通过轮次的鉴定等级失败:', error)
+      return {}
+    }
+  },
+
+  /**
    * 获取该组织「未提交草稿报告」的归属月份（2026-10-07 裁决）。
    * 存在 DRAFT 草稿时，填报弹窗必须继续锁定在该月编辑草稿——
    * 后端在草稿未提交前禁止新建其他月份报告（409），否则用户会撞资源冲突。
@@ -2669,6 +2773,11 @@ export const indicatorFillApi = {
       logger.warn('[indicatorFillApi] 加载未提交草稿报告失败:', error)
       return null
     }
+  },
+
+  /** 2026-10-27：保存/提交成功后失效报告列表缓存（避免 15s 旧缓存导致状态滞后） */
+  invalidatePlanReportsCache(planId?: number | string): void {
+    invalidatePlanReportsCache(planId)
   },
 
   /**
