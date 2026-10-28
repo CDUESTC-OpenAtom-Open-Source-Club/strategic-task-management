@@ -514,7 +514,7 @@ export function useApprovalProgressWorkflow({
 
     // 2026-10-24 用户定案（指标级鉴定）：上报链末级审批节点（上级部门鉴定环节）
     // 不再弹确认框——打开审批详情，逐指标评定等级后点「确认通过」提交。
-    const isAppraisal = await state.resolveIsAppraisalApprovalItem(
+    const isAppraisal = await state.resolveIsReportApprovalChainItem(
       item as unknown as Record<string, any>
     )
     state.appraisalDialogActive.value = isAppraisal

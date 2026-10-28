@@ -173,6 +173,8 @@ interface PlanReportIndicatorDetailItem {
   indicatorId?: number | string | null
   progress?: number | string | null
   comment?: string | null
+  /** 2026-10-28：上一节点已评定的鉴定进度等级（预填行内下拉用） */
+  appraisalLevel?: string | null
   attachments?: PlanReportAttachmentItem[] | null
 }
 
@@ -2519,9 +2521,9 @@ export function useApprovalProgressDrawer(
       return []
     }
 
-    if (
-      !(isDistributionFlow(currentDetailFlowCode.value) || props.approvalType === 'distribution')
-    ) {
+    if (!(
+      isDistributionFlow(currentDetailFlowCode.value) || props.approvalType === 'distribution'
+    )) {
       return []
     }
 
@@ -3821,6 +3823,33 @@ export function useApprovalProgressDrawer(
   function clearPlanIndicatorAppraisalLevels() {
     planIndicatorAppraisalLevels.value = {}
   }
+
+  // 2026-10-28：打开审批详情时把上一节点已评定的等级预填进下拉——
+  // 上级不改也能直接通过；改了就覆盖。
+  watch(
+    selectedPlanReportSnapshot,
+    snapshot => {
+      const reportId = Number(snapshot?.id)
+      if (!Number.isFinite(reportId) || reportId <= 0) {
+        return
+      }
+      const details = Array.isArray(snapshot?.indicatorDetails) ? snapshot.indicatorDetails : []
+      details.forEach(detail => {
+        const indicatorId = Number(detail?.indicatorId)
+        const level = String(detail?.appraisalLevel || '')
+          .trim()
+          .toUpperCase()
+        if (
+          Number.isFinite(indicatorId) &&
+          indicatorId > 0 &&
+          ['AHEAD', 'NORMAL', 'DELAYED'].includes(level)
+        ) {
+          setPlanIndicatorAppraisalLevel(reportId, indicatorId, level)
+        }
+      })
+    },
+    { immediate: true }
+  )
 
   const appraisalStepDefIdByFlow = ref<Record<string, number | null>>({})
 

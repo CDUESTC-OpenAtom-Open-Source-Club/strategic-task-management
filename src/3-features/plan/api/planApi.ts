@@ -135,6 +135,21 @@ export interface IndicatorLatestAttachmentVO {
   }>
 }
 
+/**
+ * 2026-10-28：鉴定进度上下文——当前有效等级 + 当前用户是否为当前审批节点负责人。
+ * canAppraise=true 才允许行内下拉；lockHint 是不可编辑时的提示。
+ */
+export interface IndicatorAppraisalContextVO {
+  indicatorId: number
+  reportId?: number
+  reportMonth?: string
+  reportStatus?: string
+  appraisalLevel?: string | null
+  canAppraise: boolean
+  currentStepName?: string
+  lockHint?: string
+}
+
 export interface PlanFillVO {
   fillId: number
   planId: number
@@ -2280,6 +2295,61 @@ export const indicatorFillApi = {
     return apiClient.post<ApiResponse<IndicatorLatestAttachmentVO[]>>(
       '/reports/indicator-attachments/latest',
       { indicatorIds: normalized }
+    )
+  },
+
+  /**
+   * 2026-10-28：批量查询鉴定进度上下文（当前等级 + 当前用户是否当前节点负责人）。
+   */
+  async getIndicatorAppraisalContexts(
+    indicatorIds: Array<number | string>
+  ): Promise<ApiResponse<IndicatorAppraisalContextVO[]>> {
+    const normalized = Array.from(
+      new Set(indicatorIds.map(id => Number(id)).filter(id => Number.isFinite(id) && id > 0))
+    )
+    if (normalized.length === 0) {
+      return {
+        code: 200,
+        data: [],
+        message: '无指标',
+        timestamp: new Date().toISOString()
+      }
+    }
+
+    if (USE_MOCK) {
+      return {
+        code: 200,
+        data: [],
+        message: 'mock',
+        timestamp: new Date().toISOString()
+      }
+    }
+
+    return apiClient.post<ApiResponse<IndicatorAppraisalContextVO[]>>(
+      '/reports/indicator-appraisal/context',
+      { indicatorIds: normalized }
+    )
+  },
+
+  /**
+   * 2026-10-28：行内调整鉴定等级（仅当前审批节点负责人；null 表示未评定）。
+   */
+  async setIndicatorAppraisalLevel(
+    indicatorId: number | string,
+    level: string | null
+  ): Promise<ApiResponse<IndicatorAppraisalContextVO>> {
+    if (USE_MOCK) {
+      return {
+        code: 200,
+        data: null as unknown as IndicatorAppraisalContextVO,
+        message: 'mock',
+        timestamp: new Date().toISOString()
+      }
+    }
+
+    return apiClient.put<ApiResponse<IndicatorAppraisalContextVO>>(
+      `/reports/indicators/${Number(indicatorId)}/appraisal-level`,
+      { level: level ?? '' }
     )
   },
 

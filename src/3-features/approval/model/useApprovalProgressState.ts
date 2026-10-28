@@ -1170,9 +1170,9 @@ export function useApprovalProgressState(
       return []
     }
 
-    if (
-      !(isDistributionFlow(currentDetailFlowCode.value) || props.approvalType === 'distribution')
-    ) {
+    if (!(
+      isDistributionFlow(currentDetailFlowCode.value) || props.approvalType === 'distribution'
+    )) {
       return []
     }
 
@@ -3183,6 +3183,33 @@ export function useApprovalProgressState(
     planIndicatorAppraisalLevels.value = {}
   }
 
+  // 2026-10-28：打开审批详情时把上一节点已评定的等级预填进下拉——
+  // 上级不改也能直接通过；改了就覆盖。
+  watch(
+    selectedPlanReportSnapshot,
+    snapshot => {
+      const reportId = Number(snapshot?.id)
+      if (!Number.isFinite(reportId) || reportId <= 0) {
+        return
+      }
+      const details = Array.isArray(snapshot?.indicatorDetails) ? snapshot.indicatorDetails : []
+      details.forEach(detail => {
+        const indicatorId = Number(detail?.indicatorId)
+        const level = String(detail?.appraisalLevel || '')
+          .trim()
+          .toUpperCase()
+        if (
+          Number.isFinite(indicatorId) &&
+          indicatorId > 0 &&
+          ['AHEAD', 'NORMAL', 'DELAYED'].includes(level)
+        ) {
+          setPlanIndicatorAppraisalLevel(reportId, indicatorId, level)
+        }
+      })
+    },
+    { immediate: true }
+  )
+
   /** 上报链各流程「末级审批节点」的 step_def_id 缓存（flowCode → defId/null） */
   const appraisalStepDefIdByFlow = ref<Record<string, number | null>>({})
 
@@ -3246,7 +3273,11 @@ export function useApprovalProgressState(
    * step_def_id 对照流程定义末级审批节点。待办条目的 flowCode/taskKey 在
    * 不同入口（my-tasks/部门看板）装配不一，不能作为唯一依据（线上实测踩坑）。
    */
-  async function resolveIsAppraisalApprovalItem(item: Record<string, any>): Promise<boolean> {
+  /**
+   * 2026-10-28 用户定案：上报链（PLAN_APPROVAL*）的**每个审批节点**都可以逐指标鉴定，
+   * 不再只在末级节点开放。返回 true 时审批详情打开逐指标下拉。
+   */
+  async function resolveIsReportApprovalChainItem(item: Record<string, any>): Promise<boolean> {
     const instanceId = Number(item?.instanceId)
     if (!Number.isFinite(instanceId) || instanceId <= 0) {
       return false
@@ -3272,14 +3303,10 @@ export function useApprovalProgressState(
           pendingDefId = match ? Number(match[1]) : null
         }
       } catch (error) {
-        logger.warn('[ApprovalState] 判定鉴定节点取实例详情失败:', { instanceId, error })
+        logger.warn('[ApprovalState] 判定上报审批节点取实例详情失败:', { instanceId, error })
       }
     }
-    let result = false
-    if (flowCode.startsWith('PLAN_APPROVAL') && pendingDefId !== null) {
-      const defId = await ensureAppraisalStepDefId(flowCode)
-      result = defId !== null && pendingDefId === defId
-    }
+    const result = flowCode.startsWith('PLAN_APPROVAL') && pendingDefId !== null
     appraisalInstanceFlags.value[instanceId] = result
     return result
   }
@@ -3303,7 +3330,7 @@ export function useApprovalProgressState(
     if (cached !== undefined) {
       return cached
     }
-    void resolveIsAppraisalApprovalItem(item as Record<string, any>)
+    void resolveIsReportApprovalChainItem(item as Record<string, any>)
     return false
   }
 
@@ -3823,7 +3850,7 @@ export function useApprovalProgressState(
     clearPlanIndicatorAppraisalLevels,
     isAppraisalApprovalItem,
     isAppraisalInstanceId,
-    resolveIsAppraisalApprovalItem,
+    resolveIsReportApprovalChainItem,
     appraisalDialogActive,
     appraisalDialogInstanceId,
     hasRelatedPlanReportActiveWorkflow,
