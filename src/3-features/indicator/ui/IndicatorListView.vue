@@ -27,6 +27,7 @@ import {
   type ExcelExportSheet,
   type ExcelRowTone
 } from '@/shared/lib/export/excel'
+import { getProgressLevelTagStyle } from '@/shared/lib/constants/progressLevel'
 import {
   buildAttachmentRelativeDir,
   collectAttachmentGroups,
@@ -796,7 +797,11 @@ const handleExportIndicatorList = async () => {
                 label-class-name="manual-level-header"
               >
                 <template #default="{ row }">
-                  <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
+                  <el-tag
+                    :type="getManualAlertTagType(row.manualAlertSeverity)"
+                    :style="getProgressLevelTagStyle(row.manualAlertSeverity)"
+                    size="small"
+                  >
                     {{ getManualAlertLabel(row.manualAlertSeverity) }}
                   </el-tag>
                 </template>
@@ -1027,7 +1032,11 @@ const handleExportIndicatorList = async () => {
             <span v-else style="color: #909399">—</span>
           </el-descriptions-item>
           <el-descriptions-item label="鉴定进度等级">
-            <el-tag :type="getManualAlertTagType(currentDetail.manualAlertSeverity)" size="small">
+            <el-tag
+              :type="getManualAlertTagType(currentDetail.manualAlertSeverity)"
+              :style="getProgressLevelTagStyle(currentDetail.manualAlertSeverity)"
+              size="small"
+            >
               {{ getManualAlertLabel(currentDetail.manualAlertSeverity) }}
             </el-tag>
           </el-descriptions-item>

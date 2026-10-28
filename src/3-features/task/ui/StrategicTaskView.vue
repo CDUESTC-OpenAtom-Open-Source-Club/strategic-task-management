@@ -3,6 +3,10 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { TASK_TABLE_COLUMN_WIDTH } from '@/features/task/lib/tableColumns'
 import { useLatestIndicatorFill } from '@/features/indicator/model/useLatestIndicatorFill'
+import {
+  useIndicatorAppraisal,
+  type IndicatorAppraisalLevel
+} from '@/features/indicator/model/useIndicatorAppraisal'
 import TaskIndicatorTree from './TaskIndicatorTree.vue'
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
@@ -35,6 +39,7 @@ import {
   type ExcelExportSheet,
   type ExcelRowTone
 } from '@/shared/lib/export/excel'
+import { getProgressLevelTagStyle } from '@/shared/lib/constants/progressLevel'
 import {
   buildAttachmentRelativeDir,
   collectAttachmentGroups,
@@ -357,6 +362,24 @@ const { latestFillNote, latestFillAttachments } = useLatestIndicatorFill(
   (id: string | number) => indicators.value.find(item => String(item.id) === String(id)) as any
 )
 
+// 2026-10-28：审批链行内鉴定——只有当前审批节点负责人可改（后端 canAppraise 判定）
+const {
+  load: loadIndicatorAppraisalContexts,
+  canAppraise: canAppraiseIndicator,
+  getLevel: getIndicatorAppraisalLevel,
+  getLockHint: getIndicatorAppraisalLockHint,
+  savingId: savingAppraisalIndicatorId,
+  save: saveIndicatorAppraisalLevel
+} = useIndicatorAppraisal()
+
+watch(
+  () => (normalizedIndicators?.value ?? []).map(item => String(item.id)).join(','),
+  () => {
+    void loadIndicatorAppraisalContexts((normalizedIndicators?.value ?? []).map(item => item.id))
+  },
+  { immediate: true }
+)
+
 const activeTaskTabName = ref<'functional' | 'college'>('functional')
 
 /**
@@ -578,6 +601,41 @@ const getManualAlertLabel = (severity?: ManualAlertSeverity) => getManualAlertOp
 
 const getManualAlertTagType = (severity?: ManualAlertSeverity) =>
   getManualAlertOption(severity).type
+
+/**
+ * 2026-10-28：行内调整鉴定等级。
+ * 只有当前审批节点负责人能看到下拉；确认后写报告快照，后端同步 Alert。
+ */
+const handleAppraisalChange = async (
+  row: { id: string | number; name?: string; manualAlertSeverity?: ManualAlertSeverity },
+  value: ManualAlertSelectValue
+) => {
+  const level: IndicatorAppraisalLevel = value === '' ? null : (value as IndicatorAppraisalLevel)
+  const previous = getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity ?? null)
+  if (previous === level) {
+    return
+  }
+
+  const label = getManualAlertLabel(level)
+  try {
+    await ElMessageBox.confirm(
+      `确认将「${row.name || '该指标'}」的鉴定进度等级调整为「${label}」？`,
+      '调整鉴定进度等级',
+      {
+        confirmButtonText: '确认调整',
+        cancelButtonText: '取消',
+        type: level ? 'warning' : 'info'
+      }
+    )
+    await saveIndicatorAppraisalLevel(row.id, level)
+    strategicStore.patchIndicator(String(row.id), { manualAlertSeverity: level })
+    ElMessage.success('鉴定进度等级已调整')
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(error instanceof Error ? error.message : '调整鉴定进度等级失败')
+    }
+  }
+}
 
 const allStrategicExportDepartmentsSelected = computed({
   get: () =>
@@ -1558,9 +1616,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       <span v-else style="color: #909399">—</span>
                     </template>
                   </el-table-column>
-                  <!-- 2026-10-24 用户定案（鉴定等级锁死）：填报看板上的鉴定进度等级
-                       一律只读展示——鉴定由上级部门在审批详情里按指标评定（指标级鉴定），
-                       看板不再提供行内修改入口，防止绕过审批链直接改等级。 -->
+                  <!-- 2026-10-28 用户定案（恢复行内鉴定）：鉴定是审批手段——
+                       只有当前审批节点的负责人可改；其他角色/节点只读。
+                       数据写当前报告轮次的 appraisal_level，后端同步 Alert。 -->
                   <el-table-column
                     label="鉴定进度等级"
                     :width="TASK_TABLE_COLUMN_WIDTH.appraisalLevel"
@@ -1568,9 +1626,53 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   >
                     <template #default="{ row }">
                       <div class="manual-alert-cell">
-                        <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
-                          {{ getManualAlertLabel(row.manualAlertSeverity) }}
-                        </el-tag>
+                        <template v-if="canAppraiseIndicator(row.id)">
+                          <el-select
+                            :model-value="
+                              getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity) || ''
+                            "
+                            size="small"
+                            class="manual-alert-select"
+                            :loading="savingAppraisalIndicatorId === String(row.id)"
+                            :disabled="savingAppraisalIndicatorId === String(row.id)"
+                            @change="
+                              value => handleAppraisalChange(row, value as ManualAlertSelectValue)
+                            "
+                          >
+                            <el-option
+                              v-for="option in manualAlertOptions"
+                              :key="option.value || 'NONE'"
+                              :label="option.label"
+                              :value="option.value"
+                            />
+                          </el-select>
+                        </template>
+                        <el-tooltip
+                          v-else
+                          :content="getIndicatorAppraisalLockHint(row.id)"
+                          :disabled="!getIndicatorAppraisalLockHint(row.id)"
+                          placement="top"
+                        >
+                          <el-tag
+                            :type="
+                              getManualAlertTagType(
+                                getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
+                              )
+                            "
+                            :style="
+                              getProgressLevelTagStyle(
+                                getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
+                              )
+                            "
+                            size="small"
+                          >
+                            {{
+                              getManualAlertLabel(
+                                getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
+                              )
+                            }}
+                          </el-tag>
+                        </el-tooltip>
                       </div>
                     </template>
                   </el-table-column>
@@ -2217,9 +2319,55 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     align="center"
                   >
                     <template #default="{ row }">
-                      <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
-                        {{ getManualAlertLabel(row.manualAlertSeverity) }}
-                      </el-tag>
+                      <div class="manual-alert-cell">
+                        <template v-if="canAppraiseIndicator(row.id)">
+                          <el-select
+                            :model-value="
+                              getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity) || ''
+                            "
+                            size="small"
+                            class="manual-alert-select"
+                            :loading="savingAppraisalIndicatorId === String(row.id)"
+                            :disabled="savingAppraisalIndicatorId === String(row.id)"
+                            @change="
+                              value => handleAppraisalChange(row, value as ManualAlertSelectValue)
+                            "
+                          >
+                            <el-option
+                              v-for="option in manualAlertOptions"
+                              :key="option.value || 'NONE'"
+                              :label="option.label"
+                              :value="option.value"
+                            />
+                          </el-select>
+                        </template>
+                        <el-tooltip
+                          v-else
+                          :content="getIndicatorAppraisalLockHint(row.id)"
+                          :disabled="!getIndicatorAppraisalLockHint(row.id)"
+                          placement="top"
+                        >
+                          <el-tag
+                            :type="
+                              getManualAlertTagType(
+                                getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
+                              )
+                            "
+                            :style="
+                              getProgressLevelTagStyle(
+                                getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
+                              )
+                            "
+                            size="small"
+                          >
+                            {{
+                              getManualAlertLabel(
+                                getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
+                              )
+                            }}
+                          </el-tag>
+                        </el-tooltip>
+                      </div>
                     </template>
                   </el-table-column>
                   <el-table-column
@@ -2552,7 +2700,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             <span v-else style="color: #909399">—</span>
           </el-descriptions-item>
           <el-descriptions-item label="鉴定进度等级">
-            <el-tag :type="getManualAlertTagType(currentDetail.manualAlertSeverity)" size="small">
+            <el-tag
+              :type="getManualAlertTagType(currentDetail.manualAlertSeverity)"
+              :style="getProgressLevelTagStyle(currentDetail.manualAlertSeverity)"
+              size="small"
+            >
               {{ getManualAlertLabel(currentDetail.manualAlertSeverity) }}
             </el-tag>
           </el-descriptions-item>
