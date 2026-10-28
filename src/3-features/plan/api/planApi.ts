@@ -115,6 +115,26 @@ export interface IndicatorFillVO {
   auditedAt?: string
 }
 
+/**
+ * 2026-10-28：导出专用——服务端按「当前登录人可见范围」返回的指标最新一轮填报附件。
+ * 填报组织本人可见草稿；上级/其他组织只可见非草稿（上一轮已上报快照）。
+ */
+export interface IndicatorLatestAttachmentVO {
+  indicatorId: number
+  reportId: number
+  reportMonth?: string
+  fillDate?: string
+  round?: number
+  status?: string
+  attachments: Array<{
+    id: number
+    fileName: string
+    fileType?: string
+    fileSize?: number
+    url?: string
+  }>
+}
+
 export interface PlanFillVO {
   fillId: number
   planId: number
@@ -1079,8 +1099,7 @@ async function resolveIndicatorReportContext(
           // 原判定 `'data' in r.data` 在任务对象恰含 data 字段或结构不符时取到 null，
           // 导致 planId 丢失。改为兼容两种结构：优先取嵌套 data，缺失时回退顶层对象。
           const rawTaskData = taskResponse.data as
-            | (Record<string, unknown> & { data?: Record<string, unknown> })
-            | null
+            (Record<string, unknown> & { data?: Record<string, unknown> }) | null
           const nestedTaskData =
             rawTaskData && typeof rawTaskData === 'object' && rawTaskData.data
               ? rawTaskData.data
@@ -2058,9 +2077,9 @@ export const planApi = {
     return withRetry(async () => {
       const response = await apiClient
         .getAxiosInstance()
-        .post<
-          ApiResponse<Plan>
-        >(`/plans/${planId}/withdraw`, undefined, { timeout: PLAN_WITHDRAW_TIMEOUT_MS })
+        .post<ApiResponse<Plan>>(`/plans/${planId}/withdraw`, undefined, {
+          timeout: PLAN_WITHDRAW_TIMEOUT_MS
+        })
       invalidatePlanReportsCache(planId)
       invalidatePlanCaches(planId)
       invalidateQueries([
@@ -2228,6 +2247,40 @@ export const indicatorFillApi = {
         timestamp: new Date().toISOString()
       }
     }
+  },
+
+  /**
+   * 2026-10-28：导出专用——批量查询「当前登录人可见」的指标最新一轮填报附件。
+   * 可见性由服务端判定（草稿仅填报组织本人可见），前端不要自行拼装。
+   */
+  async getLatestVisibleIndicatorAttachments(
+    indicatorIds: Array<number | string>
+  ): Promise<ApiResponse<IndicatorLatestAttachmentVO[]>> {
+    const normalized = Array.from(
+      new Set(indicatorIds.map(id => Number(id)).filter(id => Number.isFinite(id) && id > 0))
+    )
+    if (normalized.length === 0) {
+      return {
+        code: 200,
+        data: [],
+        message: '无指标',
+        timestamp: new Date().toISOString()
+      }
+    }
+
+    if (USE_MOCK) {
+      return {
+        code: 200,
+        data: [],
+        message: 'mock',
+        timestamp: new Date().toISOString()
+      }
+    }
+
+    return apiClient.post<ApiResponse<IndicatorLatestAttachmentVO[]>>(
+      '/reports/indicator-attachments/latest',
+      { indicatorIds: normalized }
+    )
   },
 
   /**
