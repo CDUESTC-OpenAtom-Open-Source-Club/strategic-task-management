@@ -47,8 +47,11 @@ const {
   unreadPreviewMessages,
   hasUnreadPreviewMessages,
   notificationPreviewLoading,
+  notificationPreviewVisible,
+  notificationPreviewPopperClass,
   handleNotificationHover,
   handleNotificationClick,
+  handleViewAllMessages,
   formatNotificationTime,
   resolveNotificationApprovalRoute,
   Bell
@@ -256,11 +259,13 @@ const handleDropdownCommand = async (command: string) => {
           </div>
 
           <!-- Notification badge -->
+          <!-- Issue #89 P4：下拉改为受控可见性 + --hidden 强制类，点击后确定收起 -->
           <el-popover
+            v-model:visible="notificationPreviewVisible"
             trigger="hover"
             placement="bottom-end"
             :width="360"
-            popper-class="notification-preview-popper"
+            :popper-class="notificationPreviewPopperClass"
             @before-enter="handleNotificationHover"
           >
             <template #reference>
@@ -334,7 +339,7 @@ const handleDropdownCommand = async (command: string) => {
               <button
                 type="button"
                 class="notification-preview__footer"
-                @click="handleNotificationClick"
+                @click="handleViewAllMessages"
               >
                 查看全部消息
               </button>
@@ -464,6 +469,13 @@ const handleDropdownCommand = async (command: string) => {
   --bg-page: #f1f5f9;
   --bg-card: #ffffff;
   --border: #e2e8f0;
+
+  /* Issue #89 P1：#app 是 height:100vh 的 flex column 容器，本容器是其 flex 子项。
+     默认 flex-shrink:1 会把本容器压扁到一屏高度，而 sticky 顶栏的约束范围
+     恰好是父容器盒子——滚动超过一屏后顶栏就被「容器底边」推出视口，
+     表现为顶栏消失、sticky 导航条上方露出滚动内容（卡片穿透观感）。
+     禁止收缩后容器高度跟随内容，sticky 约束覆盖整个文档。 */
+  flex-shrink: 0;
 
   min-height: 100vh;
   background: var(--bg-page);
@@ -676,6 +688,12 @@ const handleDropdownCommand = async (command: string) => {
   border: 1px solid rgba(15, 23, 42, 0.1);
   border-radius: 6px;
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+}
+
+/* Issue #89 P4：受控收起时强制隐藏（element-plus hover 弹层在指针
+   停留内容内时可能回写 visible，单靠 v-model 收不干净） */
+:global(.notification-preview-popper--hidden) {
+  display: none !important;
 }
 
 .notification-preview {
