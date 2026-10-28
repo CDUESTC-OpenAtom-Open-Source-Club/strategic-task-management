@@ -44,6 +44,10 @@ import {
   resolvePlanReportEntryLock,
   type PlanReportEntryLockState
 } from '@/features/indicator/model/planReportEntryLock'
+import {
+  collectExistingAttachmentIds,
+  resolveBatchSelfRating
+} from '@/features/indicator/lib/reportBatch'
 import { getUsersByOrgId } from '@/features/user/api/query'
 import { ApprovalProgressDrawer } from '@/features/approval'
 import { approveTask, rejectTask } from '@/features/workflow/api'
@@ -3890,8 +3894,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     // 2026-10-20 修复：自评等级保存后重开弹窗显示为空——回显取刚刷新的草稿明细等级，
     // 无草稿明细时依次退回列表行（覆盖层已算）与服务端快照的已存等级
     const draftDetail = reportDetailOverlay.value[String(row.id)] as
-      | { selfRating?: string | null }
-      | undefined
+      { selfRating?: string | null } | undefined
     reportForm.value = {
       newProgress: Math.max(actualProgress, Number(preferredProgress) || 0),
       remark: row.pendingRemark ?? persistedDraft?.remark ?? '',
@@ -4409,7 +4412,12 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
             indicator_name: item.name,
             progress: Number(reportProgress),
             content: reportRemark,
-            attachment_ids: isCurrentIndicator ? attachmentIds : []
+            // 该条已保存的自评等级（非当前条目需沿用它，不能被当前表单值覆盖）
+            selfRating: (item as { selfRating?: string | null }).selfRating || undefined,
+            // 2026-10-28（Issue #91 P0-2）：非当前指标必须回填其已关联的附件 id。
+            // 后端按全量 upsert 保存，空附件列表会 DELETE 该条全部附件关联——
+            // 此前非当前条目一律传空，导致先前保存的附件关联被清空。
+            attachment_ids: isCurrentIndicator ? attachmentIds : collectExistingAttachmentIds(item)
           }
         })
         .filter(Boolean)
@@ -4423,9 +4431,15 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         reportMonth: reportForm.value.reportMonth || undefined,
         attachments: [],
         // Attachments are uploaded first and linked by attachment_ids in batch_items.
+        // 2026-10-28（Issue #91 P1-1）：只有当前指标用表单里的自评等级，
+        // 其余指标沿用各自已保存的值，避免整批被当前值覆盖。
         batch_items: batchItems.map(item => ({
           ...item,
-          selfRating: reportForm.value.selfRating || undefined
+          selfRating: resolveBatchSelfRating({
+            isCurrentIndicator: String(item.indicator_id) === String(indicator.id),
+            formSelfRating: reportForm.value.selfRating,
+            itemSelfRating: item.selfRating
+          })
         }))
       })
 
@@ -5009,8 +5023,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           }
 
           let updatedReportSummary:
-            | (typeof currentPlanReportSummary.value extends infer T ? T : never)
-            | null = null
+            (typeof currentPlanReportSummary.value extends infer T ? T : never) | null = null
           if (usePlanReportFlow.value) {
             const reportOrgId = Number(currentViewingOrgId.value ?? NaN)
             if (!Number.isFinite(reportOrgId) || reportOrgId <= 0) {
@@ -5118,8 +5131,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           }
 
           let updatedReportSummary:
-            | (typeof currentPlanReportSummary.value extends infer T ? T : never)
-            | null = null
+            (typeof currentPlanReportSummary.value extends infer T ? T : never) | null = null
           if (usePlanReportFlow.value) {
             const reportOrgId = Number(currentViewingOrgId.value ?? NaN)
             if (!Number.isFinite(reportOrgId) || reportOrgId <= 0) {
