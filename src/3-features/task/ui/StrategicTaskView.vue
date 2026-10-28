@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { formatWeightPercent } from '@/shared/lib/format'
+
 import { computed, ref, watch } from 'vue'
 import { useLatestIndicatorFill } from '@/features/indicator/model/useLatestIndicatorFill'
 import TaskIndicatorTree from './TaskIndicatorTree.vue'
@@ -1195,7 +1197,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             size="small"
             style="margin-right: 12px"
           >
-            基础性权重合计: {{ departmentTotalWeight }} / 100
+            权重合计: {{ departmentTotalWeight }} / 100
           </el-tag>
           <el-tag v-if="isReadOnly" type="warning" size="small" style="margin-right: 12px">
             历史快照 (只读)
@@ -1364,7 +1366,15 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="weight" label="权重" width="80" align="center">
+                  <el-table-column prop="weight" width="96" align="center">
+                    <template #header>
+                      <el-tooltip
+                        content="同一战略任务下各指标的权重，合计为 100%；不同任务各自独立"
+                        placement="top"
+                      >
+                        <span class="weight-header">权重（%）</span>
+                      </el-tooltip>
+                    </template>
                     <template #default="{ row }">
                       <div class="weight-cell" @dblclick="handleIndicatorDblClick(row, 'weight')">
                         <el-input
@@ -1382,7 +1392,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         >
                           保存中...
                         </span>
-                        <span v-else class="weight-text">{{ row.weight }}</span>
+                        <span v-else class="weight-text">{{
+                          formatWeightPercent(row.weight)
+                        }}</span>
                       </div>
                     </template>
                   </el-table-column>
@@ -1994,7 +2006,15 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="weight" label="权重" width="80" align="center">
+                  <el-table-column prop="weight" width="96" align="center">
+                    <template #header>
+                      <el-tooltip
+                        content="同一战略任务下各指标的权重，合计为 100%；不同任务各自独立"
+                        placement="top"
+                      >
+                        <span class="weight-header">权重（%）</span>
+                      </el-tooltip>
+                    </template>
                     <template #default="{ row }">
                       <div class="weight-cell" @dblclick="handleIndicatorDblClick(row, 'weight')">
                         <el-input
@@ -2012,7 +2032,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         >
                           保存中...
                         </span>
-                        <span v-else class="weight-text">{{ row.weight }}</span>
+                        <span v-else class="weight-text">{{
+                          formatWeightPercent(row.weight)
+                        }}</span>
                       </div>
                     </template>
                   </el-table-column>
@@ -2336,7 +2358,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             >{{ getCategoryText(currentDetail.type2) }}任务</el-descriptions-item
           >
           <el-descriptions-item label="指标类型">{{ currentDetail.type1 }}</el-descriptions-item>
-          <el-descriptions-item label="权重">{{ currentDetail.weight }}</el-descriptions-item>
+          <el-descriptions-item label="权重">{{
+            formatWeightPercent(currentDetail.weight)
+          }}</el-descriptions-item>
           <!-- 2026-10-24 用户定案：自评等级与鉴定等级并列展示（前者填报告知，后者上级鉴定） -->
           <el-descriptions-item label="自评等级">
             <el-tag v-if="(currentDetail as any).selfRating" size="small" type="info">

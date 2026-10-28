@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { formatWeightPercent } from '@/shared/lib/format'
+
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
 import { computed, ref } from 'vue'
@@ -693,7 +695,15 @@ const handleExportIndicatorList = async () => {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column prop="weight" label="权重" width="76" align="center">
+              <el-table-column prop="weight" width="92" align="center">
+                <template #header>
+                  <el-tooltip
+                    content="同一战略任务下各指标的权重，合计为 100%；不同任务各自独立"
+                    placement="top"
+                  >
+                    <span class="weight-header">权重（%）</span>
+                  </el-tooltip>
+                </template>
                 <template #default="{ row }">
                   <div class="weight-cell">
                     <el-input
@@ -704,7 +714,7 @@ const handleExportIndicatorList = async () => {
                       style="width: 50px"
                       @blur="saveIndicatorEdit(row, 'weight')"
                     />
-                    <span v-else class="weight-text">{{ row.weight }}</span>
+                    <span v-else class="weight-text">{{ formatWeightPercent(row.weight) }}</span>
                   </div>
                 </template>
               </el-table-column>

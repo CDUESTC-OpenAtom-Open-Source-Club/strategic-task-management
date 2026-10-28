@@ -1,6 +1,6 @@
 /**
  * Number Formatting Utilities
- * 
+ *
  * Number formatting and parsing functions
  */
 
@@ -38,10 +38,34 @@ export function formatPercentage(value: number, decimals = 1): string {
 }
 
 /**
+ * 权重显示格式化（2026-10-28）
+ *
+ * 列表里的权重口径是「同一战略任务内各指标的权重占比，合计 100」，本身就是百分数
+ * （如 60、40、100），因此不能再乘 100。这里统一补 `%` 并去掉无意义的小数位，
+ * 空值显示为 `—`，避免出现 60 / 60.00 / 6000% 三种写法混用。
+ *
+ * 注意：不要与 formatWeightAsPercentage（把 0-1 小数转百分比）混用。
+ */
+export function formatWeightPercent(value: unknown): string {
+  if (value === null || value === undefined || value === '') {
+    return '—'
+  }
+
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) {
+    return '—'
+  }
+
+  return `${Number(numeric.toFixed(2))}%`
+}
+
+/**
  * Format file size in human-readable format
  */
 export function formatFileSize(bytes: number): string {
-  if (bytes === 0) {return '0 B'}
+  if (bytes === 0) {
+    return '0 B'
+  }
 
   const k = 1024
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
