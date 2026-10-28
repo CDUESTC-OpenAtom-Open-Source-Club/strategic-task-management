@@ -512,21 +512,8 @@ export function useApprovalProgressWorkflow({
       return
     }
 
-    // 2026-10-24 用户定案（指标级鉴定）：上报链末级审批节点（上级部门鉴定环节）
-    // 不再弹确认框——打开审批详情，逐指标评定等级后点「确认通过」提交。
-    const isAppraisal = await state.resolveIsReportApprovalChainItem(
-      item as unknown as Record<string, any>
-    )
-    state.appraisalDialogActive.value = isAppraisal
-    state.appraisalDialogInstanceId.value = isAppraisal ? item.instanceId : null
-    if (isAppraisal) {
-      // 直接驱动详情弹窗原语（openPlanApprovalDetails 的计划空态守卫会拦下报告实例）
-      state.planDetailDialogVisible.value = true
-      await state.loadSelectedHistoryInstanceDetail(item.instanceId)
-      ElMessage.info('请在详情中逐指标评定「鉴定进度等级」，然后点击「确认通过」')
-      return
-    }
-
+    // 2026-10-28 用户定案：审批卡片只做审批，不做鉴定——
+    // 鉴定在三个表格页的指标行内完成，这里直接走普通审批确认。
     let comment = '审批通过'
     try {
       const batchSuffix =
@@ -590,58 +577,6 @@ export function useApprovalProgressWorkflow({
    * 终态 APPROVED 时投影到 plan_report_indicator.appraisal_level。
    */
   /** 按实例 ID 从上报待办列表兜底取业务实体（报告）ID */
-  function itemEntityIdOfInstance(instanceId: number | string | null | undefined): number {
-    const entry = (state.pendingReportApprovalItems.value as Array<Record<string, any>>).find(
-      candidate => String(candidate.instanceId) === String(instanceId)
-    )
-    const entityId = Number(entry?.entityId)
-    return Number.isFinite(entityId) ? entityId : NaN
-  }
-
-  async function confirmAppraisalDialogApproval() {
-    // 读打开弹窗时快照的实例 ID（全局 selectedHistoryInstanceId 会被刷新事件异步清空）
-    const instanceId = state.appraisalDialogInstanceId.value
-    if (!instanceId) {
-      ElMessage.warning('未找到当前审批实例，请重新打开详情')
-      return
-    }
-
-    const reportId = Number(
-      state.selectedPlanReportSnapshot.value?.id ?? itemEntityIdOfInstance(instanceId)
-    )
-    const indicatorLevels = state.collectPlanIndicatorAppraisalLevels(
-      Number.isFinite(reportId) ? reportId : null
-    )
-
-    const loadingInstance = ElLoading.service({
-      lock: true,
-      text: '正在提交审批与鉴定等级...',
-      background: 'rgba(0, 0, 0, 0.7)'
-    })
-    try {
-      const response = await decideTask(String(instanceId), {
-        approved: true,
-        comment: '审批通过',
-        indicatorLevels: Object.keys(indicatorLevels).length > 0 ? indicatorLevels : undefined
-      })
-      if (!response.success) {
-        ElMessage.error(response.message || '审批失败')
-        return
-      }
-      state.clearPlanIndicatorAppraisalLevels()
-      state.appraisalDialogActive.value = false
-      state.appraisalDialogInstanceId.value = null
-      state.planDetailDialogVisible.value = false
-      ElMessage.success('审批通过')
-      await refreshPlanApprovalAfterMutation()
-      emit('refresh', {})
-    } catch (error) {
-      ElMessage.error((error as Error)?.message || '审批失败')
-    } finally {
-      loadingInstance.close()
-    }
-  }
-
   async function handleRejectMutation(item: PlanApprovalDetailItem) {
     const mutationInstanceIds = resolveMutationInstanceIds(item)
     if (mutationInstanceIds.length === 0) {
@@ -1449,7 +1384,6 @@ export function useApprovalProgressWorkflow({
     canCurrentUserHandleMutationApproval,
     canCurrentUserWithdrawMutation,
     handleApproveMutation,
-    confirmAppraisalDialogApproval,
     handleApprovePlanBatch,
     handleRejectMutation,
     handleRejectPlanBatch,
