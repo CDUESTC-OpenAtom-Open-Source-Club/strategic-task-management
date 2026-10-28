@@ -797,13 +797,17 @@ const handleExportIndicatorList = async () => {
                 label-class-name="manual-level-header"
               >
                 <template #default="{ row }">
+                  <!-- 2026-10-28：未评定统一显示「—」（与自评等级/进度说明等空值同风格）；
+                       已评定保留彩色 tag（深绿/绿/橙视觉口径） -->
                   <el-tag
+                    v-if="row.manualAlertSeverity"
                     :type="getManualAlertTagType(row.manualAlertSeverity)"
                     :style="getProgressLevelTagStyle(row.manualAlertSeverity)"
                     size="small"
                   >
                     {{ getManualAlertLabel(row.manualAlertSeverity) }}
                   </el-tag>
+                  <span v-else style="color: #909399">—</span>
                 </template>
               </el-table-column>
               <!-- 2026-10-20 用户定案：进度说明不占太大位置——固定宽度，
