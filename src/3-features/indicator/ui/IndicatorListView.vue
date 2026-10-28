@@ -4,6 +4,8 @@ import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.v
 import { computed, ref } from 'vue'
 import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
 import { useLatestIndicatorFill } from '@/features/indicator/model/useLatestIndicatorFill'
+// 2026-10-28 华年定案：三个页面列宽统一，唯一来源见 tableColumns.ts
+import { TASK_TABLE_COLUMN_WIDTH } from '@/features/task/lib/tableColumns'
 import {
   Plus,
   View,
@@ -700,16 +702,14 @@ const handleExportIndicatorList = async () => {
               class="unified-table"
               @selection-change="handleSelectionChange"
             >
-              <!-- 2026-10-20 用户定案（第二次）：两列用 min-width 等分剩余空间——
-                   此前全表固定宽度合计约 1200px，容器更宽时表格右侧留白。
-                   改为 min-width 后，两列同比例吃掉剩余宽度，表格始终铺满且保持等宽。
-                   下限取 192：1280 视口下容器约 1184px，固定列合计 800，两列各 192 正好铺满；
-                   更窄时才出现横向滚动 -->
+              <!-- 2026-10-28 华年定案：三个页面列宽/顺序必须与「战略任务管理」页面完全一致。
+                   战略任务列改为与基准页相同的固定宽度（140），核心指标列取基准页的 min-width（210），
+                   剩余宽度由核心指标列吃掉，表格仍铺满容器。取值统一在 TASK_TABLE_COLUMN_WIDTH。 -->
               <el-table-column
                 v-if="showStrategicTaskColumn"
                 prop="taskContent"
                 label="战略任务"
-                min-width="192"
+                :width="TASK_TABLE_COLUMN_WIDTH.strategicTask"
               >
                 <template #default="{ row }">
                   <!-- 2026-10-19 用户定案：上方=任务属性，右侧竖排看板=截断全文，两框互不干扰 -->
@@ -727,8 +727,12 @@ const handleExportIndicatorList = async () => {
                   </el-tooltip>
                 </template>
               </el-table-column>
-              <!-- 与战略任务列同为 min-width：两列等分剩余宽度，表格铺满容器 -->
-              <el-table-column prop="name" label="核心指标" min-width="192">
+              <!-- 2026-10-28 华年定案：核心指标列取基准页 min-width（210），吃掉剩余宽度 -->
+              <el-table-column
+                prop="name"
+                label="核心指标"
+                :min-width="TASK_TABLE_COLUMN_WIDTH.coreIndicatorMin"
+              >
                 <template #default="{ row }">
                   <!-- 2026-10-24 用户定案：填报页字段一律只读，不能双击编辑——
                        填报人只能通过最右侧操作栏「填报」进入填报弹窗 -->
@@ -759,7 +763,12 @@ const handleExportIndicatorList = async () => {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column prop="weight" label="权重" width="76" align="center">
+              <el-table-column
+                prop="weight"
+                label="权重"
+                :width="TASK_TABLE_COLUMN_WIDTH.weight"
+                align="center"
+              >
                 <template #default="{ row }">
                   <div class="weight-cell">
                     <el-input
@@ -774,7 +783,11 @@ const handleExportIndicatorList = async () => {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column label="自评等级" width="108" align="center">
+              <el-table-column
+                label="自评等级"
+                :width="TASK_TABLE_COLUMN_WIDTH.selfRating"
+                align="center"
+              >
                 <template #default="{ row }">
                   <el-tag
                     v-if="row.selfRating"
@@ -791,7 +804,7 @@ const handleExportIndicatorList = async () => {
               </el-table-column>
               <el-table-column
                 label="鉴定进度等级"
-                width="136"
+                :width="TASK_TABLE_COLUMN_WIDTH.appraisalLevel"
                 align="center"
                 header-align="center"
                 label-class-name="manual-level-header"
@@ -810,9 +823,28 @@ const handleExportIndicatorList = async () => {
                   <span v-else style="color: #909399">—</span>
                 </template>
               </el-table-column>
+              <!-- 2026-10-26 用户定案：上报资料列悬浮显示附件卡片（序号+文件名+类型），
+                   点击文件名直接下载；与指标分发页同构（ReportMaterialsCell）。
+                   2026-10-28 华年定案：列顺序统一为「…→ 上报资料 → 进度说明 → 下发备注 →」，
+                   与战略任务管理页面保持一致，故上报资料列前移到进度说明之前。 -->
+              <el-table-column
+                label="上报资料"
+                :width="TASK_TABLE_COLUMN_WIDTH.reportMaterials"
+                align="center"
+              >
+                <template #default="{ row }">
+                  <ReportMaterialsCell
+                    :indicator-id="row.id"
+                    :attachments="row.pendingAttachmentDetails || row.attachments"
+                  />
+                </template>
+              </el-table-column>
               <!-- 2026-10-20 用户定案：进度说明不占太大位置——固定宽度，
                    剩余空间让给战略任务/核心指标两列 -->
-              <el-table-column label="进度说明" width="140">
+              <el-table-column
+                label="进度说明"
+                :min-width="TASK_TABLE_COLUMN_WIDTH.progressNoteMin"
+              >
                 <template #default="{ row }">
                   <el-tooltip
                     :content="row.pendingRemark || ''"
@@ -825,17 +857,11 @@ const handleExportIndicatorList = async () => {
                   </el-tooltip>
                 </template>
               </el-table-column>
-              <!-- 2026-10-26 用户定案：上报资料列悬浮显示附件卡片（序号+文件名+类型），
-                   点击文件名直接下载；与指标分发页同构（ReportMaterialsCell）。 -->
-              <el-table-column label="上报资料" width="104" align="center">
-                <template #default="{ row }">
-                  <ReportMaterialsCell
-                    :indicator-id="row.id"
-                    :attachments="row.pendingAttachmentDetails || row.attachments"
-                  />
-                </template>
-              </el-table-column>
-              <el-table-column prop="remark" label="下发备注" width="132">
+              <el-table-column
+                prop="remark"
+                label="下发备注"
+                :width="TASK_TABLE_COLUMN_WIDTH.remark"
+              >
                 <template #default="{ row }">
                   <!-- 2026-10-24 用户定案：下发备注同样只读（不能双击编辑） -->
                   <div class="indicator-name-cell">
@@ -851,7 +877,7 @@ const handleExportIndicatorList = async () => {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="104" align="center">
+              <el-table-column label="操作" :width="TASK_TABLE_COLUMN_WIDTH.actions" align="center">
                 <template #default="{ row }">
                   <div class="action-cell">
                     <div class="action-buttons">
