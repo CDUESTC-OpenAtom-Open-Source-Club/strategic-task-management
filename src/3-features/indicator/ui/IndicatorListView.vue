@@ -1146,7 +1146,7 @@ const handleExportIndicatorList = async () => {
               multiple
               :limit="5"
               :disabled="isUploadingReportFiles || isSavingReport"
-              accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+              accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.txt"
               :on-change="handleReportFileChange"
               :on-remove="handleReportFileRemove"
               :before-upload="beforeReportUpload"
@@ -1154,7 +1154,7 @@ const handleExportIndicatorList = async () => {
               <el-button size="small" type="primary" plain>选择文件</el-button>
               <template #tip>
                 <div class="upload-tip">
-                  支持 PDF、Word、Excel、图片格式，单个文件不超过
+                  支持 PDF、Word、Excel、图片、TXT 格式，单个文件不超过
                   30MB，最多5个文件。选择后仅暂存，保存时才会上传并关联。双击文件名可预览或下载。
                 </div>
               </template>
