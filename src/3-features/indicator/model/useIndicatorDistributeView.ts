@@ -3730,14 +3730,15 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     }
 
     const childIndicators = getMyCollegeIndicators(college)
-    const basicTaskIndicators = childIndicators.filter(isBasicTaskIndicator)
-    const basicTaskWeightTotal = basicTaskIndicators.reduce(
+    const childWeightTotal = childIndicators.reduce(
       (sum, indicator) => sum + Number(indicator.weight || 0),
       0
     )
 
-    if (basicTaskWeightTotal !== 100) {
-      ElMessage.warning('仅当基础性任务下子指标权重合计恰好为 100 时，才可以下发')
+    // 2026-10-28 口径对齐：与后端 validateFuncToCollegeIndicators 一致，
+    // 取该学院全部子指标（跨基础性/发展性任务）合计；按两位小数归整避免浮点尾差。
+    if (Math.round(childWeightTotal * 100) / 100 !== 100) {
+      ElMessage.warning('仅当该学院子指标权重合计恰好为 100 时，才可以下发')
       return
     }
 
@@ -3930,15 +3931,20 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     return collegeOverallStatus.value
   })
 
-  // 计算当前选中学院基础性任务下子指标的总权重
+  // 计算当前选中学院下全部子指标的总权重
+  // 2026-10-28 口径对齐（详见 Issue #91）：与后端 validateFuncToCollegeIndicators 一致，
+  // 取计划内全部任务（基础性 + 发展性）的子指标合计，不再只算基础性任务子集。
   const collegeTotalWeight = computed(() => {
     if (!selectedCollege.value) {
       return 0
     }
 
-    return getMyCollegeIndicators(selectedCollege.value)
-      .filter(isBasicTaskIndicator)
-      .reduce((sum, indicator) => sum + Number(indicator.weight || 0), 0)
+    const total = getMyCollegeIndicators(selectedCollege.value).reduce(
+      (sum, indicator) => sum + Number(indicator.weight || 0),
+      0
+    )
+    // 按两位小数归整后再比较（与后端 BigDecimal 口径一致，避免浮点尾差把按钮误禁用）
+    return Math.round(total * 100) / 100
   })
 
   // 2026-10-27 用户反馈：编辑保存后的强制刷新会让指标短暂清空，权重合计

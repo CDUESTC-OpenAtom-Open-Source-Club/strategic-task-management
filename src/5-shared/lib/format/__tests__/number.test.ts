@@ -10,6 +10,7 @@ import {
   formatCurrency,
   formatPercentage,
   formatFileSize,
+  formatWeightPercent,
   parseNumber,
   clamp,
   roundTo
@@ -188,6 +189,30 @@ describe('Number Formatting', () => {
 
     it('should handle zero', () => {
       expect(roundTo(0, 2)).toBe(0)
+    })
+  })
+
+  describe('formatWeightPercent', () => {
+    // 2026-10-28：权重口径为「本计划内全部指标合计 100%」，取值本身已是百分数
+    it('should append percent sign', () => {
+      expect(formatWeightPercent(60)).toBe('60%')
+      expect(formatWeightPercent(4.16)).toBe('4.16%')
+    })
+
+    it('should drop meaningless trailing zeros', () => {
+      expect(formatWeightPercent(60.0)).toBe('60%')
+      expect(formatWeightPercent(4.16)).toBe('4.16%')
+    })
+
+    it('should return em dash for empty values', () => {
+      expect(formatWeightPercent(null)).toBe('—')
+      expect(formatWeightPercent(undefined)).toBe('—')
+      expect(formatWeightPercent('')).toBe('—')
+    })
+
+    it('should return em dash for non-numeric values', () => {
+      expect(formatWeightPercent('abc')).toBe('—')
+      expect(formatWeightPercent(Number.NaN)).toBe('—')
     })
   })
 })

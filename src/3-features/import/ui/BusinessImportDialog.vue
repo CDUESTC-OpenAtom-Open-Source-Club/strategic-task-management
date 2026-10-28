@@ -111,8 +111,10 @@ const formatCommitBlockedMessage = (result: ImportCommitResponse) => {
   if (reason.includes('已下发') || reason.includes('重复导入')) {
     return '当前任务已下发，不能重复导入或下发。'
   }
-  if (reason.includes('权重合计必须为100')) {
-    return `本次导入未写入：下发前权重校验未通过，基础属性权重合计必须等于 100%。${reason}`
+  // 2026-10-28：后端报错文案改为「计划内指标权重合计必须为 100%」（含空格），
+  // 旧的 '权重合计必须为100' 匹配已失效，这里按新文案匹配。
+  if (reason.includes('权重合计必须为 100%') || reason.includes('权重合计必须为100')) {
+    return `本次导入未写入：下发前权重校验未通过，计划内指标权重合计必须等于 100%。${reason}`
   }
   if (reason.includes('未产生可审批计划')) {
     return '本次导入未写入：没有生成可审批计划，请检查导入目标和数据。'
@@ -125,8 +127,8 @@ const formatAutoDispatchBlockedMessage = (result: ImportCommitResponse) => {
   const importSummary = `导入成功：新增 ${result.createdCount} 条，更新 ${result.updatedCount} 条`
   const reason = result.workflow?.message?.trim() || '自动下发未完成'
 
-  if (reason.includes('权重合计必须为100')) {
-    return `${importSummary}；下发已阻止：权重校验未通过，基础属性权重合计必须等于 100%。${reason}`
+  if (reason.includes('权重合计必须为 100%') || reason.includes('权重合计必须为100')) {
+    return `${importSummary}；下发已阻止：权重校验未通过，计划内指标权重合计必须等于 100%。${reason}`
   }
   if (reason.includes('已下发') || reason.includes('重复发起')) {
     return `${importSummary}；下发已阻止：当前任务已处于已下发状态，不能重复下发。`

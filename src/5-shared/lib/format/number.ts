@@ -40,11 +40,12 @@ export function formatPercentage(value: number, decimals = 1): string {
 /**
  * 权重显示格式化（2026-10-28）
  *
- * 列表里的权重口径是「同一战略任务内各指标的权重占比，合计 100」，本身就是百分数
+ * 列表里的权重口径是「本计划内全部指标的权重占比，合计 100」，本身就是百分数
  * （如 60、40、100），因此不能再乘 100。这里统一补 `%` 并去掉无意义的小数位，
  * 空值显示为 `—`，避免出现 60 / 60.00 / 6000% 三种写法混用。
  *
- * 注意：不要与 formatWeightAsPercentage（把 0-1 小数转百分比）混用。
+ * 注意：不要与 feature 内的 formatWeightAsPercentage（src/3-features/indicator/lib/calculations.ts，
+ * 把 0-1 小数转百分比）混用——两者口径不同。
  */
 export function formatWeightPercent(value: unknown): string {
   if (value === null || value === undefined || value === '') {

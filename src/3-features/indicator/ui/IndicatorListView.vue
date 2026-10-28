@@ -698,7 +698,7 @@ const handleExportIndicatorList = async () => {
               <el-table-column prop="weight" width="92" align="center">
                 <template #header>
                   <el-tooltip
-                    content="同一战略任务下各指标的权重，合计为 100%；不同任务各自独立"
+                    content="本计划内全部指标的权重合计为 100%（跨基础性/发展性任务合计）"
                     placement="top"
                   >
                     <span class="weight-header">权重（%）</span>

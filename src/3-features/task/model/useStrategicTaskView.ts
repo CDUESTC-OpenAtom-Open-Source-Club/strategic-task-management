@@ -782,7 +782,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
 
     // 计算权重之和（计划内全部指标）
-    return indicators.value.reduce((sum, i) => sum + Number(i.weight || 0), 0)
+    // 按两位小数归整后再比较：后端按两位小数分配权重，浮点直接比较会出现
+    // 100.00000000000001 / 99.99999999999999，导致「发起审批」按钮被误禁用。
+    const total = indicators.value.reduce((sum, i) => sum + Number(i.weight || 0), 0)
+    return Math.round(total * 100) / 100
   })
 
   const ensurePlanCanDistribute = (): boolean => {

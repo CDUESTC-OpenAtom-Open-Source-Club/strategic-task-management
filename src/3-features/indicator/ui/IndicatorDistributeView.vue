@@ -825,7 +825,7 @@ const handleDistributionImportCommitted = async () => {
                 :class="{ 'weight-tag--overlimit': collegeTotalWeightStable > 100 }"
                 size="default"
               >
-                基础性权重合计: {{ collegeTotalWeightStable }} / 100
+                权重合计: {{ collegeTotalWeightStable }} / 100
               </el-tag>
             </div>
             <div class="header-actions">
@@ -1011,7 +1011,7 @@ const handleDistributionImportCommitted = async () => {
                 >
                   <template #header>
                     <el-tooltip
-                      content="同一核心指标下各学院子指标的权重，合计为 100%"
+                      content="本计划内该学院全部子指标的权重合计为 100%（跨基础性/发展性任务合计）"
                       placement="top"
                     >
                       <span class="weight-header">权重（%）</span>
