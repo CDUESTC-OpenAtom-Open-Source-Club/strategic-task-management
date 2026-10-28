@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
+import { TASK_TABLE_COLUMN_WIDTH } from '@/features/task/lib/tableColumns'
 import { useLatestIndicatorFill } from '@/features/indicator/model/useLatestIndicatorFill'
 import TaskIndicatorTree from './TaskIndicatorTree.vue'
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
@@ -305,6 +307,10 @@ const {
   refreshIndicatorWorkflowContext,
   refreshTaskPageAfterIndicatorMutation,
   hasMutationDraft,
+  mutationSubmitBlocked,
+  mutationSubmitBlockedReason,
+  mutationDraftCount,
+  reportMonthLabel,
   submitMutationDraft,
   cancelMutationDraft,
   registerTaskLocally,
@@ -358,6 +364,34 @@ const activeTaskTabName = ref<'functional' | 'college'>('functional')
  * 恢复显示只需把此开关改回 true。
  */
 const SHOW_CARD_VIEW_TOGGLE = false
+
+// 2026-10-28 迭代计划 M6：未提交异动草稿的丢失可感知——
+// ① 刷新/关窗：beforeunload 原生拦截；② 站内路由离开：确认框二次确认。
+const guardActive = computed(() => canEdit.value && mutationDraftCount.value > 0)
+const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+  if (!guardActive.value) {
+    return
+  }
+  event.preventDefault()
+  event.returnValue = ''
+}
+onMounted(() => window.addEventListener('beforeunload', handleBeforeUnload))
+onBeforeUnmount(() => window.removeEventListener('beforeunload', handleBeforeUnload))
+onBeforeRouteLeave(async () => {
+  if (!guardActive.value) {
+    return true
+  }
+  try {
+    await ElMessageBox.confirm(
+      `有 ${mutationDraftCount.value} 项修改尚未发起异动，离开页面将丢失。确定离开吗？`,
+      '未提交的异动草稿',
+      { confirmButtonText: '离开', cancelButtonText: '留下', type: 'warning' }
+    )
+    return true
+  } catch {
+    return false
+  }
+})
 
 /**
  * 2026-10-24 用户定案：从「上报记录」卡点开单次上报详情。
@@ -1182,23 +1216,26 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           </el-button>
           <!-- 2026-10-21 用户定案：全部攒改一起上报；按钮就叫「发起异动」 -->
           <!-- 编辑权只属于填报人：负责人/校领导不产生草稿，也不应看到提交入口 -->
-          <!-- 2026-10-24 用户定案（互斥）：上报在审时异动发起入口锁定；异动在审时草稿区一并锁定 -->
-          <template
-            v-if="
-              canEdit &&
-              hasMutationDraft &&
-              !isReportApprovalInFlight &&
-              !isMutationApprovalInFlight
-            "
-          >
-            <el-button
-              size="small"
-              type="warning"
-              :loading="mutationApiLoading"
-              @click="submitMutationDraft"
+          <!-- 2026-10-28 迭代计划 M5（互斥可见化）：上报/异动在审时按钮置灰 + tooltip 说明，
+               取代此前「直接隐藏」——用户能看出为什么暂时不能发起，而不是入口凭空消失 -->
+          <template v-if="canEdit && hasMutationDraft">
+            <el-tooltip
+              :disabled="!mutationSubmitBlocked"
+              :content="mutationSubmitBlockedReason"
+              placement="top"
             >
-              发起异动
-            </el-button>
+              <span>
+                <el-button
+                  size="small"
+                  type="warning"
+                  :disabled="mutationSubmitBlocked"
+                  :loading="mutationApiLoading"
+                  @click="submitMutationDraft"
+                >
+                  发起异动
+                </el-button>
+              </span>
+            </el-tooltip>
             <el-button size="small" :disabled="mutationApiLoading" @click="cancelMutationDraft">
               取消异动
             </el-button>
@@ -1228,17 +1265,18 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
         <div class="toolbar-right">
           <el-popover
             placement="top-end"
-            trigger="hover"
+            trigger="click"
             :width="320"
             popper-class="approval-status-popper"
             @show="handleApprovalStatusPopoverShow"
           >
             <template #reference>
+              <!-- 2026-10-28：点击仅展开流程状态浮层（会议要求由悬停改点击）；跳转审批中心请点浮层内卡片 -->
               <el-tag
                 :type="approvalFlowStatusMeta.tagType"
                 effect="light"
                 class="approval-status-tag"
-                @click.stop="handleOpenApproval"
+                @click.stop
               >
                 {{ activeTaskTabName === 'college' ? '审批状况' : '审批状态' }}:
                 {{ approvalFlowStatusMeta.label }}
@@ -1294,7 +1332,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             size="small"
             style="margin-right: 12px"
           >
-            基础性权重合计: {{ departmentTotalWeight }} / 100
+            权重合计: {{ departmentTotalWeight }} / 100
+          </el-tag>
+          <!-- 2026-10-28 迭代计划 M2：看板显示填报月份（数据归属周期一目了然） -->
+          <el-tag v-if="reportMonthLabel" type="info" size="small" style="margin-right: 12px">
+            填报月份: {{ reportMonthLabel }}
           </el-tag>
           <el-tag v-if="isReadOnly" type="warning" size="small" style="margin-right: 12px">
             历史快照 (只读)
@@ -1310,6 +1352,21 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
         style="margin: 12px 16px"
       >
         <template #title> 当前计划已进入审批流程，请先完成整体计划审批后再继续下发或编辑 </template>
+      </el-alert>
+
+      <!-- 2026-10-28 迭代计划 M6：未提交异动草稿的可感知提示（刷新/离开即丢） -->
+      <el-alert
+        v-if="canEdit && mutationDraftCount > 0"
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin: 12px 16px"
+      >
+        <template #title>
+          有
+          {{ mutationDraftCount }}
+          项修改待发起异动（刷新或离开页面将丢失），确认后请点顶部「发起异动」提交审批
+        </template>
       </el-alert>
 
       <!-- 任务管理页签：职能部门 / 二级学院（2026-09-17 定案 tabpage 方案） -->
@@ -1463,7 +1520,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="weight" label="权重" width="80" align="center">
+                  <el-table-column prop="weight" label="权重" width="96" align="center">
                     <template #default="{ row }">
                       <div class="weight-cell" @dblclick="handleIndicatorDblClick(row, 'weight')">
                         <el-input
@@ -1485,7 +1542,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column label="自评等级" width="112" align="center">
+                  <el-table-column
+                    label="自评等级"
+                    :width="TASK_TABLE_COLUMN_WIDTH.selfRating"
+                    align="center"
+                  >
                     <template #default="{ row }">
                       <el-tag v-if="row.selfRating" size="small" type="info">
                         {{
@@ -1499,7 +1560,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   <!-- 2026-10-24 用户定案（鉴定等级锁死）：填报看板上的鉴定进度等级
                        一律只读展示——鉴定由上级部门在审批详情里按指标评定（指标级鉴定），
                        看板不再提供行内修改入口，防止绕过审批链直接改等级。 -->
-                  <el-table-column label="鉴定进度等级" width="122" align="center">
+                  <el-table-column
+                    label="鉴定进度等级"
+                    :width="TASK_TABLE_COLUMN_WIDTH.appraisalLevel"
+                    align="center"
+                  >
                     <template #default="{ row }">
                       <div class="manual-alert-cell">
                         <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
@@ -1511,7 +1576,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   <!-- 2026-10-26 用户定案：上报资料列统一用 ReportMaterialsCell——
                        悬浮即列出附件卡片（序号+文件名+类型），点击文件名下载，
                        与指标填报页/指标分发页完全同构。 -->
-                  <el-table-column label="上报资料" width="112" align="center">
+                  <el-table-column
+                    label="上报资料"
+                    :width="TASK_TABLE_COLUMN_WIDTH.reportMaterials"
+                    align="center"
+                  >
                     <template #default="{ row }">
                       <ReportMaterialsCell
                         :indicator-id="row.id"
@@ -1519,7 +1588,10 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       />
                     </template>
                   </el-table-column>
-                  <el-table-column label="进度说明" min-width="130">
+                  <el-table-column
+                    label="进度说明"
+                    :min-width="TASK_TABLE_COLUMN_WIDTH.progressNoteMin"
+                  >
                     <template #default="{ row }">
                       <el-tooltip
                         :content="row.pendingRemark || ''"
@@ -1532,7 +1604,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </el-tooltip>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="remark" label="下发备注" width="130">
+                  <el-table-column
+                    prop="remark"
+                    label="下发备注"
+                    :width="TASK_TABLE_COLUMN_WIDTH.remark"
+                  >
                     <template #default="{ row }">
                       <div
                         class="indicator-name-cell"
@@ -1566,7 +1642,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column label="操作" width="116" align="center">
+                  <el-table-column
+                    label="操作"
+                    :width="TASK_TABLE_COLUMN_WIDTH.actions"
+                    align="center"
+                  >
                     <template #default="{ row }">
                       <div class="action-buttons-inline">
                         <!-- 详情按钮 - 始终显示（2026-10-23 用户定案：查看/详情文案统一为「详情」） -->
@@ -2093,7 +2173,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="weight" label="权重" width="80" align="center">
+                  <el-table-column prop="weight" label="权重" width="96" align="center">
                     <template #default="{ row }">
                       <div class="weight-cell" @dblclick="handleIndicatorDblClick(row, 'weight')">
                         <el-input
@@ -2115,7 +2195,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column label="自评等级" width="110" align="center">
+                  <el-table-column
+                    label="自评等级"
+                    :width="TASK_TABLE_COLUMN_WIDTH.selfRating"
+                    align="center"
+                  >
                     <template #default="{ row }">
                       <el-tag v-if="row.selfRating" size="small" type="info">
                         {{
@@ -2126,14 +2210,21 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       <span v-else>—</span>
                     </template>
                   </el-table-column>
-                  <el-table-column label="鉴定进度等级" width="126" align="center">
+                  <el-table-column
+                    label="鉴定进度等级"
+                    :width="TASK_TABLE_COLUMN_WIDTH.appraisalLevel"
+                    align="center"
+                  >
                     <template #default="{ row }">
                       <el-tag :type="getManualAlertTagType(row.manualAlertSeverity)" size="small">
                         {{ getManualAlertLabel(row.manualAlertSeverity) }}
                       </el-tag>
                     </template>
                   </el-table-column>
-                  <el-table-column label="上报资料" width="96">
+                  <el-table-column
+                    label="上报资料"
+                    :width="TASK_TABLE_COLUMN_WIDTH.reportMaterials"
+                  >
                     <template #default="{ row }">
                       <!-- 当前轮次附件（含草稿）；历次经上报记录查看 -->
                       <ReportMaterialsCell
@@ -2148,7 +2239,10 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       <ReportStatusCell :indicator-id="row.id" />
                     </template>
                   </el-table-column>
-                  <el-table-column label="进度说明" min-width="116">
+                  <el-table-column
+                    label="进度说明"
+                    :min-width="TASK_TABLE_COLUMN_WIDTH.progressNoteMin"
+                  >
                     <template #default="{ row }">
                       <el-tooltip
                         :content="row.pendingRemark || ''"
@@ -2161,7 +2255,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </el-tooltip>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="remark" label="下发备注" width="106">
+                  <el-table-column
+                    prop="remark"
+                    label="下发备注"
+                    :width="TASK_TABLE_COLUMN_WIDTH.remark"
+                  >
                     <template #default="{ row }">
                       <div
                         class="indicator-name-cell"
@@ -2195,7 +2293,12 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column label="操作" width="120" align="center" fixed="right">
+                  <el-table-column
+                    label="操作"
+                    :width="TASK_TABLE_COLUMN_WIDTH.actions"
+                    align="center"
+                    fixed="right"
+                  >
                     <template #default="{ row }">
                       <el-button link type="primary" size="small" @click="handleViewDetail(row)">
                         详情
