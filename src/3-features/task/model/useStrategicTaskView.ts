@@ -386,7 +386,20 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         return candidateCreatedByOrgId === 35 && candidatePlanLevel === 'STRAT_TO_FUNC'
       }) || null
 
-    return strictMatch || plans[0] || null
+    // 2026-10-29 修复：同一部门存在多份计划时（如教务处 4044 已下发、5044/6044/7044
+    // 草稿），strictMatch 可能命中草稿副本——而「就地编辑走异动草稿」的判定
+    // （hasDistributedIndicators）完全依赖当前计划状态，选中草稿副本会导致
+    // 已下发计划的指标被误判为可直写、异动草稿不成立。
+    // 因此在同部门候选中优先取「已下发/审批中」的那份，再退回其他。
+    const distributedStatus = (plan: Record<string, unknown>): boolean => {
+      const status = normalizePlanStatus(
+        (plan.status ?? plan.planStatus ?? plan.plan_status) as string | undefined
+      )
+      return status === 'DISTRIBUTED' || status === 'PENDING'
+    }
+    const inFlow = plans.find(p => distributedStatus(p as Record<string, unknown>))
+
+    return inFlow || strictMatch || plans[0] || null
   }
 
   const findCurrentPlanByOrgId = (orgId?: number | null) => {
@@ -1363,9 +1376,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       options.collegeScope === true
         ? Number(collegeScope?.orgId ?? NaN)
         : Number(currentDepartmentOrgId.value ?? NaN)
-    if (
-      !(Number.isFinite(planId) && planId > 0 && Number.isFinite(reportOrgId) && reportOrgId > 0)
-    ) {
+    if (!(
+      Number.isFinite(planId) &&
+      planId > 0 &&
+      Number.isFinite(reportOrgId) &&
+      reportOrgId > 0
+    )) {
       currentPlanReportSummary.value = null
       latestPlanReportSummary.value = null
       return
@@ -2138,9 +2154,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         return
       }
       retainedRouteApprovalEntityType.value = routeApprovalEntityType.value as
-        | 'PLAN'
-        | 'PLAN_REPORT'
-        | undefined
+        'PLAN' | 'PLAN_REPORT' | undefined
       retainedRouteApprovalEntityId.value = routeApprovalEntityId.value
       try {
         await syncSelectedDepartmentFromRoute()
@@ -3567,7 +3581,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 指标列表编辑状态
   const editingIndicatorId = ref<number | null>(null)
   const editingIndicatorField = ref<string | null>(null)
-  const editingIndicatorValue = ref<Record<string, unknown> | null>(null)
+  // 2026-10-29 修复（未改值却误建异动草稿）：此处原先声明为
+  // ref<Record<string, unknown> | null>，但实际始终存**单值**（字符串/数字/布尔）。
+  // 类型与实际用法不符时，el-input 的 v-model 会按对象去读该 ref，
+  // 导致输入框显示出与行数据不一致的值（例如权重 100 显示成 45），
+  // 失焦保存时又按「有变化」判定 → 误建草稿、误现「发起异动」按钮。
+  const editingIndicatorValue = ref<string | number | boolean | null>(null)
   // 2026-10-26 修复：进入编辑时记录原值快照——失焦比对用快照而不是 row[field]。
   // 此前用 row 字段当原值，在合并单元格表格下 row 引用错位会读到 undefined，
   // 被 applyMutationDraftChange 误判为「有变化」→ 没改内容也入异动草稿、按钮误现。
@@ -3790,8 +3809,44 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     ElMessage.info('已标记删除；点顶部「发起异动」提交审批后生效')
   }
 
+  /**
+   * 取该行字段的「权威原值」：合并单元格表格下 row 的字段可能缺失或错位，
+   * 此时回退到全局指标库按主键匹配的指标行——保证「没改内容就不算异动」
+   * 的判定有可靠原值可比（2026-10-29 修复未改值却误建草稿）。
+   */
+  const resolveAuthoritativeIndicatorValue = (row: StrategicIndicator, field: string): unknown => {
+    const raw = row[field as keyof StrategicIndicator]
+    const missing =
+      raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '')
+    if (!missing) {
+      return raw
+    }
+    const authoritative = strategicStore.indicators.find(item => String(item.id) === String(row.id))
+    if (!authoritative) {
+      return raw
+    }
+    if (field === 'weight') {
+      return authoritative.weight
+    }
+    if (field === 'name') {
+      return authoritative.name
+    }
+    if (field === 'remark') {
+      return authoritative.remark
+    }
+    if (field === 'taskContent') {
+      return authoritative.taskContent
+    }
+    return raw
+  }
+
   // 就地编辑保存 → 已下发时写入草稿而不是落库（2026-10-21 用户定案：可攒多条指标，无拦截）
-  const applyMutationDraftChange = (row: StrategicIndicator, field: string, rawValue: unknown) => {
+  const applyMutationDraftChange = (
+    row: StrategicIndicator,
+    field: string,
+    rawValue: unknown,
+    originalValueOverride?: unknown
+  ) => {
     const mapping = MUTATION_FIELD_MAP[field]
     if (!mapping) {
       return false
@@ -3818,12 +3873,16 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     // 合并单元格表格下 row 引用可能错位（读到 undefined 被误判为有变化）。
     // 快照也为空时回退到全局指标库行（strategicStore.indicators 按主键匹配），
     // 保证「没改内容就不算异动」的判定永远有可靠的原值可比。
+    // 2026-10-29 修复：原值优先用调用方在 cancel 之前取出的快照
+    // （originalValueOverride）；未提供时才回退到当前 editingIndicatorOriginal。
+    const originalSource =
+      originalValueOverride !== undefined ? originalValueOverride : editingIndicatorOriginal.value
     let originalValue =
       mapping.payloadKey === 'weight_percent'
-        ? Number(editingIndicatorOriginal.value ?? 0)
-        : String((editingIndicatorOriginal.value as string | number | undefined) ?? '')
+        ? Number(originalSource ?? 0)
+        : String((originalSource as string | number | undefined) ?? '')
     if (
-      (mapping.payloadKey === 'weight_percent' && originalValue === '0') ||
+      (mapping.payloadKey === 'weight_percent' && !Number.isFinite(originalValue)) ||
       (mapping.payloadKey !== 'weight_percent' && originalValue === '')
     ) {
       const authoritative = strategicStore.indicators.find(
@@ -4066,7 +4125,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       editingIndicatorId.value = row.id
       editingIndicatorField.value = field
       editingIndicatorValue.value = row[field as keyof StrategicIndicator]
-      editingIndicatorOriginal.value = row[field as keyof StrategicIndicator]
+      // 2026-10-29 修复：合并单元格表格下 row 的字段可能缺失/错位，
+      // 快照回退到全局指标库按主键匹配的权威值——否则「没改内容」也会被判成有变化
+      editingIndicatorOriginal.value = resolveAuthoritativeIndicatorValue(row, field)
       return
     }
     if (savingIndicatorId.value === row.id) {
@@ -4191,8 +4252,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     // 2026-10-21 用户定案：战略任务改名同构——有 taskId 时攒草稿，没有则维持原直写。
     if (hasDistributedIndicators.value && MUTATION_FIELD_MAP[field]) {
       const value = editingIndicatorValue.value
+      // 2026-10-29 修复（未改值却误建异动草稿）：cancelIndicatorEdit() 会把
+      // editingIndicatorOriginal 清空，而原值快照正是在 applyMutationDraftChange
+      // 内部才读取的——清空后原值退化为 0，与实际权重（如 100）不等，
+      // 被误判为「有变化」而建出草稿、误现「发起异动」按钮。
+      // 这里在 cancel 之前先把原值取出，交给草稿判定使用。
+      const originalValue = editingIndicatorOriginal.value
       cancelIndicatorEdit()
-      applyMutationDraftChange(row, field, value)
+      applyMutationDraftChange(row, field, value, originalValue)
       return
     }
 
