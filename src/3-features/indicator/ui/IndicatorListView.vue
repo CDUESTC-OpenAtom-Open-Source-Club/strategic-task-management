@@ -33,6 +33,7 @@ import { getProgressLevelTagStyle } from '@/shared/lib/constants/progressLevel'
 import {
   buildAttachmentRelativeDir,
   collectAttachmentGroups,
+  countExportAttachments,
   exportDepartmentsAsZip
 } from '@/shared/lib/export/zipExport'
 import {
@@ -96,6 +97,7 @@ const {
   authStore,
   availableOwnerDepts,
   beforeReportUpload,
+  buildCollegeExportRowsByOwnerDept,
   canCurrentUserHandlePlanApprovalOnPage,
   canEdit,
   canHandleIndicatorWorkflow,
@@ -313,6 +315,12 @@ const { latestFillNote, latestFillAttachments } = useLatestIndicatorFill(
 
 const indicatorListExporting = ref(false)
 
+// 2026-10-29：二级学院导出改造——「导出当前范围」按来源部门出 Excel，
+// 「全部导出」按来源职能部门拆分多个 Excel 并打成一个 zip。
+const collegeExportDialogVisible = ref(false)
+const selectedCollegeExportDepartments = ref<string[]>([])
+const collegeBatchExporting = ref(false)
+
 // 2026-10-14 用户定案：与战略任务管理/下发界面同构——同一战略任务多行在「战略任务」列合并；移除「内部ID」列
 const buildIndicatorListExportColumns = (
   rows: StrategicIndicator[],
@@ -413,6 +421,147 @@ const getIndicatorListExportRowTone = (row: StrategicIndicator): ExcelRowTone =>
   return 'default'
 }
 
+// 2026-10-29：二级学院「全部导出」的部门多选（与战略任务页同构）
+const allCollegeExportDepartmentsSelected = computed(
+  () => selectedCollegeExportDepartments.value.length === availableOwnerDepts.value.length
+)
+
+const collegeExportDepartmentsIndeterminate = computed(
+  () =>
+    selectedCollegeExportDepartments.value.length > 0 &&
+    selectedCollegeExportDepartments.value.length < availableOwnerDepts.value.length
+)
+
+const toggleAllCollegeExportDepartments = (checked: string | number | boolean) => {
+  selectedCollegeExportDepartments.value = checked ? [...availableOwnerDepts.value] : []
+}
+
+const buildCollegeExportSheet = (
+  rows: StrategicIndicator[],
+  summaryMap: IndicatorAttachmentSummaryMap | null
+): ExcelExportSheet<StrategicIndicator> => ({
+  sheetName: '指标填报',
+  rows,
+  columns: buildIndicatorListExportColumns(rows, summaryMap),
+  emptyMessage: '该部门暂无可导出的指标',
+  getRowTone: getIndicatorListExportRowTone
+})
+
+const buildCollegeAttachmentGroups = (
+  rows: StrategicIndicator[],
+  summaryMap: IndicatorAttachmentSummaryMap | null
+) =>
+  collectAttachmentGroups(
+    rows.map((row, index) => {
+      const summary = getAttachmentSummary(summaryMap, row.id)
+      return {
+        seq: index + 1,
+        indicatorName: row.name || '指标',
+        round: summary?.round,
+        fillDate: summary?.fillDate,
+        attachments: resolveVisibleAttachments(summaryMap, row.id, () =>
+          resolveIndicatorAttachmentItems(row)
+        )
+      }
+    })
+  )
+
+// 2026-10-29：二级学院「导出当前范围」= 当前来源部门一个 Excel + 附件，强制打包 zip。
+const handleExportCollegeCurrentRange = async () => {
+  const sourceDept =
+    filterOwnerDept.value || availableOwnerDepts.value[0] || effectiveViewingDept.value
+  if (!sourceDept) {
+    ElMessage.warning('请先选择来源部门')
+    return
+  }
+
+  indicatorListExporting.value = true
+  try {
+    await strategicStore.loadIndicatorsByYear(timeContext.currentYear, { force: true })
+
+    const groups = buildCollegeExportRowsByOwnerDept([sourceDept])
+    if (groups.length === 0 || groups[0].rows.length === 0) {
+      ElMessage.warning('当前部门暂无可导出的指标数据')
+      return
+    }
+
+    const rows = groups[0].rows
+    const summaryMap = await loadIndicatorAttachmentSummaryMap(rows.map(row => row.id))
+
+    const payload = {
+      department: sourceDept,
+      sheets: [buildCollegeExportSheet(rows, summaryMap) as ExcelExportSheet<unknown>],
+      attachmentGroups: buildCollegeAttachmentGroups(rows, summaryMap)
+    }
+
+    const dateText = new Date().toISOString().slice(0, 10)
+    const collegeName = effectiveViewingDept.value || authStore.userDepartment || '当前学院'
+
+    await exportDepartmentsAsZip([payload], `指标填报_${collegeName}_${dateText}.zip`, {
+      forceZip: true,
+      onProgress: text => ElMessage({ message: text, duration: 1200, grouping: true })
+    })
+    ElMessage.success(`导出成功：${sourceDept} 的 Excel 与附件已打包`)
+  } catch {
+    ElMessage.error('导出失败，请稍后重试')
+  } finally {
+    indicatorListExporting.value = false
+  }
+}
+
+const openCollegeExportDialog = () => {
+  if (availableOwnerDepts.value.length === 0) {
+    ElMessage.warning('当前学院暂无可导出的来源部门')
+    return
+  }
+  selectedCollegeExportDepartments.value = [...availableOwnerDepts.value]
+  collegeExportDialogVisible.value = true
+}
+
+// 2026-10-29：二级学院「全部导出」= 每个来源职能部门一个 Excel，附件同包，绝不嵌套 zip。
+const handleExportAllCollegeDepartments = async () => {
+  if (selectedCollegeExportDepartments.value.length === 0) {
+    ElMessage.warning('请选择要导出的部门')
+    return
+  }
+
+  collegeBatchExporting.value = true
+  try {
+    await strategicStore.loadIndicatorsByYear(timeContext.currentYear, { force: true })
+
+    const groups = buildCollegeExportRowsByOwnerDept(selectedCollegeExportDepartments.value)
+    if (groups.length === 0) {
+      ElMessage.warning('当前学院暂无可导出的指标数据')
+      return
+    }
+
+    const allRows = groups.flatMap(group => group.rows)
+    const summaryMap = await loadIndicatorAttachmentSummaryMap(allRows.map(row => row.id))
+
+    const payloads = groups.map(group => ({
+      department: group.department,
+      sheets: [buildCollegeExportSheet(group.rows, summaryMap) as ExcelExportSheet<unknown>],
+      attachmentGroups: buildCollegeAttachmentGroups(group.rows, summaryMap)
+    }))
+
+    const dateText = new Date().toISOString().slice(0, 10)
+    const collegeName = effectiveViewingDept.value || authStore.userDepartment || '当前学院'
+
+    await exportDepartmentsAsZip(payloads, `指标填报_${collegeName}_${dateText}.zip`, {
+      forceZip: true,
+      onProgress: text => ElMessage({ message: text, duration: 1200, grouping: true })
+    })
+    collegeExportDialogVisible.value = false
+    ElMessage.success(
+      `导出成功：${payloads.length} 个职能部门各一个 Excel，${countExportAttachments(payloads)} 个附件已一并打包`
+    )
+  } catch {
+    ElMessage.error('导出失败，请稍后重试')
+  } finally {
+    collegeBatchExporting.value = false
+  }
+}
+
 const manualAlertOptions: Array<{
   label: string
   value: ManualAlertSeverity
@@ -439,6 +588,12 @@ const getMonthlyExpectedProgress = () => {
 }
 
 const handleExportIndicatorList = async () => {
+  // 2026-10-29：二级学院改走「按来源职能部门拆分」的导出；职能部门/战略部保持原逻辑
+  if (isSecondaryCollege.value) {
+    await handleExportCollegeCurrentRange()
+    return
+  }
+
   const rows = getIndicatorListExportRows()
   if (rows.length === 0) {
     ElMessage.warning('暂无可导出的指标数据')
@@ -512,7 +667,16 @@ const handleExportIndicatorList = async () => {
       <div class="page-actions">
         <el-button :loading="indicatorListExporting" @click="handleExportIndicatorList">
           <el-icon><Download /></el-icon>
-          导出
+          {{ isSecondaryCollege ? '导出当前范围' : '导出' }}
+        </el-button>
+        <el-button
+          v-if="isSecondaryCollege"
+          type="primary"
+          :loading="collegeBatchExporting"
+          @click="openCollegeExportDialog"
+        >
+          <el-icon><Download /></el-icon>
+          全部导出
         </el-button>
       </div>
     </div>
@@ -1300,6 +1464,44 @@ const handleExportIndicatorList = async () => {
       approval-type="submission"
       @refresh="refreshIndicatorListAfterMutation"
     />
+
+    <!-- 二级学院「全部导出」部门选择弹窗 -->
+    <el-dialog
+      v-model="collegeExportDialogVisible"
+      title="选择导出部门"
+      width="520px"
+      :close-on-click-modal="!collegeBatchExporting"
+    >
+      <div class="college-export-dialog-body">
+        <el-checkbox
+          :model-value="allCollegeExportDepartmentsSelected"
+          :indeterminate="collegeExportDepartmentsIndeterminate"
+          @change="toggleAllCollegeExportDepartments"
+        >
+          全选部门
+        </el-checkbox>
+        <el-checkbox-group
+          v-model="selectedCollegeExportDepartments"
+          class="college-export-selection-list"
+        >
+          <el-checkbox v-for="dept in availableOwnerDepts" :key="dept" :value="dept">
+            {{ dept }}
+          </el-checkbox>
+        </el-checkbox-group>
+      </div>
+      <template #footer>
+        <el-button :disabled="collegeBatchExporting" @click="collegeExportDialogVisible = false">
+          取消
+        </el-button>
+        <el-button
+          type="primary"
+          :loading="collegeBatchExporting"
+          @click="handleExportAllCollegeDepartments"
+        >
+          导出
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 

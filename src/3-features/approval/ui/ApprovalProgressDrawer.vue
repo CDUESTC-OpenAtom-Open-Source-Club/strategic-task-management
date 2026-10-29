@@ -88,6 +88,9 @@ const {
   expectedWorkflowCodes,
   canCurrentUserHandleReportTodo,
   externalWorkflowTodoItems,
+  planApprovalTodoCards,
+  hasApprovalContextEntity,
+  reportTodoDetailCards,
   formatStayDuration,
   formatTime,
   getFallbackSubmitterValue,
@@ -332,7 +335,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
             />
             <div v-else class="approval-list">
               <div
-                v-if="showPlanPendingCard && currentPlanApprovalSummary"
+                v-if="showPlanPendingCard && currentPlanApprovalSummary && hasApprovalContextEntity"
                 :key="currentPlanApprovalSummary.key"
                 class="approval-card"
               >
@@ -451,7 +454,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
                    此前既无独立卡渲染、也被计划范围过滤挡掉。学院侧审核人因此无法审批
                    本学院上报。现在按「上报审批」独立成卡，与分发页审批中心口径一致。 -->
               <div
-                v-for="item in externalWorkflowTodoItems"
+                v-for="item in reportTodoDetailCards"
                 :key="`external-todo-${item.instanceId || item.taskId}`"
                 class="approval-card"
                 data-card-kind="report-todo-card"
@@ -467,6 +470,30 @@ const displayedCurrentPlanApprovalName = computed(() => {
                     </div>
                   </div>
                   <ElTag type="warning" size="small">审批中</ElTag>
+                </div>
+                <!-- 2026-10-29 用户定案：上报待办统一渲染 A 卡完整字段
+                     （提交人/提交时间/当前步骤），与上方完整卡信息密度一致 -->
+                <div class="submit-info">
+                  <div class="info-row">
+                    <el-icon><User /></el-icon>
+                    <span class="label">提交人：</span>
+                    <span class="value">{{ item.submitterName || '—' }}</span>
+                  </div>
+                  <div class="info-row">
+                    <el-icon><Timer /></el-icon>
+                    <span class="label">提交时间：</span>
+                    <span class="value">{{ formatTime(item.createdAt) }}</span>
+                  </div>
+                  <div class="info-row">
+                    <el-icon><Right /></el-icon>
+                    <span class="label">当前步骤：</span>
+                    <span class="value">{{ item.currentStepName }}</span>
+                  </div>
+                  <div v-if="formatStayDuration(item.createdAt)" class="info-row">
+                    <el-icon><Timer /></el-icon>
+                    <span class="label">停留时长：</span>
+                    <span class="value">{{ formatStayDuration(item.createdAt) }}</span>
+                  </div>
                 </div>
                 <div class="card-actions">
                   <ElButton @click="openPlanApprovalDetails">查看详情</ElButton>

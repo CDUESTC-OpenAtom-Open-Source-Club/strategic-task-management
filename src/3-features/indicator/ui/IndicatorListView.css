@@ -932,3 +932,18 @@
   text-align: center !important;
   justify-content: center;
 }
+
+/* 2026-10-29：二级学院「全部导出」部门选择弹窗 */
+.college-export-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.college-export-selection-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+}

@@ -785,24 +785,23 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
   )
 
-  // 计算当前选中部门的指标权重总和（用于下发验证）
-  // 2026-10-28 口径对齐（详见 Issue #91）：后端 BasicTaskWeightValidationService 校验的是
-  // 「计划内全部指标合计 100%」，此前前端只统计基础性任务子集 —— 教务处（基础性 50 / 计划 100）、
-  // 数字校园（基础性 0 / 计划 100）这类部门即使计划合计已等于 100，「发起审批」按钮也会被禁用。
+  // 计算当前选中部门的基础性任务指标权重总和（用于下发验证）
+  // 基础性判定以「后端真实 task_type=BASIC」为准
+  // 2026-10-29 用户定案：恢复基础性口径——PR#92 的「计划内全部=100」改造不采纳
   const departmentTotalWeight = computed(() => {
     if (!selectedDepartment.value) {
       return 0
     }
 
-    // 计算权重之和（计划内全部指标）
-    return indicators.value.reduce((sum, i) => sum + Number(i.weight || 0), 0)
+    const deptIndicators = indicators.value.filter(i => isBasicIndicatorForCurrentRules(i))
+
+    // 计算权重之和
+    return deptIndicators.reduce((sum, i) => sum + Number(i.weight || 0), 0)
   })
 
   const ensurePlanCanDistribute = (): boolean => {
     if (departmentTotalWeight.value !== 100) {
-      ElMessage.warning(
-        `计划内指标权重合计必须为100%（按当前部门全部指标计算），当前为${departmentTotalWeight.value}`
-      )
+      ElMessage.warning(`基础性任务指标权重合计必须为100%，当前为${departmentTotalWeight.value}`)
       return false
     }
     return true
@@ -4788,7 +4787,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
           '[StrategicTaskView] 已下发计划新增指标，已加入待发起异动列表:',
           createdIndicatorId
         )
-        ElMessage.info('指标已新增；请确认计划内权重合计为 100 后点顶部「发起异动」提交审批')
+        ElMessage.info('指标已新增；请确认基础性权重合计为 100 后点顶部「发起异动」提交审批')
       }
 
       // 统一走“变更后刷新”链路，避免新增后被旧缓存覆盖，导致主页仍显示上一版状态。

@@ -1067,8 +1067,7 @@ const currentStrategicImportCycleId = computed(() => {
   }
 
   const cycle = timeContext.cycles.find(item => Number(item.year) === timeContext.currentYear) as
-    | { cycleId?: number | string; id?: number | string }
-    | undefined
+    { cycleId?: number | string; id?: number | string } | undefined
   const numericCycleId = Number(cycle?.cycleId ?? cycle?.id)
   return Number.isFinite(numericCycleId) && numericCycleId > 0 ? numericCycleId : null
 })
@@ -1395,7 +1394,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             size="small"
             style="margin-right: 12px"
           >
-            权重合计: {{ departmentTotalWeight }} / 100
+            基础性权重合计: {{ departmentTotalWeight }} / 100
           </el-tag>
           <!-- 2026-10-28 迭代计划 M2：看板显示填报月份（数据归属周期一目了然） -->
           <el-tag v-if="reportMonthLabel" type="info" size="small" style="margin-right: 12px">

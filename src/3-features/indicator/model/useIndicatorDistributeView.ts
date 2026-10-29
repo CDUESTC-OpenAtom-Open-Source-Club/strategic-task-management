@@ -527,17 +527,13 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
   const resolveCurrentCycleId = (): number | undefined => {
     const selectedPlan = currentSelectedCollegePlan.value as
-      | (Plan & { cycleId?: number | string; cycle_id?: number | string })
-      | null
+      (Plan & { cycleId?: number | string; cycle_id?: number | string }) | null
     const selectedPlanDetails = currentSelectedCollegePlanDetails.value as
-      | (Plan & { cycleId?: number | string; cycle_id?: number | string })
-      | null
+      (Plan & { cycleId?: number | string; cycle_id?: number | string }) | null
     const departmentPlan = currentDepartmentPlan.value as
-      | (Plan & { cycleId?: number | string; cycle_id?: number | string })
-      | null
+      (Plan & { cycleId?: number | string; cycle_id?: number | string }) | null
     const departmentPlanDetails = currentDepartmentPlanDetails.value as
-      | (Plan & { cycleId?: number | string; cycle_id?: number | string })
-      | null
+      (Plan & { cycleId?: number | string; cycle_id?: number | string }) | null
 
     const directCycleId =
       selectedPlanDetails?.cycleId ??
@@ -554,8 +550,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     }
 
     const cycle = timeContext.cycles.find(item => Number(item.year) === timeContext.currentYear) as
-      | { cycleId?: number | string; id?: number | string }
-      | undefined
+      { cycleId?: number | string; id?: number | string } | undefined
     const numericCycleId = Number(cycle?.cycleId ?? cycle?.id)
     return Number.isFinite(numericCycleId) && numericCycleId > 0 ? numericCycleId : undefined
   }
@@ -1551,6 +1546,42 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     return isBatchDistributing.value || Boolean(withdrawButtonDisabledReason.value)
   })
 
+  // 2026-10-29：与后端 PlanApplicationService 的下发守卫同口径——
+  // 战略发展部正在异动「该职能部门自己的指标」时，后端会拒绝职能部门的
+  // PLAN_DISPATCH_FUNCDEPT 下发；前端据此提前置灰按钮并给出原因。
+  // 注意：必须按 target_org_id（异动实际作用的组织）精确过滤，不能把
+  // owner_org_id 也算进来，否则会把与该部门无关的异动算上，造成过度置灰。
+  const functionalDeptMutationInFlight = ref(false)
+  const loadFunctionalDeptMutationSignal = async () => {
+    const orgId = Number(currentDepartmentOrgIdFromTable.value ?? NaN)
+    if (!Number.isFinite(orgId) || orgId <= 0) {
+      functionalDeptMutationInFlight.value = false
+      return
+    }
+
+    try {
+      const { mutationApi } = await import('@/features/indicator/api/mutationApi')
+      const response = await mutationApi.approvals(orgId)
+      const items = Array.isArray(response.data) ? response.data : []
+      functionalDeptMutationInFlight.value = items.some(item => {
+        const status = String(item.status || '').toUpperCase()
+        const entityType = String(item.entity_type || 'INDICATOR').toUpperCase()
+        return (
+          status === 'IN_REVIEW' &&
+          entityType === 'INDICATOR' &&
+          Number(item.target_org_id) === orgId
+        )
+      })
+    } catch {
+      functionalDeptMutationInFlight.value = false
+    }
+  }
+
+  // 切换部门时重新拉取异动信号，避免沿用上一个部门的置灰结论
+  watch(currentDepartmentOrgIdFromTable, () => {
+    void loadFunctionalDeptMutationSignal()
+  })
+
   const distributionSubmitButtonDisabledReason = computed(() => {
     if (timeContext.isReadOnly) {
       return '历史快照为只读状态'
@@ -1562,6 +1593,10 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
     if (!canCurrentUserSubmitCurrentDepartmentDistribution.value) {
       return '只有当前部门组织下的填报人才可以下发'
+    }
+
+    if (functionalDeptMutationInFlight.value) {
+      return '该职能部门的指标正在异动审批中，暂不能下发；请等异动审批结束或撤回后再操作'
     }
 
     if (collegeTotalWeight.value !== 100) {
@@ -1814,6 +1849,11 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         {
           source: 'taskTypeMap',
           job: loadCurrentDepartmentPlanTaskTypeMap(currentActiveCollegePlan.value?.id)
+        },
+        {
+          // 异动锁：战略部正在异动本部门指标时置灰「发起下发审批」
+          source: 'functionalDeptMutation',
+          job: loadFunctionalDeptMutationSignal()
         }
       ]
 
@@ -2292,8 +2332,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   // 获取选中学院的所有子指标（按父指标分组，只显示当前部门下发的）
   const currentDepartmentPlanIndicators = computed<StrategicIndicator[]>(() => {
     const plan = currentSelectedCollegePlanDetails.value as
-      | (Plan & { indicators?: unknown[] })
-      | null
+      (Plan & { indicators?: unknown[] }) | null
     if (!plan || !Array.isArray(plan.indicators)) {
       return []
     }
@@ -3416,8 +3455,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       if (editingEl) {
         // 处理不同类型的输入元素
         const input = editingEl.querySelector('input, textarea') as
-          | HTMLInputElement
-          | HTMLTextAreaElement
+          HTMLInputElement | HTMLTextAreaElement
         if (input) {
           input.focus()
           // 如果是文本输入框，选中所有文本
@@ -3716,6 +3754,15 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   // 下发：针对学院下所有草稿状态的子指标
   const handleBatchDistribute = async (college: string) => {
     if (isBatchDistributing.value) {
+      return
+    }
+
+    // 异动锁兜底：按钮虽已置灰（is-disabled/aria-disabled 仅视觉态），
+    // 点击仍会走到这里，与后端 PlanApplicationService 守卫保持同口径直接拦截。
+    if (functionalDeptMutationInFlight.value) {
+      ElMessage.warning(
+        '该职能部门的指标正在异动审批中，暂不能下发；请等异动审批结束或撤回后再操作'
+      )
       return
     }
 

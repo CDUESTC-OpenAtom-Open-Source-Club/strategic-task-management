@@ -81,7 +81,10 @@ import {
   resolveLatestIndicatorWorkflowSnapshot,
   type IndicatorWorkflowSnapshot
 } from '@/features/plan/lib/indicatorWorkflow'
-import { filterIndicatorsForViewerRole } from '@/features/indicator/lib/scope'
+import {
+  filterIndicatorsForViewerRole,
+  getIndicatorTargetOrgId
+} from '@/features/indicator/lib/scope'
 import {
   isCollegePlanCandidate,
   listCollegePlanSourceDepts,
@@ -1079,6 +1082,62 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
     return Array.from(ownerDepts).sort()
   })
+
+  /**
+   * 2026-10-29 定案：二级学院「全部导出」按来源职能部门分组。
+   * - 只导出当前学院可见、当前年度、ownerDept 命中的指标；
+   * - 每个部门内部沿用学院页同一套排序（父指标 sortOrder → 自身 sortOrder → id）；
+   * - 空部门直接过滤掉，不生成空 Excel。
+   */
+  const buildCollegeExportRowsByOwnerDept = (
+    departments: string[] = availableOwnerDepts.value
+  ): Array<{ department: string; rows: StrategicIndicator[] }> => {
+    if (!isSecondaryCollege.value) {
+      return []
+    }
+
+    const currentYear = timeContext.currentYear
+    const realYear = timeContext.realCurrentYear
+    const targetOrgId = currentViewingOrgId.value
+    if (targetOrgId === null) {
+      return []
+    }
+
+    const selected = new Set(departments.map(dept => String(dept ?? '').trim()).filter(Boolean))
+    // 不依赖「当前选中的 plan」状态：全部导出要覆盖多个来源部门，
+    // 每个部门各自按自己的 FUNC_TO_COLLEGE 计划是否已下发判定。
+    const visibleIndicators = strategicStore.indicators.filter(
+      indicator =>
+        resolveIndicatorYear(indicator, realYear) === currentYear &&
+        getIndicatorTargetOrgId(indicator) === targetOrgId
+    )
+
+    return availableOwnerDepts.value
+      .filter(dept => selected.size === 0 || selected.has(dept))
+      .map(department => {
+        const plan = collegePlanCandidates.value.find(candidate => {
+          const detail = collegePlanDetailsMap.value[String(candidate.id)] || candidate
+          return resolveCollegePlanSourceDept(detail as Plan) === department
+        })
+        const planDetail = plan ? collegePlanDetailsMap.value[String(plan.id)] || plan : null
+        // 未下发（非 DISTRIBUTED）的来源部门不导出，与填报页「已下发才可见」一致；
+        // 找不到计划时保留 store 行，兼容历史数据。
+        if (planDetail && !canViewReceivedPlanContentByStatus(planDetail.status, false)) {
+          return { department, rows: [] }
+        }
+        return {
+          department,
+          rows: visibleIndicators
+            .filter(
+              indicator =>
+                indicator.responsibleDept === effectiveViewingDept.value &&
+                indicator.ownerDept === department
+            )
+            .sort(compareCollegeIndicatorRows)
+        }
+      })
+      .filter(group => group.rows.length > 0)
+  }
 
   const selectedCollegePlan = computed<Plan | null>(() => {
     if (!isSecondaryCollege.value) {
@@ -4016,8 +4075,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     // 2026-10-20 修复：自评等级保存后重开弹窗显示为空——回显取刚刷新的草稿明细等级，
     // 无草稿明细时依次退回列表行（覆盖层已算）与服务端快照的已存等级
     const draftDetail = reportDetailOverlay.value[String(row.id)] as
-      | { selfRating?: string | null }
-      | undefined
+      { selfRating?: string | null } | undefined
     reportForm.value = {
       newProgress: Math.max(actualProgress, Number(preferredProgress) || 0),
       remark: row.pendingRemark ?? persistedDraft?.remark ?? '',
@@ -4272,6 +4330,23 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     return isLt30M
   }
 
+  /**
+   * 安全解码 URL 编码的文件名（2026-10-29）。
+   * multipart 传输中中文文件名可能被浏览器/代理 percent-encode，
+   * 存库后展示为 %E7%AC%AC... 乱码。仅在文件名含 % 编码序列时尝试解码，
+   * 解码失败（格式不合法）保持原值不变。
+   */
+  const safeDecodeFileName = (name: string): string => {
+    if (!name.includes('%')) {
+      return name
+    }
+    try {
+      return decodeURIComponent(name)
+    } catch {
+      return name
+    }
+  }
+
   const normalizeUploadedAttachment = (
     payload: Record<string, unknown>,
     fallbackName: string,
@@ -4279,7 +4354,10 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   ): Attachment => {
     const id = String(payload.id ?? '')
     const resolvedFileName = payload.fileName ?? payload.originalName ?? fallbackName
-    const fileName = String(resolvedFileName || '附件')
+    // 2026-10-29 修复：中文文件名可能在 multipart 传输中被 URL 编码，
+    // 存库/展示时会变成 %E7%AC%AC... 乱码。统一在此处安全解码，
+    // 解码失败（不含 % 或格式异常）时保持原值不变。
+    const fileName = safeDecodeFileName(String(resolvedFileName || '附件'))
     const url = String(payload.url ?? payload.publicUrl ?? fileName)
     const fileSize = Number(payload.fileSize ?? payload.sizeBytes ?? 0)
     const fileType = String(payload.fileType ?? payload.contentType ?? '')
@@ -4991,8 +5069,11 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
   const loadMutationInFlightSignal = async () => {
     try {
-      const auth = JSON.parse(localStorage.getItem('currentUser') || '{}')
-      const orgId = Number(auth?.orgId ?? NaN)
+      // 2026-10-29 修复：异动在途锁必须与「当前查看部门」对齐，而非登录者自身 org。
+      // 全局部门切换器（AppLayout.viewingDept）下，填报页显示 A 部门却用登录者 B 部门的
+      // org 去查异动，会把 B 部门的在途异动误报成 A 部门「存在进行中异动」（假阳性拦截）。
+      // 此前直读 localStorage.currentUser.orgId，与全页用的 authStore/currentViewingOrgId 不同源。
+      const orgId = Number(currentViewingOrgId.value ?? NaN)
       if (!Number.isFinite(orgId) || orgId <= 0) {
         mutationInFlightForCurrentDept.value = false
         return
@@ -5008,6 +5089,12 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       mutationInFlightForCurrentDept.value = false
     }
   }
+
+  // 2026-10-29 修复：切换「查看部门」时同步刷新异动在途信号，
+  // 避免停留在上一部门的判定结果（旧逻辑只在 onMounted 取一次登录者 org）。
+  watch(currentViewingOrgId, () => {
+    void loadMutationInFlightSignal()
+  })
 
   const isCurrentPlanReportLocked = computed(() => {
     if (!usePlanReportFlow.value) {
@@ -5146,8 +5233,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           }
 
           let updatedReportSummary:
-            | (typeof currentPlanReportSummary.value extends infer T ? T : never)
-            | null = null
+            (typeof currentPlanReportSummary.value extends infer T ? T : never) | null = null
           if (usePlanReportFlow.value) {
             const reportOrgId = Number(currentViewingOrgId.value ?? NaN)
             if (!Number.isFinite(reportOrgId) || reportOrgId <= 0) {
@@ -5255,8 +5341,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           }
 
           let updatedReportSummary:
-            | (typeof currentPlanReportSummary.value extends infer T ? T : never)
-            | null = null
+            (typeof currentPlanReportSummary.value extends infer T ? T : never) | null = null
           if (usePlanReportFlow.value) {
             const reportOrgId = Number(currentViewingOrgId.value ?? NaN)
             if (!Number.isFinite(reportOrgId) || reportOrgId <= 0) {
@@ -5362,6 +5447,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     authStore,
     availableOwnerDepts,
     beforeReportUpload,
+    buildCollegeExportRowsByOwnerDept,
     canCurrentUserHandlePlanApprovalOnPage,
     canEdit,
     canHandleIndicatorWorkflow,

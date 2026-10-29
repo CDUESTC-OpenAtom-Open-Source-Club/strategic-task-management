@@ -996,6 +996,81 @@ export function useApprovalProgressDrawer(
   })
 
   /**
+   * 2026-10-29 修复（计划审批页签双卡）：同一上报实例此前会渲染两张卡——
+   * 上方 A 卡（currentPlanApprovalSummary 完整卡：提交人/时间/步骤/停留时长/操作）
+   * 与下方 B 卡（externalWorkflowTodoItems 精简卡）。根因是两套卡片来源未按
+   * 实例去重：A 卡来自消息上下文加载的实例详情，B 卡来自 my-tasks 上报待办，
+   * 同一条 PLAN_REPORT 实例两边各出现一次。
+   * 修复：A 卡已在展示（showPlanPendingCard 且带消息实体 id）时，
+   * 待办精简卡按实体 id 剔除同实例项；A 卡缺失（铃铛直开无上下文）时
+   * 精简卡照常保留，审批入口不受影响。
+   */
+  const planApprovalTodoCards = computed<Record<string, any>[]>(() => {
+    const items = externalWorkflowTodoItems.value
+    if (!showPlanPendingCard.value) {
+      return items
+    }
+    const aCardEntityId = toPositiveNumber(props.workflowEntityId)
+    if (!aCardEntityId) {
+      return items
+    }
+    return items.filter(item => toPositiveNumber(item.entityId) !== aCardEntityId)
+  })
+
+  /**
+   * 2026-10-29 用户定案（上报待办统一渲染 A 卡完整形态）：
+   * 精简卡（B 卡）仅为「无实例详情时的回退」——抽屉打开后异步加载每条
+   * 在审上报待办的实例详情（提交人/提交时间/当前步骤），装配成与 A 卡
+   * 相同的完整字段渲染；加载失败回退精简展示，保证可用。
+   */
+  const reportTodoDetailMap = ref<Record<string, Record<string, any> | null>>({})
+  watch(
+    () =>
+      planApprovalTodoCards.value
+        .map(item => String(item.instanceId || item.taskId || ''))
+        .filter(Boolean)
+        .join(','),
+    async joinedIds => {
+      if (!joinedIds) {
+        return
+      }
+      for (const id of joinedIds.split(',')) {
+        if (reportTodoDetailMap.value[id] !== undefined) {
+          continue
+        }
+        try {
+          const detail = await getWorkflowInstanceDetail(id)
+          reportTodoDetailMap.value = {
+            ...reportTodoDetailMap.value,
+            [id]: (detail as unknown as Record<string, any>) || null
+          }
+        } catch (error) {
+          logger.warn('[ApprovalDrawer] 上报待办实例详情加载失败:', error)
+          reportTodoDetailMap.value = { ...reportTodoDetailMap.value, [id]: null }
+        }
+      }
+    },
+    { immediate: true }
+  )
+
+  const reportTodoDetailCards = computed<Record<string, any>[]>(() =>
+    planApprovalTodoCards.value.map(item => {
+      const id = String(item.instanceId || item.taskId || '')
+      const detail = reportTodoDetailMap.value[id]
+      if (!detail) {
+        return item
+      }
+      return {
+        ...item,
+        submitterName:
+          normalizeDisplayName(detail.starterName) || item.submitterName || item.assigneeName,
+        createdAt: detail.startedAt || item.createdAt,
+        currentStepName: detail.currentStepName || item.currentStepName
+      }
+    })
+  )
+
+  /**
    * 2026-10-27 用户定案（与分发页审批抽屉同步）：
    * 「审批流程」页签顶部的实例选择栏只承载「当前正在审批的实例」——
    * 已完成（已通过/已驳回/已撤回）的实例属于审批历史，不在这里出现。
@@ -1315,6 +1390,14 @@ export function useApprovalProgressDrawer(
   const currentDetailWorkflow = computed(
     () => selectedHistoryInstanceDetail.value || planWorkflowDetail.value
   )
+
+  /**
+   * 2026-10-29 修复（计划审批页签双卡）：仅「从消息/上下文打开」（workflowEntityId > 0）
+   * 时才渲染 A 卡（plan-summary-card 完整卡）。铃铛直开（无上下文）时抽屉仅渲染
+   * planApprovalTodoCards 全量收件箱清单——此前两个来源同屏渲染同一条实例，
+   * 出现完整卡 + 精简卡上下两张卡（用户截图反馈的双卡）。
+   */
+  const hasApprovalContextEntity = computed(() => toPositiveNumber(props.workflowEntityId) > 0)
 
   const hasPlanWorkflowData = computed(() => {
     if (
@@ -4785,6 +4868,8 @@ export function useApprovalProgressDrawer(
     pendingCount,
     pendingPlanApprovalPreviewItems,
     externalWorkflowTodoItems,
+    planApprovalTodoCards,
+    reportTodoDetailCards,
     pendingPlanApprovals,
     planDetailContentLoading,
     planApprovalsLoading,
@@ -4833,6 +4918,7 @@ export function useApprovalProgressDrawer(
     showHistoryTimeline,
     showPlanHistoryCard,
     showPlanPendingCard,
+    hasApprovalContextEntity,
     submitterNameCache,
     timeContext,
     workflowDefinitionPreview,
