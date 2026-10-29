@@ -1301,6 +1301,10 @@ export function useApprovalProgressDrawer(
         useDetail && Array.isArray(detail?.history) ? detail.history : props.plan.workflowHistory,
       sourceOrgName: useDetail ? detail.sourceOrgName : undefined,
       targetOrgName: useDetail ? detail.targetOrgName : props.plan.targetOrgName,
+      // 2026-10-28 修复（异动专项报告 P1-2）：补 submittedAt——此分支此前漏设该字段，
+      // 摘要的「提交时间」回落到 props.plan.createdAt（计划创建时间），
+      // 而非本轮审批实例的提交时间（detail.startTime = audit_instance.started_at）
+      submittedAt: useDetail ? detail.startTime : props.plan.submittedAt,
       submittedByName:
         (useDetail ? normalizeDisplayName(detail.starterName) : '') || props.plan.submittedByName,
       createdByName:

@@ -1363,12 +1363,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       options.collegeScope === true
         ? Number(collegeScope?.orgId ?? NaN)
         : Number(currentDepartmentOrgId.value ?? NaN)
-    if (!(
-      Number.isFinite(planId) &&
-      planId > 0 &&
-      Number.isFinite(reportOrgId) &&
-      reportOrgId > 0
-    )) {
+    if (
+      !(Number.isFinite(planId) && planId > 0 && Number.isFinite(reportOrgId) && reportOrgId > 0)
+    ) {
       currentPlanReportSummary.value = null
       latestPlanReportSummary.value = null
       return
@@ -2141,7 +2138,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         return
       }
       retainedRouteApprovalEntityType.value = routeApprovalEntityType.value as
-        'PLAN' | 'PLAN_REPORT' | undefined
+        | 'PLAN'
+        | 'PLAN_REPORT'
+        | undefined
       retainedRouteApprovalEntityId.value = routeApprovalEntityId.value
       try {
         await syncSelectedDepartmentFromRoute()
@@ -4894,13 +4893,25 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         return deptName === target || deptName.includes(target)
       })
       .sort((a, b) => {
-        // 按所属核心指标分组相邻（同组同序），与职能部门 tab 的任务分组展示同构
-        const parentA = indicatorById.value.get(a.parentIndicatorId ?? '')?.name ?? ''
-        const parentB = indicatorById.value.get(b.parentIndicatorId ?? '')?.name ?? ''
-        if (parentA !== parentB) {
-          return parentA.localeCompare(parentB)
+        // 2026-10-28 用户定案：跨页面同一顺序——核心指标按（sortOrder, id）排，
+        // 同核心指标下的子指标按（sortOrder, id）排；与指标填报页/下发审批页逐行一致。
+        // （此前按父指标名称拼音排序，与下发页/填报页的下发顺序不一致）
+        const pidA = String(a.parentIndicatorId ?? '')
+        const pidB = String(b.parentIndicatorId ?? '')
+        if (pidA !== pidB) {
+          const soA = Number(indicatorById.value.get(pidA)?.sortOrder ?? 0) || 0
+          const soB = Number(indicatorById.value.get(pidB)?.sortOrder ?? 0) || 0
+          if (soA !== soB) {
+            return soA - soB
+          }
+          return (Number(pidA) || 0) - (Number(pidB) || 0)
         }
-        return Number(a.sortOrder ?? 0) - Number(b.sortOrder ?? 0)
+        const orderA = Number(a.sortOrder ?? 0) || 0
+        const orderB = Number(b.sortOrder ?? 0) || 0
+        if (orderA !== orderB) {
+          return orderA - orderB
+        }
+        return Number(a.id) - Number(b.id)
       })
   })
 

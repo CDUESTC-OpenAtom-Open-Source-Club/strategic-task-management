@@ -11,7 +11,6 @@ import TaskIndicatorTree from './TaskIndicatorTree.vue'
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
 import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
-import ReportStatusCell from '@/features/indicator/ui/ReportStatusCell.vue'
 import {
   Plus,
   View,
@@ -1068,7 +1067,8 @@ const currentStrategicImportCycleId = computed(() => {
   }
 
   const cycle = timeContext.cycles.find(item => Number(item.year) === timeContext.currentYear) as
-    { cycleId?: number | string; id?: number | string } | undefined
+    | { cycleId?: number | string; id?: number | string }
+    | undefined
   const numericCycleId = Number(cycle?.cycleId ?? cycle?.id)
   return Number.isFinite(numericCycleId) && numericCycleId > 0 ? numericCycleId : null
 })
@@ -1456,7 +1456,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   highlight-current-row
                   class="unified-table"
                 >
-                  <el-table-column prop="taskContent" label="战略任务" width="140">
+                  <el-table-column
+                    prop="taskContent"
+                    label="战略任务"
+                    :width="TASK_TABLE_COLUMN_WIDTH.strategicTask"
+                  >
                     <template #default="{ row }">
                       <div class="task-cell-wrapper">
                         <div
@@ -1515,7 +1519,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="name" label="核心指标" min-width="210">
+                  <el-table-column
+                    prop="name"
+                    label="核心指标"
+                    :min-width="TASK_TABLE_COLUMN_WIDTH.coreIndicatorMin"
+                  >
                     <template #default="{ row }">
                       <div
                         class="indicator-name-cell"
@@ -1583,7 +1591,12 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="weight" label="权重" width="96" align="center">
+                  <el-table-column
+                    prop="weight"
+                    label="权重"
+                    :width="TASK_TABLE_COLUMN_WIDTH.weight"
+                    align="center"
+                  >
                     <template #default="{ row }">
                       <div class="weight-cell" @dblclick="handleIndicatorDblClick(row, 'weight')">
                         <el-input
@@ -2195,7 +2208,10 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   highlight-current-row
                   class="unified-table"
                 >
-                  <el-table-column label="核心指标" min-width="140">
+                  <el-table-column
+                    label="核心指标"
+                    :width="TASK_TABLE_COLUMN_WIDTH.coreIndicatorFixed"
+                  >
                     <template #default="{ row }">
                       <!-- 2026-10-13 用户定案：与职能部门 tab 核心指标列同构——同核心指标合并单元格、定性/定量配色；悬停看全文 -->
                       <el-tooltip
@@ -2244,7 +2260,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </el-tooltip>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="name" label="子指标名称" min-width="192">
+                  <el-table-column
+                    prop="name"
+                    label="子指标名称"
+                    :min-width="TASK_TABLE_COLUMN_WIDTH.collegeSubIndicatorMin"
+                  >
                     <template #default="{ row }">
                       <div
                         class="indicator-name-cell"
@@ -2278,9 +2298,19 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                               placement="top"
                             >
                               <FullTextPanel :text="row.name">
-                                <span class="indicator-name-text">{{
-                                  truncateText(row.name, 50)
-                                }}</span>
+                                <!-- 2026-10-28 修复：子指标名称补上定性/定量配色类，
+                                     与核心指标列/职能部门 tab 保持同构（此前裸 span 丢色） -->
+                                <span
+                                  class="indicator-name-text"
+                                  :class="
+                                    row.type1 === '定性'
+                                      ? 'indicator-qualitative'
+                                      : row.type1 === '定量'
+                                        ? 'indicator-quantitative'
+                                        : ''
+                                  "
+                                  >{{ truncateText(row.name, 50) }}</span
+                                >
                               </FullTextPanel>
                             </el-tooltip>
                           </template>
@@ -2294,7 +2324,12 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="weight" label="权重" width="96" align="center">
+                  <el-table-column
+                    prop="weight"
+                    label="权重"
+                    :width="TASK_TABLE_COLUMN_WIDTH.weight"
+                    align="center"
+                  >
                     <template #default="{ row }">
                       <div class="weight-cell" @dblclick="handleIndicatorDblClick(row, 'weight')">
                         <el-input
@@ -2412,12 +2447,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         :indicator-id="row.id"
                         :attachments="row.pendingAttachmentDetails || row.attachments"
                       />
-                    </template>
-                  </el-table-column>
-                  <el-table-column label="上报状态" width="100" align="center">
-                    <template #default="{ row }">
-                      <!-- 取最新一次非草稿上报的真实审批状态（hasCurrentMonthFill 是"能否继续填报"字段，不反映上报历史） -->
-                      <ReportStatusCell :indicator-id="row.id" />
                     </template>
                   </el-table-column>
                   <el-table-column

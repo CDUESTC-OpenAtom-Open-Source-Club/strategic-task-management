@@ -520,6 +520,59 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     return effectiveViewingRole.value === 'secondary_college'
   })
 
+  // 2026-10-28 用户定案：学院端填报页改为「核心指标 + 子指标名称」双列——
+  // 学院的行是职能部门下发的子指标，前面要补它所属的核心指标。
+  // 计划详情接口不返回父指标名称/类型，按 parentIndicatorId 逐个拉取
+  // （getIndicatorById 走 fetchWithCache，同 id 不重复请求）。
+  interface ParentIndicatorBrief {
+    name: string
+    type1?: string
+    sortOrder?: number
+  }
+  const parentIndicatorMap = ref<Record<string, ParentIndicatorBrief>>({})
+
+  const resolveParentIndicator = (row: {
+    parentIndicatorId?: string | number | null
+  }): ParentIndicatorBrief | null => {
+    const pid = String(row?.parentIndicatorId ?? '').trim()
+    if (!pid) {
+      return null
+    }
+    return parentIndicatorMap.value[pid] ?? null
+  }
+
+  // 2026-10-28 用户定案：跨页面同一顺序——核心指标按（sortOrder, id）排，
+  // 同核心指标下的子指标按（sortOrder, id）排；与学院管理视图/下发审批页完全一致。
+  const compareCollegeIndicatorRows = (
+    a: {
+      parentIndicatorId?: string | number | null
+      sortOrder?: number | string | null
+      id: string | number
+    },
+    b: {
+      parentIndicatorId?: string | number | null
+      sortOrder?: number | string | null
+      id: string | number
+    }
+  ) => {
+    const pidA = String(a.parentIndicatorId ?? '').trim()
+    const pidB = String(b.parentIndicatorId ?? '').trim()
+    if (pidA !== pidB) {
+      const soA = Number(parentIndicatorMap.value[pidA]?.sortOrder ?? NaN)
+      const soB = Number(parentIndicatorMap.value[pidB]?.sortOrder ?? NaN)
+      if (Number.isFinite(soA) && Number.isFinite(soB) && soA !== soB) {
+        return soA - soB
+      }
+      return (Number(pidA) || 0) - (Number(pidB) || 0)
+    }
+    const orderA = Number(a.sortOrder ?? 0) || 0
+    const orderB = Number(b.sortOrder ?? 0) || 0
+    if (orderA !== orderB) {
+      return orderA - orderB
+    }
+    return Number(a.id) - Number(b.id)
+  }
+
   // 判断当前是否为职能部门角色
   const isFunctionalDept = computed(() => {
     return effectiveViewingRole.value === 'functional_dept'
@@ -2384,6 +2437,11 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       list = applyReportDetailOverlay(list)
 
       // 排序
+      // 2026-10-28 用户定案：学院端按「核心指标 → 子指标」同序规则排列，
+      // 与学院管理视图/下发审批页逐行一致
+      if (isSecondaryCollege.value) {
+        return list.sort(compareCollegeIndicatorRows)
+      }
       return list.sort((a, b) => {
         const type2A = a.type2 || ''
         const type2B = b.type2 || ''
@@ -2493,6 +2551,10 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       list = list.filter(i => i.ownerDept === filterOwnerDept.value)
     }
 
+    // 2026-10-28 用户定案：学院端按「核心指标 → 子指标」同序规则排列
+    if (isSecondaryCollege.value) {
+      return list.sort(compareCollegeIndicatorRows)
+    }
     // 先按 type2（任务类型）排序，再按下发顺序对齐（与战略任务管理页一致）
     return list.sort((a, b) => {
       const type2A = a.type2 || ''
@@ -2509,6 +2571,64 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return Number(a.id) - Number(b.id)
     })
   })
+
+  // 2026-10-28：学院端「核心指标」列的父指标信息补全。
+  // 监听行集合里的 parentIndicatorId，缺哪个拉哪个（接口带缓存，重复切换零开销）。
+  const hydrateParentIndicators = async () => {
+    if (!isSecondaryCollege.value) {
+      return
+    }
+    const pendingIds = new Set<string>()
+    indicators.value.forEach(item => {
+      const pid = String(
+        (item as { parentIndicatorId?: string | number | null }).parentIndicatorId ?? ''
+      ).trim()
+      if (pid && !(pid in parentIndicatorMap.value)) {
+        pendingIds.add(pid)
+      }
+    })
+    if (pendingIds.size === 0) {
+      return
+    }
+    const { indicatorApi } = await import('@/features/indicator/api')
+    await Promise.all(
+      [...pendingIds].map(async pid => {
+        try {
+          const response = await indicatorApi.getIndicatorById(pid)
+          const vo = (response?.data ?? null) as Record<string, unknown> | null
+          if (!vo) {
+            return
+          }
+          const sortOrder = Number(vo.sortOrder ?? NaN)
+          parentIndicatorMap.value = {
+            ...parentIndicatorMap.value,
+            [pid]: {
+              name: String(vo.indicatorName ?? vo.name ?? ''),
+              type1: String(vo.indicatorType ?? vo.type1 ?? '') || undefined,
+              sortOrder: Number.isFinite(sortOrder) ? sortOrder : undefined
+            }
+          }
+        } catch (parentError) {
+          logger.warn('[IndicatorListView] 父指标信息拉取失败:', { pid, parentError })
+        }
+      })
+    )
+  }
+
+  watch(
+    () => [
+      isSecondaryCollege.value,
+      indicators.value
+        .map(i =>
+          String((i as { parentIndicatorId?: string | number | null }).parentIndicatorId ?? '')
+        )
+        .join(',')
+    ],
+    () => {
+      void hydrateParentIndicators()
+    },
+    { immediate: true }
+  )
 
   const indicatorWorkflowCache = ref<Record<string, IndicatorWorkflowSnapshot | null>>({})
   const indicatorWorkflowLoadingMap = ref<Record<string, boolean>>({})
@@ -3094,16 +3214,18 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return { rowspan: 1, colspan: 1 }
     }
 
-    // 只有战略任务列（第0列）需要合并
+    // 只有第 0 列需要合并：职能部门=战略任务列（按任务名分组）；
+    // 2026-10-28 用户定案：学院端第 0 列是核心指标列（按所属核心指标分组）
     if (columnIndex === 0) {
-      const currentTask = row.taskContent || '未关联任务'
+      const groupKeyOf = (item: any) =>
+        isSecondaryCollege.value
+          ? String(item?.parentIndicatorId ?? '') || '未关联核心指标'
+          : item?.taskContent || '未关联任务'
+      const currentTask = groupKeyOf(row)
 
       // 计算当前任务在列表中的起始位置
       let startIndex = rowIndex
-      while (
-        startIndex > 0 &&
-        (dataList[startIndex - 1].taskContent || '未关联任务') === currentTask
-      ) {
+      while (startIndex > 0 && groupKeyOf(dataList[startIndex - 1]) === currentTask) {
         startIndex--
       }
 
@@ -3112,7 +3234,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         let count = 1
         while (
           rowIndex + count < dataList.length &&
-          (dataList[rowIndex + count].taskContent || '未关联任务') === currentTask
+          groupKeyOf(dataList[rowIndex + count]) === currentTask
         ) {
           count++
         }
@@ -3894,7 +4016,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     // 2026-10-20 修复：自评等级保存后重开弹窗显示为空——回显取刚刷新的草稿明细等级，
     // 无草稿明细时依次退回列表行（覆盖层已算）与服务端快照的已存等级
     const draftDetail = reportDetailOverlay.value[String(row.id)] as
-      { selfRating?: string | null } | undefined
+      | { selfRating?: string | null }
+      | undefined
     reportForm.value = {
       newProgress: Math.max(actualProgress, Number(preferredProgress) || 0),
       remark: row.pendingRemark ?? persistedDraft?.remark ?? '',
@@ -5023,7 +5146,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           }
 
           let updatedReportSummary:
-            (typeof currentPlanReportSummary.value extends infer T ? T : never) | null = null
+            | (typeof currentPlanReportSummary.value extends infer T ? T : never)
+            | null = null
           if (usePlanReportFlow.value) {
             const reportOrgId = Number(currentViewingOrgId.value ?? NaN)
             if (!Number.isFinite(reportOrgId) || reportOrgId <= 0) {
@@ -5131,7 +5255,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           }
 
           let updatedReportSummary:
-            (typeof currentPlanReportSummary.value extends infer T ? T : never) | null = null
+            | (typeof currentPlanReportSummary.value extends infer T ? T : never)
+            | null = null
           if (usePlanReportFlow.value) {
             const reportOrgId = Number(currentViewingOrgId.value ?? NaN)
             if (!Number.isFinite(reportOrgId) || reportOrgId <= 0) {
@@ -5428,6 +5553,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     showOwnerDeptDetail,
     showPlanBatchActions,
     showStrategicTaskColumn,
+    parentIndicatorMap,
+    resolveParentIndicator,
     showSubmitAllButton,
     showWithdrawAllButton,
     strategicStore,

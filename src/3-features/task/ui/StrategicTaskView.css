@@ -297,6 +297,23 @@
   background: #f0f7ff !important;
 }
 
+/* 2026-10-29 列对齐修复（第三版·最终）：真正吃 15px 的是 .table-container 自己的
+   纵向原生滚动条（overflow-y: auto，二级学院 tab 内容超高时出现），
+   而非 el-scrollbar——职能/二级学院两个 tab 因此容器宽 918 vs 903，
+   弹性列分摊宽度随之变小，从「权重」列起整体错位。
+   注意：Edge 156 对 `::-webkit-scrollbar:vertical` 静默失效（实测仍占 15px），
+   必须用不带 :vertical 的 `::-webkit-scrollbar{width:0}` 才生效。
+   本容器横向从不滚动（横向滚动在 el-table 内部），故隐藏两个方向的滚动条无副作用；
+   滚轮/触控板滚动照常可用。 */
+.table-container {
+  scrollbar-width: none;
+}
+
+.table-container::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
 /* ========================================
      详情头部样式 - 统一页面头部规范
      Requirements: 5.1, 5.2, 5.3, 5.4
@@ -746,13 +763,13 @@
   gap: 2px;
 }
 
-/* 操作按钮竖直排列 */
+/* 操作按钮横向排列（2026-10-29 用户定案：详情/删除等并排显示，不再上下堆叠） */
 .action-buttons-inline {
   display: flex !important;
-  flex-direction: column !important;
+  flex-direction: row !important;
   justify-content: center;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
 }
 
 .action-buttons-inline .el-button {
