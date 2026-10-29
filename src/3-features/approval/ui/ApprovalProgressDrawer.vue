@@ -88,6 +88,7 @@ const {
   expectedWorkflowCodes,
   canCurrentUserHandleReportTodo,
   externalWorkflowTodoItems,
+  planApprovalTodoCards,
   formatStayDuration,
   formatTime,
   getFallbackSubmitterValue,
@@ -451,7 +452,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
                    此前既无独立卡渲染、也被计划范围过滤挡掉。学院侧审核人因此无法审批
                    本学院上报。现在按「上报审批」独立成卡，与分发页审批中心口径一致。 -->
               <div
-                v-for="item in externalWorkflowTodoItems"
+                v-for="item in planApprovalTodoCards"
                 :key="`external-todo-${item.instanceId || item.taskId}`"
                 class="approval-card"
                 data-card-kind="report-todo-card"

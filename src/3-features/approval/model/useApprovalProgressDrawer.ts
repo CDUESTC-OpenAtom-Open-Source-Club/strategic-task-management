@@ -996,6 +996,28 @@ export function useApprovalProgressDrawer(
   })
 
   /**
+   * 2026-10-29 修复（计划审批页签双卡）：同一上报实例此前会渲染两张卡——
+   * 上方 A 卡（currentPlanApprovalSummary 完整卡：提交人/时间/步骤/停留时长/操作）
+   * 与下方 B 卡（externalWorkflowTodoItems 精简卡）。根因是两套卡片来源未按
+   * 实例去重：A 卡来自消息上下文加载的实例详情，B 卡来自 my-tasks 上报待办，
+   * 同一条 PLAN_REPORT 实例两边各出现一次。
+   * 修复：A 卡已在展示（showPlanPendingCard 且带消息实体 id）时，
+   * 待办精简卡按实体 id 剔除同实例项；A 卡缺失（铃铛直开无上下文）时
+   * 精简卡照常保留，审批入口不受影响。
+   */
+  const planApprovalTodoCards = computed<Record<string, any>[]>(() => {
+    const items = externalWorkflowTodoItems.value
+    if (!showPlanPendingCard.value) {
+      return items
+    }
+    const aCardEntityId = toPositiveNumber(props.workflowEntityId)
+    if (!aCardEntityId) {
+      return items
+    }
+    return items.filter(item => toPositiveNumber(item.entityId) !== aCardEntityId)
+  })
+
+  /**
    * 2026-10-27 用户定案（与分发页审批抽屉同步）：
    * 「审批流程」页签顶部的实例选择栏只承载「当前正在审批的实例」——
    * 已完成（已通过/已驳回/已撤回）的实例属于审批历史，不在这里出现。
@@ -4785,6 +4807,7 @@ export function useApprovalProgressDrawer(
     pendingCount,
     pendingPlanApprovalPreviewItems,
     externalWorkflowTodoItems,
+    planApprovalTodoCards,
     pendingPlanApprovals,
     planDetailContentLoading,
     planApprovalsLoading,
