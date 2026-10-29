@@ -100,6 +100,16 @@
   border-bottom: 1px solid var(--border-color);
 }
 
+/* 2026-10-29 定案：指标填报页表格宽度与「战略任务管理」页对齐。
+   两页容器链实测对比（content-area 均为 976）：
+     - 战略任务管理：task-detail(margin-left 24 + border 0.8) + excel-table-wrapper(padding 16/16)
+       → 吃掉 58px → 表格 918
+     - 指标填报：indicator-list-container(padding 24/24) → 只吃掉 48px → 表格 928
+   故在此补 5px/5px，使表格同样为 918，切换页面时表格框架不再跳宽。 */
+.table-card .card-body.table-body {
+  padding: 0 5px;
+}
+
 .table-card .card-title {
   font-size: 16px;
   font-weight: 600;
