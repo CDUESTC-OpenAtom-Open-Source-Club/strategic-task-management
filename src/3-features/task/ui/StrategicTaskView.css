@@ -746,13 +746,13 @@
   gap: 2px;
 }
 
-/* 操作按钮竖直排列 */
+/* 操作按钮横向排列（2026-10-29 用户定案：详情/删除等并排显示，不再上下堆叠） */
 .action-buttons-inline {
   display: flex !important;
-  flex-direction: column !important;
+  flex-direction: row !important;
   justify-content: center;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
 }
 
 .action-buttons-inline .el-button {
