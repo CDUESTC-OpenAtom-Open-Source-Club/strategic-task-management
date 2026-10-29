@@ -26,6 +26,9 @@ function createViewModel(overrides: Record<string, unknown> = {}) {
     indicators: [] as unknown[],
     functionalDepartments: ref([] as string[]),
     collegeDepartmentsScoped: ref([] as string[]),
+    // 2026-10-29 二级学院导出改造新增：来源部门清单与按部门装配行的函数
+    availableOwnerDepts: ref([] as string[]),
+    buildCollegeExportRowsByOwnerDept: vi.fn(() => []),
     hasMutationDraft: false,
     mutationDraftLabels: [] as string[],
     mutationApiLoading: false,
