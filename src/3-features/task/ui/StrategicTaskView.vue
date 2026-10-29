@@ -2089,7 +2089,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                 >
                   <el-table-column
                     label="核心指标"
-                    :min-width="TASK_TABLE_COLUMN_WIDTH.coreIndicatorMin"
+                    :width="TASK_TABLE_COLUMN_WIDTH.coreIndicatorFixed"
                   >
                     <template #default="{ row }">
                       <!-- 2026-10-13 用户定案：与职能部门 tab 核心指标列同构——同核心指标合并单元格、定性/定量配色；悬停看全文 -->
@@ -2142,7 +2142,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   <el-table-column
                     prop="name"
                     label="子指标名称"
-                    :min-width="TASK_TABLE_COLUMN_WIDTH.subIndicatorMin"
+                    :min-width="TASK_TABLE_COLUMN_WIDTH.collegeSubIndicatorMin"
                   >
                     <template #default="{ row }">
                       <div
@@ -2177,9 +2177,19 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                               placement="top"
                             >
                               <FullTextPanel :text="row.name">
-                                <span class="indicator-name-text">{{
-                                  truncateText(row.name, 50)
-                                }}</span>
+                                <!-- 2026-10-28 修复：子指标名称补上定性/定量配色类，
+                                     与核心指标列/职能部门 tab 保持同构（此前裸 span 丢色） -->
+                                <span
+                                  class="indicator-name-text"
+                                  :class="
+                                    row.type1 === '定性'
+                                      ? 'indicator-qualitative'
+                                      : row.type1 === '定量'
+                                        ? 'indicator-quantitative'
+                                        : ''
+                                  "
+                                  >{{ truncateText(row.name, 50) }}</span
+                                >
                               </FullTextPanel>
                             </el-tooltip>
                           </template>
