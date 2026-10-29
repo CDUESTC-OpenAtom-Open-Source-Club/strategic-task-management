@@ -138,19 +138,20 @@ async function downloadAttachment(ref: ExportAttachmentRef): Promise<Blob | null
 
 /**
  * 导出多个部门：每部门一个 xlsx，附件放各自部门的 附件/{序号}_{指标名}/ 目录，统一打包 zip。
- * 只有 1 个部门且无附件时直接下 xlsx，避免不必要的解压步骤。
+ * 只有 1 个部门且无附件时直接下 xlsx，避免不必要的解压步骤；
+ * forceZip=true 时强制输出 zip，供二级学院「导出当前范围/全部导出」使用。
  */
 export async function exportDepartmentsAsZip(
   payloads: DepartmentExportPayload[],
   zipFileName: string,
-  options: { onProgress?: (text: string) => void } = {}
+  options: { onProgress?: (text: string) => void; forceZip?: boolean } = {}
 ): Promise<void> {
-  const { onProgress } = options
+  const { onProgress, forceZip = false } = options
   const totalAttachments = countExportAttachments(payloads)
 
-  // 单部门且无附件：直接给 xlsx（符合“一个部门一个文件”）
+  // 单部门且无附件：直接给 xlsx（符合“一个部门一个文件”）；forceZip=true 时仍走 zip
   const single = payloads.length === 1 ? payloads[0] : null
-  if (single && totalAttachments === 0) {
+  if (!forceZip && single && totalAttachments === 0) {
     const blob = await buildExcelBlob(single.sheets)
     // zipFileName 由调用方拼好（已含部门/范围与日期），这里只换扩展名，避免部门名重复
     saveBlobAsFile(blob, sanitizeFileName(`${zipFileName.replace(/\.zip$/i, '')}.xlsx`))

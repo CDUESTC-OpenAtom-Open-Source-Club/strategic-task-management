@@ -6,8 +6,46 @@ vi.mock('@/5-shared/api/client', () => ({
   }
 }))
 
+const { mockSaveBlobAsFile } = vi.hoisted(() => ({
+  mockSaveBlobAsFile: vi.fn()
+}))
+
+vi.mock('./excel', async importOriginal => {
+  const actual = await importOriginal<typeof import('./excel')>()
+  return {
+    ...actual,
+    buildExcelBlob: vi.fn(async () => new Blob(['xlsx'])),
+    sanitizeFileName: (name: string) => name,
+    saveBlobAsFile: mockSaveBlobAsFile
+  }
+})
+
+vi.mock('jszip', () => {
+  const createFolder = (): {
+    file: () => void
+    folder: () => ReturnType<typeof createFolder>
+  } => ({
+    file: vi.fn(),
+    folder: () => createFolder()
+  })
+  return {
+    default: class {
+      folder() {
+        return createFolder()
+      }
+      async generateAsync() {
+        return new Blob(['zip'])
+      }
+    }
+  }
+})
+
 import { MAX_SEGMENT_BYTES, utf8ByteLength } from './fileName'
-import { buildAttachmentRelativeDir, collectAttachmentGroups } from './zipExport'
+import {
+  buildAttachmentRelativeDir,
+  collectAttachmentGroups,
+  exportDepartmentsAsZip
+} from './zipExport'
 
 describe('zip export attachment grouping', () => {
   it('collects attachments per indicator and skips rows without attachments', () => {
@@ -56,5 +94,25 @@ describe('zip export attachment grouping', () => {
 
     expect(dir.startsWith('附件/07_')).toBe(true)
     expect(utf8ByteLength(dir)).toBeLessThanOrEqual(MAX_SEGMENT_BYTES + utf8ByteLength('附件/'))
+  })
+})
+
+describe('exportDepartmentsAsZip forceZip', () => {
+  const singlePayload = [{ department: '计算机学院', sheets: [] }]
+
+  it('downloads xlsx directly for a single department without attachments by default', async () => {
+    mockSaveBlobAsFile.mockClear()
+    await exportDepartmentsAsZip(singlePayload, '计算机学院.zip')
+
+    expect(mockSaveBlobAsFile).toHaveBeenCalledTimes(1)
+    expect(mockSaveBlobAsFile.mock.calls[0][1]).toMatch(/\.xlsx$/)
+  })
+
+  it('forces zip output when forceZip=true', async () => {
+    mockSaveBlobAsFile.mockClear()
+    await exportDepartmentsAsZip(singlePayload, '计算机学院.zip', { forceZip: true })
+
+    expect(mockSaveBlobAsFile).toHaveBeenCalledTimes(1)
+    expect(mockSaveBlobAsFile.mock.calls[0][1]).toMatch(/\.zip$/)
   })
 })

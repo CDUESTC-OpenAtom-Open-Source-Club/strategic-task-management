@@ -240,6 +240,6 @@ describe('page shell smoke', () => {
       ...mountOptions
     })
 
-    expect(wrapper.text()).toContain('导出报表')
+    expect(wrapper.text()).toContain('导出综合报表')
   })
 })

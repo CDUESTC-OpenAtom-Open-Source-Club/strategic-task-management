@@ -81,7 +81,10 @@ import {
   resolveLatestIndicatorWorkflowSnapshot,
   type IndicatorWorkflowSnapshot
 } from '@/features/plan/lib/indicatorWorkflow'
-import { filterIndicatorsForViewerRole } from '@/features/indicator/lib/scope'
+import {
+  filterIndicatorsForViewerRole,
+  getIndicatorTargetOrgId
+} from '@/features/indicator/lib/scope'
 import {
   isCollegePlanCandidate,
   listCollegePlanSourceDepts,
@@ -1079,6 +1082,62 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
     return Array.from(ownerDepts).sort()
   })
+
+  /**
+   * 2026-10-29 定案：二级学院「全部导出」按来源职能部门分组。
+   * - 只导出当前学院可见、当前年度、ownerDept 命中的指标；
+   * - 每个部门内部沿用学院页同一套排序（父指标 sortOrder → 自身 sortOrder → id）；
+   * - 空部门直接过滤掉，不生成空 Excel。
+   */
+  const buildCollegeExportRowsByOwnerDept = (
+    departments: string[] = availableOwnerDepts.value
+  ): Array<{ department: string; rows: StrategicIndicator[] }> => {
+    if (!isSecondaryCollege.value) {
+      return []
+    }
+
+    const currentYear = timeContext.currentYear
+    const realYear = timeContext.realCurrentYear
+    const targetOrgId = currentViewingOrgId.value
+    if (targetOrgId === null) {
+      return []
+    }
+
+    const selected = new Set(departments.map(dept => String(dept ?? '').trim()).filter(Boolean))
+    // 不依赖「当前选中的 plan」状态：全部导出要覆盖多个来源部门，
+    // 每个部门各自按自己的 FUNC_TO_COLLEGE 计划是否已下发判定。
+    const visibleIndicators = strategicStore.indicators.filter(
+      indicator =>
+        resolveIndicatorYear(indicator, realYear) === currentYear &&
+        getIndicatorTargetOrgId(indicator) === targetOrgId
+    )
+
+    return availableOwnerDepts.value
+      .filter(dept => selected.size === 0 || selected.has(dept))
+      .map(department => {
+        const plan = collegePlanCandidates.value.find(candidate => {
+          const detail = collegePlanDetailsMap.value[String(candidate.id)] || candidate
+          return resolveCollegePlanSourceDept(detail as Plan) === department
+        })
+        const planDetail = plan ? collegePlanDetailsMap.value[String(plan.id)] || plan : null
+        // 未下发（非 DISTRIBUTED）的来源部门不导出，与填报页「已下发才可见」一致；
+        // 找不到计划时保留 store 行，兼容历史数据。
+        if (planDetail && !canViewReceivedPlanContentByStatus(planDetail.status, false)) {
+          return { department, rows: [] }
+        }
+        return {
+          department,
+          rows: visibleIndicators
+            .filter(
+              indicator =>
+                indicator.responsibleDept === effectiveViewingDept.value &&
+                indicator.ownerDept === department
+            )
+            .sort(compareCollegeIndicatorRows)
+        }
+      })
+      .filter(group => group.rows.length > 0)
+  }
 
   const selectedCollegePlan = computed<Plan | null>(() => {
     if (!isSecondaryCollege.value) {
@@ -5388,6 +5447,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     authStore,
     availableOwnerDepts,
     beforeReportUpload,
+    buildCollegeExportRowsByOwnerDept,
     canCurrentUserHandlePlanApprovalOnPage,
     canEdit,
     canHandleIndicatorWorkflow,
