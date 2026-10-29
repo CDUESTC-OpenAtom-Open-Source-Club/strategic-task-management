@@ -5010,8 +5010,11 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
   const loadMutationInFlightSignal = async () => {
     try {
-      const auth = JSON.parse(localStorage.getItem('currentUser') || '{}')
-      const orgId = Number(auth?.orgId ?? NaN)
+      // 2026-10-29 修复：异动在途锁必须与「当前查看部门」对齐，而非登录者自身 org。
+      // 全局部门切换器（AppLayout.viewingDept）下，填报页显示 A 部门却用登录者 B 部门的
+      // org 去查异动，会把 B 部门的在途异动误报成 A 部门「存在进行中异动」（假阳性拦截）。
+      // 此前直读 localStorage.currentUser.orgId，与全页用的 authStore/currentViewingOrgId 不同源。
+      const orgId = Number(currentViewingOrgId.value ?? NaN)
       if (!Number.isFinite(orgId) || orgId <= 0) {
         mutationInFlightForCurrentDept.value = false
         return
@@ -5027,6 +5030,12 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       mutationInFlightForCurrentDept.value = false
     }
   }
+
+  // 2026-10-29 修复：切换「查看部门」时同步刷新异动在途信号，
+  // 避免停留在上一部门的判定结果（旧逻辑只在 onMounted 取一次登录者 org）。
+  watch(currentViewingOrgId, () => {
+    void loadMutationInFlightSignal()
+  })
 
   const isCurrentPlanReportLocked = computed(() => {
     if (!usePlanReportFlow.value) {
