@@ -80,6 +80,8 @@ const {
   handleCollegeMonthChange,
   handleCollegeRankingMonthChange,
   handleExport,
+  exportComprehensiveReport,
+  exporting,
   handleMonthChange,
   handleOwnerDeptFilterChange,
   handleResize,
@@ -146,7 +148,15 @@ function openApprovalCenterFromDashboard() {
     <!-- 顶部工具栏 -->
     <div class="dashboard-toolbar">
       <div class="toolbar-right">
-        <el-button type="primary" :icon="Download" @click="handleExport">导出报表</el-button>
+        <!-- 2026-10-29 用户定案：导出报表改为综合报表（总览/部门/学院/滞后/附件 五页签单文件） -->
+        <el-button
+          type="primary"
+          :icon="Download"
+          :loading="exporting"
+          @click="exportComprehensiveReport"
+        >
+          导出综合报表
+        </el-button>
       </div>
     </div>
 

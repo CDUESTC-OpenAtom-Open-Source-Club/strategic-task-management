@@ -15,10 +15,15 @@ import { logger } from '@/shared/lib/utils/logger'
 import { buildDashboardSummary, getIndicatorStatusAtMonth } from '@/features/dashboard/lib'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
 import {
+  buildExcelBlob,
   buildExportFileName,
   exportRowsToExcel,
-  type ExcelExportColumn
+  saveBlobAsFile,
+  sanitizeFileName,
+  type ExcelExportColumn,
+  type ExcelExportSheet
 } from '@/shared/lib/export/excel'
+import { buildComprehensiveReport } from '@/features/dashboard/lib/comprehensiveReport'
 import {
   GLOBAL_DATA_REFRESH_REQUEST_EVENT,
   shouldRefreshForDomains,
@@ -1126,6 +1131,117 @@ export function useDashboardView(props: DashboardViewProps) {
       dashboardStore.filters.alertLevel
     )
   })
+
+  // 综合报表导出（2026-10-29 用户定案）：一个 Excel、五个 Sheet——
+  // 总览 / 各部门进度 / 各学院进度 / 滞后任务清单 / 附件索引。
+  // 数据全部来自看板既有 store，不新增后端接口。
+  const exporting = ref(false)
+  const exportComprehensiveReport = async () => {
+    const indicators =
+      dashboardStore.visibleIndicators.length > 0
+        ? dashboardStore.visibleIndicators
+        : strategicStore.indicators
+    if (indicators.length === 0) {
+      ElMessage.warning('没有可导出的数据')
+      return
+    }
+    exporting.value = true
+    try {
+      const report = buildComprehensiveReport(indicators)
+      const dateTag = new Date().toISOString().slice(0, 10)
+      // 列定义统一走 getValue（ExcelExportSheet 的规范），值取行对象的同名字段
+      const col = <T extends Record<string, unknown>>(
+        header: string,
+        width: number,
+        align: 'left' | 'center' | 'right' = 'left'
+      ) => ({
+        header,
+        width,
+        align,
+        getValue: (row: T) => ({ value: row[header] ?? '-' })
+      })
+
+      const sheets: ExcelExportSheet<Record<string, unknown>>[] = [
+        {
+          sheetName: '总览',
+          rows: report.overview as unknown as Array<Record<string, unknown>>,
+          columns: [
+            col('指标总数', 12, 'center'),
+            col('已完成', 12, 'center'),
+            col('进行中', 12, 'center'),
+            col('延期预警', 12, 'center'),
+            col('平均进度', 12, 'center'),
+            col('附件覆盖率', 14, 'center')
+          ],
+          emptyMessage: '暂无数据'
+        },
+        {
+          sheetName: '各部门进度',
+          rows: report.departments as unknown as Array<Record<string, unknown>>,
+          columns: [
+            col('排名', 8, 'center'),
+            col('部门', 22),
+            col('平均进度', 12, 'center'),
+            col('综合得分', 12, 'center'),
+            col('完成率', 12, 'center'),
+            col('指标总数', 10, 'center'),
+            col('已完成', 10, 'center'),
+            col('进行中', 10, 'center'),
+            col('延期预警', 10, 'center'),
+            col('状态', 10, 'center')
+          ],
+          emptyMessage: '暂无部门数据'
+        },
+        {
+          sheetName: '各学院进度',
+          rows: report.colleges as unknown as Array<Record<string, unknown>>,
+          columns: [
+            col('排名', 8, 'center'),
+            col('学院', 22),
+            col('平均进度', 12, 'center'),
+            col('综合得分', 12, 'center'),
+            col('完成率', 12, 'center'),
+            col('指标总数', 10, 'center'),
+            col('已完成', 10, 'center'),
+            col('进行中', 10, 'center'),
+            col('延期预警', 10, 'center'),
+            col('状态', 10, 'center')
+          ],
+          emptyMessage: '暂无学院数据'
+        },
+        {
+          sheetName: '滞后任务清单',
+          rows: report.lagging as unknown as Array<Record<string, unknown>>,
+          columns: [
+            col('序号', 8, 'center'),
+            col('指标内容', 40),
+            col('所属部门', 20),
+            col('当前进度', 12, 'center'),
+            col('自评等级', 12, 'center')
+          ],
+          emptyMessage: '没有滞后任务'
+        },
+        {
+          sheetName: '附件索引',
+          rows: report.attachments as unknown as Array<Record<string, unknown>>,
+          columns: [
+            col('序号', 8, 'center'),
+            col('指标内容', 40),
+            col('所属单位', 20),
+            col('文件名', 40)
+          ],
+          emptyMessage: '暂无附件'
+        }
+      ]
+      const blob = await buildExcelBlob(sheets)
+      saveBlobAsFile(blob, sanitizeFileName(`SISM综合报表_${dateTag}.xlsx`))
+      ElMessage.success('综合报表已导出（含总览/部门/学院/滞后/附件 5 个页签）')
+    } catch (error) {
+      ElMessage.error(error instanceof Error ? error.message : '综合报表导出失败')
+    } finally {
+      exporting.value = false
+    }
+  }
 
   // 导出功能 - 根据角色差异化导出
   const handleExport = async () => {
@@ -2530,6 +2646,7 @@ export function useDashboardView(props: DashboardViewProps) {
     handleCollegeMonthChange,
     handleCollegeRankingMonthChange,
     handleExport,
+    exportComprehensiveReport,
     handleMonthChange,
     handleOwnerDeptFilterChange,
     handleResize,
