@@ -249,6 +249,7 @@ const {
   primaryApprovalWorkflowEntityType,
   readPersistedIndicatorDraft,
   readPlanReportUiState,
+  resolveParentIndicator,
   refreshCurrentPlanDetails,
   refreshIndicatorListAfterMutation,
   refreshIndicatorWorkflowContext,
@@ -704,8 +705,10 @@ const handleExportIndicatorList = async () => {
               <!-- 2026-10-28 华年定案：三个页面列宽/顺序必须与「战略任务管理」页面完全一致。
                    战略任务列改为与基准页相同的固定宽度（140），核心指标列取基准页的 min-width（210），
                    剩余宽度由核心指标列吃掉，表格仍铺满容器。取值统一在 TASK_TABLE_COLUMN_WIDTH。 -->
+              <!-- 2026-10-28 用户定案：学院端不显示战略任务列——学院的行是职能部门
+                   下发的子指标，首列改为所属「核心指标」（见下方学院专用列） -->
               <el-table-column
-                v-if="showStrategicTaskColumn"
+                v-if="showStrategicTaskColumn && !isSecondaryCollege"
                 prop="taskContent"
                 label="战略任务"
                 :width="TASK_TABLE_COLUMN_WIDTH.strategicTask"
@@ -726,11 +729,51 @@ const handleExportIndicatorList = async () => {
                   </el-tooltip>
                 </template>
               </el-table-column>
-              <!-- 2026-10-28 华年定案：核心指标列取基准页 min-width（210），吃掉剩余宽度 -->
+              <!-- 2026-10-28 用户定案：学院端首列=所属核心指标（父指标），
+                   与二级学院管理视图同构——定性/定量配色、同核心指标合并单元格、悬停看全文 -->
               <el-table-column
-                prop="name"
+                v-if="isSecondaryCollege"
                 label="核心指标"
                 :min-width="TASK_TABLE_COLUMN_WIDTH.coreIndicatorMin"
+              >
+                <template #default="{ row }">
+                  <el-tooltip
+                    :content="
+                      resolveParentIndicator(row)?.type1 === '定性'
+                        ? '定性指标'
+                        : resolveParentIndicator(row)?.type1 === '定量'
+                          ? '定量指标'
+                          : '未设置类型'
+                    "
+                    placement="top"
+                  >
+                    <FullTextPanel :text="resolveParentIndicator(row)?.name || ''">
+                      <span
+                        class="indicator-name-text"
+                        :class="
+                          resolveParentIndicator(row)?.type1 === '定性'
+                            ? 'indicator-qualitative'
+                            : resolveParentIndicator(row)?.type1 === '定量'
+                              ? 'indicator-quantitative'
+                              : ''
+                        "
+                        >{{ truncateText(resolveParentIndicator(row)?.name || '—', 50) }}</span
+                      >
+                    </FullTextPanel>
+                  </el-tooltip>
+                </template>
+              </el-table-column>
+              <!-- 2026-10-28 华年定案：核心指标列取基准页 min-width（210），吃掉剩余宽度。
+                   2026-10-28 用户定案：学院端该列展示的是子指标（职能部门下发），
+                   列名改「子指标名称」，宽度取子指标列基准（192） -->
+              <el-table-column
+                prop="name"
+                :label="isSecondaryCollege ? '子指标名称' : '核心指标'"
+                :min-width="
+                  isSecondaryCollege
+                    ? TASK_TABLE_COLUMN_WIDTH.subIndicatorMin
+                    : TASK_TABLE_COLUMN_WIDTH.coreIndicatorMin
+                "
               >
                 <template #default="{ row }">
                   <!-- 2026-10-24 用户定案：填报页字段一律只读，不能双击编辑——
@@ -816,8 +859,8 @@ const handleExportIndicatorList = async () => {
               </el-table-column>
               <!-- 2026-10-26 用户定案：上报资料列悬浮显示附件卡片（序号+文件名+类型），
                    点击文件名直接下载；与指标分发页同构（ReportMaterialsCell）。
-                   2026-10-28 华年定案：列顺序统一为「…→ 上报资料 → 进度说明 → 下发备注 →」，
-                   与战略任务管理页面保持一致，故上报资料列前移到进度说明之前。 -->
+                   2026-10-29 用户定案：维持「上报资料 → 进度说明」顺序，与战略任务管理页一致
+                   （曾短暂对调过一次，同日撤回）。 -->
               <el-table-column
                 label="上报资料"
                 :width="TASK_TABLE_COLUMN_WIDTH.reportMaterials"
