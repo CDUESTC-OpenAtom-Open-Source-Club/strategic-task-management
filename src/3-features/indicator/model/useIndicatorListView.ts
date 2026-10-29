@@ -4016,8 +4016,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     // 2026-10-20 修复：自评等级保存后重开弹窗显示为空——回显取刚刷新的草稿明细等级，
     // 无草稿明细时依次退回列表行（覆盖层已算）与服务端快照的已存等级
     const draftDetail = reportDetailOverlay.value[String(row.id)] as
-      | { selfRating?: string | null }
-      | undefined
+      { selfRating?: string | null } | undefined
     reportForm.value = {
       newProgress: Math.max(actualProgress, Number(preferredProgress) || 0),
       remark: row.pendingRemark ?? persistedDraft?.remark ?? '',
@@ -4272,6 +4271,23 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     return isLt30M
   }
 
+  /**
+   * 安全解码 URL 编码的文件名（2026-10-29）。
+   * multipart 传输中中文文件名可能被浏览器/代理 percent-encode，
+   * 存库后展示为 %E7%AC%AC... 乱码。仅在文件名含 % 编码序列时尝试解码，
+   * 解码失败（格式不合法）保持原值不变。
+   */
+  const safeDecodeFileName = (name: string): string => {
+    if (!name.includes('%')) {
+      return name
+    }
+    try {
+      return decodeURIComponent(name)
+    } catch {
+      return name
+    }
+  }
+
   const normalizeUploadedAttachment = (
     payload: Record<string, unknown>,
     fallbackName: string,
@@ -4279,7 +4295,10 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   ): Attachment => {
     const id = String(payload.id ?? '')
     const resolvedFileName = payload.fileName ?? payload.originalName ?? fallbackName
-    const fileName = String(resolvedFileName || '附件')
+    // 2026-10-29 修复：中文文件名可能在 multipart 传输中被 URL 编码，
+    // 存库/展示时会变成 %E7%AC%AC... 乱码。统一在此处安全解码，
+    // 解码失败（不含 % 或格式异常）时保持原值不变。
+    const fileName = safeDecodeFileName(String(resolvedFileName || '附件'))
     const url = String(payload.url ?? payload.publicUrl ?? fileName)
     const fileSize = Number(payload.fileSize ?? payload.sizeBytes ?? 0)
     const fileType = String(payload.fileType ?? payload.contentType ?? '')
@@ -5146,8 +5165,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           }
 
           let updatedReportSummary:
-            | (typeof currentPlanReportSummary.value extends infer T ? T : never)
-            | null = null
+            (typeof currentPlanReportSummary.value extends infer T ? T : never) | null = null
           if (usePlanReportFlow.value) {
             const reportOrgId = Number(currentViewingOrgId.value ?? NaN)
             if (!Number.isFinite(reportOrgId) || reportOrgId <= 0) {
@@ -5255,8 +5273,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           }
 
           let updatedReportSummary:
-            | (typeof currentPlanReportSummary.value extends infer T ? T : never)
-            | null = null
+            (typeof currentPlanReportSummary.value extends infer T ? T : never) | null = null
           if (usePlanReportFlow.value) {
             const reportOrgId = Number(currentViewingOrgId.value ?? NaN)
             if (!Number.isFinite(reportOrgId) || reportOrgId <= 0) {
