@@ -28,6 +28,7 @@ import AppAvatar from '@/shared/ui/avatar/AppAvatar.vue'
 import { DistributionApprovalProgressDrawer } from '@/features/approval'
 import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
+import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
 import type { StrategicIndicator } from '@/shared/types'
 import {
   buildAttachmentNameCell,
@@ -960,7 +961,7 @@ const handleExportCurrentStrategicDepartment = async () => {
     }
 
     // 2026-10-28：单部门有附件时也走 zip——Excel 与附件同包，避免附件只剩超链接
-    const dateText = new Date().toISOString().slice(0, 10)
+    const dateText = formatLocalDateTag()
     await exportDepartmentsAsZip(
       [
         {
@@ -1026,7 +1027,7 @@ const handleExportSelectedStrategicDepartments = async () => {
       attachmentGroups: buildStrategicExportAttachmentGroups(rows, summaryMap)
     }))
 
-    const dateText = new Date().toISOString().slice(0, 10)
+    const dateText = formatLocalDateTag()
     await exportDepartmentsAsZip(
       payloads,
       `战略任务指标总表_${departments.length === 1 ? departments[0] : '多部门'}_${dateText}.zip`,

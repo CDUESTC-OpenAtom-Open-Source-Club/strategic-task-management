@@ -16,6 +16,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { StrategicIndicator } from '@/shared/types'
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import { truncateText } from '@/shared/lib/utils/formatters'
+import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
 import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
 import {
   buildAttachmentNameCell,
@@ -677,7 +678,7 @@ const handleExportCurrentDistributionCollege = async () => {
     }
 
     // 2026-10-28：单学院有附件时也走 zip——Excel 与附件同包，避免附件只剩超链接
-    const dateText = new Date().toISOString().slice(0, 10)
+    const dateText = formatLocalDateTag()
     await exportDepartmentsAsZip(
       [
         {
@@ -738,7 +739,7 @@ const handleExportSelectedDistributionColleges = async () => {
       attachmentGroups: buildDistributionExportAttachmentGroups(rows, summaryMap)
     }))
 
-    const dateText = new Date().toISOString().slice(0, 10)
+    const dateText = formatLocalDateTag()
     await exportDepartmentsAsZip(
       payloads,
       `指标下发与管理_${selectedColleges.length === 1 ? selectedColleges[0] : '多学院'}_${dateText}.zip`,

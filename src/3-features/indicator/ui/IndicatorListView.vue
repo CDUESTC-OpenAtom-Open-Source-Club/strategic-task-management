@@ -49,6 +49,7 @@ import {
 } from '@/features/indicator/model/useIndicatorAppraisal'
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import { truncateText } from '@/shared/lib/utils/formatters'
+import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
 import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
 import {
   useIndicatorListView,
@@ -498,7 +499,7 @@ const handleExportCollegeCurrentRange = async () => {
       attachmentGroups: buildCollegeAttachmentGroups(rows, summaryMap)
     }
 
-    const dateText = new Date().toISOString().slice(0, 10)
+    const dateText = formatLocalDateTag()
     const collegeName = effectiveViewingDept.value || authStore.userDepartment || '当前学院'
 
     await exportDepartmentsAsZip([payload], `指标填报_${collegeName}_${dateText}.zip`, {
@@ -548,7 +549,7 @@ const handleExportAllCollegeDepartments = async () => {
       attachmentGroups: buildCollegeAttachmentGroups(group.rows, summaryMap)
     }))
 
-    const dateText = new Date().toISOString().slice(0, 10)
+    const dateText = formatLocalDateTag()
     const collegeName = effectiveViewingDept.value || authStore.userDepartment || '当前学院'
 
     await exportDepartmentsAsZip(payloads, `指标填报_${collegeName}_${dateText}.zip`, {
@@ -586,68 +587,66 @@ const getManualAlertLabel = (severity?: ManualAlertSeverity) => getManualAlertOp
 const getManualAlertTagType = (severity?: ManualAlertSeverity) =>
   getManualAlertOption(severity).type
 
-const getMonthlyExpectedProgress = () => {
-  // ============================================================================
-  // 2026-10-30 P0-3：补「鉴定进度等级」写入位（上报审批链行内鉴定）
-  //
-  // 背景：鉴定进度等级此前只有战略任务管理页有写入入口，指标填报页这一列纯只读，
-  // 导致「上报链可评级节点要求全部指标已评定」与「无人能评级」构成死锁
-  // （本地上报实例实测 409：资源冲突：存在未评定的鉴定进度等级）。
-  // 此处复用 useIndicatorAppraisal（后端 canAppraise 判定谁能改），与战略任务页同构。
-  // ============================================================================
-  const {
-    load: loadIndicatorAppraisalContexts,
-    canAppraise: canAppraiseIndicator,
-    getLevel: getIndicatorAppraisalLevel,
-    getLockHint: getIndicatorAppraisalLockHint,
-    save: saveIndicatorAppraisalLevel
-  } = useIndicatorAppraisal()
+// ============================================================================
+// 2026-10-30 P0-3：补「鉴定进度等级」写入位（上报审批链行内鉴定）
+//
+// 背景：鉴定进度等级此前只有战略任务管理页有写入入口，指标填报页这一列纯只读，
+// 导致「上报链可评级节点要求全部指标已评定」与「无人能评级」构成死锁
+// （本地上报实例实测 409：资源冲突：存在未评定的鉴定进度等级）。
+// 此处复用 useIndicatorAppraisal（后端 canAppraise 判定谁能改），与战略任务页同构。
+// ============================================================================
+const {
+  load: loadIndicatorAppraisalContexts,
+  canAppraise: canAppraiseIndicator,
+  getLevel: getIndicatorAppraisalLevel,
+  getLockHint: getIndicatorAppraisalLockHint,
+  save: saveIndicatorAppraisalLevel
+} = useIndicatorAppraisal()
 
-  watch(
-    () => (indicators.value ?? []).map(item => String(item.id)).join(','),
-    () => {
-      void loadIndicatorAppraisalContexts((indicators.value ?? []).map(item => item.id))
-    },
-    { immediate: true }
-  )
+watch(
+  () => (indicators.value ?? []).map(item => String(item.id)).join(','),
+  () => {
+    void loadIndicatorAppraisalContexts((indicators.value ?? []).map(item => item.id))
+  },
+  { immediate: true }
+)
 
-  /** 行内调整鉴定等级：确认后写报告快照，后端同步 Alert 手动等级 */
-  const handleAppraisalChange = async (
-    row: { id: string | number; name?: string; manualAlertSeverity?: ManualAlertSeverity },
-    value: ManualAlertSeverity
-  ) => {
-    const level: IndicatorAppraisalLevel =
-      value === null ? null : (value as IndicatorAppraisalLevel)
-    const previous = getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity ?? null)
-    if (previous === level) {
-      return
-    }
+/** 行内调整鉴定等级：确认后写报告快照，后端同步 Alert 手动等级 */
+const handleAppraisalChange = async (
+  row: { id: string | number; name?: string; manualAlertSeverity?: ManualAlertSeverity },
+  value: ManualAlertSeverity
+) => {
+  const level: IndicatorAppraisalLevel = value === null ? null : (value as IndicatorAppraisalLevel)
+  const previous = getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity ?? null)
+  if (previous === level) {
+    return
+  }
 
-    const label = getManualAlertLabel(level)
-    try {
-      await ElMessageBox.confirm(
-        `确认将「${row.name || row.indicatorDesc || '该指标'}」的鉴定进度等级调整为「${label}」？`,
-        '调整鉴定进度等级',
-        {
-          confirmButtonText: '确认调整',
-          cancelButtonText: '取消',
-          type: level ? 'warning' : 'info'
-        }
-      )
-      await saveIndicatorAppraisalLevel(row.id, level)
-      ElMessage.success('鉴定进度等级已调整')
-    } catch (error) {
-      if (error !== 'cancel' && error !== 'close') {
-        ElMessage.error(error instanceof Error ? error.message : '调整鉴定进度等级失败')
+  const label = getManualAlertLabel(level)
+  try {
+    await ElMessageBox.confirm(
+      `确认将「${row.name || row.indicatorDesc || '该指标'}」的鉴定进度等级调整为「${label}」？`,
+      '调整鉴定进度等级',
+      {
+        confirmButtonText: '确认调整',
+        cancelButtonText: '取消',
+        type: level ? 'warning' : 'info'
       }
+    )
+    await saveIndicatorAppraisalLevel(row.id, level)
+    ElMessage.success('鉴定进度等级已调整')
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(error instanceof Error ? error.message : '调整鉴定进度等级失败')
     }
   }
+}
 
-  /** 锁定状态点击只提示一次（与战略任务页同口径） */
-  const handleAppraisalTagClick = (row: { id: string | number }) => {
-    ElMessage.info(getIndicatorAppraisalLockHint(row.id) || '上报期间才能解锁鉴定进度等级')
-  }
-
+/** 锁定状态点击只提示一次（与战略任务页同口径） */
+const handleAppraisalTagClick = (row: { id: string | number }) => {
+  ElMessage.info(getIndicatorAppraisalLockHint(row.id) || '上报期间才能解锁鉴定进度等级')
+}
+const getMonthlyExpectedProgress = () => {
   const month = new Date().getMonth() + 1
   return Math.min(100, Math.round((month / 12) * 100))
 }
@@ -700,7 +699,7 @@ const handleExportIndicatorList = async () => {
     }
 
     // 2026-10-28：有附件时改为 zip——Excel 与附件同包，Excel 里用「附件目录」列定位
-    const dateText = new Date().toISOString().slice(0, 10)
+    const dateText = formatLocalDateTag()
     await exportDepartmentsAsZip(
       [
         {

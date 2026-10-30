@@ -6,6 +6,7 @@ import { ElMessage } from 'element-plus'
 import { apiClient } from '@/shared/api/client'
 import { usePlanStore } from '@/features/plan/model/store'
 import { logger } from '@/shared/lib/utils/logger'
+import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
 import {
   buildAttachmentNameCell,
   buildExportFileName,
@@ -278,7 +279,7 @@ const handleExportFills = async () => {
       return
     }
 
-    const dateText = new Date().toISOString().slice(0, 10)
+    const dateText = formatLocalDateTag()
     await exportDepartmentsAsZip(
       [
         {

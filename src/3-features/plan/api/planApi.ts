@@ -14,6 +14,7 @@ import { buildQueryKey, fetchWithCache, invalidateQueries } from '@/shared/lib/u
 import { getCachedUserContext } from '@/shared/lib/utils/cacheContext'
 import { useTimeContextStore } from '@/shared/lib/timeContext'
 import { logger } from '@/shared/lib/utils/logger'
+import { formatLocalMonthTag } from '@/shared/lib/utils/localDateTag'
 import type {
   ApiResponse,
   Plan,
@@ -910,7 +911,9 @@ function mapRoleToReportOrgType(
 }
 
 function getCurrentReportMonth(): string {
-  return new Date().toISOString().slice(0, 7).replace('-', '')
+  // 2026-10-30：本地时区月份（原先用 UTC，每月 1 日 00:00~08:00 会算成上个月，
+  // 导致月报归属期错位）。见 shared/lib/utils/localDateTag.ts。
+  return formatLocalMonthTag()
 }
 
 function getNormalizedReportStatus(status?: string | null): string {
