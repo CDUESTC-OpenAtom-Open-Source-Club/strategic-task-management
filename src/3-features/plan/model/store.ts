@@ -11,6 +11,7 @@ import type { Plan, PlanStatus, PlanFill, IndicatorFill, IndicatorFillForm } fro
 import { useAuthStore } from '@/features/auth/model/store'
 import { useTimeContextStore } from '@/shared/lib/timeContext'
 import { logger } from '@/shared/lib/utils/logger'
+import { markErrorHandled } from '@/shared/lib/utils/errorToast'
 import { withExponentialRetry } from '@/shared/api/wrappers'
 import { ElMessage } from 'element-plus'
 
@@ -358,6 +359,8 @@ export const usePlanStore = defineStore('plan', () => {
       error.value = err instanceof Error ? err.message : '创建计划失败'
       logger.error('[Plan Store] Failed to create plan:', err)
       ElMessage.error(error.value)
+      // 2026-10-30：业务层已提示，标记后响应拦截器不再重复弹同一条。
+      markErrorHandled(err)
       throw err
     } finally {
       loading.value = false
@@ -390,6 +393,8 @@ export const usePlanStore = defineStore('plan', () => {
       error.value = err instanceof Error ? err.message : '更新计划失败'
       logger.error('[Plan Store] Failed to update plan:', err)
       ElMessage.error(error.value)
+      // 2026-10-30：业务层已提示，标记后响应拦截器不再重复弹同一条。
+      markErrorHandled(err)
       throw err
     } finally {
       loading.value = false
@@ -421,6 +426,8 @@ export const usePlanStore = defineStore('plan', () => {
       error.value = err instanceof Error ? err.message : '删除计划失败'
       logger.error('[Plan Store] Failed to delete plan:', err)
       ElMessage.error(error.value)
+      // 2026-10-30：业务层已提示，标记后响应拦截器不再重复弹同一条。
+      markErrorHandled(err)
       throw err
     } finally {
       loading.value = false
@@ -464,6 +471,8 @@ export const usePlanStore = defineStore('plan', () => {
       error.value = err instanceof Error ? err.message : '提交计划失败'
       logger.error('[Plan Store] Failed to submit plan:', err)
       ElMessage.error(error.value)
+      // 2026-10-30：业务层已提示，标记后响应拦截器不再重复弹同一条。
+      markErrorHandled(err)
       throw err
     } finally {
       submitting.value = false
@@ -521,6 +530,8 @@ export const usePlanStore = defineStore('plan', () => {
       error.value = err instanceof Error ? err.message : '提交审批失败'
       logger.error('[Plan Store] Failed to submit plan for approval:', err)
       ElMessage.error(error.value)
+      // 2026-10-30：业务层已提示，标记后响应拦截器不再重复弹同一条。
+      markErrorHandled(err)
       throw err
     } finally {
       submitting.value = false
@@ -558,6 +569,8 @@ export const usePlanStore = defineStore('plan', () => {
       error.value = err instanceof Error ? err.message : '审批失败'
       logger.error('[Plan Store] Failed to approve plan:', err)
       ElMessage.error(error.value)
+      // 2026-10-30：业务层已提示，标记后响应拦截器不再重复弹同一条。
+      markErrorHandled(err)
       throw err
     } finally {
       submitting.value = false
@@ -596,6 +609,8 @@ export const usePlanStore = defineStore('plan', () => {
       error.value = err instanceof Error ? err.message : '驳回失败'
       logger.error('[Plan Store] Failed to reject plan:', err)
       ElMessage.error(error.value)
+      // 2026-10-30：业务层已提示，标记后响应拦截器不再重复弹同一条。
+      markErrorHandled(err)
       throw err
     } finally {
       submitting.value = false
@@ -633,6 +648,8 @@ export const usePlanStore = defineStore('plan', () => {
       error.value = err instanceof Error ? err.message : '撤回失败'
       logger.error('[Plan Store] Failed to withdraw plan:', err)
       ElMessage.error(error.value)
+      // 2026-10-30：业务层已提示，标记后响应拦截器不再重复弹同一条。
+      markErrorHandled(err)
       throw err
     } finally {
       submitting.value = false
@@ -670,6 +687,8 @@ export const usePlanStore = defineStore('plan', () => {
       error.value = err instanceof Error ? err.message : '下发失败'
       logger.error('[Plan Store] Failed to publish plan:', err)
       ElMessage.error(error.value)
+      // 2026-10-30：业务层已提示，标记后响应拦截器不再重复弹同一条。
+      markErrorHandled(err)
       throw err
     } finally {
       submitting.value = false
@@ -707,6 +726,8 @@ export const usePlanStore = defineStore('plan', () => {
       error.value = err instanceof Error ? err.message : '归档失败'
       logger.error('[Plan Store] Failed to archive plan:', err)
       ElMessage.error(error.value)
+      // 2026-10-30：业务层已提示，标记后响应拦截器不再重复弹同一条。
+      markErrorHandled(err)
       throw err
     } finally {
       submitting.value = false
@@ -761,6 +782,8 @@ export const usePlanStore = defineStore('plan', () => {
       error.value = err instanceof Error ? err.message : '加载指标填报历史失败'
       logger.error('[Plan Store] Failed to load indicator fill history:', err)
       ElMessage.error(error.value)
+      // 2026-10-30：业务层已提示，标记后响应拦截器不再重复弹同一条。
+      markErrorHandled(err)
       throw err
     } finally {
       loading.value = false
@@ -785,6 +808,8 @@ export const usePlanStore = defineStore('plan', () => {
       error.value = err instanceof Error ? err.message : '加载指标填报详情失败'
       logger.error('[Plan Store] Failed to load indicator fill detail:', err)
       ElMessage.error(error.value)
+      // 2026-10-30：业务层已提示，标记后响应拦截器不再重复弹同一条。
+      markErrorHandled(err)
       throw err
     } finally {
       loading.value = false
@@ -811,6 +836,8 @@ export const usePlanStore = defineStore('plan', () => {
       error.value = err instanceof Error ? err.message : '保存指标填报失败'
       logger.error('[Plan Store] Failed to save indicator fill:', err)
       ElMessage.error(error.value)
+      // 2026-10-30：业务层已提示，标记后响应拦截器不再重复弹同一条。
+      markErrorHandled(err)
       throw err
     } finally {
       submitting.value = false
@@ -837,6 +864,8 @@ export const usePlanStore = defineStore('plan', () => {
       error.value = err instanceof Error ? err.message : '提交指标填报失败'
       logger.error('[Plan Store] Failed to submit indicator fill:', err)
       ElMessage.error(error.value)
+      // 2026-10-30：业务层已提示，标记后响应拦截器不再重复弹同一条。
+      markErrorHandled(err)
       throw err
     } finally {
       submitting.value = false
@@ -889,6 +918,8 @@ export const usePlanStore = defineStore('plan', () => {
         details: errObj?.details
       })
       ElMessage.error(error.value)
+      // 2026-10-30：业务层已提示，标记后响应拦截器不再重复弹同一条。
+      markErrorHandled(err)
       throw err
     } finally {
       submitting.value = false

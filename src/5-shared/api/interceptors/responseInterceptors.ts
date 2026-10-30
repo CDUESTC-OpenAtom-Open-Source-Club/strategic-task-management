@@ -20,10 +20,68 @@ import { cacheManager } from '@/shared/lib/utils/cache'
 import { transformError, toExtendedError, stringifyMessage } from '@/shared/api/errorHandler'
 import { tokenManager } from '@/shared/lib/utils/tokenManager'
 import { clearPersistedAuthState, redirectToLogin } from '@/shared/lib/utils/authSession'
+import {
+  buildUserFacingErrorMessage,
+  claimErrorToast,
+  clientErrorFallbackText,
+  isErrorHandled
+} from '@/shared/lib/utils/errorToast'
 import type { ExtendedErrorInfo } from '@/shared/types/error'
 import { API_TARGET, USE_MOCK } from '@/shared/config/api'
 
 const backendDisplayTarget = API_TARGET || '当前配置的后端地址'
+
+/**
+ * 健康检查类请求：403 / 404 等状态码属于「预期结果」，不应给用户弹提示。
+ * 覆盖 /actuator/health、/auth/health 以及带 X-Health-Check 标记的请求。
+ */
+function isHealthCheckRequest(error: AxiosError): boolean {
+  const url = error.config?.url || ''
+  if (url.includes('/actuator/health') || url.includes('/auth/health')) {
+    return true
+  }
+  return error.config?.headers?.['X-Health-Check'] === 'true'
+}
+
+/**
+ * 取出后端返回的业务错误原文（response.data.message）。
+ * 后端返回原文时优先透出（例如 "You are not authorized to approve this task"），
+ * 比前端通用文案更有信息量；没有原文时返回空串，由调用方决定兜底文案。
+ */
+function extractServerMessage(error: AxiosError): string {
+  const payload = error.response?.data as { message?: unknown } | undefined
+  if (!payload || payload.message === undefined || payload.message === null) {
+    return ''
+  }
+  return stringifyMessage(payload.message)
+}
+
+/**
+ * 兜底提示：把后端原文带给用户，但避免与业务层的提示重复。
+ *
+ * 2026-10-29（N-02）规则：
+ * - 拦截器**不无条件弹**：先让出一个宏任务，等业务层的 catch 有机会先提示；
+ * - 业务层 catch 里已提示（markErrorHandled）→ 拦截器不再弹；
+ * - 业务层没处理 → 拦截器兜底弹一次；同一条消息在去重窗口内只弹一次，
+ *   因此「拦截器 + 调用方」不会弹成两条一模一样的 toast。
+ */
+function scheduleFallbackErrorToast(target: unknown, message: string, duration: number): void {
+  setTimeout(() => {
+    if (isErrorHandled(target)) {
+      return
+    }
+    if (!claimErrorToast(message)) {
+      return
+    }
+    void import('element-plus').then(({ ElMessage }) => {
+      ElMessage.error({
+        message,
+        duration,
+        showClose: true
+      })
+    })
+  }, 0)
+}
 
 async function loadMockResponse(config: InternalAxiosRequestConfig): Promise<unknown> {
   if (!import.meta.env.DEV) {
@@ -341,22 +399,29 @@ export function createResponseErrorInterceptor(config: ResponseInterceptorConfig
     }
 
     // ========================================================================
-    // 403 FORBIDDEN ERROR HANDLING
+    // 兜底提示文案准备
+    //
+    // 2026-10-29（N-02）修复要点：
+    // - 此前只有 403 / 500 有提示分支，400 / 409 / 422 等业务错误被整个吞掉——
+    //   后端返回的业务原文既没提示、调用方也拿不到，用户只看到「点了没反应」。
+    // - 现在这里只**准备**兜底文案，真正的弹窗延后到宏任务里由
+    //   scheduleFallbackErrorToast 触发：业务层 catch 已提示过的错误不再重复弹，
+    //   保证同一条错误只出现一次。
     // ========================================================================
+    let fallbackToast: { message: string; duration: number } | null = null
+
+    // ------------------------------------------------------------------
+    // 403 FORBIDDEN
+    // ------------------------------------------------------------------
     if (error.response?.status === 403) {
       logger.warn('🚫 [API Auth] 403 权限不足')
 
       // 不要为健康检查请求显示错误通知（403是预期的）
-      const isHealthCheck =
-        error.config?.url?.includes('/actuator/health') ||
-        error.config?.url?.includes('/auth/health')
-
-      // 检查是否是健康检查发起的请求（通过请求头标记）
-      const isHealthCheckRequest = error.config?.headers?.['X-Health-Check'] === 'true'
+      const isHealthCheck = isHealthCheckRequest(error)
 
       // 某些受保护接口在 access token 过期时会返回 403。
       // 对于非登录/刷新、非健康检查请求，优先尝试刷新一次 token 后重放请求。
-      if (!isHealthCheck && !isHealthCheckRequest && !isLoginRequest && !isRefreshRequest) {
+      if (!isHealthCheck && !isLoginRequest && !isRefreshRequest) {
         const currentToken = tokenManager.getAccessToken()
         if (currentToken && tokenManager.isTokenExpiring(0)) {
           logger.warn('🔄 [API Auth] 403 可能由 access token 过期引起，尝试刷新后重试')
@@ -364,34 +429,60 @@ export function createResponseErrorInterceptor(config: ResponseInterceptorConfig
         }
       }
 
-      if (!isHealthCheck && !isHealthCheckRequest) {
-        const { ElMessage } = await import('element-plus')
-        ElMessage.error({
-          message: '权限不足，无法执行此操作',
-          duration: 3000,
-          showClose: true
-        })
+      // 登录/刷新请求由认证层自己提示（见 auth store / LoginView），此处不重复弹。
+      if (!isHealthCheck && !isLoginRequest && !isRefreshRequest) {
+        fallbackToast = {
+          // 后端原文优先透出；原文是英文时用中文兜底 + 原文附注（不静默）
+          message: buildUserFacingErrorMessage(
+            extractServerMessage(error),
+            '权限不足，无法执行此操作',
+            403
+          ),
+          duration: 3000
+        }
       }
     }
 
-    // ========================================================================
-    // 500 SERVER ERROR HANDLING
-    // ========================================================================
+    // ------------------------------------------------------------------
+    // 4XX CLIENT ERROR (400 / 404 / 409 / 422 ...)
+    // ------------------------------------------------------------------
+    const clientErrorStatus = error.response?.status
+    if (
+      !fallbackToast &&
+      typeof clientErrorStatus === 'number' &&
+      clientErrorStatus >= 400 &&
+      clientErrorStatus < 500 &&
+      clientErrorStatus !== 401 && // 401 走刷新重试逻辑，不在此提示
+      clientErrorStatus !== 403 && // 403 已有专门分支，避免重复弹两次
+      !isLoginRequest && // 登录/刷新请求由业务层自己提示，避免重复弹窗
+      !isRefreshRequest &&
+      !isHealthCheckRequest(error)
+    ) {
+      logger.warn(`⚠️ [Client Error] ${clientErrorStatus} ${error.config?.url || ''}`)
+
+      fallbackToast = {
+        message: buildUserFacingErrorMessage(
+          // 后端原文优先（transformError → formatErrorMessage 同样以
+          // response.data.message 为先）；后端没给原文时用状态码兜底文案
+          extractServerMessage(error),
+          clientErrorFallbackText(clientErrorStatus),
+          clientErrorStatus
+        ),
+        duration: 3000
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // 500 SERVER ERROR
+    // ------------------------------------------------------------------
     if (error.response?.status === 500) {
       logger.error('💥 [Server Error] 服务器内部错误')
 
-      const isHealthCheck =
-        error.config?.url?.includes('/actuator/health') ||
-        error.config?.url?.includes('/auth/health')
-      const isHealthCheckRequest = error.config?.headers?.['X-Health-Check'] === 'true'
-
-      if (!isHealthCheck && !isHealthCheckRequest) {
-        const { ElMessage } = await import('element-plus')
-        ElMessage.error({
+      if (!isHealthCheckRequest(error)) {
+        fallbackToast = {
           message: '服务器内部错误，请稍后重试或联系管理员',
-          duration: 5000,
-          showClose: true
-        })
+          duration: 5000
+        }
       }
     }
 
@@ -399,7 +490,11 @@ export function createResponseErrorInterceptor(config: ResponseInterceptorConfig
     // UNIFIED ERROR HANDLING
     // ========================================================================
     const apiError = transformError(error)
-    const extendedError: ExtendedErrorInfo = toExtendedError(apiError, error)
+    const extendedError = {
+      ...toExtendedError(apiError, error),
+      // 业务层 catch 里提示过后会置为 true，拦截器的兜底提示据此跳过
+      handled: false
+    } as ExtendedErrorInfo & { handled?: boolean }
 
     logger.error('❌ [API Error] 统一错误格式:', {
       code: extendedError.code,
@@ -408,6 +503,10 @@ export function createResponseErrorInterceptor(config: ResponseInterceptorConfig
       severity: extendedError.severity,
       retryable: extendedError.retryable
     })
+
+    if (fallbackToast) {
+      scheduleFallbackErrorToast(extendedError, fallbackToast.message, fallbackToast.duration)
+    }
 
     return Promise.reject(extendedError)
   }

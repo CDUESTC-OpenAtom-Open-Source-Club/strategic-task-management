@@ -9,6 +9,11 @@ import { apiClient } from '@/shared/api'
 import type { ApiResponse } from '@/shared/types'
 import { logger } from '@/shared/lib/utils/logger'
 import {
+  buildUserFacingErrorMessage,
+  claimErrorToast,
+  markErrorHandled
+} from '@/shared/lib/utils/errorToast'
+import {
   getWorkflowDefinitionPreviewByCode,
   getWorkflowInstanceDetail,
   getWorkflowInstanceDetailByBusiness,
@@ -34,6 +39,54 @@ export function useApprovalProgressWorkflow({
   emit,
   state
 }: UseApprovalProgressWorkflowOptions) {
+  /**
+   * ElMessageBox.prompt 被用户「取消 / 关闭」时，promise reject 的是字符串
+   * 'cancel' / 'close'（不是 Error）。这类情况不是失败，不能弹错误提示。
+   */
+  function isPromptDismissed(error: unknown): boolean {
+    return error === 'cancel' || error === 'close'
+  }
+
+  /**
+   * 提取错误文案：
+   * - 拦截器 reject 的是统一错误对象（{ message, code, ... }），不是 Error 实例
+   * - 也有直接抛 Error 的路径
+   * 两者都取 .message；取不到时返回空串由调用方兜底。
+   */
+  function extractErrorMessage(error: unknown): string {
+    if (typeof error === 'string') {
+      return error
+    }
+    if (error instanceof Error) {
+      return error.message
+    }
+    const message = (error as { message?: unknown } | null | undefined)?.message
+    return typeof message === 'string' ? message : ''
+  }
+
+  /**
+   * 提示一条审批失败信息（2026-10-29 N-02 修复）。
+   *
+   * - `markErrorHandled`：告诉响应拦截器「这条错误业务层已经提示过」，
+   *   拦截器的兜底提示据此跳过 → 同一条错误只弹一次（实测 409 场景原本弹两条）。
+   * - `claimErrorToast`：消息级去重，避免与其它层重复弹同一条文案。
+   * - 后端原文优先透出（中文原文直接用；英文原文用中文兜底 + 原文附注）。
+   */
+  function showApprovalErrorToast(error: unknown, fallbackText: string): void {
+    markErrorHandled(error)
+
+    const message = buildUserFacingErrorMessage(
+      extractErrorMessage(error),
+      fallbackText,
+      (error as { status?: number } | null | undefined)?.status
+    )
+
+    if (!claimErrorToast(message)) {
+      return
+    }
+    ElMessage.error(message)
+  }
+
   function normalizeWorkflowRuntimeStatus(value: unknown): string {
     return String(value || '')
       .trim()
@@ -800,8 +853,15 @@ export function useApprovalProgressWorkflow({
           loadingInstance.close()
         }
         return
-      } catch {
-        return
+      } catch (error) {
+        // 用户取消输入框：不是失败，静默返回（抽屉保持打开）
+        if (isPromptDismissed(error)) {
+          return
+        }
+        // 2026-10-29 修复（N-02「点了没反应」）：响应拦截器 reject 后，
+        // 错误原先被整个吞掉——既没有提示也没有回源刷新，弹窗像卡住不动。
+        // 这里把后端返回的原文透出，抽屉保持打开。
+        showApprovalErrorToast(error, '审批失败')
       }
     }
 
@@ -869,8 +929,16 @@ export function useApprovalProgressWorkflow({
       } finally {
         loadingInstance.close()
       }
-    } catch {
-      // 批量通过失败时静默处理，已在内部显示错误提示
+    } catch (error) {
+      // 用户取消输入框：不是失败，静默返回
+      if (isPromptDismissed(error)) {
+        return
+      }
+      // 2026-10-29 修复（N-02）：批量通过时实例接口抛错原先被整个吞掉，
+      // 用户只看到「点了没反应」。这里把后端原文透出。
+      showApprovalErrorToast(error, '审批失败')
+      // 批量中途失败也要回源收尾——前面的实例已提交成功，跳过刷新会让抽屉停留旧状态
+      await refreshPlanApprovalAfterMutation().catch(() => undefined)
     }
   }
 
@@ -941,8 +1009,15 @@ export function useApprovalProgressWorkflow({
           loadingInstance.close()
         }
         return
-      } catch {
-        return
+      } catch (error) {
+        // 用户取消输入框：不是失败，静默返回（抽屉保持打开）
+        if (isPromptDismissed(error)) {
+          return
+        }
+        // 2026-10-29 修复（N-02「点了没反应」）：响应拦截器 reject 后，
+        // 错误原先被整个吞掉——既没有提示也没有回源刷新，弹窗像卡住不动。
+        // 这里把后端返回的原文透出，抽屉保持打开。
+        showApprovalErrorToast(error, '驳回失败')
       }
     }
 
@@ -1002,8 +1077,16 @@ export function useApprovalProgressWorkflow({
       } finally {
         loadingInstance.close()
       }
-    } catch {
-      // 批量驳回失败时静默处理，已在内部显示错误提示
+    } catch (error) {
+      // 用户取消输入框：不是失败，静默返回
+      if (isPromptDismissed(error)) {
+        return
+      }
+      // 2026-10-29 修复（N-02）：批量驳回时实例接口抛错原先被整个吞掉，
+      // 用户只看到「点了没反应」。这里把后端原文透出。
+      showApprovalErrorToast(error, '驳回失败')
+      // 批量中途失败也要回源收尾，避免抽屉停留旧状态
+      await refreshPlanApprovalAfterMutation().catch(() => undefined)
     }
   }
 
