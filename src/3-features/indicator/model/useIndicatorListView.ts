@@ -327,7 +327,14 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   })
 
   // 2026-10-07 心跳/聚焦等轻源节流：与战略任务页同口径，45s 内不重复重刷列表
-  const LIGHT_REFRESH_SOURCES: string[] = ['heartbeat', 'window-focus', 'visibility-return']
+  // 2026-10-29 用户定案：DATA_CHANGED 广播（他人连续编辑指标）也归入轻源——
+  // 此前每改一条就整页回源一次，频率跟着别人的编辑节奏走。
+  const LIGHT_REFRESH_SOURCES: string[] = [
+    'heartbeat',
+    'window-focus',
+    'visibility-return',
+    'data-change-push'
+  ]
   let lastLightRefreshAt = 0
 
   const handleGlobalDataRefreshRequest = (event: Event) => {
@@ -645,8 +652,10 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   // 指标异动审批流（填报人修改→战略部负责人→分管校领导），实体类型 INDICATOR
   const PLAN_MUTATION_WORKFLOW_CODE = 'PLAN_MUTATION_STRATEGY'
   // 2026-09-27 用户拍板：15s 高频轮询给服务器造成压力（生产曾出现整波请求超时），
-  // 放宽到 60s；页面隐藏时本来就跳过（pollCurrentPlanApprovalState 有 document.hidden 守卫）
-  const PLAN_APPROVAL_POLL_INTERVAL_MS = 60000
+  // 放宽到 60s；页面隐藏时本来就跳过（pollCurrentPlanApprovalState 有 document.hidden 守卫）。
+  // 2026-10-29 用户定案（客户反馈）：自动刷新太频繁，5 分钟一次足够；
+  // 审批流转的实时性由 WS 推送保证，本定时器只做漏推兜底。
+  const PLAN_APPROVAL_POLL_INTERVAL_MS = 5 * 60 * 1000
   let planApprovalPollTimer: ReturnType<typeof setInterval> | null = null
 
   function getCurrentPlanId(): number | null {
@@ -728,12 +737,14 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         return
       }
     } catch (error) {
+      // 2026-10-29 用户定案：拉取失败保留上一次的工作流详情（审批状态/按钮不回落）
       logger.warn('[IndicatorListView] 加载当前计划工作流详情失败:', {
         planId: resolvedPlanId,
         reportId,
         workflowInstanceId,
         error
       })
+      return
     }
 
     currentPlanWorkflowDetail.value = null
@@ -829,9 +840,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         writePlanReportUiState(null)
       }
     } catch (error) {
-      currentPlanReportSummary.value = null
-      latestPlanReportSummary.value = null
-      clearCurrentPlanReportDerivedState()
+      // 2026-10-29 用户定案：刷新失败保留上一次的摘要与派生状态，不清空。
+      // 页面已显示的审批状态/填报入口必须原样保留，等待下一次刷新收敛。
       logger.warn('[IndicatorListView] 加载当前上报摘要失败:', {
         planId: resolvedPlanId,
         reportOrgId,
@@ -906,8 +916,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         approved: approvalSummary.approved
       }
     } catch (error) {
-      planReportEntryLockState.value = null
-      reportApprovalSummaryState.value = null
+      // 2026-10-29 用户定案：失败保留上一次的锁定判定与审批汇总，避免入口锁/状态章闪变
       logger.warn('[IndicatorListView] 刷新填报入口锁定状态失败:', {
         planId: resolvedPlanId,
         reportOrgId,
@@ -3964,7 +3973,14 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       reportDetailOverlay.value = {}
       return
     }
-    const draft = await indicatorFillApi.getOpenDraftReport(planId, reportOrgId)
+    let draft: Awaited<ReturnType<typeof indicatorFillApi.getOpenDraftReport>>
+    try {
+      draft = await indicatorFillApi.getOpenDraftReport(planId, reportOrgId)
+    } catch (error) {
+      // 2026-10-29 用户定案：拉取失败保留上一次的说明/等级回显，不把已有内容清空
+      logger.warn('[IndicatorListView] 刷新填报明细覆盖层失败:', { planId, reportOrgId, error })
+      return
+    }
     const map: Record<string, any> = {}
     ;(draft?.indicatorDetails ?? []).forEach(detail => {
       if (detail?.indicatorId !== undefined && detail.indicatorId !== null) {
@@ -4720,7 +4736,13 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     const planId = getCurrentPlanId()
 
     const tasks: Promise<any>[] = [
-      strategicStore.loadIndicatorsByYear(timeContext.currentYear, { force: true }),
+      // 2026-10-29 用户定案：本函数是「已有数据之后的回源刷新」（心跳/审批推送/保存后），
+      // 必须带 background 静默加载——否则会翻转 strategicStore.loading，
+      // 让 isInitialLoading 变 true，整张表被骨架屏顶掉，表现为页面每隔一段时间闪一下。
+      strategicStore.loadIndicatorsByYear(timeContext.currentYear, {
+        force: true,
+        background: true
+      }),
       approvalStore.loadPendingApprovals()
     ]
 

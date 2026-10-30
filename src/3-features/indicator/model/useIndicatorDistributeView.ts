@@ -1103,8 +1103,8 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         )
       )
     } catch (error) {
+      // 2026-10-29 用户定案：刷新失败保留上一次的待办列表，不把已显示的条目清空
       logger.warn('[IndicatorDistributeView] 加载我的待办审批失败:', error)
-      myPendingApprovalTasks.value = []
     }
   }
   const hasMyPendingApprovalTasks = computed(() => myPendingApprovalTasks.value.length > 0)
@@ -1959,8 +1959,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         pendingCollegePlanUiState.value = null
       }
     } catch (error) {
-      currentCollegePlanReportSummary.value = null
-      latestCollegePlanReportSummary.value = null
+      // 2026-10-29 用户定案：刷新失败保留上一次的学院上报摘要，不清空状态章
       logger.warn('[IndicatorDistributeView] 加载当前学院 plan_report 失败:', {
         planId,
         reportOrgId,
@@ -3358,7 +3357,14 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   })
 
   // 2026-10-07 心跳/聚焦等轻源节流：与战略任务页同口径，45s 内不重复重刷下发数据
-  const LIGHT_REFRESH_SOURCES: string[] = ['heartbeat', 'window-focus', 'visibility-return']
+  // 2026-10-29 用户定案：DATA_CHANGED 广播（他人连续编辑指标）也归入轻源——
+  // 下发页每轮刷新要跑 10 个左右请求，不能跟着别人的编辑节奏走。
+  const LIGHT_REFRESH_SOURCES: string[] = [
+    'heartbeat',
+    'window-focus',
+    'visibility-return',
+    'data-change-push'
+  ]
   let lastLightRefreshAt = 0
 
   const handleGlobalDataRefreshRequest = (event: Event) => {

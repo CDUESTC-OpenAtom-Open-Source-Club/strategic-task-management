@@ -13,9 +13,11 @@ import {
 import { useWebSocketNotifications } from '@/shared/api/websocket'
 
 const ATTENTION_REFRESH_COOLDOWN_MS = 45 * 1000
-// 2026-10-07 心跳兜底：WS 断连/漏推时，每 30s 轻量同步一次消息与审批状态，
-// 保证"操作后几秒内状态异步收敛"；页面不可见时跳过，卸载时清理。
-const NOTIFICATION_HEARTBEAT_INTERVAL_MS = 30 * 1000
+// 2026-10-07 心跳兜底：WS 断连/漏推时轻量同步一次消息与审批状态；
+// 页面不可见时跳过，卸载时清理。
+// 2026-10-29 用户定案（客户反馈）：自动刷新太频繁，5 分钟一次足够。
+// 实时性由 WS 推送保证，心跳只做断线兜底，因此周期放宽到 5min 不影响正常场景。
+const NOTIFICATION_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000
 let approvalNotificationRefreshListener: EventListener | null = null
 let lastAttentionRefreshAt = 0
 let messageRefreshInFlight: Promise<unknown> | null = null
