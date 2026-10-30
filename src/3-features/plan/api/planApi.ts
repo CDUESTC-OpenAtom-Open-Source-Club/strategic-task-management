@@ -137,7 +137,7 @@ export interface IndicatorLatestAttachmentVO {
 }
 
 /**
- * 2026-10-28：鉴定进度上下文——当前有效等级 + 当前用户是否为当前审批节点负责人。
+ * 2026-10-28：审核进度上下文——当前有效等级 + 当前用户是否为当前审批节点负责人。
  * canAppraise=true 才允许行内下拉；lockHint 是不可编辑时的提示。
  */
 export interface IndicatorAppraisalContextVO {
@@ -757,11 +757,11 @@ interface PlanReportIndicatorDetailResponse {
   indicatorId: number
   progress?: number | null
   comment?: string | null
-  /** 自评等级 AHEAD/NORMAL/DELAYED（等级制填报） */
+  /** 自评进度 AHEAD/NORMAL/DELAYED（等级制填报） */
   selfRating?: string | null
   /** 完成情况描述（与 comment 同源，读侧优先） */
   description?: string | null
-  /** 2026-10-27：审批人鉴定进度等级（上报链末节点评定） */
+  /** 2026-10-27：审批人审核进度（上报链末节点评定） */
   appraisalLevel?: string | null
   attachments?: Attachment[] | null
 }
@@ -823,7 +823,7 @@ function mapPlanReportToIndicatorFill(
     created_at: report.createdAt || fillDate,
     updated_at: report.updatedAt || report.createdAt || fillDate,
     status: convertReportStatusToFillStatus(report.status),
-    // 2026-10-24：本轮填报的自评等级随记录下发，供上报记录卡与详情展示
+    // 2026-10-24：本轮填报的自评进度随记录下发，供上报记录卡与详情展示
     selfRating: resolvedDetail?.selfRating ?? null,
     audit_comment: report.rejectionReason || undefined,
     audited_by: report.approvedBy != null ? String(report.approvedBy) : undefined,
@@ -1305,7 +1305,7 @@ function resolveCurrentMonthPlanReportSummaries(
 } {
   // 2026-10-19 修复（上级角色看不见下级填报内容）：
   // 填报月份锁定为「最早未填报月」（如 202601），不等于自然月；
-  // 默认按自然月查询时上级角色永远命中不到报告 → 自评等级/进度说明/资料全空。
+  // 默认按自然月查询时上级角色永远命中不到报告 → 自评进度/进度说明/资料全空。
   // 当月精确匹配为空且调用方未显式指定月份时，回退取该组织最近月份的报告；
   // 显式传月（如填报入口校验）保持精确匹配语义，不回退（避免把「该月无报告」误判为有）。
   const byRoundDesc = (a: PlanReportSimpleResponse, b: PlanReportSimpleResponse) =>
@@ -2302,7 +2302,7 @@ export const indicatorFillApi = {
   },
 
   /**
-   * 2026-10-28：批量查询鉴定进度上下文（当前等级 + 当前用户是否当前节点负责人）。
+   * 2026-10-28：批量查询审核进度上下文（当前等级 + 当前用户是否当前节点负责人）。
    */
   async getIndicatorAppraisalContexts(
     indicatorIds: Array<number | string>
@@ -2335,7 +2335,7 @@ export const indicatorFillApi = {
   },
 
   /**
-   * 2026-10-28：行内调整鉴定等级（仅当前审批节点负责人；null 表示未评定）。
+   * 2026-10-28：行内调整审核进度（仅当前审批节点负责人；null 表示未评定）。
    */
   async setIndicatorAppraisalLevel(
     indicatorId: number | string,
@@ -2766,8 +2766,8 @@ export const indicatorFillApi = {
   },
 
   /**
-   * 2026-10-27 用户定案：取该组织每个指标「最近一轮已上报通过」的鉴定进度等级。
-   * 鉴定等级是审批人在上报审批末节点对指标的评定结果；新一个月的填报轮次
+   * 2026-10-27 用户定案：取该组织每个指标「最近一轮已上报通过」的审核进度。
+   * 审核进度是审批人在上报审批末节点对指标的评定结果；新一个月的填报轮次
    * 应沿用最近一轮的评定显示，而不是回到「未评定」。
    * 同指标多轮时按报告月份降序取最新评定。无已通过轮次的指标不出现在结果中。
    */
@@ -2803,7 +2803,7 @@ export const indicatorFillApi = {
       }
       return levels
     } catch (error) {
-      logger.warn('[indicatorFillApi] 加载最近已通过轮次的鉴定等级失败:', error)
+      logger.warn('[indicatorFillApi] 加载最近已通过轮次的审核进度失败:', error)
       return {}
     }
   },
@@ -2823,7 +2823,7 @@ export const indicatorFillApi = {
   },
 
   /**
-   * 获取该组织「未提交草稿报告」完整内容（含 indicatorDetails 明细与自评等级）。
+   * 获取该组织「未提交草稿报告」完整内容（含 indicatorDetails 明细与自评进度）。
    * 用于填报列表的等级/说明回显（补签月份的草稿不落在当月摘要里）。
    * 无 DRAFT 时返回 null。
    */

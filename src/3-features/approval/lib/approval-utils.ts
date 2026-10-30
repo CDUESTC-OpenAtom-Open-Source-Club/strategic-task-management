@@ -63,7 +63,7 @@ export function resolvePlanApprovalTypeLabel(flowCode?: string): string {
   return '上报审批'
 }
 
-// 鉴定等级只属于上报链路（V88 口径）：下发/异动流程不显示鉴定等级选择器。
+// 审核进度只属于上报链路（V88 口径）：下发/异动流程不显示审核进度选择器。
 // flowCode 未知时保持显示，避免老数据丢功能。
 export function showAppraisalLevelForFlow(flowCode?: string): boolean {
   const code = normalizeWorkflowCode(flowCode)

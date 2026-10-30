@@ -2959,8 +2959,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       }
   )
 
-  // 2026-10-19 修复（上级/本级看不见自评等级与进度说明）：战略任务管理页此前没有把
-  // 「当期报告明细」覆盖到行上——自评等级/进度说明列永远为空。与指标填报页的
+  // 2026-10-19 修复（上级/本级看不见自评进度与进度说明）：战略任务管理页此前没有把
+  // 「当期报告明细」覆盖到行上——自评进度/进度说明列永远为空。与指标填报页的
   // applyReportDetailOverlay 同构：按 indicatorId 把报告明细覆盖到行。
   const reportDetailByIndicatorId = computed(() => {
     const map = new Map<string, Record<string, unknown>>()
@@ -4913,7 +4913,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       return
     }
     selectedCollege.value = college
-    // 2026-10-19 修复：切换学院后重新拉取该学院的上报摘要（自评等级/进度说明回显依据）
+    // 2026-10-19 修复：切换学院后重新拉取该学院的上报摘要（自评进度/进度说明回显依据）
     void syncCurrentPlanReportSummaries({ force: true, collegeScope: true })
   }
 

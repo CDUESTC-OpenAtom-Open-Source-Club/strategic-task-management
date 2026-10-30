@@ -371,7 +371,7 @@ const buildIndicatorListExportColumns = (
     { header: '下发备注', width: 24, getValue: row => row.remark || '-' },
     { header: '权重', width: 10, align: 'center', getValue: row => Number(row.weight || 0) },
     {
-      header: '鉴定进度等级',
+      header: '审核进度',
       width: 18,
       align: 'center',
       getValue: row => getManualAlertLabel(row.manualAlertSeverity)
@@ -587,11 +587,11 @@ const getManualAlertTagType = (severity?: ManualAlertSeverity) =>
   getManualAlertOption(severity).type
 
 // ============================================================================
-// 2026-10-30 P0-3：补「鉴定进度等级」写入位（上报审批链行内鉴定）
+// 2026-10-30 P0-3：补「审核进度」写入位（上报审批链行内鉴定）
 //
-// 背景：鉴定进度等级此前只有战略任务管理页有写入入口，指标填报页这一列纯只读，
+// 背景：审核进度此前只有战略任务管理页有写入入口，指标填报页这一列纯只读，
 // 导致「上报链可评级节点要求全部指标已评定」与「无人能评级」构成死锁
-// （本地上报实例实测 409：资源冲突：存在未评定的鉴定进度等级）。
+// （本地上报实例实测 409：资源冲突：存在未评定的审核进度）。
 // 此处复用 useIndicatorAppraisal（后端 canAppraise 判定谁能改），与战略任务页同构。
 // ============================================================================
 const {
@@ -610,7 +610,7 @@ watch(
   { immediate: true }
 )
 
-/** 行内调整鉴定等级：确认后写报告快照，后端同步 Alert 手动等级 */
+/** 行内调整审核进度：确认后写报告快照，后端同步 Alert 手动等级 */
 const handleAppraisalChange = async (
   row: { id: string | number; name?: string; manualAlertSeverity?: ManualAlertSeverity },
   value: ManualAlertSeverity
@@ -624,8 +624,8 @@ const handleAppraisalChange = async (
   const label = getManualAlertLabel(level)
   try {
     await ElMessageBox.confirm(
-      `确认将「${row.name || row.indicatorDesc || '该指标'}」的鉴定进度等级调整为「${label}」？`,
-      '调整鉴定进度等级',
+      `确认将「${row.name || row.indicatorDesc || '该指标'}」的审核进度调整为「${label}」？`,
+      '调整审核进度',
       {
         confirmButtonText: '确认调整',
         cancelButtonText: '取消',
@@ -633,17 +633,17 @@ const handleAppraisalChange = async (
       }
     )
     await saveIndicatorAppraisalLevel(row.id, level)
-    ElMessage.success('鉴定进度等级已调整')
+    ElMessage.success('审核进度已调整')
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
-      ElMessage.error(error instanceof Error ? error.message : '调整鉴定进度等级失败')
+      ElMessage.error(error instanceof Error ? error.message : '调整审核进度失败')
     }
   }
 }
 
 /** 锁定状态点击只提示一次（与战略任务页同口径） */
 const handleAppraisalTagClick = (row: { id: string | number }) => {
-  ElMessage.info(getIndicatorAppraisalLockHint(row.id) || '上报期间才能解锁鉴定进度等级')
+  ElMessage.info(getIndicatorAppraisalLockHint(row.id) || '上报期间才能解锁审核进度')
 }
 const getMonthlyExpectedProgress = () => {
   const month = new Date().getMonth() + 1
@@ -855,7 +855,7 @@ const handleExportIndicatorList = async () => {
                 type="primary"
                 size="small"
                 :disabled="timeContext.isReadOnly || indicators.length === 0"
-                title="提交前会校验每条指标的自评等级与进度说明"
+                title="提交前会校验每条指标的自评进度与进度说明"
                 @click="handleSubmitAll"
               >
                 <el-icon><Upload /></el-icon>
@@ -1054,7 +1054,7 @@ const handleExportIndicatorList = async () => {
                 </template>
               </el-table-column>
               <el-table-column
-                label="自评等级"
+                label="自评进度"
                 :width="TASK_TABLE_COLUMN_WIDTH.selfRating"
                 align="center"
               >
@@ -1073,7 +1073,7 @@ const handleExportIndicatorList = async () => {
                 </template>
               </el-table-column>
               <el-table-column
-                label="鉴定进度等级"
+                label="审核进度"
                 :width="TASK_TABLE_COLUMN_WIDTH.appraisalLevel"
                 align="center"
                 header-align="center"
@@ -1082,7 +1082,7 @@ const handleExportIndicatorList = async () => {
                 <template #default="{ row }">
                   <!-- 2026-10-30 P0-3：审批链行内鉴定（与战略任务管理页同构）。
                        当前审批节点负责人可改（后端 canAppraise 判定）；其他人点击看锁定原因。
-                       未评定统一显示「—」（与自评等级/进度说明等空值同风格）；
+                       未评定统一显示「—」（与自评进度/进度说明等空值同风格）；
                        已评定保留彩色 tag（深绿/绿/橙视觉口径） -->
                   <div class="manual-alert-cell">
                     <el-dropdown
@@ -1361,8 +1361,8 @@ const handleExportIndicatorList = async () => {
           >
           <el-descriptions-item label="指标类型">{{ currentDetail.type1 }}</el-descriptions-item>
           <el-descriptions-item label="权重">{{ currentDetail.weight }}</el-descriptions-item>
-          <!-- 2026-10-24 用户定案：自评等级与鉴定等级并列展示（前者填报告知，后者上级鉴定） -->
-          <el-descriptions-item label="自评等级">
+          <!-- 2026-10-24 用户定案：自评进度与审核进度并列展示（前者填报告知，后者上级鉴定） -->
+          <el-descriptions-item label="自评进度">
             <el-tag v-if="(currentDetail as any).selfRating" size="small" type="info">
               {{
                 { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' }[
@@ -1372,7 +1372,7 @@ const handleExportIndicatorList = async () => {
             </el-tag>
             <span v-else style="color: #909399">—</span>
           </el-descriptions-item>
-          <el-descriptions-item label="鉴定进度等级">
+          <el-descriptions-item label="审核进度">
             <el-tag
               :type="getManualAlertTagType(currentDetail.manualAlertSeverity)"
               :style="getProgressLevelTagStyle(currentDetail.manualAlertSeverity)"
@@ -1453,7 +1453,7 @@ const handleExportIndicatorList = async () => {
              单个指标的填报弹窗不再重复展示月份横幅。 -->
         <!-- 填报表单 -->
         <el-form label-width="100px" class="report-form">
-          <el-form-item label="自评等级" required>
+          <el-form-item label="自评进度" required>
             <el-select
               v-model="reportForm.selfRating"
               placeholder="请自评进度"

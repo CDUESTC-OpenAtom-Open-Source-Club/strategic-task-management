@@ -178,7 +178,7 @@ interface PlanReportIndicatorDetailItem {
   indicatorId?: number | string | null
   progress?: number | string | null
   comment?: string | null
-  /** 2026-10-28：上一节点已评定的鉴定进度等级（预填行内下拉用） */
+  /** 2026-10-28：上一节点已评定的审核进度（预填行内下拉用） */
   appraisalLevel?: string | null
   attachments?: PlanReportAttachmentItem[] | null
 }

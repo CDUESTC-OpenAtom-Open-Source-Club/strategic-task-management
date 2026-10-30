@@ -14,7 +14,7 @@ export function canEditManualAlertLevel(
   ) {
     return false
   }
-  // 2026-10-18 用户定案：鉴定进度等级是上报审批过程中的状态——
+  // 2026-10-18 用户定案：审核进度是上报审批过程中的状态——
   // 仅「计划已下发 + 上报流程进行中」可调整；平时（流程未发起/已结束/已退回）锁死。
   if (options.workflowInFlight !== true) {
     return false

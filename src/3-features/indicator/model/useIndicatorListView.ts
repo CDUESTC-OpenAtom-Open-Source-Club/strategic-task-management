@@ -294,7 +294,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     ])
 
     await loadCollegePlanDetails()
-    // 2026-10-27 用户定案：鉴定等级是审批人对「指标」的评定，新一个月的填报轮次
+    // 2026-10-27 用户定案：审核进度是审批人对「指标」的评定，新一个月的填报轮次
     // 应沿用最近一轮已上报通过时的评定显示，而不是回到「未评定」。
     // 手动设置的等级（若有）优先，此处只做鉴定结果的兜底回显。
     void hydrateAppraisalLevelsFromLastApprovedRound()
@@ -1237,9 +1237,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   })
 
   /**
-   * 2026-10-27 用户定案：用「最近一轮已上报通过」的鉴定进度等级回显到列表行。
+   * 2026-10-27 用户定案：用「最近一轮已上报通过」的审核进度回显到列表行。
    * 行数据里 manualAlertSeverity 为空（从未手动设置）时，用审批人最近一轮
-   * 的鉴定结果补位——同一个指标的鉴定等级不会因为开了新一月填报而归零。
+   * 的鉴定结果补位——同一个指标的审核进度不会因为开了新一月填报而归零。
    */
   async function hydrateAppraisalLevelsFromLastApprovedRound(): Promise<void> {
     const planId = getCurrentPlanId()
@@ -1279,7 +1279,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         }
       })
     } catch (error) {
-      logger.warn('[IndicatorListView] 回显最近一轮鉴定等级失败:', error)
+      logger.warn('[IndicatorListView] 回显最近一轮审核进度失败:', error)
     }
   }
 
@@ -2436,7 +2436,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   const reportDetailOverlay = ref<Record<string, any>>({})
 
   // 2026-10-07 裁决：等级制列数据回显——用「未提交草稿明细（优先）+ 当月报告摘要」
-  // 覆盖自评等级/进度说明/附件，全部填报角色（职能部门+二级学院）生效。
+  // 覆盖自评进度/进度说明/附件，全部填报角色（职能部门+二级学院）生效。
   const applyReportDetailOverlay = (list: StrategicIndicator[]): StrategicIndicator[] => {
     if (
       !Array.isArray(currentPlanReportSummary.value?.indicatorDetails) &&
@@ -4088,7 +4088,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     // 2026-10-07：有未提交草稿时优先锁定草稿月，并刷新等级/说明回显覆盖层
     await refreshReportDetailOverlay()
     lockedReportMonth.value = await resolveEarliestUnfilledReportMonth(row.id)
-    // 2026-10-20 修复：自评等级保存后重开弹窗显示为空——回显取刚刷新的草稿明细等级，
+    // 2026-10-20 修复：自评进度保存后重开弹窗显示为空——回显取刚刷新的草稿明细等级，
     // 无草稿明细时依次退回列表行（覆盖层已算）与服务端快照的已存等级
     const draftDetail = reportDetailOverlay.value[String(row.id)] as
       { selfRating?: string | null } | undefined
@@ -4567,9 +4567,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
     const indicator = await refreshReportIndicatorSnapshot(currentReportIndicator.value)
 
-    // 2026-10-07 裁决：进度改为等级制（自评等级），不再采集百分比数值
+    // 2026-10-07 裁决：进度改为等级制（自评进度），不再采集百分比数值
     if (!reportForm.value.selfRating) {
-      ElMessage.warning('请选择自评等级')
+      ElMessage.warning('请选择自评进度')
       return
     }
 
@@ -4629,7 +4629,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
             indicator_name: item.name,
             progress: Number(reportProgress),
             content: reportRemark,
-            // 该条已保存的自评等级（非当前条目需沿用它，不能被当前表单值覆盖）
+            // 该条已保存的自评进度（非当前条目需沿用它，不能被当前表单值覆盖）
             selfRating: (item as { selfRating?: string | null }).selfRating || undefined,
             // 2026-10-28（Issue #91 P0-2）：非当前指标必须回填其已关联的附件 id。
             // 后端按全量 upsert 保存，空附件列表会 DELETE 该条全部附件关联——
@@ -4648,7 +4648,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         reportMonth: reportForm.value.reportMonth || undefined,
         attachments: [],
         // Attachments are uploaded first and linked by attachment_ids in batch_items.
-        // 2026-10-28（Issue #91 P1-1）：只有当前指标用表单里的自评等级，
+        // 2026-10-28（Issue #91 P1-1）：只有当前指标用表单里的自评进度，
         // 其余指标沿用各自已保存的值，避免整批被当前值覆盖。
         batch_items: batchItems.map(item => ({
           ...item,
@@ -4982,7 +4982,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
   // 检查指标是否已有真实填报内容
   // 业务要求：按钮文案只根据当前轮次的 pendingProgress 判断。
-  // 2026-10-24 用户定案：自评等级与进度说明是必填项，缺任一即视为未完成填报——
+  // 2026-10-24 用户定案：自评进度与进度说明是必填项，缺任一即视为未完成填报——
   // 按钮维持「填报」态，一键提交闸门拦截（与后端提交守卫同口径）。
   const hasReportContent = (row: StrategicIndicator): boolean => {
     const withReport = row as StrategicIndicator & {
@@ -4996,7 +4996,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     )
   }
 
-  // 2026-10-24：缺自评等级/进度说明的条数（一键提交提示用）
+  // 2026-10-24：缺自评进度/进度说明的条数（一键提交提示用）
   const missingSelfRatingCount = computed(
     () =>
       indicators.value.filter(
@@ -5210,11 +5210,11 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return
     }
 
-    // 检查是否所有指标都已填报（2026-10-24：自评等级与进度说明必须全部有值）
+    // 检查是否所有指标都已填报（2026-10-24：自评进度与进度说明必须全部有值）
     if (!allIndicatorsFilled.value) {
       const parts: string[] = []
       if (missingSelfRatingCount.value > 0) {
-        parts.push(`${missingSelfRatingCount.value} 个指标未选择自评等级`)
+        parts.push(`${missingSelfRatingCount.value} 个指标未选择自评进度`)
       }
       if (missingRemarkCount.value > 0) {
         parts.push(`${missingRemarkCount.value} 个指标未填写进度说明`)

@@ -100,7 +100,7 @@ const getStatusLabel = (status?: string) => {
 }
 
 /**
- * 2026-10-24 用户定案：每次上报记录都要能看出这一轮的自评等级。
+ * 2026-10-24 用户定案：每次上报记录都要能看出这一轮的自评进度。
  * 等级制填报时进度百分比无意义（后端也会跳过递增校验），卡片上并列展示等级。
  */
 const SELF_RATING_LABELS: Record<string, string> = {
@@ -225,7 +225,7 @@ const buildFillExportColumns = (rows: IndicatorFill[]): ExcelExportColumn<Indica
   { header: '填报人', width: 14, getValue: row => row.filled_by_name || '-' },
   { header: '审核状态', width: 10, align: 'center', getValue: row => getStatusLabel(row.status) },
   {
-    header: '自评等级',
+    header: '自评进度',
     width: 12,
     align: 'center',
     getValue: row => resolveSelfRatingText(row.selfRating)
@@ -338,10 +338,10 @@ void loadHistory()
         @click="selectFill(fill)"
       >
         <div class="history-top">
-          <!-- 2026-10-24 用户定案：「进度百分比」概念已废弃，统一为鉴定进度等级体系——
-               上报记录卡只展示本轮自评等级（超前完成/正常/延期），不再显示进度% -->
+          <!-- 2026-10-24 用户定案：「进度百分比」概念已废弃，统一为审核进度体系——
+               上报记录卡只展示本轮自评进度（超前完成/正常/延期），不再显示进度% -->
           <div class="progress-block">
-            <span class="muted-label">自评等级</span>
+            <span class="muted-label">自评进度</span>
             <span
               v-if="resolveSelfRatingLabel(fill.selfRating)"
               class="self-rating-tag"
@@ -416,8 +416,8 @@ void loadHistory()
               {{ resolveStatusLabel(activeFill.status) }}
             </el-tag>
           </el-descriptions-item>
-          <!-- 2026-10-24 用户定案：进度百分比已废弃，统一为鉴定进度等级体系 -->
-          <el-descriptions-item label="自评等级">
+          <!-- 2026-10-24 用户定案：进度百分比已废弃，统一为审核进度体系 -->
+          <el-descriptions-item label="自评进度">
             <el-tag
               v-if="resolveSelfRatingLabel(activeFill.selfRating)"
               size="small"
@@ -557,7 +557,7 @@ void loadHistory()
   color: #111827;
 }
 
-/* 2026-10-24：自评等级为空时的占位文本 */
+/* 2026-10-24：自评进度为空时的占位文本 */
 .self-rating-value {
   font-size: 14px;
   font-weight: 600;
@@ -596,7 +596,7 @@ void loadHistory()
   color: #374151;
 }
 
-/* 2026-10-24：上报记录卡上的自评等级标签 */
+/* 2026-10-24：上报记录卡上的自评进度标签 */
 .self-rating-tag {
   padding: 2px 8px;
   border-radius: 999px;

@@ -366,7 +366,7 @@ const normalizeApprovalDepartmentName = (value: unknown): string => {
     .trim()
 }
 
-// 鉴定等级仅上报链路显示（2026-09-27 用户拍板）：下发/异动流程不出现该选择器
+// 审核进度仅上报链路显示（2026-09-27 用户拍板）：下发/异动流程不出现该选择器
 const showPlanAppraisalLevelSelect = computed(() =>
   showAppraisalLevelForFlow(
     activePlanWorkflow.value?.flowCode || currentDetailWorkflow.value?.flowCode
@@ -667,7 +667,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 </div>
                 <div class="card-actions">
                   <el-button @click="openPlanApprovalDetails">查看详情</el-button>
-                  <!-- 2026-10-24 用户定案：整体鉴定废弃——鉴定等级改在审批详情里
+                  <!-- 2026-10-24 用户定案：整体鉴定废弃——审核进度改在审批详情里
                        按指标逐条评定（仅上报链末级审批节点出现），卡片上不再有选择器 -->
                   <el-button
                     v-if="
@@ -993,7 +993,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
               </div>
 
               <div class="snapshot-section">
-                <div class="snapshot-section-title">自评等级</div>
+                <div class="snapshot-section-title">自评进度</div>
                 <div class="snapshot-section-content">
                   <ElTag v-if="indicator.submittedSelfRating" size="small" type="info">{{
                     formatAppraisalLevel(indicator.submittedSelfRating)
@@ -1005,7 +1005,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
               <!-- 2026-10-28 用户定案：审批卡片不提供鉴定下拉——
                    鉴定只在三个表格页的指标行内完成，这里只读展示当前等级。 -->
               <div class="snapshot-section">
-                <div class="snapshot-section-title">鉴定进度等级</div>
+                <div class="snapshot-section-title">审核进度</div>
                 <div class="snapshot-section-content">
                   <ElTag
                     v-if="indicator.appraisalLevel"

@@ -919,7 +919,7 @@
   color: var(--text-regular);
 }
 
-/* 2026-10-18 用户定案：鉴定进度等级列——表头六字需单行且居中。
+/* 2026-10-18 用户定案：审核进度列——表头六字需单行且居中。
    Element Plus 默认左右各 12px 内边距在窄列会把表头挤成两行。 */
 .el-table th.manual-level-header .cell {
   padding-left: 4px !important;
@@ -944,7 +944,7 @@
   overflow-y: auto;
 }
 
-/* 2026-10-30 P0-3：鉴定进度等级行内调整（与战略任务管理页同构） */
+/* 2026-10-30 P0-3：审核进度行内调整（与战略任务管理页同构） */
 .manual-alert-cell {
   display: flex;
   align-items: center;

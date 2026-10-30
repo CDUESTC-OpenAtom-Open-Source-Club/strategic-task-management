@@ -1218,7 +1218,7 @@ export function useDashboardView(props: DashboardViewProps) {
             col('指标内容', 40),
             col('所属部门', 20),
             col('当前进度', 12, 'center'),
-            col('自评等级', 12, 'center')
+            col('自评进度', 12, 'center')
           ],
           emptyMessage: '没有滞后任务'
         },

@@ -4325,7 +4325,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
   // ================== 学院视图数据 ==================
 
-  // 2026-10-27 用户定案（草稿隔离 + 三列同源）：下发页的自评等级/进度说明/上报资料列
+  // 2026-10-27 用户定案（草稿隔离 + 三列同源）：下发页的自评进度/进度说明/上报资料列
   // 与战略任务管理页同一数据源——报告列表接口返回的「当期轮次」明细覆盖到子指标行。
   // 不再直接展示计划详情内嵌的 pending 字段：草稿期那会外泄学院未提交的填报内容，
   // 且审批全部通过后计划详情当期上下文为空会导致三列整列空白。
@@ -4465,7 +4465,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     return normalized.some(role => MANUAL_ALERT_WRITE_ROLES.includes(role))
   })
 
-  // 2026-10-18 用户定案：鉴定进度等级是上报审批过程中的状态——
+  // 2026-10-18 用户定案：审核进度是上报审批过程中的状态——
   // 仅「计划已下发 + 上报审批流程进行中」可调整；平时（流程未发起/已结束/已回退）锁死。
   const childManualAlertWorkflowInFlight = computed(() =>
     ['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(
