@@ -39,3 +39,35 @@ export function resolveBatchSelfRating(params: {
   }
   return itemSelfRating || undefined
 }
+
+/**
+ * 取某条指标「已保存的自评进度等级」。
+ *
+ * 2026-10-30 修复（等级制批量保存必失败 + 已存自评进度被清空）：
+ * 后端按全量 upsert 保存（`self_rating = EXCLUDED.self_rating`），
+ * 非当前条目若不回填已存等级，就会把该条已存的等级覆盖成空；
+ * 且等级为空时后端会落回百分比「进度必须递增」校验，
+ * 等级制下进度恒为 0 → `0 <= 0` 恒成立 → 整次保存回滚、报「保存指标填报失败」。
+ *
+ * 等级来源优先级：未提交草稿明细（overlay）→ 列表行自身字段。
+ * 列表接口（/plans/{id}/details）不返回 selfRating，故实际靠 overlay 提供。
+ */
+export function resolveSavedSelfRating(
+  item: unknown,
+  isCurrentIndicator: boolean,
+  overlayDetail?: { selfRating?: string | null } | null
+): string | undefined {
+  if (isCurrentIndicator) {
+    // 当前条目用表单值，由 resolveBatchSelfRating 决定，此处不参与
+    return undefined
+  }
+  const overlayRating = overlayDetail?.selfRating
+  if (typeof overlayRating === 'string' && overlayRating.trim()) {
+    return overlayRating.trim().toUpperCase()
+  }
+  const rowRating = (item as { selfRating?: string | null } | null)?.selfRating
+  if (typeof rowRating === 'string' && rowRating.trim()) {
+    return rowRating.trim().toUpperCase()
+  }
+  return undefined
+}

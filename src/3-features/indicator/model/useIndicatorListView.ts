@@ -46,7 +46,8 @@ import {
 } from '@/features/indicator/model/planReportEntryLock'
 import {
   collectExistingAttachmentIds,
-  resolveBatchSelfRating
+  resolveBatchSelfRating,
+  resolveSavedSelfRating
 } from '@/features/indicator/lib/reportBatch'
 import { getUsersByOrgId } from '@/features/user/api/query'
 import { ApprovalProgressDrawer } from '@/features/approval'
@@ -2901,12 +2902,20 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   /**
    * 2026-10-26 用户定案（修订 10-19 口径）：状态章按「从下发月起逐月推进，
    * 封顶在当前自然月」展示——
-   * - 未填到当前月 → 「7月未填报」→「8月未填报」→…逐月推进
-   * - 当前月已填报（含审批中/已通过）→ 「10月已填报」；当前月未结束不显示下一个月
+   * - 未填到当前月 → 当前填报周期 = 该待填月（info，含历史欠账）
+   * - 当前月已填报（草稿/审批中/已通过）→ 当前填报周期 = 当前自然月；当前月未结束不显示下一个月
    * - 当前月报告被驳回 → 「已回退」（保留 danger 提醒，需重报）
    * - 12 个月全部填完 → 「各月份已上报完毕」
+   * 2026-10-30 用户定案：周期文案不再用「N月未填报/N月已填报」，统一为
+   * 「当前填报周期：YYYY年M月」（ReportCycleTag 渲染，month 字段携带 YYYYMM）；
+   * 「已回退 / 各月份已上报完毕 / 未填报」是状态而非周期，保留原 label 走旧 tag 渲染。
+   * 2026-10-30 用户定案：绿色 = 当前周期审批链全部走完（APPROVED）；草稿/审批中/欠账一律灰色。
    */
-  const monthlySequenceStatusMeta = computed(() => {
+  const monthlySequenceStatusMeta = computed<{
+    label: string
+    type: StatusTagType
+    month?: string
+  }>(() => {
     if (!usePlanReportFlow.value || !hasCurrentUserPlanData.value) {
       return { label: '未填报', type: 'info' as StatusTagType }
     }
@@ -2928,8 +2937,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }
 
     // 显示月封顶在当前自然月：
-    // - earliest ≤ 当前月（含历史欠账）→ 按 earliest 显示「N月未填报」
-    // - earliest > 当前月 或 earliest 为空但计划年=当年 → 当前月已填报 → 「N月已填报」
+    // - earliest ≤ 当前月（含历史欠账）→ 当前填报周期 = earliest
+    // - earliest > 当前月 或 earliest 为空但计划年=当年 → 当前月已填报 → 周期封顶当前月
     //   （当前月未结束，不会跳到下一个月）
     // - 计划年为非当年（未来年/往年）→ 不做当前月封顶，按 earliest 原样
     const planYear = Number(timeContext.currentYear)
@@ -2942,18 +2951,19 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     const earliestNum = /^\d{6}$/.test(earliest) ? Number(earliest) : null
 
     if (currentMonthValue !== null && earliestNum !== null && earliestNum > currentMonthValue) {
+      // 2026-10-30 用户定案：绿色只有一个含义 = 当前周期审批链全部走完（APPROVED）。
+      // 当前月报告为草稿/审批中/未知状态时一律灰色（info），防止草稿即变绿。
+      const isCurrentPeriodApproved = currentPlanReportUiStatus.value === 'APPROVED'
       return {
-        label: `${currentMonthValue.toString().slice(4).replace(/^0/, '')}月已填报`,
-        type: 'success' as StatusTagType
+        label: '',
+        type: (isCurrentPeriodApproved ? 'success' : 'info') as StatusTagType,
+        month: String(currentMonthValue)
       }
     }
 
-    // 有明确的待填月（≤ 当前月）→ 「N月未填报」
-    if (earliest.length === 6) {
-      const month = Number(earliest.slice(4, 6))
-      if (Number.isFinite(month) && month >= 1 && month <= 12) {
-        return { label: `${month}月未填报`, type: 'info' as StatusTagType }
-      }
+    // 有明确的待填月（≤ 当前月）→ 当前填报周期 = 该月
+    if (/^\d{6}$/.test(earliest)) {
+      return { label: '', type: 'info' as StatusTagType, month: earliest }
     }
 
     // 数据不可得时降级为旧口径
@@ -4629,8 +4639,17 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
             indicator_name: item.name,
             progress: Number(reportProgress),
             content: reportRemark,
-            // 该条已保存的自评进度（非当前条目需沿用它，不能被当前表单值覆盖）
-            selfRating: (item as { selfRating?: string | null }).selfRating || undefined,
+            // 2026-10-30 修复（等级制批量保存必失败 + 已存自评进度被清空）：
+            // 非当前条目的自评进度必须回填，否则后端按全量 upsert 保存时
+            // （self_rating = EXCLUDED.self_rating）会把该条已存的等级覆盖成空。
+            // 等级来源优先级：未提交草稿明细（reportDetailOverlay）→ 列表行自身字段。
+            // 列表接口不返回 selfRating，故实际靠 overlay 提供；两者皆空时传 undefined，
+            // 由后端判定「该报告轮次下是否已有等级制记录」来决定是否豁免百分比递增校验。
+            selfRating: resolveSavedSelfRating(
+              item,
+              isCurrentIndicator,
+              reportDetailOverlay.value[itemId] as { selfRating?: string | null } | undefined
+            ),
             // 2026-10-28（Issue #91 P0-2）：非当前指标必须回填其已关联的附件 id。
             // 后端按全量 upsert 保存，空附件列表会 DELETE 该条全部附件关联——
             // 此前非当前条目一律传空，导致先前保存的附件关联被清空。

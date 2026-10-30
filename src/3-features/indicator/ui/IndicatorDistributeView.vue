@@ -17,6 +17,7 @@ import type { StrategicIndicator } from '@/shared/types'
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
 import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
+import ReportCycleTag from '@/shared/ui/display/ReportCycleTag.vue'
 import {
   buildAttachmentNameCell,
   buildExportFileName,
@@ -42,6 +43,7 @@ import {
 import { DistributionApprovalProgressDrawer } from '@/features/approval'
 import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
+import { MUTATION_FIELDS_INDICATOR_NAME } from '@/features/indicator/model/mutationHistory'
 import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
 import {
   useIndicatorAppraisal,
@@ -139,6 +141,7 @@ const {
   currentCollegePlanReportSummary,
   currentCollegePlanReportUiStatus,
   currentCollegePlanStatusMeta,
+  currentCollegeReportMonth,
   currentCollegeWorkflowDetail,
   currentDepartmentOrgId,
   currentDepartmentOrgIdFromTable,
@@ -1003,6 +1006,9 @@ const handleDistributionImportCommitted = async () => {
               >
                 基础性权重合计: {{ collegeTotalWeightStable }} / 100
               </el-tag>
+              <!-- 2026-10-30 三页统一：当前填报周期（ReportCycleTag，与站内任务/指标填报页同组件同文案）；
+                   2026-10-30 用户定案：固定放在卡片头部最后一个位置（权重合计之后） -->
+              <ReportCycleTag :month="currentCollegeReportMonth" />
             </div>
             <div class="header-actions">
               <el-button
@@ -1933,11 +1939,14 @@ const handleDistributionImportCommitted = async () => {
                     {{ getIndicatorTypeLabel(row.indicator) }}
                   </el-tag>
                   <span class="indicator-name">{{ row.indicator.name }}</span>
-                  <!-- D10：异动/改名历史徽标（悬停看历史，无变更自动隐藏） -->
+                  <!-- D10：异动/改名历史徽标（悬停看历史，无变更自动隐藏）
+                       2026-10-30 用户定案：徽标按被改字段分流，权重异动不计入指标名徽标；
+                       角标统一落在单元格右上角（.indicator-row-badge 绝对定位） -->
                   <MutationBadgePopover
                     v-if="row.indicator?.id"
                     class="indicator-row-badge"
                     :indicator-id="row.indicator.id"
+                    :fields="MUTATION_FIELDS_INDICATOR_NAME"
                   />
                 </div>
               </div>

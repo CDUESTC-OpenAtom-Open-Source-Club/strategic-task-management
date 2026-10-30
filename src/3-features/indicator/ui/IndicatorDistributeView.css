@@ -1317,8 +1317,12 @@
   }
 }
 
-/* D10：行内异动/改名历史徽标（下发页） */
+/* D10：异动/改名历史徽标（下发页·选择关联核心指标弹窗）。
+   2026-10-30 用户定案：异动角标统一移到单元格右上角（原内联跟在指标名后）。
+   定位基准是整格（td，element-plus 默认 .el-table__cell position:relative） */
 .indicator-row-badge {
-  margin-left: 8px;
-  flex-shrink: 0;
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  line-height: 1;
 }

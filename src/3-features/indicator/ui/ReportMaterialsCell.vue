@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import type { Attachment } from '@/shared/types'
 import type { IndicatorFill } from '@/shared/types'
 import { apiClient } from '@/shared/api/client'
+import { formatAttachmentTypeLabel } from '@/shared/lib/format'
 import { useIndicatorFills } from '../model/useIndicatorFills'
 import { logger } from '@/shared/lib/utils/logger'
 
@@ -30,6 +31,10 @@ const latestAttachments = (): Attachment[] => {
   }
   return fills.value[0]?.attachments ?? []
 }
+
+// 类型标签用短标签（扩展名优先/MIME 映射），空串时整体不渲染，绝不裸显后端 MIME 串
+const attachmentTypeLabel = (attachment: Attachment): string =>
+  formatAttachmentTypeLabel(attachment.fileType, attachment.fileName)
 
 async function downloadAttachment(attachment: Attachment): Promise<void> {
   if (downloadingAttachment.value) {
@@ -81,8 +86,8 @@ onMounted(async () => {
           <span class="report-materials__name">{{
             downloadingAttachment === String(attachment.id) ? '下载中…' : attachment.fileName
           }}</span>
-          <span v-if="attachment.fileType" class="report-materials__type">{{
-            attachment.fileType
+          <span v-if="attachmentTypeLabel(attachment)" class="report-materials__type">{{
+            attachmentTypeLabel(attachment)
           }}</span>
         </button>
       </div>
@@ -152,6 +157,10 @@ onMounted(async () => {
 }
 .report-materials-popper .report-materials__type {
   flex: none;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 0 5px;
   border-radius: 3px;
   background: #e8f1ff;

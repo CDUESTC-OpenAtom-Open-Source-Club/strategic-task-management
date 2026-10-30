@@ -319,6 +319,19 @@
   width: 100%;
 }
 
+/* 2026-10-30 用户定案：权重异动角标落在「权重这一格」的右上角。
+   定位基准是整格（td.weight-col-cell），不是权重数字容器。 */
+.weight-col-cell {
+  position: relative;
+}
+
+.weight-cell .weight-cell__badge {
+  position: absolute;
+  right: 4px;
+  top: 2px;
+  line-height: 1;
+}
+
 .weight-text {
   font-weight: 500;
   color: var(--text-main);
@@ -907,10 +920,14 @@
   opacity: 0.9;
 }
 
-/* D10：行内异动/改名历史徽标（指标列表页） */
+/* D10：异动/改名历史徽标（指标列表页）。
+   2026-10-30 用户定案：异动角标统一移到单元格右上角（原内联跟在指标名后）。
+   定位基准是整格（td，element-plus 默认 .el-table__cell position:relative） */
 .indicator-row-badge {
-  margin-left: 8px;
-  flex-shrink: 0;
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  line-height: 1;
 }
 
 /* 进度说明列：2026-10-30 用户定案——完整换行展示、把单元格填满，不再两行截断 */

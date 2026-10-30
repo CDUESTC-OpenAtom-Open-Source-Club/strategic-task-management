@@ -706,11 +706,14 @@
   display: none;
 }
 
-/* 「已更改 N 次」标注：单元格右下角对齐 */
+/* 「已更改 N 次」标注：单元格右上角对齐（2026-10-30 用户定案：异动角标统一移到右上角）。
+   定位基准是整格（td）：职能部门页签战略任务列的 td:first-child 已设 position:relative */
 .indicator-cell-footer {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: var(--spacing-xs);
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  margin-top: 0;
+  line-height: 1;
 }
 
 .table-container {
@@ -1246,6 +1249,31 @@
   align-items: center;
   justify-content: center;
   width: 100%;
+}
+
+/* 2026-10-30 用户定案：异动角标落在「所在那一格」的右上角。
+   定位基准是整格（td），不是单元格里的内容容器——
+   按内容容器定位会让角标悬在文字/数字旁边，不是真正的格子右上角。 */
+.weight-col-cell,
+.indicator-name-col-cell,
+.remark-col-cell {
+  position: relative;
+}
+
+.weight-cell .weight-cell__badge {
+  position: absolute;
+  right: 4px;
+  top: 2px;
+  line-height: 1;
+}
+
+/* 同口径：核心指标列 / 下发备注列的角标也贴格子右上角 */
+.indicator-cell-footer--corner {
+  position: absolute;
+  right: 4px;
+  top: 2px;
+  margin-top: 0;
+  line-height: 1;
 }
 
 .weight-text {

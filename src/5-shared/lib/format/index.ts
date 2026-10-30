@@ -1,6 +1,6 @@
 /**
  * Format Module
- * 
+ *
  * Exports all formatting utilities
  */
 
@@ -42,3 +42,6 @@ export {
   escapeHtml,
   randomString
 } from './string'
+
+// Attachment formatting
+export { formatAttachmentTypeLabel } from './attachment'

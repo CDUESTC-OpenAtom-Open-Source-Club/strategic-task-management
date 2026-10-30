@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
+import {
+  MUTATION_FIELDS_INDICATOR_NAME,
+  MUTATION_FIELDS_WEIGHT
+} from '@/features/indicator/model/mutationHistory'
 import { computed, ref, watch } from 'vue'
 import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
 import { useLatestIndicatorFill } from '@/features/indicator/model/useLatestIndicatorFill'
@@ -50,6 +54,7 @@ import {
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
 import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
+import ReportCycleTag from '@/shared/ui/display/ReportCycleTag.vue'
 import {
   useIndicatorListView,
   type IndicatorListViewProps
@@ -787,7 +792,19 @@ const handleExportIndicatorList = async () => {
         <div class="card-header">
           <span class="card-title">指标列表</span>
           <div class="header-actions">
-            <el-tag size="small" class="overall-status-tag" :type="monthlySequenceStatusMeta.type">
+            <!-- 2026-10-30 三页统一：周期态走共享 ReportCycleTag（当前填报周期：YYYY年M月），
+                 状态态（已回退/各月份已上报完毕/未填报降级）保留旧 tag 文案 -->
+            <ReportCycleTag
+              v-if="monthlySequenceStatusMeta.month"
+              :month="monthlySequenceStatusMeta.month"
+              :type="monthlySequenceStatusMeta.type"
+            />
+            <el-tag
+              v-else
+              size="small"
+              class="overall-status-tag"
+              :type="monthlySequenceStatusMeta.type"
+            >
               {{ monthlySequenceStatusMeta.label }}
             </el-tag>
             <el-popover
@@ -1024,11 +1041,14 @@ const handleExportIndicatorList = async () => {
                       </FullTextPanel>
                     </el-tooltip>
 
-                    <!-- D10：异动/改名历史徽标（悬停看历史，无变更自动隐藏） -->
+                    <!-- D10：异动/改名历史徽标（悬停看历史，无变更自动隐藏）
+                         2026-10-30 用户定案：徽标按被改字段分流，权重异动不计入指标名徽标；
+                         角标统一落在单元格右上角（.indicator-row-badge 绝对定位） -->
                     <MutationBadgePopover
                       v-if="row.id"
                       class="indicator-row-badge"
                       :indicator-id="row.id"
+                      :fields="MUTATION_FIELDS_INDICATOR_NAME"
                     />
                   </div>
                 </template>
@@ -1038,6 +1058,7 @@ const handleExportIndicatorList = async () => {
                 label="权重"
                 :width="TASK_TABLE_COLUMN_WIDTH.weight"
                 align="center"
+                class-name="weight-col-cell"
               >
                 <template #default="{ row }">
                   <div class="weight-cell">
@@ -1050,6 +1071,14 @@ const handleExportIndicatorList = async () => {
                       @blur="saveIndicatorEdit(row, 'weight')"
                     />
                     <span v-else class="weight-text">{{ row.weight }}</span>
+                    <!-- 2026-10-30 用户定案：权重异动角标落在「权重这一格」的右上角 -->
+                    <div class="weight-cell__badge">
+                      <MutationBadgePopover
+                        v-if="row.id"
+                        :indicator-id="row.id"
+                        :fields="MUTATION_FIELDS_WEIGHT"
+                      />
+                    </div>
                   </div>
                 </template>
               </el-table-column>

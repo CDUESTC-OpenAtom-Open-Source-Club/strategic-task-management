@@ -10,6 +10,12 @@ import {
 import TaskIndicatorTree from './TaskIndicatorTree.vue'
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
+import {
+  MUTATION_FIELDS_INDICATOR_NAME,
+  MUTATION_FIELDS_REMARK,
+  MUTATION_FIELDS_TASK_NAME,
+  MUTATION_FIELDS_WEIGHT
+} from '@/features/indicator/model/mutationHistory'
 import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
 import {
   Plus,
@@ -25,6 +31,7 @@ import {
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { logger } from '@/shared/lib/utils/logger'
 import AppAvatar from '@/shared/ui/avatar/AppAvatar.vue'
+import ReportCycleTag from '@/shared/ui/display/ReportCycleTag.vue'
 import { DistributionApprovalProgressDrawer } from '@/features/approval'
 import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
@@ -99,6 +106,9 @@ const {
   addNewRow,
   addRowFormRef,
   approvalEntryButtonText,
+  approvalEntryButtonTextWithMutation,
+  approvalEntryCanHandle,
+  allDepartmentMutationPendingApprovals,
   approvalFlowStatusMeta,
   approvalIndicators,
   approvalPreviewLoading,
@@ -142,6 +152,7 @@ const {
   currentDepartmentOrgId,
   currentDetail,
   departmentMutationPendingApprovals,
+  isEntityMutationInFlight,
   currentDistributeGroup,
   currentDistributeItem,
   currentIndicator,
@@ -314,9 +325,13 @@ const {
   mutationSubmitBlocked,
   mutationSubmitBlockedReason,
   mutationDraftCount,
-  reportMonthLabel,
+  reportMonth,
   submitMutationDraft,
-  cancelMutationDraft,
+  // 2026-10-30（取消闭环）：取消入口改为 handleCancelMutation 按状态分流，
+  // 纯清草稿的 cancelMutationDraft 仍由 model 内部（分流 b 分支）复用
+  handleCancelMutation,
+  hasReturnedMutationChain,
+  returnedMutationChainCount,
   registerTaskLocally,
   rejectIndicatorReview,
   resetApprovalSetupDialog,
@@ -1243,7 +1258,10 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           </el-button>
           <div class="approval-entry-wrapper">
             <!-- 审批进度按钮（带徽章） -->
-            <el-badge v-if="pendingApprovalCount > 0" is-dot class="approval-badge">
+            <!-- 2026-10-30（纯附加）：红点可见条件升级为「按钮文字为『处理审批』」——
+                 计划级可处理（既有表现不变）或异动可处理（当前节点审批组织=当前用户组织）。
+                 既有 pendingApprovalCount 在下发守卫等处的口径不受影响 -->
+            <el-badge v-if="approvalEntryCanHandle" is-dot class="approval-badge">
               <el-button
                 size="small"
                 type="warning"
@@ -1251,7 +1269,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                 @click="handleOpenApproval"
               >
                 <el-icon><Check /></el-icon>
-                {{ approvalEntryButtonText }}
+                {{ approvalEntryButtonTextWithMutation }}
               </el-button>
             </el-badge>
             <el-button
@@ -1297,10 +1315,20 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                 </el-button>
               </span>
             </el-tooltip>
-            <el-button size="small" :disabled="mutationApiLoading" @click="cancelMutationDraft">
+          </template>
+          <!-- 2026-10-30（取消闭环）：取消异动按钮按状态分流（handleCancelMutation）——
+               有「退回待重报」异动链时可点（即使暂无草稿）：点击后整链终结归审批历史；
+               无在途/退回链时维持既有清草稿行为。 -->
+          <el-tooltip
+            v-if="canEdit && (hasMutationDraft || hasReturnedMutationChain)"
+            :disabled="!hasReturnedMutationChain"
+            content="存在被驳回退回的异动：点击「取消异动」可终结该批审批链并归入审批历史"
+            placement="top"
+          >
+            <el-button size="small" :disabled="mutationApiLoading" @click="handleCancelMutation">
               取消异动
             </el-button>
-          </template>
+          </el-tooltip>
           <!-- 视图切换按钮 -->
           <!-- 2026-10-24 用户定案：卡片视图无业务需求，且不能切换时单独留「表格视图」按钮
                也无意义——整组隐藏（两个按钮与卡片视图模板代码均保留） -->
@@ -1396,10 +1424,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           >
             基础性权重合计: {{ departmentTotalWeight }} / 100
           </el-tag>
-          <!-- 2026-10-28 迭代计划 M2：看板显示填报月份（数据归属周期一目了然） -->
-          <el-tag v-if="reportMonthLabel" type="info" size="small" style="margin-right: 12px">
-            填报月份: {{ reportMonthLabel }}
-          </el-tag>
+          <!-- 2026-10-28 迭代计划 M2：看板显示当前填报周期（数据归属周期一目了然）。
+               2026-10-30 起文案/样式由共享组件 ReportCycleTag 统一，三页一致 -->
+          <ReportCycleTag :month="reportMonth" />
           <el-tag v-if="isReadOnly" type="warning" size="small" style="margin-right: 12px">
             历史快照 (只读)
           </el-tag>
@@ -1428,6 +1455,24 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           有
           {{ mutationDraftCount }}
           项修改待发起异动（刷新或离开页面将丢失），确认后请点顶部「发起异动」提交审批
+        </template>
+      </el-alert>
+
+      <!-- 2026-10-30（取消闭环）：被驳回退回待重报的异动链可感知提示。
+           2026-10-30 定案修订：发起人撤回同样把链退回填报人（活链），
+           与驳回退回共用本横幅——链活着就提示可重报/可取消。
+           活链不进审批历史也不锁发起入口，填报人可修改后重新发起，或点「取消异动」终结 -->
+      <el-alert
+        v-if="canEdit && hasReturnedMutationChain"
+        type="error"
+        :closable="false"
+        show-icon
+        style="margin: 12px 16px"
+      >
+        <template #title>
+          有
+          {{ returnedMutationChainCount }}
+          批异动已退回待重报（驳回或发起人撤回）：可修改后点「发起异动」重新提交，或点「取消异动」终结该批异动（归入审批历史）
         </template>
       </el-alert>
 
@@ -1501,7 +1546,13 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                           </el-tooltip>
                           <!-- 战略任务改名同样计入「已更改 N 次」（悬停查看历史） -->
                           <div v-if="!isReadOnly" class="indicator-cell-footer">
-                            <MutationBadgePopover :task-id="getIndicatorTaskId(row) || null" />
+                            <MutationBadgePopover
+                              :task-id="getIndicatorTaskId(row) || null"
+                              :fields="MUTATION_FIELDS_TASK_NAME"
+                              :mutation-in-flight="
+                                isEntityMutationInFlight('TASK', getIndicatorTaskId(row))
+                              "
+                            />
                           </div>
                         </div>
 
@@ -1522,6 +1573,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     prop="name"
                     label="核心指标"
                     :min-width="TASK_TABLE_COLUMN_WIDTH.coreIndicatorMin"
+                    class-name="indicator-name-col-cell"
                   >
                     <template #default="{ row }">
                       <div
@@ -1579,8 +1631,13 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                               class="orphan-parent-tag"
                               >父级已删除</el-tag
                             >
-                            <div class="indicator-cell-footer">
-                              <MutationBadgePopover v-if="row.id" :indicator-id="row.id" />
+                            <div class="indicator-cell-footer indicator-cell-footer--corner">
+                              <MutationBadgePopover
+                                v-if="row.id"
+                                :indicator-id="row.id"
+                                :fields="MUTATION_FIELDS_INDICATOR_NAME"
+                                :mutation-in-flight="isEntityMutationInFlight('INDICATOR', row.id)"
+                              />
                             </div>
                           </template>
                           <span v-else class="indicator-name-text placeholder-text"
@@ -1595,6 +1652,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     label="权重"
                     :width="TASK_TABLE_COLUMN_WIDTH.weight"
                     align="center"
+                    class-name="weight-col-cell"
                   >
                     <template #default="{ row }">
                       <div class="weight-cell" @dblclick="handleIndicatorDblClick(row, 'weight')">
@@ -1614,6 +1672,17 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                           保存中...
                         </span>
                         <span v-else class="weight-text">{{ row.weight }}</span>
+                        <!-- 2026-10-30 用户定案：权重异动记录的角标落在权重单元格（表格格子）右上角，
+                             不再挂在核心指标列下（权重改动却显示在核心指标旁边，看不出是权重被改）。
+                             定位基准是整格（.el-table__cell.weight-col），不是权重数字容器。 -->
+                        <div class="weight-cell__badge">
+                          <MutationBadgePopover
+                            v-if="row.id"
+                            :indicator-id="row.id"
+                            :fields="MUTATION_FIELDS_WEIGHT"
+                            :mutation-in-flight="isEntityMutationInFlight('INDICATOR', row.id)"
+                          />
+                        </div>
                       </div>
                     </template>
                   </el-table-column>
@@ -1739,6 +1808,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     prop="remark"
                     label="下发备注"
                     :width="TASK_TABLE_COLUMN_WIDTH.remark"
+                    class-name="remark-col-cell"
                   >
                     <template #default="{ row }">
                       <div
@@ -1770,6 +1840,15 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                             row.remark || '样例：双击编辑说明'
                           }}</span>
                         </el-tooltip>
+                        <!-- 2026-10-30 用户定案：备注异动角标落在下发备注格子右上角 -->
+                        <div class="indicator-cell-footer indicator-cell-footer--corner">
+                          <MutationBadgePopover
+                            v-if="row.id"
+                            :indicator-id="row.id"
+                            :fields="MUTATION_FIELDS_REMARK"
+                            :mutation-in-flight="isEntityMutationInFlight('INDICATOR', row.id)"
+                          />
+                        </div>
                       </div>
                     </template>
                   </el-table-column>
@@ -2255,6 +2334,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     prop="name"
                     label="子指标名称"
                     :min-width="TASK_TABLE_COLUMN_WIDTH.collegeSubIndicatorMin"
+                    class-name="indicator-name-col-cell"
                   >
                     <template #default="{ row }">
                       <div
@@ -2308,8 +2388,15 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                           <span v-else class="placeholder-text">未命名指标</span>
                         </template>
                         <!-- 异动历史徽章（有变更时显示，悬停看历史） -->
-                        <div v-if="row.id" class="indicator-cell-footer">
-                          <MutationBadgePopover :indicator-id="row.id" />
+                        <div
+                          v-if="row.id"
+                          class="indicator-cell-footer indicator-cell-footer--corner"
+                        >
+                          <MutationBadgePopover
+                            :indicator-id="row.id"
+                            :fields="MUTATION_FIELDS_INDICATOR_NAME"
+                            :mutation-in-flight="isEntityMutationInFlight('INDICATOR', row.id)"
+                          />
                           <!-- 上报历史小标（每次上报更新，不走异动链，悬停看历次上报+资料） -->
                         </div>
                       </div>
@@ -2320,25 +2407,39 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     label="权重"
                     :width="TASK_TABLE_COLUMN_WIDTH.weight"
                     align="center"
+                    class-name="weight-col-cell"
                   >
                     <template #default="{ row }">
                       <div class="weight-cell" @dblclick="handleIndicatorDblClick(row, 'weight')">
-                        <el-input
-                          v-if="editingIndicatorId === row.id && editingIndicatorField === 'weight'"
-                          v-model="editingIndicatorValue"
-                          v-focus
-                          size="small"
-                          style="width: 50px"
-                          @blur="saveIndicatorEdit(row, 'weight')"
-                          @keyup.enter="saveIndicatorEdit(row, 'weight')"
-                        />
-                        <span
-                          v-else-if="isSavingIndicatorCell(row, 'weight')"
-                          class="cell-saving-text"
-                        >
-                          保存中...
-                        </span>
-                        <span v-else class="weight-text">{{ row.weight }}</span>
+                        <div class="weight-cell__content">
+                          <el-input
+                            v-if="
+                              editingIndicatorId === row.id && editingIndicatorField === 'weight'
+                            "
+                            v-model="editingIndicatorValue"
+                            v-focus
+                            size="small"
+                            style="width: 50px"
+                            @blur="saveIndicatorEdit(row, 'weight')"
+                            @keyup.enter="saveIndicatorEdit(row, 'weight')"
+                          />
+                          <span
+                            v-else-if="isSavingIndicatorCell(row, 'weight')"
+                            class="cell-saving-text"
+                          >
+                            保存中...
+                          </span>
+                          <span v-else class="weight-text">{{ row.weight }}</span>
+                          <!-- 2026-10-30 用户定案：权重异动记录挂在权重格子右上角 -->
+                          <div class="weight-cell__badge">
+                            <MutationBadgePopover
+                              v-if="row.id"
+                              :indicator-id="row.id"
+                              :fields="MUTATION_FIELDS_WEIGHT"
+                              :mutation-in-flight="isEntityMutationInFlight('INDICATOR', row.id)"
+                            />
+                          </div>
+                        </div>
                       </div>
                     </template>
                   </el-table-column>
@@ -2458,6 +2559,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     prop="remark"
                     label="下发备注"
                     :width="TASK_TABLE_COLUMN_WIDTH.remark"
+                    class-name="remark-col-cell"
                   >
                     <template #default="{ row }">
                       <div
@@ -2489,6 +2591,15 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                             row.remark || '—'
                           }}</span>
                         </el-tooltip>
+                        <!-- 2026-10-30 用户定案：备注异动角标落在下发备注格子右上角 -->
+                        <div class="indicator-cell-footer indicator-cell-footer--corner">
+                          <MutationBadgePopover
+                            v-if="row.id"
+                            :indicator-id="row.id"
+                            :fields="MUTATION_FIELDS_REMARK"
+                            :mutation-in-flight="isEntityMutationInFlight('INDICATOR', row.id)"
+                          />
+                        </div>
                       </div>
                     </template>
                   </el-table-column>
@@ -2988,6 +3099,8 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
     </el-dialog>
 
     <!-- 任务审批抽屉 -->
+    <!-- 2026-10-30（纯附加）链路覆盖：异动卡数据源传合并视图（主计划 + 链下学院子计划），
+         修正学院子计划异动在抽屉漏卡；发起异动互斥锁仍读 departmentMutationPendingApprovals -->
     <DistributionApprovalProgressDrawer
       v-model="taskApprovalVisible"
       :indicators="approvalIndicators"
@@ -3003,7 +3116,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
       :secondary-workflow-entity-type="secondaryApprovalWorkflowEntityType"
       :secondary-workflow-entity-id="secondaryApprovalWorkflowEntityId"
       :mutation-workflow-entities="departmentMutationWorkflowEntities"
-      :mutation-pending-approvals="departmentMutationPendingApprovals"
+      :mutation-pending-approvals="allDepartmentMutationPendingApprovals"
       :related-workflow-entities="departmentPlanFamilyWorkflowEntities"
       approval-type="submission"
       @close="taskApprovalVisible = false"

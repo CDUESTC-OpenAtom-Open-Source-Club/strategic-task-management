@@ -2529,6 +2529,11 @@ export const indicatorFillApi = {
         content: form.content,
         summary: form.content,
         progress: form.progress,
+        // 2026-10-30 修复（等级制填报保存必失败）：自评进度等级要同时提到顶层，
+        // 否则后端走单条路径（indicatorDetails 为空）时拿不到等级语义，
+        // 只能按百分比路径校验「进度必须大于真实进度」→ 等级制下 progress 恒为 0
+        // → `0 <= 0` 恒成立 → 保存必 400「填报进度必须大于真实进度」。
+        selfRating: form.selfRating,
         issues: form.content,
         nextPlan: form.content,
         operatorUserId,
