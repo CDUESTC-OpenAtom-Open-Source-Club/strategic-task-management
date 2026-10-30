@@ -14,6 +14,7 @@ import { useLoadingState } from '@/shared/lib/loading/useLoadingState'
 import { logger } from '@/shared/lib/utils/logger'
 import { buildDashboardSummary, getIndicatorStatusAtMonth } from '@/features/dashboard/lib'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
+import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
 import {
   buildExcelBlob,
   buildExportFileName,
@@ -1148,7 +1149,7 @@ export function useDashboardView(props: DashboardViewProps) {
     exporting.value = true
     try {
       const report = buildComprehensiveReport(indicators)
-      const dateTag = new Date().toISOString().slice(0, 10)
+      const dateTag = formatLocalDateTag()
       // 列定义统一走 getValue（ExcelExportSheet 的规范），值取行对象的同名字段
       const col = <T extends Record<string, unknown>>(
         header: string,
@@ -1217,7 +1218,7 @@ export function useDashboardView(props: DashboardViewProps) {
             col('指标内容', 40),
             col('所属部门', 20),
             col('当前进度', 12, 'center'),
-            col('自评等级', 12, 'center')
+            col('自评进度', 12, 'center')
           ],
           emptyMessage: '没有滞后任务'
         },

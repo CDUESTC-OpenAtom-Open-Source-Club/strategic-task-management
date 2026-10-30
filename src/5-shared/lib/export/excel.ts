@@ -1,4 +1,5 @@
 import type { Cell, SheetData } from 'write-excel-file/browser'
+import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
 
 export type ExcelRowTone = 'default' | 'basic' | 'development' | 'draft' | 'warning'
 
@@ -195,7 +196,9 @@ export function saveBlobAsFile(blob: Blob, fileName: string): void {
 }
 
 export function buildExportFileName(pageName: string, scopeName?: string): string {
-  const dateText = new Date().toISOString().slice(0, 10)
+  // 2026-10-30（N-20）：改用本地时区日期标签。原先用 toISOString()（UTC），
+  // 东八区本地 00:00~08:00 之间导出会把文件名写成前一天。
+  const dateText = formatLocalDateTag()
   const parts = [pageName, scopeName, dateText].filter(Boolean)
   return `${sanitizeFileName(parts.join('_'))}.xlsx`
 }

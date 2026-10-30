@@ -1103,8 +1103,8 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         )
       )
     } catch (error) {
+      // 2026-10-29 用户定案：刷新失败保留上一次的待办列表，不把已显示的条目清空
       logger.warn('[IndicatorDistributeView] 加载我的待办审批失败:', error)
-      myPendingApprovalTasks.value = []
     }
   }
   const hasMyPendingApprovalTasks = computed(() => myPendingApprovalTasks.value.length > 0)
@@ -1959,8 +1959,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         pendingCollegePlanUiState.value = null
       }
     } catch (error) {
-      currentCollegePlanReportSummary.value = null
-      latestCollegePlanReportSummary.value = null
+      // 2026-10-29 用户定案：刷新失败保留上一次的学院上报摘要，不清空状态章
       logger.warn('[IndicatorDistributeView] 加载当前学院 plan_report 失败:', {
         planId,
         reportOrgId,
@@ -3358,7 +3357,14 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   })
 
   // 2026-10-07 心跳/聚焦等轻源节流：与战略任务页同口径，45s 内不重复重刷下发数据
-  const LIGHT_REFRESH_SOURCES: string[] = ['heartbeat', 'window-focus', 'visibility-return']
+  // 2026-10-29 用户定案：DATA_CHANGED 广播（他人连续编辑指标）也归入轻源——
+  // 下发页每轮刷新要跑 10 个左右请求，不能跟着别人的编辑节奏走。
+  const LIGHT_REFRESH_SOURCES: string[] = [
+    'heartbeat',
+    'window-focus',
+    'visibility-return',
+    'data-change-push'
+  ]
   let lastLightRefreshAt = 0
 
   const handleGlobalDataRefreshRequest = (event: Event) => {
@@ -4319,7 +4325,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
   // ================== 学院视图数据 ==================
 
-  // 2026-10-27 用户定案（草稿隔离 + 三列同源）：下发页的自评等级/进度说明/上报资料列
+  // 2026-10-27 用户定案（草稿隔离 + 三列同源）：下发页的自评进度/进度说明/上报资料列
   // 与战略任务管理页同一数据源——报告列表接口返回的「当期轮次」明细覆盖到子指标行。
   // 不再直接展示计划详情内嵌的 pending 字段：草稿期那会外泄学院未提交的填报内容，
   // 且审批全部通过后计划详情当期上下文为空会导致三列整列空白。
@@ -4459,7 +4465,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     return normalized.some(role => MANUAL_ALERT_WRITE_ROLES.includes(role))
   })
 
-  // 2026-10-18 用户定案：鉴定进度等级是上报审批过程中的状态——
+  // 2026-10-18 用户定案：审核进度是上报审批过程中的状态——
   // 仅「计划已下发 + 上报审批流程进行中」可调整；平时（流程未发起/已结束/已回退）锁死。
   const childManualAlertWorkflowInFlight = computed(() =>
     ['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(

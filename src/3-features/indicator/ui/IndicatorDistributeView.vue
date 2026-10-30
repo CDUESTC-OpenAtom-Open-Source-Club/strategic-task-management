@@ -15,7 +15,7 @@ import {
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { StrategicIndicator } from '@/shared/types'
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
-import { truncateText } from '@/shared/lib/utils/formatters'
+import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
 import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
 import {
   buildAttachmentNameCell,
@@ -322,7 +322,7 @@ type DistributionExportChild = Partial<StrategicIndicator> & {
   pendingAttachmentDetails?: unknown[]
 }
 
-// 鉴定进度等级（与战略任务管理页同一套选项；当前编辑权限仅战略部负责人/分管校领导/系统管理员）
+// 审核进度（与战略任务管理页同一套选项；当前编辑权限仅战略部负责人/分管校领导/系统管理员）
 type ManualAlertSelectValue = Exclude<ManualAlertSeverity, null> | ''
 
 const manualAlertOptions: Array<{
@@ -338,7 +338,7 @@ const manualAlertOptions: Array<{
 ]
 
 /**
- * 2026-10-28：行内调整鉴定等级。
+ * 2026-10-28：行内调整审核进度。
  * 只有当前审批节点负责人能看到下拉；确认后写报告快照，后端同步 Alert。
  */
 const handleAppraisalChange = async (
@@ -360,8 +360,8 @@ const handleAppraisalChange = async (
   const label = getChildManualAlertLabel(level)
   try {
     await ElMessageBox.confirm(
-      `确认将「${child.name || '该指标'}」的鉴定进度等级调整为「${label}」？`,
-      '调整鉴定进度等级',
+      `确认将「${child.name || '该指标'}」的审核进度调整为「${label}」？`,
+      '调整审核进度',
       {
         confirmButtonText: '确认调整',
         cancelButtonText: '取消',
@@ -370,17 +370,17 @@ const handleAppraisalChange = async (
     )
     await saveIndicatorAppraisalLevel(child.id, level)
     strategicStore.patchIndicator(String(child.id), { manualAlertSeverity: level })
-    ElMessage.success('鉴定进度等级已调整')
+    ElMessage.success('审核进度已调整')
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
-      ElMessage.error(error instanceof Error ? error.message : '调整鉴定进度等级失败')
+      ElMessage.error(error instanceof Error ? error.message : '调整审核进度失败')
     }
   }
 }
 
 /** 锁定状态点击只提示一次（不再用悬停提示，避免两套文案重复） */
 const handleAppraisalTagClick = (indicatorId: string | number | null | undefined) => {
-  ElMessage.info(getIndicatorAppraisalLockHint(indicatorId) || '上报期间才能解锁鉴定进度等级')
+  ElMessage.info(getIndicatorAppraisalLockHint(indicatorId) || '上报期间才能解锁审核进度')
 }
 
 interface DistributionExportRow {
@@ -482,7 +482,7 @@ const buildDistributionExportColumns = (
       getValue: row => Number(row.child.weight || 0)
     },
     {
-      header: '鉴定进度等级',
+      header: '审核进度',
       width: 18,
       align: 'center',
       getValue: row => getChildManualAlertLabel(getChildManualAlertSeverity(row.child))
@@ -677,7 +677,7 @@ const handleExportCurrentDistributionCollege = async () => {
     }
 
     // 2026-10-28：单学院有附件时也走 zip——Excel 与附件同包，避免附件只剩超链接
-    const dateText = new Date().toISOString().slice(0, 10)
+    const dateText = formatLocalDateTag()
     await exportDepartmentsAsZip(
       [
         {
@@ -738,7 +738,7 @@ const handleExportSelectedDistributionColleges = async () => {
       attachmentGroups: buildDistributionExportAttachmentGroups(rows, summaryMap)
     }))
 
-    const dateText = new Date().toISOString().slice(0, 10)
+    const dateText = formatLocalDateTag()
     await exportDepartmentsAsZip(
       payloads,
       `指标下发与管理_${selectedColleges.length === 1 ? selectedColleges[0] : '多学院'}_${dateText}.zip`,
@@ -796,7 +796,7 @@ const currentDistributionImportCycleId = computed(() => {
 const distributionImportEnabled = true
 const distributionImportDisabledReason = '导入功能暂不启用'
 
-// 2026-10-24 用户定案：详情抽屉补「鉴定进度等级」展示（只读三档，与战略任务页口径一致）
+// 2026-10-24 用户定案：详情抽屉补「审核进度」展示（只读三档，与战略任务页口径一致）
 // 2026-10-28：未评定空值统一显示「—」（与本页其他空值单元格同风格），已评定保留彩色 tag
 const _getManualAlertLabel = (severity?: string | null): string => {
   const normalized = String(severity || '')
@@ -1137,7 +1137,7 @@ const handleDistributionImportCommitted = async () => {
                                   ? 'indicator-qualitative'
                                   : 'indicator-quantitative'
                               "
-                              >{{ truncateText(row.child?.name || '未命名', 50) }}</span
+                              >{{ row.child?.name || '未命名' }}</span
                             >
                           </FullTextPanel>
                         </el-tooltip>
@@ -1169,7 +1169,7 @@ const handleDistributionImportCommitted = async () => {
                             <span
                               class="new-child-text"
                               :class="{ 'placeholder-text': !row.child.name }"
-                              >{{ truncateText(row.child.name || '点击输入名称', 50) }}</span
+                              >{{ row.child.name || '点击输入名称' }}</span
                             >
                           </FullTextPanel>
                         </el-tooltip>
@@ -1223,8 +1223,8 @@ const handleDistributionImportCommitted = async () => {
                   </template>
                 </el-table-column>
 
-                <!-- 自评等级列（与战略任务管理页命名一致） -->
-                <el-table-column label="自评等级" width="96" align="center">
+                <!-- 自评进度列（与战略任务管理页命名一致） -->
+                <el-table-column label="自评进度" width="96" align="center">
                   <template #default="{ row }">
                     <template v-if="row.type === 'child'">
                       <el-tag v-if="row.child?.selfRating" size="small" type="info">
@@ -1241,8 +1241,8 @@ const handleDistributionImportCommitted = async () => {
                   </template>
                 </el-table-column>
 
-                <!-- 鉴定进度等级列（按业务要求替代原里程碑列；控件与战略任务管理页一致） -->
-                <el-table-column label="鉴定进度等级" width="120" align="center">
+                <!-- 审核进度列（按业务要求替代原里程碑列；控件与战略任务管理页一致） -->
+                <el-table-column label="审核进度" width="120" align="center">
                   <template #default="{ row }">
                     <template v-if="row.type !== 'child'">
                       <span class="manual-alert-placeholder">-</span>
@@ -1355,9 +1355,7 @@ const handleDistributionImportCommitted = async () => {
                         :disabled="(row.child?.pendingRemark || '').length <= 50"
                         placement="top"
                       >
-                        <span>{{
-                          row.child?.pendingRemark ? truncateText(row.child.pendingRemark, 50) : '—'
-                        }}</span>
+                        <span>{{ row.child?.pendingRemark || '—' }}</span>
                       </el-tooltip>
                     </template>
                     <template v-else>
@@ -1401,9 +1399,7 @@ const handleDistributionImportCommitted = async () => {
                           :disabled="(row.child?.remark || '').length <= 50"
                           placement="top"
                         >
-                          <span class="remark-text">{{
-                            row.child?.remark ? truncateText(row.child.remark, 50) : '-'
-                          }}</span>
+                          <span class="remark-text">{{ row.child?.remark || '-' }}</span>
                         </el-tooltip>
                       </div>
                     </template>
@@ -1676,8 +1672,8 @@ const handleDistributionImportCommitted = async () => {
           <el-descriptions-item label="权重">{{
             currentDetailIndicator.weight
           }}</el-descriptions-item>
-          <!-- 2026-10-24 用户定案：自评等级与鉴定等级并列展示，与战略任务页详情抽屉同构 -->
-          <el-descriptions-item label="自评等级">
+          <!-- 2026-10-24 用户定案：自评进度与审核进度并列展示，与战略任务页详情抽屉同构 -->
+          <el-descriptions-item label="自评进度">
             <el-tag v-if="(currentDetailIndicator as any).selfRating" size="small" type="info">
               {{
                 { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' }[
@@ -1687,7 +1683,7 @@ const handleDistributionImportCommitted = async () => {
             </el-tag>
             <span v-else style="color: #909399">—</span>
           </el-descriptions-item>
-          <el-descriptions-item label="鉴定进度等级">
+          <el-descriptions-item label="审核进度">
             <!-- 2026-10-28：未评定空值统一「—」（与其他空值单元格同风格） -->
             <el-tag
               v-if="(currentDetailIndicator as any).manualAlertSeverity"
@@ -1976,7 +1972,7 @@ const handleDistributionImportCommitted = async () => {
 <style scoped src="./IndicatorDistributeView.css"></style>
 <style src="./IndicatorDistributeView.global.css"></style>
 <style scoped>
-/* 鉴定进度等级列（与战略任务管理页一致） */
+/* 审核进度列（与战略任务管理页一致） */
 .manual-alert-cell {
   display: flex;
   width: 100%;

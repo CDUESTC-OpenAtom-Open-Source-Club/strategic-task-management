@@ -11,6 +11,7 @@ import { ref, computed } from 'vue'
 import type { ApprovalInstance, ApprovalHistory } from './types'
 import { useAuthStore } from '@/features/auth/model/store'
 import { logger } from '@/shared/lib/utils/logger'
+import { markErrorHandled } from '@/shared/lib/utils/errorToast'
 import { ElMessage } from 'element-plus'
 import { getMyPendingTasks, getWorkflowInstanceDetail, decideTask } from '@/features/workflow/api'
 import type { WorkflowTaskResponse, WorkflowInstanceDetailResponse } from '@/features/workflow/api'
@@ -241,6 +242,9 @@ export const useApprovalStore = defineStore('approval', () => {
     } catch (err) {
       error.value = err instanceof Error ? err.message : '审批失败'
       logger.error('[Approval Store] Failed to approve:', err)
+      // 2026-10-30：这里提示后会把错误继续抛给调用方，响应拦截器的兜底提示会重复弹同一条。
+      // 先标记「已由业务层提示」，拦截器据此跳过，保证一条错误只出现一次。
+      markErrorHandled(err)
       ElMessage.error(error.value)
       throw err
     } finally {
@@ -287,6 +291,8 @@ export const useApprovalStore = defineStore('approval', () => {
     } catch (err) {
       error.value = err instanceof Error ? err.message : '驳回失败'
       logger.error('[Approval Store] Failed to reject:', err)
+      // 2026-10-30：同上——业务层已提示，标记后拦截器不再重复弹。
+      markErrorHandled(err)
       ElMessage.error(error.value)
       throw err
     } finally {

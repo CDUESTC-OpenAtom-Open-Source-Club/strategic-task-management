@@ -39,7 +39,7 @@ export interface DashboardLaggingRow {
   指标内容: string
   所属部门: string
   当前进度: string
-  自评等级: string
+  自评进度: string
 }
 
 export interface DashboardAttachmentRow {
@@ -161,7 +161,7 @@ export function buildComprehensiveReport(
       指标内容: item.name || '未命名指标',
       所属部门: item.responsibleDept || item.ownerDept || '未分配',
       当前进度: `${item.progress ?? 0}%`,
-      自评等级: item.selfRating ? (RATING_LABEL[item.selfRating] ?? item.selfRating) : '未评定'
+      自评进度: item.selfRating ? (RATING_LABEL[item.selfRating] ?? item.selfRating) : '未评定'
     }))
 
   // ---- 附件索引 ----

@@ -3,7 +3,7 @@ import { indicatorFillApi, type IndicatorAppraisalContextVO } from '@/features/p
 import { logger } from '@/shared/lib/utils/logger'
 
 /**
- * 审批链上的鉴定进度等级（2026-10-28 用户定案）。
+ * 审批链上的审核进度（2026-10-28 用户定案）。
  *
  * 规则：
  * ① 只有「当前审批节点的负责人」可改（由后端 canAppraise 判定）；
@@ -103,7 +103,7 @@ export function useIndicatorAppraisal() {
     try {
       const response = await indicatorFillApi.setIndicatorAppraisalLevel(indicatorId, level)
       if (!response?.success) {
-        throw new Error(response?.message || '鉴定等级调整失败')
+        throw new Error(response?.message || '审核进度调整失败')
       }
       const updated = response.data ?? null
       if (updated) {

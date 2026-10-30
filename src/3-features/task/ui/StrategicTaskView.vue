@@ -28,6 +28,7 @@ import AppAvatar from '@/shared/ui/avatar/AppAvatar.vue'
 import { DistributionApprovalProgressDrawer } from '@/features/approval'
 import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
+import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
 import type { StrategicIndicator } from '@/shared/types'
 import {
   buildAttachmentNameCell,
@@ -64,7 +65,6 @@ import {
   MANUAL_ALERT_WORKFLOW_LOCKED_HINT,
   canEditManualAlertLevel
 } from '@/features/task/lib/warning-level'
-import { truncateText } from '@/shared/lib/utils/formatters'
 import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
 import type { ImportCommitResponse } from '@/features/import/api/businessImport'
 
@@ -448,7 +448,7 @@ const handleAddNewRow = () => {
 
 // 2026-10-19 修复：切 tab 时按对应链路重新拉取上报摘要——
 // 二级学院 tab 用「职能部门→学院」的 FUNC_TO_COLLEGE 计划/组织查询，
-// 否则学院链路的自评等级与进度说明列读不到数据（恒为空）。
+// 否则学院链路的自评进度与进度说明列读不到数据（恒为空）。
 watch(activeTaskTabName, tab => {
   // PR#83：告知 model 头部「审批状态」的填报审批态聚合范围——
   // 「上报状态」列只存在于学院页签，聚合也只在该页签进行
@@ -471,7 +471,7 @@ const showCollegeGuide = computed(
     collegeDepartmentsScoped.value.length > 0
 )
 
-// 2026-10-18 用户定案：鉴定进度等级是上报审批过程中的状态——
+// 2026-10-18 用户定案：审核进度是上报审批过程中的状态——
 // 仅「计划已下发 + 上报审批流程进行中」可调整；平时（流程未发起/已结束/已退回）锁死。
 const manualAlertWorkflowInFlight = computed(() =>
   ['PENDING', 'IN_REVIEW'].includes(
@@ -601,7 +601,7 @@ const getManualAlertTagType = (severity?: ManualAlertSeverity) =>
   getManualAlertOption(severity).type
 
 /**
- * 2026-10-28：行内调整鉴定等级。
+ * 2026-10-28：行内调整审核进度。
  * 只有当前审批节点负责人能看到下拉；确认后写报告快照，后端同步 Alert。
  */
 const handleAppraisalChange = async (
@@ -617,8 +617,8 @@ const handleAppraisalChange = async (
   const label = getManualAlertLabel(level)
   try {
     await ElMessageBox.confirm(
-      `确认将「${row.name || '该指标'}」的鉴定进度等级调整为「${label}」？`,
-      '调整鉴定进度等级',
+      `确认将「${row.name || '该指标'}」的审核进度调整为「${label}」？`,
+      '调整审核进度',
       {
         confirmButtonText: '确认调整',
         cancelButtonText: '取消',
@@ -627,17 +627,17 @@ const handleAppraisalChange = async (
     )
     await saveIndicatorAppraisalLevel(row.id, level)
     strategicStore.patchIndicator(String(row.id), { manualAlertSeverity: level })
-    ElMessage.success('鉴定进度等级已调整')
+    ElMessage.success('审核进度已调整')
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
-      ElMessage.error(error instanceof Error ? error.message : '调整鉴定进度等级失败')
+      ElMessage.error(error instanceof Error ? error.message : '调整审核进度失败')
     }
   }
 }
 
 /** 锁定状态点击只提示一次（不再用悬停提示，避免两套文案重复） */
 const handleAppraisalTagClick = (row: { id: string | number }) => {
-  ElMessage.info(getIndicatorAppraisalLockHint(row.id) || '上报期间才能解锁鉴定进度等级')
+  ElMessage.info(getIndicatorAppraisalLockHint(row.id) || '上报期间才能解锁审核进度')
 }
 
 const allStrategicExportDepartmentsSelected = computed({
@@ -729,7 +729,7 @@ const buildStrategicExportColumns = (
     },
     // 2026-10-20：阅读列标注「导入忽略」——导入解析器不识别这两列，改了不起作用
     {
-      header: '鉴定进度等级（导入忽略）',
+      header: '审核进度（导入忽略）',
       width: 20,
       align: 'center',
       getValue: row => getManualAlertLabel(row.manualAlertSeverity)
@@ -960,7 +960,7 @@ const handleExportCurrentStrategicDepartment = async () => {
     }
 
     // 2026-10-28：单部门有附件时也走 zip——Excel 与附件同包，避免附件只剩超链接
-    const dateText = new Date().toISOString().slice(0, 10)
+    const dateText = formatLocalDateTag()
     await exportDepartmentsAsZip(
       [
         {
@@ -1026,7 +1026,7 @@ const handleExportSelectedStrategicDepartments = async () => {
       attachmentGroups: buildStrategicExportAttachmentGroups(rows, summaryMap)
     }))
 
-    const dateText = new Date().toISOString().slice(0, 10)
+    const dateText = formatLocalDateTag()
     await exportDepartmentsAsZip(
       payloads,
       `战略任务指标总表_${departments.length === 1 ? departments[0] : '多部门'}_${dateText}.zip`,
@@ -1495,7 +1495,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                               <span
                                 class="indicator-name-text task-content-colored"
                                 :style="{ color: getCategoryColor(row.type2) }"
-                                >{{ truncateText(row.taskContent || '未关联任务', 50) }}</span
+                                >{{ row.taskContent || '未关联任务' }}</span
                               >
                             </FullTextPanel>
                           </el-tooltip>
@@ -1564,7 +1564,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                                         ? 'indicator-quantitative'
                                         : ''
                                   "
-                                  >{{ truncateText(row.name, 50) }}</span
+                                  >{{ row.name }}</span
                                 >
                               </FullTextPanel>
                             </el-tooltip>
@@ -1618,7 +1618,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     </template>
                   </el-table-column>
                   <el-table-column
-                    label="自评等级"
+                    label="自评进度"
                     :width="TASK_TABLE_COLUMN_WIDTH.selfRating"
                     align="center"
                   >
@@ -1636,7 +1636,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                        只有当前审批节点的负责人可改；其他角色/节点只读。
                        数据写当前报告轮次的 appraisal_level，后端同步 Alert。 -->
                   <el-table-column
-                    label="鉴定进度等级"
+                    label="审核进度"
                     :width="TASK_TABLE_COLUMN_WIDTH.appraisalLevel"
                     align="center"
                   >
@@ -1731,9 +1731,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         :disabled="(row.pendingRemark || '').length <= 50"
                         placement="top"
                       >
-                        <span>{{
-                          row.pendingRemark ? truncateText(row.pendingRemark, 50) : '—'
-                        }}</span>
+                        <span>{{ row.pendingRemark || '—' }}</span>
                       </el-tooltip>
                     </template>
                   </el-table-column>
@@ -1769,7 +1767,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                           placement="top"
                         >
                           <span class="indicator-name-text remark-text-wrap">{{
-                            row.remark ? truncateText(row.remark, 50) : '样例：双击编辑说明'
+                            row.remark || '样例：双击编辑说明'
                           }}</span>
                         </el-tooltip>
                       </div>
@@ -2244,15 +2242,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                                   : ''
                             "
                             >{{
-                              row.parentIndicatorId &&
-                              indicatorById.get(row.parentIndicatorId)?.name
-                                ? truncateText(
-                                    (row.parentIndicatorId &&
-                                      indicatorById.get(row.parentIndicatorId)?.name) ||
-                                      '',
-                                    50
-                                  )
-                                : '—'
+                              (row.parentIndicatorId &&
+                                indicatorById.get(row.parentIndicatorId)?.name) ||
+                              '—'
                             }}</span
                           >
                         </FullTextPanel>
@@ -2308,7 +2300,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                                         ? 'indicator-quantitative'
                                         : ''
                                   "
-                                  >{{ truncateText(row.name, 50) }}</span
+                                  >{{ row.name }}</span
                                 >
                               </FullTextPanel>
                             </el-tooltip>
@@ -2351,7 +2343,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     </template>
                   </el-table-column>
                   <el-table-column
-                    label="自评等级"
+                    label="自评进度"
                     :width="TASK_TABLE_COLUMN_WIDTH.selfRating"
                     align="center"
                   >
@@ -2366,7 +2358,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     </template>
                   </el-table-column>
                   <el-table-column
-                    label="鉴定进度等级"
+                    label="审核进度"
                     :width="TASK_TABLE_COLUMN_WIDTH.appraisalLevel"
                     align="center"
                   >
@@ -2458,9 +2450,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         :disabled="(row.pendingRemark || '').length <= 50"
                         placement="top"
                       >
-                        <span>{{
-                          row.pendingRemark ? truncateText(row.pendingRemark, 50) : '—'
-                        }}</span>
+                        <span>{{ row.pendingRemark || '—' }}</span>
                       </el-tooltip>
                     </template>
                   </el-table-column>
@@ -2496,7 +2486,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                           placement="top"
                         >
                           <span class="indicator-name-text remark-text-wrap">{{
-                            row.remark ? truncateText(row.remark, 50) : '—'
+                            row.remark || '—'
                           }}</span>
                         </el-tooltip>
                       </div>
@@ -2748,8 +2738,8 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           >
           <el-descriptions-item label="指标类型">{{ currentDetail.type1 }}</el-descriptions-item>
           <el-descriptions-item label="权重">{{ currentDetail.weight }}</el-descriptions-item>
-          <!-- 2026-10-24 用户定案：自评等级与鉴定等级并列展示（前者填报告知，后者上级鉴定） -->
-          <el-descriptions-item label="自评等级">
+          <!-- 2026-10-24 用户定案：自评进度与审核进度并列展示（前者填报告知，后者上级鉴定） -->
+          <el-descriptions-item label="自评进度">
             <el-tag v-if="(currentDetail as any).selfRating" size="small" type="info">
               {{
                 { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' }[
@@ -2759,7 +2749,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             </el-tag>
             <span v-else style="color: #909399">—</span>
           </el-descriptions-item>
-          <el-descriptions-item label="鉴定进度等级">
+          <el-descriptions-item label="审核进度">
             <el-tag
               :type="getManualAlertTagType(currentDetail.manualAlertSeverity)"
               :style="getProgressLevelTagStyle(currentDetail.manualAlertSeverity)"
@@ -3025,7 +3015,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
 <style scoped src="./StrategicTaskView.css"></style>
 
 <style scoped>
-/* 计划未正式下发时锁定鉴定等级 */
+/* 计划未正式下发时锁定审核进度 */
 .manual-alert-select-wrapper--locked {
   cursor: not-allowed;
 }

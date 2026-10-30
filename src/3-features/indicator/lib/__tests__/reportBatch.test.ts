@@ -34,8 +34,8 @@ describe('collectExistingAttachmentIds（附件关联回填）', () => {
   })
 })
 
-describe('resolveBatchSelfRating（自评等级不被当前值覆盖）', () => {
-  // 2026-10-28：此前整批都用当前表单的自评等级，实填「超前/延期」落库全为「正常」（Issue #91 P1-1）
+describe('resolveBatchSelfRating（自评进度不被当前值覆盖）', () => {
+  // 2026-10-28：此前整批都用当前表单的自评进度，实填「超前/延期」落库全为「正常」（Issue #91 P1-1）
   it('当前指标用表单里的等级', () => {
     expect(
       resolveBatchSelfRating({

@@ -215,7 +215,7 @@ const normalizeApprovalDepartmentName = (value: unknown): string => {
     .trim()
 }
 
-// 鉴定等级仅上报链路显示（2026-09-27 用户拍板）：下发/异动流程不出现该选择器
+// 审核进度仅上报链路显示（2026-09-27 用户拍板）：下发/异动流程不出现该选择器
 const showPlanAppraisalLevelSelect = computed(() =>
   showAppraisalLevelForFlow(
     activePlanWorkflow.value?.flowCode || currentDetailWorkflow.value?.flowCode
@@ -401,7 +401,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 </div>
                 <div class="card-actions">
                   <ElButton @click="openPlanApprovalDetails">查看详情</ElButton>
-                  <!-- 2026-10-24 用户定案：整体鉴定废弃——鉴定等级改在审批详情里
+                  <!-- 2026-10-24 用户定案：整体鉴定废弃——审核进度改在审批详情里
                        按指标逐条评定（仅上报链末级审批节点出现），卡片上不再有选择器 -->
                   <ElButton
                     v-if="
@@ -447,7 +447,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
               <!-- 2026-10-20 用户定案（复盘 P3）：删除 my-tasks 待办卡（B 卡）。
                    同一次填报会同时出现在 A 卡（上报审批 · 部门 -> 上级）与本 B 卡
                    （202601 XX月报）中，属同一实例的重复展示，且 B 卡提交人显示错误、
-                   还带不该出现的鉴定进度等级下拉。统一只走 A 卡，与战略发展部审批中心对齐。 -->
+                   还带不该出现的审核进度下拉。统一只走 A 卡，与战略发展部审批中心对齐。 -->
 
               <!-- 2026-10-26 修复（学院审核人看不到本学院上报待办）：
                    PLAN_REPORT 上报待办独立于「当前计划」实体范围（实体是月报不是计划），
@@ -793,7 +793,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
               </div>
 
               <div class="snapshot-section">
-                <div class="snapshot-section-title">自评等级</div>
+                <div class="snapshot-section-title">自评进度</div>
                 <div class="snapshot-section-content">
                   <ElTag v-if="indicator.submittedSelfRating" size="small" type="info">{{
                     formatAppraisalLevel(indicator.submittedSelfRating)
@@ -804,7 +804,7 @@ const displayedCurrentPlanApprovalName = computed(() => {
 
               <!-- 2026-10-24 指标级鉴定：末级审批节点逐指标评定；其余只读展示 -->
               <div class="snapshot-section">
-                <div class="snapshot-section-title">鉴定进度等级</div>
+                <div class="snapshot-section-title">审核进度</div>
                 <div class="snapshot-section-content">
                   <!-- 2026-10-28 用户定案：审批中心不提供鉴定下拉——
                        鉴定在指标列表的行内完成，这里只读展示当前等级。 -->

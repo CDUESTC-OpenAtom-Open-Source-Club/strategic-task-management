@@ -913,17 +913,13 @@
   flex-shrink: 0;
 }
 
-/* 进度说明列：两行截断，悬停看全文（2026-10-07 等级制列配置） */
+/* 进度说明列：2026-10-30 用户定案——完整换行展示、把单元格填满，不再两行截断 */
 .pending-remark-text {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
   word-break: break-word;
   color: var(--text-regular);
 }
 
-/* 2026-10-18 用户定案：鉴定进度等级列——表头六字需单行且居中。
+/* 2026-10-18 用户定案：审核进度列——表头六字需单行且居中。
    Element Plus 默认左右各 12px 内边距在窄列会把表头挤成两行。 */
 .el-table th.manual-level-header .cell {
   padding-left: 4px !important;
@@ -946,4 +942,21 @@
   gap: 8px;
   max-height: 320px;
   overflow-y: auto;
+}
+
+/* 2026-10-30 P0-3：审核进度行内调整（与战略任务管理页同构） */
+.manual-alert-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.manual-alert-tag--clickable {
+  cursor: pointer;
+}
+
+.manual-alert-tag--locked {
+  cursor: pointer;
+  opacity: 0.85;
 }

@@ -784,10 +784,14 @@ export const useStrategicStore = defineStore('strategic', () => {
 
         throw new Error(response.message || 'Failed to load indicators')
       } catch (err) {
-        error.value = err instanceof Error ? err.message : 'Unknown error'
-        loadingState.value.error = error.value
-        indicators.value = []
-        dataSource.value = 'local'
+        const message = err instanceof Error ? err.message : 'Unknown error'
+        // 2026-10-29 用户定案：刷新失败绝不能把已经展示的指标打空。
+        // 有数据时保留上一次成功结果，只记日志等待下一次刷新收敛；
+        // 只有「首屏就没拿到数据」才把错误态抛给 UI（看板据此显示重试）。
+        if (indicators.value.length === 0) {
+          error.value = message
+          loadingState.value.error = message
+        }
         logger.error('[Strategic Store] Failed to load indicators:', err)
         throw err
       } finally {
