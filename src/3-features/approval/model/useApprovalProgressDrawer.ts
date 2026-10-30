@@ -778,7 +778,12 @@ export function useApprovalProgressDrawer(
 
   function resolvePreferredActiveTab(): 'pending-plans' | 'workflow' | 'history' {
     if (props.showPlanApprovals) {
-      return isPlanPendingApproval.value || scopedPendingPlanCount.value > 0
+      // 2026-10-30 用户定案：有待处理内容默认落「计划审批」，纯查看才落「审批历史」。
+      // scopedPendingPlanCount 已不含异动实例；本抽屉无独立异动卡集合（异动卡仅任务页抽屉渲染），
+      // 上报待办以 reportTodoItems 单独计入。
+      return isPlanPendingApproval.value ||
+        scopedPendingPlanCount.value > 0 ||
+        reportTodoItems.value.length > 0
         ? 'pending-plans'
         : 'history'
     }
@@ -4639,8 +4644,11 @@ export function useApprovalProgressDrawer(
         // 打开时重置到工作流标签页；焦点实例索引一并复位——
         // 上次打开选到「实例2」时，换个上下文再开不能默认还停在最后一条。
         workflowFocusIdx.value = 0
+        // 2026-10-30 用户定案：有待处理内容默认落「计划审批」，纯查看才落「审批历史」。
+        // 本抽屉无独立异动卡集合，上报待办以 reportTodoItems 计入；
+        // 待办晚于打开到达时由下方 reportTodoItems / loadPendingPlanApprovals 的既有 watch 兜底切换。
         activeTab.value = props.showPlanApprovals
-          ? isPlanPendingApproval.value
+          ? isPlanPendingApproval.value || reportTodoItems.value.length > 0
             ? 'pending-plans'
             : 'history'
           : hasWorkflowTabContent.value

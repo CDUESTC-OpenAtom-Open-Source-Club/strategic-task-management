@@ -756,36 +756,45 @@ export function useApprovalProgressState(
     )
   }
 
+  // 2026-10-30 用户定案：异动按整个计划发起、聚合计数；「其他计划审批中」不再混入异动实例
+  // ——异动的展示与审批由计划审批页签的异动卡（整批一张卡）承载。
   const pendingPlanApprovalPreviewItems = computed<PendingPlanApprovalPreviewItem[]>(() =>
-    scopedPlanApprovals.value.map((instance, index) => {
-      const entityType = normalizeWorkflowEntityType(instance.entityType) || 'PLAN'
-      const entityId = toPositiveNumber(instance.entityId ?? instance.businessEntityId) ?? undefined
-      const approvalInstanceId = toPositiveNumber(instance.instanceId) ?? undefined
-      const routeTarget =
-        resolveApprovalRoute({
-          actionUrl: typeof instance.actionUrl === 'string' ? instance.actionUrl : null,
-          entityType,
-          entityId,
-          approvalInstanceId,
-          viewerRole: authStore.effectiveRole || authStore.userRole,
-          departmentName: resolvePendingApprovalDepartmentName(instance) || null,
-          sourceOrgName: normalizeDisplayName(instance.sourceOrgName) || null,
-          targetOrgName: normalizeDisplayName(instance.targetOrgName) || null,
-          currentDepartmentName:
-            normalizeDisplayName(authStore.effectiveDepartment || authStore.user?.department) ||
-            null
-        }) || ''
+    scopedPlanApprovals.value
+      .filter(instance => !isMutationWorkflowInstance(instance))
+      .map((instance, index) => {
+        const entityType = normalizeWorkflowEntityType(instance.entityType) || 'PLAN'
+        const entityId =
+          toPositiveNumber(instance.entityId ?? instance.businessEntityId) ?? undefined
+        const approvalInstanceId = toPositiveNumber(instance.instanceId) ?? undefined
+        const routeTarget =
+          resolveApprovalRoute({
+            actionUrl: typeof instance.actionUrl === 'string' ? instance.actionUrl : null,
+            entityType,
+            entityId,
+            approvalInstanceId,
+            viewerRole: authStore.effectiveRole || authStore.userRole,
+            departmentName: resolvePendingApprovalDepartmentName(instance) || null,
+            sourceOrgName: normalizeDisplayName(instance.sourceOrgName) || null,
+            targetOrgName: normalizeDisplayName(instance.targetOrgName) || null,
+            currentDepartmentName:
+              normalizeDisplayName(authStore.effectiveDepartment || authStore.user?.department) ||
+              null
+          }) || ''
 
-      return {
-        key: `${approvalInstanceId || instance.taskId || index}`,
-        title: resolvePendingApprovalTitle(instance, index),
-        routeDisplay: resolvePendingApprovalRouteDisplay(instance),
-        routeTarget
-      }
-    })
+        return {
+          key: `${approvalInstanceId || instance.taskId || index}`,
+          title: resolvePendingApprovalTitle(instance, index),
+          routeDisplay: resolvePendingApprovalRouteDisplay(instance),
+          routeTarget
+        }
+      })
   )
 
-  const scopedPendingPlanCount = computed(() => scopedPlanApprovals.value.length)
+  // 2026-10-30 用户定案：异动按整个计划发起、聚合计数；「其他计划审批中」chip 不再混入异动实例
+  // ——异动的展示与审批由计划审批页签的异动卡（整批一张卡）承载。
+  const scopedPendingPlanCount = computed(
+    () => scopedPlanApprovals.value.filter(instance => !isMutationWorkflowInstance(instance)).length
+  )
 
   /**
    * 2026-10-21：审批中的异动实例卡片（「计划审批」看板）。

@@ -92,6 +92,13 @@ describe('approval-utils', () => {
     expect(isTerminalHistoryStatus('withdrawn')).toBe(false)
   })
 
+  // 2026-10-30（取消闭环）：取消异动终态与已通过同归审批历史，标签单列「已取消」
+  it('treats CANCELLED (取消异动) as a terminal history status with its own tag', () => {
+    expect(resolveHistoryStatusTag('CANCELLED')).toEqual({ label: '已取消', type: 'info' })
+    expect(resolveHistoryStatusTag('cancelled')).toEqual({ label: '已取消', type: 'info' })
+    expect(isTerminalHistoryStatus('CANCELLED')).toBe(true)
+  })
+
   it('normalizes workflow history actions for display', () => {
     expect(normalizeWorkflowAction('reject_task')).toBe('reject')
     expect(normalizeWorkflowAction('cancel_process')).toBe('withdraw')

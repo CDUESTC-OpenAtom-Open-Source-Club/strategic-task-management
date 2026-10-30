@@ -174,8 +174,10 @@ const handleDropdownCommand = async (command: string) => {
     case 'console':
       router.push('/admin/console')
       break
-    case 'changePassword':
-      router.push('/profile?tab=password')
+    case 'profile':
+      // 2026-10-30 用户定案：个人中心默认落在「基本信息」，不带 tab 时
+      // ProfileView 的 normalizeTab 本就回退到 basic，不指向修改密码
+      router.push('/profile')
       break
     case 'logout':
       try {
@@ -192,6 +194,11 @@ const handleDropdownCommand = async (command: string) => {
       }
       break
   }
+}
+
+/** 点击头像 = 进入个人中心（基本信息），与下拉里的「个人中心」一致 */
+const goToProfile = () => {
+  router.push('/profile')
 }
 </script>
 
@@ -347,7 +354,9 @@ const handleDropdownCommand = async (command: string) => {
           </el-popover>
 
           <!-- User dropdown menu -->
-          <el-dropdown @command="handleDropdownCommand">
+          <!-- 2026-10-30 用户定案：头像本身点击 = 个人中心（基本信息），
+               悬停仍展开下拉（退出登录等入口不受影响） -->
+          <el-dropdown trigger="hover" @command="handleDropdownCommand">
             <AppAvatar
               class="user-avatar"
               :size="32"
@@ -356,6 +365,7 @@ const handleDropdownCommand = async (command: string) => {
                 (currentUser as { avatar?: string; avatarUrl?: string } | null)?.avatarUrl
               "
               :name="currentUser?.name || currentUser?.realName || currentUser?.username || '用户'"
+              @click="goToProfile"
             />
             <template #dropdown>
               <el-dropdown-menu>
@@ -366,7 +376,7 @@ const handleDropdownCommand = async (command: string) => {
                 </el-dropdown-item>
 
                 <!-- All users visible -->
-                <el-dropdown-item command="changePassword">
+                <el-dropdown-item command="profile">
                   <el-icon><Lock /></el-icon>
                   个人中心
                 </el-dropdown-item>

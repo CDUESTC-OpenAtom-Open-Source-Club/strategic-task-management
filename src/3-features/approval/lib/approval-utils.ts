@@ -102,6 +102,11 @@ export function resolveHistoryStatusTag(status?: string): ApprovalStatusTag {
   if (normalized === 'WITHDRAWN') {
     return { label: '已回退', type: 'info' }
   }
+  // 2026-10-30 用户定案（异动驳回后重报/取消闭环）：填报人「取消异动」主动终结
+  // 的链与已通过同归审批历史，状态标签单列「已取消」
+  if (normalized === 'CANCELLED') {
+    return { label: '已取消', type: 'info' }
+  }
   if (normalized === 'IN_REVIEW' || normalized === 'PENDING' || normalized === 'SUBMITTED') {
     return { label: '审批中', type: 'warning' }
   }
@@ -112,7 +117,9 @@ export function isTerminalHistoryStatus(status?: string): boolean {
   const normalized = String(status || '')
     .trim()
     .toUpperCase()
-  return ['APPROVED', 'REJECTED'].includes(normalized)
+  // 2026-10-30（异动驳回后重报/取消闭环）：CANCELLED（取消异动）与 APPROVED/REJECTED
+  // 同为链条终态，历史页签按终态准入
+  return ['APPROVED', 'REJECTED', 'CANCELLED'].includes(normalized)
 }
 
 export function normalizeWorkflowAction(action?: string): ApprovalHistoryItem['action'] {

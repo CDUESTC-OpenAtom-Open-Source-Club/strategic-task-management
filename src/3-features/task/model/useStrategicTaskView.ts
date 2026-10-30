@@ -47,11 +47,16 @@ import {
   getStatusIcon as _getStatusIcon
 } from '@/shared/lib/utils/indicatorStatus'
 import { getPlanStatusDisplay, normalizePlanStatus } from '@/features/task/lib'
+import {
+  canCurrentUserHandleMutationEntry,
+  normalizeWorkflowStepMatchKey
+} from '@/features/task/lib/mutationApprovalHandleable'
 import { ApprovalProgressDrawer } from '@/features/approval'
 import { notifyApprovalStateRefresh } from '@/features/approval/lib'
 import { useApprovalRouteAutopen } from '@/features/approval/lib'
 import { useApprovalStore } from '@/features/approval/model/store'
 import { indicatorApi } from '@/features/indicator/api'
+import { invalidateMutationHistory } from '@/features/indicator/model/mutationHistory'
 import { usePlanStore } from '@/features/plan/model/store'
 import { indicatorFillApi, planApi } from '@/features/plan/api/planApi'
 import {
@@ -77,6 +82,7 @@ import type {
   WorkflowDefinitionPreviewResponse,
   WorkflowHistoryItem,
   WorkflowInstanceDetailResponse,
+  WorkflowStepPreviewResponse,
   WorkflowTaskResponse
 } from '@/features/workflow/api/types'
 
@@ -837,32 +843,34 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   } | null>(null)
   const latestPlanReportSummary = ref<{ id: number } | null>(null)
 
-  // 2026-10-28 迭代计划 M2：审批看板显示填报月份——上级看下级数据时能判断数据归属周期。
+  // 2026-10-28 迭代计划 M2：审批看板显示当前填报周期——上级看下级数据时能判断数据归属周期。
+  // 2026-10-30 用户定案：文案统一为「当前填报周期：YYYY年M月」，由共享组件 ReportCycleTag
+  // 负责格式化，这里只存原始 YYYYMM；站内任务 / 指标下发 / 指标填报三页共用同一组件与文案。
   // 数据源 = 计划详情 dispatchMonth（后端按计划审批实例完成时刻所在月计算，1667bac），
   // 与指标填报页起算月同源，避免前端自算 1/12 月边界算错（计划文档「风险与注意 2」）。
-  const reportMonthLabel = ref('')
+  const reportMonth = ref('')
   const reportMonthCache = new Map<string, string>()
   watch(
     () => currentPlan.value?.id,
     async planId => {
       if (!planId) {
-        reportMonthLabel.value = ''
+        reportMonth.value = ''
         return
       }
       const key = String(planId)
       const cached = reportMonthCache.get(key)
       if (cached !== undefined) {
-        reportMonthLabel.value = cached
+        reportMonth.value = cached
         return
       }
       try {
         const response = await planApi.getPlanDetails(planId)
         const raw = String(response.data?.dispatchMonth || '').trim()
-        const label = /^\d{6}$/.test(raw) ? `${raw.slice(0, 4)}年${Number(raw.slice(4, 6))}月` : ''
-        reportMonthCache.set(key, label)
-        reportMonthLabel.value = label
+        const month = /^\d{6}$/.test(raw) ? raw : ''
+        reportMonthCache.set(key, month)
+        reportMonth.value = month
       } catch (error) {
-        logger.warn('[StrategicTaskView] 填报月份获取失败:', error)
+        logger.warn('[StrategicTaskView] 当前填报周期获取失败:', error)
       }
     },
     { immediate: true }
@@ -1217,6 +1225,19 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         label: '未填报',
         tagType: 'info' as const,
         description: '当前学院还没有填报记录。'
+      }
+    }
+
+    // 2026-10-30（纯附加）：职能部门页签对齐学院页签的异动优先语义——
+    // 当前部门上下文存在在途异动审批时优先显示「异动审批中 · 当前节点」，
+    // 否则职能部门页签会继续显示计划级状态（如「已完成审批」），与悬浮卡片矛盾。
+    // 学院页签分支（上方 collegeFillStatusScope）原样保留，此处仅在非学院页签生效。
+    if (!collegeFillStatusScope.value && departmentMutationPendingApprovals.value.length > 0) {
+      const top = departmentMutationPendingApprovals.value[0]
+      return {
+        label: `异动审批中 · ${String(top.currentStepName || '').trim()}`.replace(/ ·\s*$/, ''),
+        tagType: 'warning' as const,
+        description: '当前部门存在进行中的异动审批；异动期间下发/上报提交被锁定。'
       }
     }
 
@@ -2115,6 +2136,65 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     return '查看审批'
   })
 
+  // 2026-10-30（纯附加）异动审批可处理判定：allDepartmentMutationPendingApprovals
+  // （主计划 + 链下学院子计划，链路全覆盖，按钮不按页签隔离）中只要存在在途异动实例，
+  // 且当前节点轮到当前用户处理；currentUserOrgId 取不到时一律 false。不改任何既有计划级判定。
+  // 2026-10-30 判定细化（用户真机反馈：填报人与负责人同属组织 35，组织级匹配让填报人
+  // 按钮也误点亮）：按「当前用户在该节点可审批成员名单内」判定（userId 或姓名匹配），
+  // 名单= 预览当前步骤候选审批人（loader 挂 currentStepCandidates，与抽屉「可审批成员」
+  // 同源）+ 实例详情已定审批人；名单缺失时退回既有 approverOrgId 组织级匹配兜底。
+  // 注：清单 ref 声明在本文件下方（与上方 approvalFlowStatusMeta 学院分支同款前向引用），
+  // computed 惰性求值，首帧渲染时已初始化。
+  const canHandleMutationApproval = computed(() => {
+    const currentOrgId = currentUserOrgId.value
+    if (!currentOrgId) {
+      return false
+    }
+    return allDepartmentMutationPendingApprovals.value.some(entry =>
+      canCurrentUserHandleMutationEntry(entry, {
+        userId: currentUserId.value,
+        userName: String(authStore.user?.realName || authStore.user?.userName || ''),
+        orgId: currentOrgId
+      })
+    )
+  })
+
+  // 2026-10-30（纯附加）上报审批在途判定（按钮点亮信号第 3 条）：
+  // 数据源选型：复用既有 approvalStore.loadPendingApprovals（GET /workflow/instances/
+  // my-pending，本模型既有刷新链已在审批事件/心跳/窗口聚焦时维护，零新增后端接口）。
+  // 「出现在我的待办」=「上报在途且当前节点轮到我审批」，天然覆盖学院上报
+  // （PLAN_REPORT，学院→职能部门→战略发展部链）与职能部门上报到达本人节点的在途实例。
+  // 仅统计 PLAN_REPORT：计划下发由 canHandleCurrentPlanApproval（第 1 条）、
+  // 异动由 canHandleMutationApproval（第 2 条）各自覆盖，避免语义放大；
+  // 与第 2 条对同一异动实例的潜在重叠只影响布尔并集，无重复展示/计数冲突。
+  const canHandleCurrentReportApproval = computed(() =>
+    approvalStore.pendingApprovals.some(
+      approval =>
+        String(approval.status || '').toUpperCase() === 'PENDING' &&
+        String(approval.entityType || '').toUpperCase() === 'PLAN_REPORT'
+    )
+  )
+  // 首屏兜底：既有刷新链不在初载时拉 my-pending，store 可能为空导致按钮信号缺失；
+  // 这里只重复调用既有 action（同一接口、幂等回填），不新增后端调用、不改动既有刷新逻辑。
+  void approvalStore.loadPendingApprovals()
+
+  // 2026-10-30（纯附加）审批入口组合判定：计划级可处理（1）或 异动可处理（2）
+  // 或 上报在途轮到本人（3）。仅供工具栏按钮文字与红点使用；既有
+  // canHandleCurrentPlanApproval / pendingApprovalCount（下发守卫、提示条）语义不变。
+  const approvalEntryCanHandle = computed(
+    () =>
+      canHandleCurrentPlanApproval.value ||
+      canHandleMutationApproval.value ||
+      canHandleCurrentReportApproval.value
+  )
+
+  // 2026-10-30（纯附加）按钮文字判定：approvalEntryCanHandle（计划可处理/异动可处理/
+  // 上报在途轮到本人，三选一）→ 「处理审批」，否则 → 「查看审批」。
+  // 原 approvalEntryButtonText 保留不删（避免扩大 diff），模板带红点入口切换到本 computed。
+  const approvalEntryButtonTextWithMutation = computed(() =>
+    approvalEntryCanHandle.value ? '处理审批' : '查看审批'
+  )
+
   // 任务审批抽屉状态
   const taskApprovalVisible = ref(false)
   const retainedRouteApprovalEntityType = ref<'PLAN' | 'PLAN_REPORT' | undefined>(undefined)
@@ -2313,6 +2393,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     if (planUiPhase.value === 'draft') {
       return 'success'
     }
+    // 2026-10-30 用户反馈：异动在审且可撤（发起人、未过窗口）时按钮用警告黄，
+    // 与 pending_withdrawable（上报审批撤回窗口）同一 warning 预设（#E6A23C），
+    // 不再落「已下发」分支的 info 灰；既有 draft/pending 分支原样保留。
+    if (canWithdrawMutationInFlight.value) {
+      return 'warning'
+    }
     return planUiPhase.value === 'pending_withdrawable' ? 'warning' : 'info'
   })
 
@@ -2341,6 +2427,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       return isCurrentUserReporter.value
         ? '当前审批进度不支持撤回'
         : '当前登录身份不是填报人，不能撤回'
+    }
+
+    // 2026-10-30（多态撤回·异动分支）：异动审批在途且当前用户为发起人（未过撤回窗口）时，
+    // 已下发阶段的「撤回」改指撤回异动，不再按「当前状态不可操作」置灰；
+    // 非发起人 / 已过窗口仍维持原置灰口径。
+    if (planUiPhase.value === 'distributed' && canWithdrawMutationInFlight.value) {
+      return ''
     }
 
     if (planUiPhase.value === 'distributed') {
@@ -2523,6 +2616,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       void openApprovalSetupDialog()
     } else {
       // 待审批/已下发状态：撤回
+      // 2026-10-30（多态撤回·异动分支）：异动审批在途且当前用户为发起人时，
+      // 撤回改指「撤回异动」——与审批中心异动卡撤回同源（逐实例 POST /workflows/{id}/cancel）。
+      // 异动只在已下发计划上发起、与上报/计划审批互斥，草稿与计划待审撤回分支不受影响。
+      if (canWithdrawMutationInFlight.value) {
+        void handleWithdrawMutationBatch()
+        return
+      }
       if (canWithdrawPlan.value) {
         handleWithdrawAll()
       }
@@ -2726,6 +2826,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
 
     invalidateQueries(invalidateTargets)
+
+    // 2026-10-30：异动历史徽标按被改字段落位（权重异动挂权重列）。
+    // 后端在「发起异动」时就写了快照，这里让徽标缓存失效，计数才能跟着变。
+    invalidateMutationHistory()
 
     // 开始全量并发刷新各维度数据
     await Promise.all([
@@ -4016,6 +4120,66 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     void refreshTaskPageAfterIndicatorMutation()
   }
 
+  /**
+   * 2026-10-30 用户定案（异动驳回后重报/取消闭环）：顶部「取消异动」按钮按状态分流。
+   *
+   * a) 存在「退回待重报」异动链（有被驳回的异动）：取消 = 终结整条链——
+   *    先二次确认，再调 POST /indicators/mutations/{instanceId}/cancel-returned
+   *    把该批次全部实例一次置为 CANCELLED（后端校验发起人），整链归入审批历史；
+   *    成功后清本地草稿（复用 cancelMutationDraft 既有路径）并刷新异动/审批数据。
+   *    确认框提供「仅清空草稿」出口（distinguishCancelAndClose），不终结链；
+   *    关闭（Esc/右上角）视为不操作。
+   * b) 无在途/退回链：维持既有「清草稿」行为不变（cancelMutationDraft）。
+   * 互斥锁（isMutationApprovalInFlight 只认 IN_REVIEW）与审批中心异动卡口径不受影响。
+   */
+  const handleCancelMutation = async () => {
+    if (!hasReturnedMutationChain.value) {
+      await cancelMutationDraft()
+      return
+    }
+    try {
+      await ElMessageBox.confirm(
+        `有 ${returnedMutationChainCount.value} 批异动已被驳回退回待重报。取消异动将终结该批审批链（整链归入审批历史），改动不再生效且本地未提交的修改草稿会一并丢弃。确认取消？`,
+        '取消异动',
+        {
+          confirmButtonText: '确认取消异动',
+          cancelButtonText: '仅清空草稿',
+          distinguishCancelAndClose: true,
+          type: 'warning'
+        }
+      )
+    } catch (action) {
+      // 仅清空草稿：保留退回链，之后仍可修改后重新发起
+      if (action === 'cancel') {
+        await cancelMutationDraft()
+      }
+      return
+    }
+    try {
+      mutationApiLoading.value = true
+      const { mutationApi } = await import('@/features/indicator/api/mutationApi')
+      // 逐批终结：每批传该批任一实例 ID，后端按 batch_id 整批取消并校验发起人
+      for (const chain of groupReturnedMutationChains()) {
+        const response = await mutationApi.cancelReturned(chain.instance_id)
+        if (!response.success) {
+          throw new Error(response.message || '取消异动失败')
+        }
+      }
+      ElMessage.success('已取消异动；该批审批链已终结并归入审批历史')
+      await cancelMutationDraft()
+      // 重拉异动审批与退回链清单（取消后按钮回到纯清草稿语义）
+      void loadDepartmentMutationWorkflowEntities()
+      void refreshTaskPageAfterIndicatorMutation()
+    } catch (error) {
+      const msg = (error as { message?: string })?.message
+      ElMessage.error(msg || '取消异动失败')
+    } finally {
+      mutationApiLoading.value = false
+      // 与 submitMutationDraft 同款兜底：确认框残留时显式收起
+      ElMessageBox.close()
+    }
+  }
+
   // 顶部「发起异动」：指标攒改 + 新增指标 + 战略任务改名一起上报
   // （2026-10-21 用户定案：不做拦截、整批校验）
   const submitMutationDraft = async () => {
@@ -4049,6 +4213,18 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
     if (effectiveDrafts.length === 0 && taskDrafts.length === 0 && pendingCreates.length === 0) {
       ElMessage.warning('本次没有可提交的异动内容')
+      return
+    }
+
+    // 2026-10-30 用户定案：发起异动与下发/审批同规则——基础性权重合计必须为 100。
+    // 口径与后端闭合校验一致（BasicTaskWeightValidationService 按「本批异动生效后」
+    // 的快照判定）：表格内存态已是「删减行剔除 + 权重攒改应用 + 待提交新增计入」
+    // 之后的生效前快照，departmentTotalWeight 即本批生效后的合计；≠100 在点击时
+    // 拦截并提示，不再等后端整批驳回。
+    if (Math.abs(departmentTotalWeight.value - 100) > 1e-6) {
+      ElMessage.warning(
+        `基础性权重合计必须为100%（当前为${Number(departmentTotalWeight.value.toFixed(2))}），请调整到100后再发起异动`
+      )
       return
     }
 
@@ -4092,6 +4268,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       pendingCreatedIndicatorIds.value = []
       ElMessage.success('异动已提交审批；审批期间其他模块不受影响')
       void refreshTaskPageAfterIndicatorMutation()
+      // 2026-10-30 修复：提交成功立即重拉异动审批实例——「发起异动」按钮的互斥置灰
+      // （isMutationApprovalInFlight）与异动角标的「在异动当中」状态都依赖这份数据，
+      // 不重拉则按钮仍可点（二次提交会被后端整批拒绝）、角标也不显示在途状态。
+      void loadDepartmentMutationWorkflowEntities()
     } catch (error) {
       const msg = (error as { message?: string })?.message
       ElMessage.error(msg || '发起异动失败')
@@ -4199,8 +4379,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
     try {
       isSavingIndicatorEdit.value = true
+      // savingIndicatorId 仅作防重入守卫（双击同格在途时忽略）；
+      // savingIndicatorField 只在战略任务分支设置——其余字段走乐观更新，
+      // 不渲染「保存中」（见下方 localPatch 注释）。
       savingIndicatorId.value = row.id
-      savingIndicatorField.value = field
       // 使用 Store 更新指标
       const updates: Record<string, unknown> = {}
       const mappedField = fieldMapping[field] || field
@@ -4227,6 +4409,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
           cancelIndicatorEdit()
           return
         }
+        savingIndicatorField.value = field
         cancelIndicatorEdit()
         await persistTaskContentEdit(row, normalizedTaskName)
         updateEditTime()
@@ -4253,9 +4436,42 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       }
 
       console.log('[saveIndicatorEdit] updates:', updates)
+
+      // 2026-10-30 用户定案：草稿计划直写改为乐观更新——本地先行生效，
+      // 接口后台落库，速度对齐战略任务改名（PUT /tasks/{id}/name 16ms vs
+      // PUT /indicators/{id} 40-80ms，后者多事件落库与 WebSocket 广播，
+      // 属后端固有开销）。「保存中」不再展示；失败回滚本地值并报错。
+      // 注意取值必须在 cancelIndicatorEdit 之前——cancel 会清空编辑值。
+      const localPatch: Record<string, unknown> = {}
+      if (field === 'name') {
+        localPatch.name = editingIndicatorValue.value
+        if (updates.type1 !== undefined) {
+          localPatch.type1 = updates.type1
+          localPatch.isQualitative = updates.isQualitative
+        }
+      } else if (field === 'weight') {
+        localPatch.weight = Number(editingIndicatorValue.value)
+      } else {
+        localPatch[field] = editingIndicatorValue.value
+      }
+      const revertSnapshot: Record<string, unknown> = {}
+      for (const patchKey of Object.keys(localPatch)) {
+        revertSnapshot[patchKey] = (row as Record<string, unknown>)[patchKey]
+      }
+
       cancelIndicatorEdit()
-      await strategicStore.updateIndicator(row.id.toString(), updates)
-      updateEditTime()
+      strategicStore.patchIndicator(row.id.toString(), localPatch as Partial<StrategicIndicator>)
+
+      try {
+        await strategicStore.updateIndicator(row.id.toString(), updates)
+        updateEditTime()
+      } catch (saveError) {
+        strategicStore.patchIndicator(
+          row.id.toString(),
+          revertSnapshot as Partial<StrategicIndicator>
+        )
+        throw saveError
+      }
     } catch (error) {
       console.error('[saveIndicatorEdit] Error details:', error)
       logger.error('[StrategicTaskView] Failed to save indicator:', error)
@@ -4917,6 +5133,28 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const departmentMutationPendingApprovals = ref<Array<Record<string, any>>>([])
   const collegeFillStatusScope = ref(false)
 
+  // 2026-10-30 用户定案（异动驳回后重报/取消闭环）：「退回待重报」异动链清单。
+  // 数据源 GET /indicators/mutations/returned（按当前部门查，只含退回填报人的
+  // 活链：WITHDRAWN、completed_at 为空、存在退回提交步骤——2026-10-30 定案修订：
+  // 发起人撤回与驳回退回同构，撤回后的链也被该清单认领）。消费方：
+  // ① 「取消异动」按钮可点性/分流（有退回链时点击=终结整链归审批历史）；
+  // ② 被驳回/撤回可感知提示（alert）；
+  // ③ 2026-10-30 定案修订：isEntityMutationInFlight 角标数据基础（链活着角标就亮）。
+  // 不参与互斥锁（isMutationApprovalInFlight 只认 IN_REVIEW）。
+  const returnedMutationChains = ref<
+    Array<{
+      instance_id: number
+      indicator_id: number
+      entity_type?: 'INDICATOR' | 'TASK'
+      batch_id?: string | null
+      requester_id?: number | null
+      indicator_desc: string
+      status: string
+      created_at: string
+      reject_comment?: string | null
+    }>
+  >([])
+
   // 2026-10-10：异动审批实例 → 审批中心「审批历史」卡片（P1 修复：异动链不缺失前端）
   // 2026-10-21：任务改名异动（entity_type=TASK）与指标异动并列，需按各自类型取历史
   // 2026-10-26：loader 从 UI 组件下沉到 model——handleApprovalRefresh（本文件）此前
@@ -4924,12 +5162,25 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const departmentMutationWorkflowEntities = ref<
     Array<{ entityId: number; entityType?: 'INDICATOR' | 'TASK' }>
   >([])
+  // 2026-10-30（纯附加）部门下发链上学院子计划的在途异动追回清单。
+  // 后端 mutation-approvals 按「indicator.owner_org_id/target_org_id（或 task.org_id/
+  // created_by_org_id）= orgId」过滤（IndicatorMutationService.listMutationApprovals），
+  // 学院子计划异动实例 source=战略发展部、target=学院，用职能部门 orgId 查询时
+  // 两个条件均不命中 → 抽屉漏卡。此清单由 loader 对下发链学院组织追回查询填充，
+  // 仅并入 allDepartmentMutationPendingApprovals（审批抽屉异动卡 + 按钮判定）；
+  // departmentMutationPendingApprovals 本体口径不变——isMutationApprovalInFlight
+  // （发起异动互斥锁）/ isEntityMutationInFlight（异动角标）/ 状态标签分支均不受影响。
+  const departmentChainMutationPendingApprovals = ref<Array<Record<string, any>>>([])
   const loadDepartmentMutationWorkflowEntities = async () => {
     try {
       const orgId = resolveDepartmentIdByName(selectedDepartment.value)
       if (!orgId) {
         departmentMutationWorkflowEntities.value = []
         departmentMutationPendingApprovals.value = []
+        // 2026-10-30（纯附加）：链下学院追回清单随主清单一并清空
+        departmentChainMutationPendingApprovals.value = []
+        // 2026-10-30（取消闭环）：退回待重报链清单同步清空
+        returnedMutationChains.value = []
         return
       }
       const { mutationApi } = await import('@/features/indicator/api/mutationApi')
@@ -4970,6 +5221,18 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
           createdAt: item.created_at
         }))
 
+      // 2026-10-30（取消闭环）：退回待重报链清单——与在途审批分开端点，
+      // 后端只回被驳回退回填报人的活链；失败不阻断主清单加载
+      try {
+        const returnedResponse = await mutationApi.returnedChains(orgId)
+        returnedMutationChains.value = Array.isArray(returnedResponse.data)
+          ? returnedResponse.data
+          : []
+      } catch (returnedError) {
+        logger.warn('[StrategicTaskView] 加载退回待重报异动链失败:', returnedError)
+        returnedMutationChains.value = []
+      }
+
       // 2026-10-21：异动本身也是一条审批流程，「审批流程」页签要能显示它走到哪一步。
       // 按实例取流程详情挂到对应条目上（与计划审批同一套 getWorkflowInstanceDetail 接口）。
       const { getWorkflowInstanceDetail } = await import('@/features/workflow/api/queries')
@@ -4989,9 +5252,200 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
           }
         })
       )
+
+      // 2026-10-30（纯附加）链路覆盖追查：学院子计划异动（source=战略发展部、target=学院）
+      // 不命中上方按职能部门 orgId 的查询过滤（见 departmentChainMutationPendingApprovals
+      // 注释），对选中部门下发链上的学院组织逐个追回查询，与主清单按 instance_id 去重合并。
+      // 仅填充 departmentChainMutationPendingApprovals，不回写 departmentMutationPendingApprovals
+      // （互斥锁等既有消费方口径不变）。
+      const seenInstanceIds = new Set(
+        departmentMutationPendingApprovals.value.map(entry => String(entry.instanceId ?? ''))
+      )
+      const chainCollegeOrgIds = [
+        ...new Set(
+          collegeDepartmentsScoped.value
+            .map(collegeName => resolveDepartmentIdByName(collegeName))
+            .filter(
+              collegeOrgId =>
+                collegeOrgId != null &&
+                Number.isFinite(collegeOrgId) &&
+                collegeOrgId > 0 &&
+                collegeOrgId !== orgId
+            )
+        )
+      ]
+      const chainItems: Array<Record<string, any>> = []
+      for (const chainOrgId of chainCollegeOrgIds) {
+        try {
+          const chainResponse = await mutationApi.approvals(chainOrgId)
+          const chainRawItems = Array.isArray(chainResponse.data) ? chainResponse.data : []
+          for (const item of chainRawItems) {
+            if (String(item.status || '').toUpperCase() !== 'IN_REVIEW') {
+              continue
+            }
+            const instanceKey = String(item.instance_id ?? '')
+            if (!instanceKey || seenInstanceIds.has(instanceKey)) {
+              continue
+            }
+            seenInstanceIds.add(instanceKey)
+            chainItems.push({
+              instanceId: item.instance_id,
+              entityId: Number(item.indicator_id),
+              entityType:
+                String(item.entity_type || 'INDICATOR').toUpperCase() === 'TASK'
+                  ? ('TASK' as const)
+                  : ('INDICATOR' as const),
+              flowCode: item.flow_code || 'PLAN_MUTATION_STRATEGY',
+              status: 'IN_REVIEW',
+              title: item.indicator_desc,
+              currentStepName: item.current_step_name,
+              approverOrgId: item.approver_org_id,
+              sourceOrgId: item.source_org_id,
+              sourceOrgName: item.source_org_name,
+              targetOrgId: item.target_org_id,
+              targetOrgName: item.target_org_name,
+              batchId: item.batch_id || null,
+              changedFields: item.changed_fields || null,
+              submitterName: item.submitter_name,
+              createdAt: item.created_at
+            })
+          }
+        } catch (chainError) {
+          logger.warn('[StrategicTaskView] 追查部门链下学院异动审批失败:', {
+            chainOrgId,
+            error: chainError
+          })
+        }
+      }
+      departmentChainMutationPendingApprovals.value = await Promise.all(
+        chainItems.map(async entry => {
+          try {
+            const detail = await getWorkflowInstanceDetail(String(entry.instanceId))
+            return detail?.success && detail.data
+              ? { ...entry, workflowDetail: detail.data }
+              : entry
+          } catch (error) {
+            logger.warn('[StrategicTaskView] 加载链下学院异动流程详情失败:', {
+              instanceId: entry.instanceId,
+              error
+            })
+            return entry
+          }
+        })
+      )
+
+      // 2026-10-30（纯附加）「处理审批」按钮名单化判定数据源：按在途条目 flowCode 拉取
+      // 流程定义预览，把当前在途步骤的候选审批人（step.candidateApprovers）挂到条目
+      // currentStepCandidates 上。名单与审批抽屉「可审批成员」同源（后端候选人解析与
+      // 派单、鉴权共用同一范围组织入口），步骤匹配口径与抽屉一致（stepNo 优先、归一化
+      // 步骤名兜底）。预览接口走 fetchWithCache 短缓存，同 flowCode 只打一次；失败只令
+      // 该 flowCode 无名单，判定侧退回组织兜底，不阻断主清单。
+      const previewStepsByFlowCode = new Map<string, WorkflowStepPreviewResponse[]>()
+      const mutationFlowCodes = [
+        ...new Set(
+          [
+            ...departmentMutationPendingApprovals.value,
+            ...departmentChainMutationPendingApprovals.value
+          ]
+            .map(entry => String(entry.flowCode || '').trim())
+            .filter(Boolean)
+        )
+      ]
+      await Promise.all(
+        mutationFlowCodes.map(async flowCode => {
+          try {
+            const response = await getWorkflowDefinitionPreviewByCode(flowCode)
+            if (response?.success && Array.isArray(response.data?.steps)) {
+              previewStepsByFlowCode.set(flowCode, response.data.steps)
+            }
+          } catch (previewError) {
+            logger.warn('[StrategicTaskView] 加载异动流程定义预览失败:', {
+              flowCode,
+              error: previewError
+            })
+          }
+        })
+      )
+      const attachMutationStepCandidates = (entry: Record<string, any>): Record<string, any> => {
+        const previewSteps = previewStepsByFlowCode.get(String(entry.flowCode || '').trim())
+        if (!previewSteps || previewSteps.length === 0) {
+          return entry
+        }
+        const detailTasks = Array.isArray(entry.workflowDetail?.tasks)
+          ? entry.workflowDetail.tasks
+          : []
+        const pendingTask =
+          detailTasks.find(
+            task =>
+              String(task.status || '')
+                .trim()
+                .toUpperCase() === 'PENDING'
+          ) || null
+        const pendingStepNo = Number(pendingTask?.stepNo ?? NaN)
+        const pendingStepKey = normalizeWorkflowStepMatchKey(
+          entry.currentStepName || pendingTask?.currentStepName || pendingTask?.taskName
+        )
+        const matchedStep =
+          previewSteps.find(
+            step => Number.isFinite(pendingStepNo) && Number(step.stepOrder) === pendingStepNo
+          ) ||
+          previewSteps.find(
+            step =>
+              pendingStepKey && normalizeWorkflowStepMatchKey(step.stepName) === pendingStepKey
+          ) ||
+          null
+        if (!matchedStep || !Array.isArray(matchedStep.candidateApprovers)) {
+          return entry
+        }
+        return { ...entry, currentStepCandidates: matchedStep.candidateApprovers }
+      }
+      departmentMutationPendingApprovals.value = departmentMutationPendingApprovals.value.map(
+        attachMutationStepCandidates
+      )
+      departmentChainMutationPendingApprovals.value =
+        departmentChainMutationPendingApprovals.value.map(attachMutationStepCandidates)
     } catch (error) {
       logger.warn('[StrategicTaskView] 加载异动审批实例失败:', error)
     }
+  }
+
+  // 2026-10-30（纯附加）合并视图：主计划口径清单 + 链下学院追回清单
+  // （去重已在 loader 内按 instance_id 完成，这里仅拼接）。
+  // 消费方：审批抽屉异动卡（StrategicTaskView 传参）与按钮判定 canHandleMutationApproval；
+  // isMutationApprovalInFlight（互斥锁）等既有消费方仍只读 departmentMutationPendingApprovals。
+  const allDepartmentMutationPendingApprovals = computed(() => [
+    ...departmentMutationPendingApprovals.value,
+    ...departmentChainMutationPendingApprovals.value
+  ])
+
+  // 2026-10-30 用户定案：异动历史角标要打「在异动当中」状态——按实体匹配在途异动
+  // 实例（TASK=任务改名 / INDICATOR=指标字段改）。数据由 loadDepartmentMutationWorkflowEntities
+  // 在打开审批中心与发起异动成功后刷新。
+  // 2026-10-30 定案修订（异动撤回=退回填报人活链）：数据基础扩展为
+  // 「在审实例 + 退回存活链」——发起人撤回/驳回退回后链未终结（WITHDRAWN 且
+  // completed_at 为空），returnedMutationChains 命中即角标继续亮「在异动当中」。
+  // 注意：互斥锁 isMutationApprovalInFlight 保持只看 IN_REVIEW 不变（退回后必须
+  // 能再次发起），退回链绝不计入锁。
+  const isEntityMutationInFlight = (
+    entityType: 'INDICATOR' | 'TASK',
+    entityId?: number | string | null
+  ): boolean => {
+    const id = Number(entityId)
+    if (!Number.isFinite(id) || id <= 0) {
+      return false
+    }
+    if (
+      departmentMutationPendingApprovals.value.some(
+        item => item.entityType === entityType && Number(item.entityId) === id
+      )
+    ) {
+      return true
+    }
+    return returnedMutationChains.value.some(
+      chain =>
+        String(chain.entity_type || 'INDICATOR').toUpperCase() === entityType &&
+        Number(chain.indicator_id) === id
+    )
   }
 
   // 2026-10-24 用户定案（异动/上报互斥）：同一学院链上「上报审批在途」与「异动审批在途」
@@ -5010,6 +5464,31 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     () => departmentMutationPendingApprovals.value.length > 0
   )
 
+  // 2026-10-30（多态撤回·异动分支）：工具栏「撤回」在异动在审时是否按「撤回异动」处理。
+  // 口径与审批中心异动卡撤回（原 useApprovalProgressWorkflow.canCurrentUserWithdrawMutation）同源：
+  // 仅发起人（submitter_name 与当前登录人姓名比对）且未过撤回窗口（当前节点不含
+  // 终审/分管校领导）才可撤；后端 cancelInstance 仍会二次校验 requester 与窗口。
+  // 一次异动提交的一批实例同一发起人，故在途清单按 every 判定。
+  const canWithdrawMutationInFlight = computed(() => {
+    if (!isMutationApprovalInFlight.value) {
+      return false
+    }
+    const currentUserName = String(
+      authStore.user?.realName || authStore.user?.userName || ''
+    ).trim()
+    if (!currentUserName) {
+      return false
+    }
+    return departmentMutationPendingApprovals.value.every(entry => {
+      const submitterName = String(entry.submitterName || '').trim()
+      if (!submitterName || submitterName !== currentUserName) {
+        return false
+      }
+      const stepName = String(entry.currentStepName || '')
+      return !stepName.includes('终审') && !stepName.includes('分管校领导')
+    })
+  })
+
   // 2026-10-28 迭代计划 M5（互斥可见化）：「发起异动」不再整体隐藏，改为置灰 + tooltip。
   // 拦截口径与 submitMutationDraft 的提交守卫一致，只是把「为什么不能点」亮给用户看。
   const mutationSubmitBlocked = computed(
@@ -5024,6 +5503,24 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
     return ''
   })
+
+  // ==================== 2026-10-30 取消异动（退回待重报整链终结） ====================
+
+  /** 退回待重报链按批次归组（无批次号的孤例按实例自成一组），一次「取消异动」终结整批。 */
+  const groupReturnedMutationChains = () => {
+    const groups = new Map<string, (typeof returnedMutationChains.value)[number]>()
+    for (const chain of returnedMutationChains.value) {
+      const key = chain.batch_id || `instance-${chain.instance_id}`
+      if (!groups.has(key)) {
+        groups.set(key, chain)
+      }
+    }
+    return [...groups.values()]
+  }
+
+  /** 存在被驳回退回的异动链（活链，可重新发起或取消），用于按钮分流与可感知提示。 */
+  const returnedMutationChainCount = computed(() => groupReturnedMutationChains().length)
+  const hasReturnedMutationChain = computed(() => returnedMutationChainCount.value > 0)
 
   // 2026-10-28 迭代计划 M6：草稿丢失可感知——顶部横幅计数 + 离开/刷新前确认。
   const mutationDraftCount = computed(
@@ -5418,8 +5915,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   // 打开任务审批抽屉
   const handleOpenApproval = async () => {
-    await refreshApprovalWorkflowSummaries()
-    await preloadApprovalWorkflowDetail()
+    // 2026-10-30 修复：打开审批中心必须重拉异动审批实例——loadDepartmentMutationWorkflowEntities
+    // 此前只在 handleApprovalRefresh（审批动作后）被调，新发起的异动在「计划审批」页签
+    // 无卡片（空态「暂无审批中的计划」）、「审批流程」页签也无异动流程可看。
+    await Promise.all([
+      refreshApprovalWorkflowSummaries(),
+      preloadApprovalWorkflowDetail(),
+      loadDepartmentMutationWorkflowEntities()
+    ])
     taskApprovalVisible.value = true
   }
 
@@ -6162,6 +6665,95 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       })
   }
 
+  // 2026-10-30（多态撤回·异动分支，同日定案修订：撤回=退回填报人活链）：
+  // 工具栏「撤回」在异动在审时的执行体——改为逐批次调
+  // POST /indicators/mutations/{instanceId}/withdraw（后端
+  // BusinessWorkflowApplicationService.withdrawMutationBatchToRequester 校验只有
+  // 发起人可撤、流程限 PLAN_MUTATION_STRATEGY，按 batch_id 把整批在审实例一次
+  // 退回填报人节点：实例 WITHDRAWN、completed_at 为空、追加退回提交步骤，
+  // 形态与「驳回退回填报人」同构——链保持存活，不再像旧 cancelWorkflow 那样
+  // 置 completed_at 终结归历史）。退回后：「发起异动」恢复可点（重新发起走既有
+  // resume 机制复用同链）；红色横幅 + 「取消异动」照常可用（取消才是终结）。
+  // 计划下发撤回（handleWithdrawAll → POST /plans/{id}/withdraw）行为不变。
+  const handleWithdrawMutationBatch = async () => {
+    // 按批次归组（与取消异动的 groupReturnedMutationChains 同款口径）：
+    // 每批传任一实例 ID，后端按 batch_id 整批退回并校验发起人
+    const batchGroups = new Map<string, { instanceId: number; count: number }>()
+    for (const entry of departmentMutationPendingApprovals.value) {
+      const instanceId = Number(entry.instanceId)
+      if (!Number.isFinite(instanceId) || instanceId <= 0) {
+        continue
+      }
+      const key = String(entry.batchId || `instance-${instanceId}`)
+      const group = batchGroups.get(key)
+      if (group) {
+        group.count += 1
+      } else {
+        batchGroups.set(key, { instanceId, count: 1 })
+      }
+    }
+    if (batchGroups.size === 0) {
+      ElMessage.warning('未找到进行中的异动审批实例，请刷新后重试')
+      return
+    }
+
+    const totalInstances = [...batchGroups.values()].reduce((sum, group) => sum + group.count, 0)
+    try {
+      const batchSuffix =
+        totalInstances > 1 ? `\n\n本次异动共 ${totalInstances} 项，将一并退回。` : ''
+      await ElMessageBox.confirm(
+        `确认撤回本次异动审批？${batchSuffix}\n\n撤回后异动退回到填报人节点（审批链保持存活）：可修改后重新发起，或点「取消异动」终结该批异动。`,
+        '撤回异动审批',
+        { confirmButtonText: '确定撤回', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch {
+      return
+    }
+
+    const loadingInstance = ElLoading.service({
+      lock: true,
+      text: '正在撤回...',
+      background: 'rgba(0, 0, 0, 0.7)'
+    })
+    try {
+      const { mutationApi } = await import('@/features/indicator/api/mutationApi')
+      const failures: string[] = []
+      for (const [key, group] of batchGroups) {
+        try {
+          const response = await mutationApi.withdraw(group.instanceId)
+          if (!response.success) {
+            failures.push(`${key}: ${response.message || '撤回失败'}`)
+          }
+        } catch (error) {
+          failures.push(`${key}: ${(error as Error)?.message || '撤回失败'}`)
+        }
+      }
+      if (failures.length > 0) {
+        ElMessage.error(`有 ${failures.length} 批撤回未成功：${failures[0]}`)
+        return
+      }
+      ElMessage.success(
+        totalInstances > 1
+          ? `已撤回本次异动全部 ${totalInstances} 项（已退回填报人，可修改后重新发起或取消异动）`
+          : '已撤回本次异动审批（已退回填报人，可修改后重新发起或取消异动）'
+      )
+      // 重拉异动在途清单 + 退回链清单（互斥锁 / 异动角标 / 撤回判定 /
+      // 红色横幅 / 「取消异动」可点性都依赖）
+      await loadDepartmentMutationWorkflowEntities()
+      try {
+        await refreshTaskPageAfterIndicatorMutation()
+        notifyApprovalStateRefresh({ source: 'strategic-task-mutation-withdraw' })
+      } catch (refreshError) {
+        logger.warn('[StrategicTaskView] 异动撤回成功，但看板刷新失败:', refreshError)
+        ElMessage.warning('异动已撤回成功，但看板刷新失败，请手动刷新页面确认最新状态')
+      }
+    } catch (error) {
+      ElMessage.error(error instanceof Error ? error.message : '撤回失败')
+    } finally {
+      loadingInstance.close()
+    }
+  }
+
   // 按任务整体下发（复用下发弹窗）
   const _handleBatchDistributeByTask = (group: {
     taskContent: string
@@ -6507,7 +7099,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     addNewRow,
     addRowFormRef,
     approvalEntryButtonText,
+    approvalEntryButtonTextWithMutation,
+    approvalEntryCanHandle,
     approvalFlowStatusMeta,
+    allDepartmentMutationPendingApprovals,
     approvalIndicators,
     approvalPreviewLoading,
     approvalSetupDialogVisible,
@@ -6614,7 +7209,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     mutationSubmitBlocked,
     mutationSubmitBlockedReason,
     mutationDraftCount,
-    reportMonthLabel,
+    reportMonth,
     getCategoryColor,
     getCategoryText,
     getCurrentActorUserId,
@@ -6645,6 +7240,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     handleApprovalRefresh,
     departmentMutationWorkflowEntities,
     loadDepartmentMutationWorkflowEntities,
+    isEntityMutationInFlight,
+    // 2026-10-30 修复：审批中心「计划审批」页签的异动卡片数据源此前从未导出——
+    // 页面解构得到 undefined，抽屉 prop 落到默认空数组，卡片/审批按钮永远不渲染
+    // （角标走模型闭包内的 isEntityMutationInFlight 不受影响，造成「角标亮、卡片无」）。
+    departmentMutationPendingApprovals,
     departmentPlanFamilyWorkflowEntities,
     loadDepartmentPlanFamilyWorkflowEntities,
     handleApprovalStatusPopoverShow,
@@ -6662,6 +7262,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     pendingCreatedIndicatorIds,
     submitMutationDraft,
     cancelMutationDraft,
+    // 2026-10-30（取消闭环）：取消异动按退回链状态分流 + 被驳回可感知提示
+    handleCancelMutation,
+    hasReturnedMutationChain,
+    returnedMutationChainCount,
     handleOpenApproval,
     handleRejectCurrentIndicatorWorkflow,
     handleSelectionChange,

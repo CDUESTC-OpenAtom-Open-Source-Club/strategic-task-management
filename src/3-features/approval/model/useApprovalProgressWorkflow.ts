@@ -701,88 +701,10 @@ export function useApprovalProgressWorkflow({
     }
   }
 
-  /**
-   * 异动撤回：与上报审批的「一键撤回」同源——都调 POST /workflows/{instanceId}/cancel，
-   * 后端 BusinessWorkflowApplicationService.cancelInstance 校验「只有发起人可撤回」，
-   * 且取消窗口由 AuditInstance.canRequesterWithdraw() 卡住（负责人通过后即不可撤回）。
-   * 撤回后走 WorkflowBusinessStatusSyncService → 清 mutation_status，指标回到稳定态。
-   */
-  function canCurrentUserWithdrawMutation(item: PlanApprovalDetailItem): boolean {
-    const instanceId = Number(item.instanceId)
-    if (!Number.isFinite(instanceId) || instanceId <= 0) {
-      return false
-    }
-    // 只有发起人可撤回：卡片上的提交人姓名与当前登录人比对
-    const currentUserName = String(
-      state.authStore.user?.realName || state.authStore.user?.userName || ''
-    ).trim()
-    const submitterName = String(item.submitterName || '').trim()
-    if (!currentUserName || !submitterName || currentUserName !== submitterName) {
-      return false
-    }
-    // 只在审批中可撤回
-    const stepName = String(item.currentStepName || '')
-    return !stepName.includes('终审') && !stepName.includes('分管校领导')
-  }
-
-  async function handleWithdrawMutation(item: PlanApprovalDetailItem) {
-    // 2026-10-22：同审批/驳回——一次异动提交对应多个实例，撤回必须整批一起撤，
-    // 否则会留下一半仍在审批中的实例。
-    const instanceIds = resolveMutationInstanceIds(item)
-    if (instanceIds.length === 0) {
-      ElMessage.warning('未找到该异动的审批实例，请刷新后重试')
-      return
-    }
-
-    try {
-      const batchSuffix =
-        instanceIds.length > 1 ? `\n\n本次异动共 ${instanceIds.length} 项，将一并撤回。` : ''
-      await ElMessageBox.confirm(
-        `确认撤回本次异动审批？${batchSuffix}\n\n撤回后异动回到未提交状态，改动内容保留，可重新修改后再发起。`,
-        '撤回异动审批',
-        { confirmButtonText: '确定撤回', cancelButtonText: '取消', type: 'warning' }
-      )
-    } catch {
-      return
-    }
-
-    const loadingInstance = ElLoading.service({
-      lock: true,
-      text: '正在撤回...',
-      background: 'rgba(0, 0, 0, 0.7)'
-    })
-    try {
-      const { cancelWorkflow } = await import('@/features/workflow/api/mutations')
-      const failures: string[] = []
-      for (const instanceId of instanceIds) {
-        try {
-          const response = await cancelWorkflow(String(instanceId))
-          if (!response.success) {
-            failures.push(`${instanceId}: ${response.message || '撤回失败'}`)
-          }
-        } catch (error) {
-          failures.push(`${instanceId}: ${(error as Error)?.message || '撤回失败'}`)
-        }
-      }
-      if (failures.length > 0) {
-        ElMessage.error(`有 ${failures.length} 项撤回未成功：${failures[0]}`)
-        return
-      }
-      ElMessage.success(
-        instanceIds.length > 1
-          ? `已撤回本次异动全部 ${instanceIds.length} 项`
-          : '已撤回本次异动审批'
-      )
-      await refreshPlanApprovalAfterMutation()
-      // 异动卡片的列表由父组件（StrategicTaskView）按部门拉取后经 prop 传入，
-      // 这里必须通知父组件重新拉取，否则撤回成功后卡片仍停留在「审批中」。
-      emit('refresh', {})
-    } catch (error) {
-      ElMessage.error(error instanceof Error ? error.message : '撤回失败')
-    } finally {
-      loadingInstance.close()
-    }
-  }
+  // 2026-10-30 用户定案：异动卡「撤回」按钮移除（撤回统一走战略任务页工具栏的
+  // 多态「撤回」按钮），canCurrentUserWithdrawMutation / handleWithdrawMutation
+  // 随之删除——异动撤回的取消接口（POST /workflows/{id}/cancel）改由
+  // useStrategicTaskView 的工具栏撤回分支调用，口径保持同源。
 
   async function handleApprovePlanBatch() {
     if (!state.hasPlanApprovalPermission.value) {
@@ -1312,8 +1234,14 @@ export function useApprovalProgressWorkflow({
     () => props.modelValue,
     async val => {
       if (val) {
+        // 2026-10-30 用户定案：有待处理内容默认落「计划审批」，纯查看才落「审批历史」。
+        // 待处理口径 = 计划在审 + 关联上报在审 + 异动在审 + 通用上报待办；
+        // 此前漏掉异动/上报待办，按钮处于「处理审批」状态时抽屉会落在空的「审批历史」页签。
         state.activeTab.value = props.showPlanApprovals
-          ? state.isPlanPendingApproval.value || state.hasRelatedPlanReportActiveWorkflow.value
+          ? state.isPlanPendingApproval.value ||
+            state.hasRelatedPlanReportActiveWorkflow.value ||
+            state.pendingMutationApprovalItems.value.length > 0 ||
+            state.pendingReportApprovalItems.value.length > 0
             ? 'pending-plans'
             : 'history'
           : state.hasWorkflowTabContent.value
@@ -1465,12 +1393,10 @@ export function useApprovalProgressWorkflow({
     ensureWorkflowUserAvatarLoaded,
     formatTime,
     canCurrentUserHandleMutationApproval,
-    canCurrentUserWithdrawMutation,
     handleApproveMutation,
     handleApprovePlanBatch,
     handleRejectMutation,
     handleRejectPlanBatch,
-    handleWithdrawMutation,
     loadPendingPlanApprovals,
     loadPlanWorkflowDetail,
     loadPlanWorkflowHistoryCards,

@@ -3533,15 +3533,32 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       [field]: valueToSave
     } as Record<string, unknown>
 
+    // 2026-10-30 用户定案：与战略任务页同口径改乐观更新——本地先行生效、
+    // 接口后台落库，「保存中」不再展示；失败回滚本地值并报错。
+    // 权重合计等汇总由 refreshDistributionData 后台静默刷新（原实现
+    // await 整表刷新才结束保存，单格编辑体感接近秒级）。
+    const localPatch = { ...updates }
+    const revertSnapshot: Record<string, unknown> = {}
+    for (const patchKey of Object.keys(localPatch)) {
+      revertSnapshot[patchKey] = (child as Record<string, unknown>)[patchKey]
+    }
+
     savingChildId.value = child.id.toString()
-    savingChildField.value = field
     cancelChildEdit()
+    strategicStore.patchIndicator(child.id.toString(), localPatch as Partial<StrategicIndicator>)
 
     try {
       await strategicStore.updateIndicator(child.id.toString(), updates)
-      await refreshDistributionData()
+      // 刷新失败不应报「保存失败」（落库已成功）：静默记日志，等下次刷新收敛
+      void refreshDistributionData().catch(refreshError => {
+        logger.warn('[IndicatorDistributeView] 保存后刷新汇总数据失败:', refreshError)
+      })
       broadcastDistributionMutation()
     } catch (error) {
+      strategicStore.patchIndicator(
+        child.id.toString(),
+        revertSnapshot as Partial<StrategicIndicator>
+      )
       logger.error('[IndicatorDistributeView] 保存子指标编辑失败:', {
         indicatorId: child.id,
         field,
@@ -3981,6 +3998,14 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     }
 
     return collegeOverallStatus.value
+  })
+
+  // 2026-10-30 用户定案：下发管理页与站内任务页/指标填报页统一展示「当前填报周期」，
+  // 由共享组件 ReportCycleTag 渲染。数据源 = 选中学院计划详情的 dispatchMonth
+  // （后端按计划审批实例完成时刻所在月计算），与任务看板同源。
+  const currentCollegeReportMonth = computed(() => {
+    const raw = String(currentActiveCollegePlan.value?.dispatchMonth || '').trim()
+    return /^\d{6}$/.test(raw) ? raw : ''
   })
 
   // 计算当前选中学院基础性任务下子指标的总权重
@@ -4704,6 +4729,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     currentCollegePlanReportSummary,
     currentCollegePlanReportUiStatus,
     currentCollegePlanStatusMeta,
+    currentCollegeReportMonth,
     currentCollegeWorkflowDetail,
     currentDepartmentOrgId,
     currentDepartmentOrgIdFromTable,

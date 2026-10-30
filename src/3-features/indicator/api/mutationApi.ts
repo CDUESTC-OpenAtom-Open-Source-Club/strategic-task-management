@@ -21,6 +21,28 @@ export interface MutationInProgressItem {
 }
 
 /**
+ * 2026-10-30 用户定案（异动驳回后重报/取消闭环）：
+ * 「退回待重报」的异动链条目（退回填报人的活链，取消异动按钮数据源）。
+ * 2026-10-30 定案修订：发起人撤回与驳回退回同构（均为 WITHDRAWN、completed_at
+ * 为空、含退回提交步骤），撤回后的链同样出现在本清单。
+ */
+export interface ReturnedMutationChainItem {
+  instance_id: number
+  indicator_id: number
+  /** 异动实体类型：INDICATOR=指标异动，TASK=战略任务改名异动 */
+  entity_type?: 'INDICATOR' | 'TASK'
+  /** 同一次「发起异动」批次号，取消时后端按批次整链终结 */
+  batch_id?: string | null
+  requester_id?: number | null
+  submitter_name?: string | null
+  indicator_desc: string
+  status: string
+  created_at: string
+  /** 最近一次驳回意见（审批节点驳回时填写），供被驳回可感知提示展示 */
+  reject_comment?: string | null
+}
+
+/**
  * P5 指标异动 API（仅战略发展部可发起）
  */
 export const mutationApi = {
@@ -103,5 +125,35 @@ export const mutationApi = {
     >
   > {
     return apiClient.get('/indicators/mutation-approvals', { params: { orgId } })
+  },
+
+  /**
+   * 2026-10-30 用户定案（异动驳回后重报/取消闭环）：
+   * 「退回待重报」异动链清单（被驳回可感知提示 + 取消异动按钮可点性）。
+   * 只含被驳回退回填报人的活链（WITHDRAWN、未完结），不含审批中与已终结实例。
+   */
+  async returnedChains(orgId: number | string): Promise<ApiResponse<ReturnedMutationChainItem[]>> {
+    return apiClient.get('/indicators/mutations/returned', { params: { orgId } })
+  },
+
+  /**
+   * 2026-10-30 用户定案（异动驳回后重报/取消闭环）：
+   * 「取消异动」终态动作——把该实例所在批次的全部「退回待重报」异动实例
+   * 一次性终结为 CANCELLED（completedAt=now），整链归入审批历史。
+   * 仅异动发起人可操作（后端校验）。
+   */
+  async cancelReturned(instanceId: number | string): Promise<ApiResponse<number[]>> {
+    return apiClient.post(`/indicators/mutations/${instanceId}/cancel-returned`, {})
+  },
+
+  /**
+   * 2026-10-30 用户定案（异动撤回=退回填报人活链）：
+   * 发起人在审批中的「撤回」把该实例所在批次的全部在审异动实例一次性退回
+   * 填报人节点（实例 WITHDRAWN、completed_at 为空、追加退回提交步骤，
+   * 形态与驳回退回同构）——链保持存活：可修改后重新发起（resume 复用同链），
+   * 或「取消异动」终结归审批历史。仅异动发起人可操作（后端校验）。
+   */
+  async withdraw(instanceId: number | string): Promise<ApiResponse<number[]>> {
+    return apiClient.post(`/indicators/mutations/${instanceId}/withdraw`, {})
   }
 }

@@ -1,32 +1,54 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { mutationApi, type MutationHistoryItem } from '@/features/indicator/api/mutationApi'
+import { computed, onMounted, watch } from 'vue'
+import type { MutationHistoryItem } from '@/features/indicator/api/mutationApi'
+import {
+  MUTATION_FIELD_LABELS,
+  countMutationHistoryByFields,
+  getMutationHistory,
+  loadMutationHistory,
+  mutationHistoryRevision,
+  projectMutationHistoryByFields
+} from '@/features/indicator/model/mutationHistory'
 
 const props = withDefaults(
   defineProps<{
     indicatorId?: number | string | null
     taskId?: number | string | null
+    /**
+     * 只统计改动了这些字段的异动（后端 changed_fields 键）。
+     * 不传 = 统计该实体的全部异动。徽标落在哪一列，就传哪一列对应的字段。
+     */
+    fields?: string[] | null
+    /**
+     * 2026-10-30 用户定案：该实体是否处于在途异动（审批中）。
+     * 由宿主按审批实例数据判定后传入；为 true 时浮层顶部打「在异动当中」状态、角标变警示色。
+     */
+    mutationInFlight?: boolean
   }>(),
-  { indicatorId: null, taskId: null }
+  { indicatorId: null, taskId: null, fields: null, mutationInFlight: false }
 )
 
-const FIELD_LABELS: Record<string, string> = {
-  indicator_desc: '指标内容',
-  weight_percent: '权重',
-  name: '战略任务',
-  desc: '任务描述',
-  remark: '备注'
-}
-
-const count = ref(0)
-const history = ref<MutationHistoryItem[]>([])
-const loaded = ref(false)
+const scope = computed(() => (props.taskId ? ('task' as const) : ('indicator' as const)))
+const entityId = computed(() => props.taskId ?? props.indicatorId)
 
 const entityLabel = computed(() => (props.taskId ? '战略任务' : '核心指标'))
-const hasEntity = computed(() => Boolean(props.taskId ?? props.indicatorId))
+const hasEntity = computed(() => Boolean(entityId.value))
+
+/** 共享缓存里的原始历史（响应式：缓存失效/更新后自动重算） */
+const history = computed<MutationHistoryItem[]>(() =>
+  getMutationHistory(scope.value, entityId.value)
+)
+
+/**
+ * 徽标只展示自己那一列涉及的字段。2026-10-30 用户反馈：原行级过滤下，
+ * 同一条记录里「指标内容」的变更会跟着出现在权重列圆点的浮层里——
+ * 这里改为行级过滤+字段级投影，浮层只渲染本列跟踪字段的交集。
+ */
+const visibleHistory = computed(() => projectMutationHistoryByFields(history.value, props.fields))
+const count = computed(() => countMutationHistoryByFields(history.value, props.fields))
 
 function fieldName(key: string): string {
-  return FIELD_LABELS[key] || key
+  return MUTATION_FIELD_LABELS[key] || key
 }
 
 function formatValue(value: unknown): string {
@@ -43,29 +65,21 @@ function formatTime(value: string | null | undefined): string {
   return String(value).replace('T', ' ').slice(0, 16)
 }
 
-async function load(): Promise<void> {
-  if (loaded.value) {
-    return
-  }
-  const id = props.taskId ?? props.indicatorId
+function reload(): void {
+  const id = entityId.value
   if (!id) {
-    loaded.value = true
     return
   }
-  try {
-    const response = props.taskId
-      ? await mutationApi.taskHistory(id)
-      : await mutationApi.history(id)
-    history.value = response.data ?? []
-  } catch {
-    history.value = []
-  } finally {
-    count.value = history.value.length
-    loaded.value = true
-  }
+  void loadMutationHistory(scope.value, id)
 }
 
-onMounted(load)
+onMounted(reload)
+
+// 实体或统计字段变了 → 重新拉取
+watch(() => [props.indicatorId, props.taskId, ...(props.fields ?? [])], reload)
+
+// 发起异动后缓存失效 → 重新拉取，徽标计数跟着变
+watch(mutationHistoryRevision, reload)
 </script>
 
 <template>
@@ -83,17 +97,25 @@ onMounted(load)
       <button
         type="button"
         class="mutation-badge__trigger"
+        :class="{ 'mutation-badge__trigger--in-flight': mutationInFlight }"
         :aria-label="`${entityLabel}已更改 ${count} 次`"
-        :title="`已更改 ${count} 次`"
+        :title="mutationInFlight ? `在异动当中，已更改 ${count} 次` : `已更改 ${count} 次`"
         @click.stop
+        @dblclick.stop
+        @mousedown.stop
       >
         {{ count }}
       </button>
     </template>
     <div class="mutation-history">
       <div class="mutation-history__title">{{ entityLabel }}异动历史</div>
-      <div v-if="count === 0" class="mutation-history__empty">暂无异动记录</div>
-      <div v-for="item in history" :key="item.log_id" class="mutation-history__item">
+      <!-- 2026-10-30 用户定案：异动在途时打「在异动当中」状态——发起后审批进展一目了然 -->
+      <div v-if="mutationInFlight" class="mutation-history__in-flight">
+        <el-tag type="warning" size="small" effect="light">在异动当中</el-tag>
+        <span class="mutation-history__in-flight-text">正在异动审批中，通过后生效</span>
+      </div>
+      <div v-if="visibleHistory.length === 0" class="mutation-history__empty">暂无异动记录</div>
+      <div v-for="item in visibleHistory" :key="item.log_id" class="mutation-history__item">
         <div class="mutation-history__time">{{ formatTime(item.created_at) }}</div>
         <div
           v-for="(change, key) in item.changed_fields || {}"
@@ -133,6 +155,17 @@ onMounted(load)
   background: #ecf5ff;
   color: #409eff;
 }
+/* 2026-10-30：在途异动时角标变警示色，与浮层「在异动当中」状态呼应 */
+.mutation-badge__trigger--in-flight {
+  border-color: #f3d19e;
+  background: #fdf6ec;
+  color: #e6a23c;
+}
+.mutation-badge__trigger--in-flight:hover {
+  border-color: #e6a23c;
+  background: #fdf6ec;
+  color: #b88230;
+}
 </style>
 
 <!-- 浮层被 teleport 到 body，需用非 scoped 样式配合 popper-class -->
@@ -153,6 +186,15 @@ onMounted(load)
 }
 .mutation-history-popper .mutation-history__empty {
   color: #909399;
+}
+.mutation-history-popper .mutation-history__in-flight {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.mutation-history-popper .mutation-history__in-flight-text {
+  color: var(--el-color-warning);
 }
 .mutation-history-popper .mutation-history__item {
   border-top: 1px solid #f0f0f0;

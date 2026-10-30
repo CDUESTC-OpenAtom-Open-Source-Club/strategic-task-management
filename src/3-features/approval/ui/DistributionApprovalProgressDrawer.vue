@@ -61,7 +61,6 @@ const {
   cacheWorkflowUserAvatar,
   canCurrentUserHandlePlanApproval,
   canCurrentUserHandleMutationApproval,
-  canCurrentUserWithdrawMutation,
   canLookupWorkflowUsers,
   currentDetailWorkflow,
   currentIndicator,
@@ -109,7 +108,6 @@ const {
   handleRejectPlanBatch,
   handleSaveTemplate,
   handleUpdateApprover,
-  handleWithdrawMutation,
   hasApprovalData,
   hasDisplayableApprovalContent,
   hasPlanApprovalPermission,
@@ -532,14 +530,9 @@ const displayedCurrentPlanApprovalName = computed(() => {
                       >审批驳回</el-button
                     >
                   </template>
-                  <!-- 撤回：与上报审批同源（POST /workflows/{id}/cancel），仅发起人且未过窗口时可见 -->
-                  <el-button
-                    v-if="canCurrentUserWithdrawMutation(item)"
-                    type="warning"
-                    @click="handleWithdrawMutation(item)"
-                  >
-                    撤回
-                  </el-button>
+                  <!-- 2026-10-30 用户定案：异动卡不再放「撤回」——撤回统一走战略任务页
+                       工具栏的「撤回」按钮（多态撤回，异动在审时改指撤回异动），
+                       卡片只保留查看详情与审批人操作 -->
                 </div>
               </div>
               <!-- 2026-10-23 修复（上报审批卡片不显示）：月报待办独立成卡。
