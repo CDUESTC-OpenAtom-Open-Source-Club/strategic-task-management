@@ -97,6 +97,11 @@ import { usePlanStore } from '@/features/plan/model/store'
 import { useStrategicStore } from '@/features/task/model/strategic'
 import { useTimeContextStore } from '@/shared/lib/timeContext'
 import { logger } from '@/shared/lib/utils/logger'
+import {
+  buildUserFacingErrorMessage,
+  claimErrorToast,
+  markErrorHandled
+} from '@/shared/lib/utils/errorToast'
 import { getMyPendingTasks } from '@/features/workflow/api/queries'
 import { useApprovalStore } from '@/features/approval/model/store'
 import {
@@ -995,80 +1000,11 @@ export function useApprovalProgressDrawer(
     return items
   })
 
-  /**
-   * 2026-10-29 修复（计划审批页签双卡）：同一上报实例此前会渲染两张卡——
-   * 上方 A 卡（currentPlanApprovalSummary 完整卡：提交人/时间/步骤/停留时长/操作）
-   * 与下方 B 卡（externalWorkflowTodoItems 精简卡）。根因是两套卡片来源未按
-   * 实例去重：A 卡来自消息上下文加载的实例详情，B 卡来自 my-tasks 上报待办，
-   * 同一条 PLAN_REPORT 实例两边各出现一次。
-   * 修复：A 卡已在展示（showPlanPendingCard 且带消息实体 id）时，
-   * 待办精简卡按实体 id 剔除同实例项；A 卡缺失（铃铛直开无上下文）时
-   * 精简卡照常保留，审批入口不受影响。
-   */
-  const planApprovalTodoCards = computed<Record<string, any>[]>(() => {
-    const items = externalWorkflowTodoItems.value
-    if (!showPlanPendingCard.value) {
-      return items
-    }
-    const aCardEntityId = toPositiveNumber(props.workflowEntityId)
-    if (!aCardEntityId) {
-      return items
-    }
-    return items.filter(item => toPositiveNumber(item.entityId) !== aCardEntityId)
-  })
-
-  /**
-   * 2026-10-29 用户定案（上报待办统一渲染 A 卡完整形态）：
-   * 精简卡（B 卡）仅为「无实例详情时的回退」——抽屉打开后异步加载每条
-   * 在审上报待办的实例详情（提交人/提交时间/当前步骤），装配成与 A 卡
-   * 相同的完整字段渲染；加载失败回退精简展示，保证可用。
-   */
-  const reportTodoDetailMap = ref<Record<string, Record<string, any> | null>>({})
-  watch(
-    () =>
-      planApprovalTodoCards.value
-        .map(item => String(item.instanceId || item.taskId || ''))
-        .filter(Boolean)
-        .join(','),
-    async joinedIds => {
-      if (!joinedIds) {
-        return
-      }
-      for (const id of joinedIds.split(',')) {
-        if (reportTodoDetailMap.value[id] !== undefined) {
-          continue
-        }
-        try {
-          const detail = await getWorkflowInstanceDetail(id)
-          reportTodoDetailMap.value = {
-            ...reportTodoDetailMap.value,
-            [id]: (detail as unknown as Record<string, any>) || null
-          }
-        } catch (error) {
-          logger.warn('[ApprovalDrawer] 上报待办实例详情加载失败:', error)
-          reportTodoDetailMap.value = { ...reportTodoDetailMap.value, [id]: null }
-        }
-      }
-    },
-    { immediate: true }
-  )
-
-  const reportTodoDetailCards = computed<Record<string, any>[]>(() =>
-    planApprovalTodoCards.value.map(item => {
-      const id = String(item.instanceId || item.taskId || '')
-      const detail = reportTodoDetailMap.value[id]
-      if (!detail) {
-        return item
-      }
-      return {
-        ...item,
-        submitterName:
-          normalizeDisplayName(detail.starterName) || item.submitterName || item.assigneeName,
-        createdAt: detail.startedAt || item.createdAt,
-        currentStepName: detail.currentStepName || item.currentStepName
-      }
-    })
-  )
+  // 说明（2026-10-29）：计划审批待办卡片相关状态（planApprovalTodoCards /
+  // reportTodoDetailMap / reportTodoDetailCards）已下移到本文件更靠后的
+  // 「showPlanPendingCard」声明之后——它们依赖 showPlanPendingCard，
+  // 若声明在其之前会触发暂时性死区（TDZ）错误。
+  // 见文件末尾「上报待办卡片」区块。
 
   /**
    * 2026-10-27 用户定案（与分发页审批抽屉同步）：
@@ -3847,6 +3783,54 @@ export function useApprovalProgressDrawer(
   // 列表直接展示当前组织的全部待审批项。
   const filteredPlanApprovalItems = computed(() => currentPlanApprovalItems.value)
 
+  /**
+   * ElMessageBox.prompt 被用户「取消 / 关闭」时，promise reject 的是字符串
+   * 'cancel' / 'close'（不是 Error）。这类情况不是失败，不能弹错误提示。
+   */
+  function isPromptDismissed(error: unknown): boolean {
+    return error === 'cancel' || error === 'close'
+  }
+
+  /**
+   * 提取错误文案：
+   * - 响应拦截器 reject 的是统一错误对象（{ message, code, ... }），不是 Error 实例
+   * - 也有直接抛 Error 的路径
+   * 两者都取 .message；取不到时返回空串由调用方兜底。
+   */
+  function extractErrorMessage(error: unknown): string {
+    if (typeof error === 'string') {
+      return error
+    }
+    if (error instanceof Error) {
+      return error.message
+    }
+    const message = (error as { message?: unknown } | null | undefined)?.message
+    return typeof message === 'string' ? message : ''
+  }
+
+  /**
+   * 提示一条审批失败信息（2026-10-29 N-02 修复）。
+   *
+   * - `markErrorHandled`：告诉响应拦截器「这条错误业务层已经提示过」，
+   *   拦截器的兜底提示据此跳过 → 同一条错误只弹一次（实测 409 场景原本弹两条）。
+   * - `claimErrorToast`：消息级去重，避免与其它层重复弹同一条文案。
+   * - 后端原文优先透出（中文原文直接用；英文原文用中文兜底 + 原文附注）。
+   */
+  function showApprovalErrorToast(error: unknown, fallbackText: string): void {
+    markErrorHandled(error)
+
+    const message = buildUserFacingErrorMessage(
+      extractErrorMessage(error),
+      fallbackText,
+      (error as { status?: number } | null | undefined)?.status
+    )
+
+    if (!claimErrorToast(message)) {
+      return
+    }
+    ElMessage.error(message)
+  }
+
   async function handleApprovePlanBatch() {
     if (!hasPlanApprovalPermission.value && !hasAnyPlanApprovalRole.value) {
       ElMessage.warning('当前角色或组织范围不匹配该审批节点，无法执行审批通过')
@@ -3907,8 +3891,15 @@ export function useApprovalProgressDrawer(
           loadingInstance.close()
         }
         return
-      } catch {
-        return
+      } catch (error) {
+        // 用户取消输入框：不是失败，静默返回（抽屉保持打开）
+        if (isPromptDismissed(error)) {
+          return
+        }
+        // 2026-10-29 修复（N-02「点了没反应」）：响应拦截器 reject 后，
+        // 错误原先被整个吞掉——既没有提示也没有回源刷新，弹窗像卡住不动。
+        // 这里把后端返回的原文透出，抽屉保持打开。
+        showApprovalErrorToast(error, '审批失败')
       }
     }
 
@@ -3967,8 +3958,14 @@ export function useApprovalProgressDrawer(
       } finally {
         loadingInstance.close()
       }
-    } catch {
-      // 用户取消
+    } catch (error) {
+      // 用户取消输入框：不是失败，静默返回
+      if (isPromptDismissed(error)) {
+        return
+      }
+      // 2026-10-29 修复（N-02）：批量通过时实例接口抛错原先被整个吞掉，
+      // 用户只看到「点了没反应」。这里把后端原文透出。
+      showApprovalErrorToast(error, '审批失败')
     }
   }
 
@@ -4027,8 +4024,15 @@ export function useApprovalProgressDrawer(
           loadingInstance.close()
         }
         return
-      } catch {
-        return
+      } catch (error) {
+        // 用户取消输入框：不是失败，静默返回（抽屉保持打开）
+        if (isPromptDismissed(error)) {
+          return
+        }
+        // 2026-10-29 修复（N-02「点了没反应」）：响应拦截器 reject 后，
+        // 错误原先被整个吞掉——既没有提示也没有回源刷新，弹窗像卡住不动。
+        // 这里把后端返回的原文透出，抽屉保持打开。
+        showApprovalErrorToast(error, '驳回失败')
       }
     }
 
@@ -4081,8 +4085,14 @@ export function useApprovalProgressDrawer(
       } finally {
         loadingInstance.close()
       }
-    } catch {
-      // 用户取消
+    } catch (error) {
+      // 用户取消输入框：不是失败，静默返回
+      if (isPromptDismissed(error)) {
+        return
+      }
+      // 2026-10-29 修复（N-02）：批量驳回时实例接口抛错原先被整个吞掉，
+      // 用户只看到「点了没反应」。这里把后端原文透出。
+      showApprovalErrorToast(error, '驳回失败')
     }
   }
 
@@ -4136,8 +4146,14 @@ export function useApprovalProgressDrawer(
       } finally {
         loadingInstance.close()
       }
-    } catch {
-      // 用户取消
+    } catch (error) {
+      // 用户取消输入框：不是失败，静默返回
+      if (isPromptDismissed(error)) {
+        return
+      }
+      // 2026-10-29 修复（N-02）：待办审批接口抛错原先被整个吞掉，
+      // 用户只看到「点了没反应」。这里把后端原文透出。
+      showApprovalErrorToast(error, '审批失败')
     }
   }
 
@@ -4178,8 +4194,14 @@ export function useApprovalProgressDrawer(
       } finally {
         loadingInstance.close()
       }
-    } catch {
-      // 用户取消
+    } catch (error) {
+      // 用户取消输入框：不是失败，静默返回
+      if (isPromptDismissed(error)) {
+        return
+      }
+      // 2026-10-29 修复（N-02）：待办审批接口抛错原先被整个吞掉，
+      // 用户只看到「点了没反应」。这里把后端原文透出。
+      showApprovalErrorToast(error, '驳回失败')
     }
   }
 
@@ -4471,6 +4493,97 @@ export function useApprovalProgressDrawer(
     }
     return Boolean(currentPlanApprovalSummary.value)
   })
+
+  // ==========================================================================
+  // 上报待办卡片（planApprovalTodoCards / reportTodoDetailMap /
+  // reportTodoDetailCards）
+  //
+  // 2026-10-29 修复（TDZ / ReferenceError）：
+  // 该区块原先声明在本文件更靠前的位置，但 `planApprovalTodoCards` 的 getter
+  // 会读取 `showPlanPendingCard.value`，而 `showPlanPendingCard` 的 const 声明
+  // 在其之后 —— 于是 `reportTodoDetailMap` 上的
+  // `watch(..., { immediate: true })` 在 setup 期强制求值时命中暂时性死区，
+  // 抛出 “Cannot access 'showPlanPendingCard' before initialization”，
+  // 导致 8 个页面挂载抽屉时直接报错。
+  //
+  // 修复：把整块下移到 `showPlanPendingCard` 声明之后（此处），
+  // 保证声明先于使用；消费方（返回值 4871-4872 / 模板渲染）与声明顺序无关。
+  // ==========================================================================
+
+  /**
+   * 2026-10-29 修复（计划审批页签双卡）：同一上报实例此前会渲染两张卡——
+   * 上方 A 卡（currentPlanApprovalSummary 完整卡：提交人/时间/步骤/停留时长/操作）
+   * 与下方 B 卡（externalWorkflowTodoItems 精简卡）。根因是两套卡片来源未按
+   * 实例去重：A 卡来自消息上下文加载的实例详情，B 卡来自 my-tasks 上报待办，
+   * 同一条 PLAN_REPORT 实例两边各出现一次。
+   * 修复：A 卡已在展示（showPlanPendingCard 且带消息实体 id）时，
+   * 待办精简卡按实体 id 剔除同实例项；A 卡缺失（铃铛直开无上下文）时
+   * 精简卡照常保留，审批入口不受影响。
+   */
+  const planApprovalTodoCards = computed<Record<string, any>[]>(() => {
+    const items = externalWorkflowTodoItems.value
+    if (!showPlanPendingCard.value) {
+      return items
+    }
+    const aCardEntityId = toPositiveNumber(props.workflowEntityId)
+    if (!aCardEntityId) {
+      return items
+    }
+    return items.filter(item => toPositiveNumber(item.entityId) !== aCardEntityId)
+  })
+
+  /**
+   * 2026-10-29 用户定案（上报待办统一渲染 A 卡完整形态）：
+   * 精简卡（B 卡）仅为「无实例详情时的回退」——抽屉打开后异步加载每条
+   * 在审上报待办的实例详情（提交人/提交时间/当前步骤），装配成与 A 卡
+   * 相同的完整字段渲染；加载失败回退精简展示，保证可用。
+   */
+  const reportTodoDetailMap = ref<Record<string, Record<string, any> | null>>({})
+  watch(
+    () =>
+      planApprovalTodoCards.value
+        .map(item => String(item.instanceId || item.taskId || ''))
+        .filter(Boolean)
+        .join(','),
+    async joinedIds => {
+      if (!joinedIds) {
+        return
+      }
+      for (const id of joinedIds.split(',')) {
+        if (reportTodoDetailMap.value[id] !== undefined) {
+          continue
+        }
+        try {
+          const detail = await getWorkflowInstanceDetail(id)
+          reportTodoDetailMap.value = {
+            ...reportTodoDetailMap.value,
+            [id]: (detail as unknown as Record<string, any>) || null
+          }
+        } catch (error) {
+          logger.warn('[ApprovalDrawer] 上报待办实例详情加载失败:', error)
+          reportTodoDetailMap.value = { ...reportTodoDetailMap.value, [id]: null }
+        }
+      }
+    },
+    { immediate: true }
+  )
+
+  const reportTodoDetailCards = computed<Record<string, any>[]>(() =>
+    planApprovalTodoCards.value.map(item => {
+      const id = String(item.instanceId || item.taskId || '')
+      const detail = reportTodoDetailMap.value[id]
+      if (!detail) {
+        return item
+      }
+      return {
+        ...item,
+        submitterName:
+          normalizeDisplayName(detail.starterName) || item.submitterName || item.assigneeName,
+        createdAt: detail.startedAt || item.createdAt,
+        currentStepName: detail.currentStepName || item.currentStepName
+      }
+    })
+  )
 
   const showPlanHistoryCard = computed(() => {
     return Boolean(props.showPlanApprovals && historicalPlanApprovalItems.value.length > 0)
