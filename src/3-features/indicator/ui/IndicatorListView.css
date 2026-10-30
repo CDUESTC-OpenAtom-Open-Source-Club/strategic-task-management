@@ -947,3 +947,20 @@
   max-height: 320px;
   overflow-y: auto;
 }
+
+/* 2026-10-30 P0-3：鉴定进度等级行内调整（与战略任务管理页同构） */
+.manual-alert-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.manual-alert-tag--clickable {
+  cursor: pointer;
+}
+
+.manual-alert-tag--locked {
+  cursor: pointer;
+  opacity: 0.85;
+}

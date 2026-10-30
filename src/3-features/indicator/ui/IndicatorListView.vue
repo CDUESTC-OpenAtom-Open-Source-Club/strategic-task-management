@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
 import { useLatestIndicatorFill } from '@/features/indicator/model/useLatestIndicatorFill'
 // 2026-10-28 华年定案：三个页面列宽统一，唯一来源见 tableColumns.ts
@@ -19,7 +19,7 @@ import {
   Refresh,
   Calendar
 } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import type { StrategicIndicator } from '@/shared/types'
 import {
   buildAttachmentNameCell,
@@ -43,6 +43,10 @@ import {
   type IndicatorAttachmentSummaryMap
 } from '@/features/indicator/model/indicatorAttachmentSummary'
 import { ApprovalProgressDrawer } from '@/features/approval'
+import {
+  useIndicatorAppraisal,
+  type IndicatorAppraisalLevel
+} from '@/features/indicator/model/useIndicatorAppraisal'
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import { truncateText } from '@/shared/lib/utils/formatters'
 import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
@@ -583,6 +587,67 @@ const getManualAlertTagType = (severity?: ManualAlertSeverity) =>
   getManualAlertOption(severity).type
 
 const getMonthlyExpectedProgress = () => {
+  // ============================================================================
+  // 2026-10-30 P0-3：补「鉴定进度等级」写入位（上报审批链行内鉴定）
+  //
+  // 背景：鉴定进度等级此前只有战略任务管理页有写入入口，指标填报页这一列纯只读，
+  // 导致「上报链可评级节点要求全部指标已评定」与「无人能评级」构成死锁
+  // （本地上报实例实测 409：资源冲突：存在未评定的鉴定进度等级）。
+  // 此处复用 useIndicatorAppraisal（后端 canAppraise 判定谁能改），与战略任务页同构。
+  // ============================================================================
+  const {
+    load: loadIndicatorAppraisalContexts,
+    canAppraise: canAppraiseIndicator,
+    getLevel: getIndicatorAppraisalLevel,
+    getLockHint: getIndicatorAppraisalLockHint,
+    save: saveIndicatorAppraisalLevel
+  } = useIndicatorAppraisal()
+
+  watch(
+    () => (indicators.value ?? []).map(item => String(item.id)).join(','),
+    () => {
+      void loadIndicatorAppraisalContexts((indicators.value ?? []).map(item => item.id))
+    },
+    { immediate: true }
+  )
+
+  /** 行内调整鉴定等级：确认后写报告快照，后端同步 Alert 手动等级 */
+  const handleAppraisalChange = async (
+    row: { id: string | number; name?: string; manualAlertSeverity?: ManualAlertSeverity },
+    value: ManualAlertSeverity
+  ) => {
+    const level: IndicatorAppraisalLevel =
+      value === null ? null : (value as IndicatorAppraisalLevel)
+    const previous = getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity ?? null)
+    if (previous === level) {
+      return
+    }
+
+    const label = getManualAlertLabel(level)
+    try {
+      await ElMessageBox.confirm(
+        `确认将「${row.name || row.indicatorDesc || '该指标'}」的鉴定进度等级调整为「${label}」？`,
+        '调整鉴定进度等级',
+        {
+          confirmButtonText: '确认调整',
+          cancelButtonText: '取消',
+          type: level ? 'warning' : 'info'
+        }
+      )
+      await saveIndicatorAppraisalLevel(row.id, level)
+      ElMessage.success('鉴定进度等级已调整')
+    } catch (error) {
+      if (error !== 'cancel' && error !== 'close') {
+        ElMessage.error(error instanceof Error ? error.message : '调整鉴定进度等级失败')
+      }
+    }
+  }
+
+  /** 锁定状态点击只提示一次（与战略任务页同口径） */
+  const handleAppraisalTagClick = (row: { id: string | number }) => {
+    ElMessage.info(getIndicatorAppraisalLockHint(row.id) || '上报期间才能解锁鉴定进度等级')
+  }
+
   const month = new Date().getMonth() + 1
   return Math.min(100, Math.round((month / 12) * 100))
 }
@@ -1017,17 +1082,62 @@ const handleExportIndicatorList = async () => {
                 label-class-name="manual-level-header"
               >
                 <template #default="{ row }">
-                  <!-- 2026-10-28：未评定统一显示「—」（与自评等级/进度说明等空值同风格）；
+                  <!-- 2026-10-30 P0-3：审批链行内鉴定（与战略任务管理页同构）。
+                       当前审批节点负责人可改（后端 canAppraise 判定）；其他人点击看锁定原因。
+                       未评定统一显示「—」（与自评等级/进度说明等空值同风格）；
                        已评定保留彩色 tag（深绿/绿/橙视觉口径） -->
-                  <el-tag
-                    v-if="row.manualAlertSeverity"
-                    :type="getManualAlertTagType(row.manualAlertSeverity)"
-                    :style="getProgressLevelTagStyle(row.manualAlertSeverity)"
-                    size="small"
-                  >
-                    {{ getManualAlertLabel(row.manualAlertSeverity) }}
-                  </el-tag>
-                  <span v-else style="color: #909399">—</span>
+                  <div class="manual-alert-cell">
+                    <el-dropdown
+                      v-if="canAppraiseIndicator(row.id)"
+                      trigger="click"
+                      @command="value => handleAppraisalChange(row, value as ManualAlertSeverity)"
+                    >
+                      <el-tag
+                        :type="
+                          getManualAlertTagType(
+                            getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
+                          )
+                        "
+                        :style="
+                          getProgressLevelTagStyle(
+                            getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
+                          )
+                        "
+                        size="small"
+                        class="manual-alert-tag--clickable"
+                      >
+                        {{
+                          getManualAlertLabel(
+                            getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
+                          )
+                        }}
+                      </el-tag>
+                      <template #dropdown>
+                        <el-dropdown-menu>
+                          <el-dropdown-item
+                            v-for="option in manualAlertOptions"
+                            :key="option.value || 'NONE'"
+                            :command="option.value"
+                          >
+                            {{ option.label }}
+                          </el-dropdown-item>
+                        </el-dropdown-menu>
+                      </template>
+                    </el-dropdown>
+                    <el-tag
+                      v-else-if="row.manualAlertSeverity"
+                      :type="getManualAlertTagType(row.manualAlertSeverity)"
+                      :style="getProgressLevelTagStyle(row.manualAlertSeverity)"
+                      size="small"
+                      class="manual-alert-tag--locked"
+                      @click="handleAppraisalTagClick(row)"
+                    >
+                      {{ getManualAlertLabel(row.manualAlertSeverity) }}
+                    </el-tag>
+                    <span v-else style="color: #909399" @click="handleAppraisalTagClick(row)">
+                      —
+                    </span>
+                  </div>
                 </template>
               </el-table-column>
               <!-- 2026-10-26 用户定案：上报资料列悬浮显示附件卡片（序号+文件名+类型），
