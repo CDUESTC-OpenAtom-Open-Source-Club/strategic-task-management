@@ -10,7 +10,7 @@ import { computed, ref } from 'vue'
  */
 const props = defineProps<{
   text: string
-  /** 超过该字数才弹出，与列表里的 truncateText(text, maxChars) 保持一致 */
+  /** 超过该字数才弹出（列表单元格现在完整换行展示，本面板作为长文的悬浮全文辅助） */
   maxChars?: number
 }>()
 

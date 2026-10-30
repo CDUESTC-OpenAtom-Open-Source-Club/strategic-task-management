@@ -65,7 +65,6 @@ import {
   MANUAL_ALERT_WORKFLOW_LOCKED_HINT,
   canEditManualAlertLevel
 } from '@/features/task/lib/warning-level'
-import { truncateText } from '@/shared/lib/utils/formatters'
 import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
 import type { ImportCommitResponse } from '@/features/import/api/businessImport'
 
@@ -1496,7 +1495,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                               <span
                                 class="indicator-name-text task-content-colored"
                                 :style="{ color: getCategoryColor(row.type2) }"
-                                >{{ truncateText(row.taskContent || '未关联任务', 50) }}</span
+                                >{{ row.taskContent || '未关联任务' }}</span
                               >
                             </FullTextPanel>
                           </el-tooltip>
@@ -1565,7 +1564,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                                         ? 'indicator-quantitative'
                                         : ''
                                   "
-                                  >{{ truncateText(row.name, 50) }}</span
+                                  >{{ row.name }}</span
                                 >
                               </FullTextPanel>
                             </el-tooltip>
@@ -1732,9 +1731,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         :disabled="(row.pendingRemark || '').length <= 50"
                         placement="top"
                       >
-                        <span>{{
-                          row.pendingRemark ? truncateText(row.pendingRemark, 50) : '—'
-                        }}</span>
+                        <span>{{ row.pendingRemark || '—' }}</span>
                       </el-tooltip>
                     </template>
                   </el-table-column>
@@ -1770,7 +1767,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                           placement="top"
                         >
                           <span class="indicator-name-text remark-text-wrap">{{
-                            row.remark ? truncateText(row.remark, 50) : '样例：双击编辑说明'
+                            row.remark || '样例：双击编辑说明'
                           }}</span>
                         </el-tooltip>
                       </div>
@@ -2245,15 +2242,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                                   : ''
                             "
                             >{{
-                              row.parentIndicatorId &&
-                              indicatorById.get(row.parentIndicatorId)?.name
-                                ? truncateText(
-                                    (row.parentIndicatorId &&
-                                      indicatorById.get(row.parentIndicatorId)?.name) ||
-                                      '',
-                                    50
-                                  )
-                                : '—'
+                              (row.parentIndicatorId &&
+                                indicatorById.get(row.parentIndicatorId)?.name) ||
+                              '—'
                             }}</span
                           >
                         </FullTextPanel>
@@ -2309,7 +2300,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                                         ? 'indicator-quantitative'
                                         : ''
                                   "
-                                  >{{ truncateText(row.name, 50) }}</span
+                                  >{{ row.name }}</span
                                 >
                               </FullTextPanel>
                             </el-tooltip>
@@ -2459,9 +2450,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         :disabled="(row.pendingRemark || '').length <= 50"
                         placement="top"
                       >
-                        <span>{{
-                          row.pendingRemark ? truncateText(row.pendingRemark, 50) : '—'
-                        }}</span>
+                        <span>{{ row.pendingRemark || '—' }}</span>
                       </el-tooltip>
                     </template>
                   </el-table-column>
@@ -2497,7 +2486,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                           placement="top"
                         >
                           <span class="indicator-name-text remark-text-wrap">{{
-                            row.remark ? truncateText(row.remark, 50) : '—'
+                            row.remark || '—'
                           }}</span>
                         </el-tooltip>
                       </div>

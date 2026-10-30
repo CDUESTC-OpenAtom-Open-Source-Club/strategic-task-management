@@ -502,15 +502,10 @@
   overflow: hidden;
 }
 
+/* 2026-10-30 用户定案：说明列完整换行展示、把单元格填满，不再两行截断 */
 .remark-text {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  text-overflow: ellipsis;
   word-break: break-word;
   line-height: 1.4;
-  max-height: 2.8em;
   width: 100%;
 }
 

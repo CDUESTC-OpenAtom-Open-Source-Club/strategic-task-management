@@ -15,7 +15,6 @@ import {
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { StrategicIndicator } from '@/shared/types'
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
-import { truncateText } from '@/shared/lib/utils/formatters'
 import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
 import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
 import {
@@ -1138,7 +1137,7 @@ const handleDistributionImportCommitted = async () => {
                                   ? 'indicator-qualitative'
                                   : 'indicator-quantitative'
                               "
-                              >{{ truncateText(row.child?.name || '未命名', 50) }}</span
+                              >{{ row.child?.name || '未命名' }}</span
                             >
                           </FullTextPanel>
                         </el-tooltip>
@@ -1170,7 +1169,7 @@ const handleDistributionImportCommitted = async () => {
                             <span
                               class="new-child-text"
                               :class="{ 'placeholder-text': !row.child.name }"
-                              >{{ truncateText(row.child.name || '点击输入名称', 50) }}</span
+                              >{{ row.child.name || '点击输入名称' }}</span
                             >
                           </FullTextPanel>
                         </el-tooltip>
@@ -1356,9 +1355,7 @@ const handleDistributionImportCommitted = async () => {
                         :disabled="(row.child?.pendingRemark || '').length <= 50"
                         placement="top"
                       >
-                        <span>{{
-                          row.child?.pendingRemark ? truncateText(row.child.pendingRemark, 50) : '—'
-                        }}</span>
+                        <span>{{ row.child?.pendingRemark || '—' }}</span>
                       </el-tooltip>
                     </template>
                     <template v-else>
@@ -1402,9 +1399,7 @@ const handleDistributionImportCommitted = async () => {
                           :disabled="(row.child?.remark || '').length <= 50"
                           placement="top"
                         >
-                          <span class="remark-text">{{
-                            row.child?.remark ? truncateText(row.child.remark, 50) : '-'
-                          }}</span>
+                          <span class="remark-text">{{ row.child?.remark || '-' }}</span>
                         </el-tooltip>
                       </div>
                     </template>

@@ -48,7 +48,6 @@ import {
   type IndicatorAppraisalLevel
 } from '@/features/indicator/model/useIndicatorAppraisal'
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
-import { truncateText } from '@/shared/lib/utils/formatters'
 import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
 import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
 import {
@@ -952,7 +951,7 @@ const handleExportIndicatorList = async () => {
                       <span
                         class="task-content-colored"
                         :style="{ color: getTaskTypeColor(row.type2) }"
-                        >{{ truncateText(row.taskContent || '未关联任务', 50) }}</span
+                        >{{ row.taskContent || '未关联任务' }}</span
                       >
                     </FullTextPanel>
                   </el-tooltip>
@@ -986,7 +985,7 @@ const handleExportIndicatorList = async () => {
                               ? 'indicator-quantitative'
                               : ''
                         "
-                        >{{ truncateText(resolveParentIndicator(row)?.name || '—', 50) }}</span
+                        >{{ resolveParentIndicator(row)?.name || '—' }}</span
                       >
                     </FullTextPanel>
                   </el-tooltip>
@@ -1020,7 +1019,7 @@ const handleExportIndicatorList = async () => {
                               ? 'indicator-qualitative'
                               : 'indicator-quantitative'
                           "
-                          >{{ truncateText(row.name || '', 50) }}</span
+                          >{{ row.name || '' }}</span
                         >
                       </FullTextPanel>
                     </el-tooltip>
@@ -1167,9 +1166,7 @@ const handleExportIndicatorList = async () => {
                     :disabled="(row.pendingRemark || '').length <= 50"
                     placement="top"
                   >
-                    <span class="pending-remark-text">{{
-                      row.pendingRemark ? truncateText(row.pendingRemark, 50) : '—'
-                    }}</span>
+                    <span class="pending-remark-text">{{ row.pendingRemark || '—' }}</span>
                   </el-tooltip>
                 </template>
               </el-table-column>
@@ -1186,9 +1183,7 @@ const handleExportIndicatorList = async () => {
                       :disabled="(row.remark || '').length <= 50"
                       placement="top"
                     >
-                      <span class="remark-text">{{
-                        row.remark ? truncateText(row.remark, 50) : ''
-                      }}</span>
+                      <span class="remark-text">{{ row.remark || '' }}</span>
                     </el-tooltip>
                   </div>
                 </template>
