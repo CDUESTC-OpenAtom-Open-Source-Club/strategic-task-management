@@ -4138,85 +4138,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     editingIndicatorOriginal.value = row[field as keyof StrategicIndicator]
   }
 
-  /**
-   * 已下发指标的异动入口：仅填报人可发起；支持 指标内容/权重/备注 三类字段。
-   * 提交后走异动审批链；2026-10-20 定案：审批期间不再锁死其他模块（人为处理）。
-   * 2026-10-21 定案：发起权收紧到填报人，负责人/校领导只审批不发起。
-   */
-  const openMutationDialogForField = async (row: StrategicIndicator, field: string) => {
-    if (!canEdit.value) {
-      ElMessage.warning('已下发的指标只能由填报人发起异动调整')
-      return
-    }
-
-    const fieldMap: Record<
-      string,
-      { payloadKey: 'indicator_desc' | 'weight_percent' | 'remark'; label: string }
-    > = {
-      name: { payloadKey: 'indicator_desc', label: '指标内容' },
-      weight: { payloadKey: 'weight_percent', label: '权重' },
-      remark: { payloadKey: 'remark', label: '备注' }
-    }
-    const mapping = fieldMap[field]
-    if (!mapping) {
-      return
-    }
-
-    const currentValue =
-      mapping.payloadKey === 'weight_percent'
-        ? String(Number(row.weight ?? 0))
-        : String((row[field as keyof StrategicIndicator] as string | number | undefined) ?? '')
-
-    try {
-      const { value } = await ElMessageBox.prompt(
-        `该指标已下发，直接修改会被系统拒绝。是否发起「指标异动」调整${mapping.label}？` +
-          '确认后将启动异动审批（填报人修改 → 战略发展部负责人审批 → 分管校领导审批）。' +
-          '审批期间其他模块不受影响，异动结果由审批链决定。',
-        `发起指标异动 · ${mapping.label}`,
-        {
-          confirmButtonText: '发起异动',
-          cancelButtonText: '取消',
-          inputType: mapping.payloadKey === 'weight_percent' ? 'number' : 'textarea',
-          inputPlaceholder: `请输入新的${mapping.label}`,
-          inputValue: currentValue,
-          inputValidator: val => {
-            const trimmed = String(val ?? '').trim()
-            if (!trimmed) {
-              return `${mapping.label}不能为空`
-            }
-            if (mapping.payloadKey === 'weight_percent') {
-              const num = Number(trimmed)
-              if (!Number.isFinite(num) || num < 0 || num > 100) {
-                return '权重需为 0-100 之间的数字'
-              }
-            }
-            if (trimmed === currentValue.trim()) {
-              return `新${mapping.label}与当前值相同，无需异动`
-            }
-            return true
-          }
-        }
-      )
-
-      const payload =
-        mapping.payloadKey === 'weight_percent'
-          ? { weight_percent: Number(String(value).trim()) }
-          : { [mapping.payloadKey]: String(value).trim() }
-
-      const { mutationApi } = await import('@/features/indicator/api/mutationApi')
-      const response = await mutationApi.initiate(row.id as number, payload)
-      if (response.success) {
-        ElMessage.success('异动已提交审批；审批期间其他模块不受影响')
-        void refreshTaskPageAfterIndicatorMutation()
-      } else {
-        ElMessage.error(response.message || '发起异动失败')
-      }
-    } catch (error) {
-      if (error !== 'cancel' && error !== 'close') {
-        ElMessage.error(error instanceof Error ? error.message : '发起异动失败')
-      }
-    }
-  }
+  // 2026-10-30：删除 openMutationDialogForField（单条异动弹窗入口）。
+  // 该函数从未被模板或任何模块调用（无调用点的死代码），其内部走的
+  // mutationApi.initiate 单条端点已因「batch_id 为 null → 快照落库 JOIN 不上 →
+  // 变更值静默丢失」被整体移除。异动现统一走顶部「发起异动」批量提交。
 
   const isSavingIndicatorCell = (row: StrategicIndicator, field: string) =>
     savingIndicatorId.value === row.id && savingIndicatorField.value === field
@@ -6731,7 +6656,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     handleDistributeOrWithdraw,
     handleGlobalClick,
     handleIndicatorDblClick,
-    openMutationDialogForField,
     hasMutationDraft,
     mutationDrafts,
     taskNameDrafts,

@@ -24,17 +24,17 @@ export interface MutationInProgressItem {
  * P5 指标异动 API（仅战略发展部可发起）
  */
 export const mutationApi = {
-  /** 发起异动：原地修改+写快照+启动 PLAN_MUTATION_STRATEGY 三级审批（2026-10-20 起不再锁死其他模块） */
-  async initiate(
-    indicatorId: number | string,
-    changes: { indicator_desc?: string; weight_percent?: number; remark?: string }
-  ): Promise<ApiResponse<string>> {
-    return apiClient.post(`/indicators/${indicatorId}/mutation`, changes)
-  },
+  // 2026-10-30：删除单条异动入口 initiate(indicatorId, changes)。
+  // 后端同路径端点已移除：它写 audit_log 时 batch_id 为 null，而审批通过后的
+  // 快照落库靠 `audit_log.batch_id = audit_instance.batch_id` 定位，JOIN 不上 →
+  // 变更值永远不落库且审批链显示 APPROVED（静默丢数据）。
+  // 业务上异动按「整个计划统一攒改 → 顶部「发起异动」批量提交」走
+  // （initiateBatch，两侧 batch_id 对齐，落库正常）；
+  // 本仓库亦从未有界面调用单条入口（openMutationDialogForField 无调用点）。
 
   /**
    * 2026-10-20：已下发计划新增指标后，立即为该新指标发起异动审批。
-   * 与 initiate 的区别：无 before 值（快照记为「(新增)」），节点链相同。
+   * 与批量提交的差异：无 before 值（快照记为「(新增)」），节点链相同。
    */
   async initiateForCreate(indicatorId: number | string): Promise<ApiResponse<string>> {
     return apiClient.post(`/indicators/${indicatorId}/mutation-for-create`, {})
