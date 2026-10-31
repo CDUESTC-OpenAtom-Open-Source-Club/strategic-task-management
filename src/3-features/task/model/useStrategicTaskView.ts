@@ -966,9 +966,16 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       .trim()
       .toUpperCase()
 
+    // 2026-10-31 定稿（审批状态接上报链）：上报摘要报出 SUBMITTED 即视为上报链权威——
+    // 即使 workflow 绑定信息（实例 ID/待办任务）还没取全，也不让计划级下发链状态顶掉它；
+    // WITHDRAWN 同理（「上报已撤回」只有上报链自己知道，下发链只会报已完成）。
+    if (reportWorkflowStatus === 'SUBMITTED' || reportWorkflowStatus === 'WITHDRAWN') {
+      return true
+    }
+
     return (
       hasApprovalWorkflowReportBinding.value &&
-      (['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(reportWorkflowStatus) ||
+      (['PENDING', 'IN_REVIEW'].includes(reportWorkflowStatus) ||
         Boolean(approvalWorkflowReportSummary.value?.currentTaskId) ||
         Boolean(String(approvalWorkflowReportSummary.value?.currentStepName || '').trim()))
     )
@@ -1253,6 +1260,17 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       }
     }
 
+    // 2026-10-31 定稿（审批状态接上报链）：上报链撤回单列——
+    // WITHDRAWN 在上报链语境是「上报已撤回，等重新上报」，不是计划链的「已回退」，
+    // 也不应被下发链的「已完成审批」遮住（shouldPreferCurrentReportWorkflow 已放行 WITHDRAWN）。
+    if (workflowStatus === 'WITHDRAWN' && shouldPreferCurrentReportWorkflow.value) {
+      return {
+        label: '上报已撤回（待重新上报）',
+        tagType: 'warning' as const,
+        description: '本轮上报已被撤回，等待重新上报。'
+      }
+    }
+
     if (
       workflowStatus === 'REJECTED' ||
       workflowStatus === 'RETURNED' ||
@@ -1270,9 +1288,16 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       stepName ||
       approverName ||
       workflowStatus === 'PENDING' ||
-      workflowStatus === 'IN_REVIEW'
+      workflowStatus === 'IN_REVIEW' ||
+      workflowStatus === 'SUBMITTED'
     ) {
-      const label = formatPendingApprovalLabel(stepName)
+      // 2026-10-31 定稿：上报链在途 → 「上报审批中 · 节点名」（与「异动审批中 · 节点名」同构）；
+      // 计划级下发链在途保持原「待X审批」口径
+      const label =
+        shouldPreferCurrentReportWorkflow.value &&
+        ['SUBMITTED', 'IN_REVIEW', 'PENDING'].includes(workflowStatus)
+          ? `上报审批中 · ${stepName}`.replace(/ ·\s*$/, '')
+          : formatPendingApprovalLabel(stepName)
 
       return {
         label,
@@ -4122,14 +4147,19 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   /**
    * 2026-10-30 用户定案（异动驳回后重报/取消闭环）：顶部「取消异动」按钮按状态分流。
+   * 2026-10-31 用户定案修订（退回填报人节点两按钮常驻）：按钮与「发起异动」并排常驻
+   * （仅发起人可见，isReturnedChainRequester 预判 + 后端二次校验）；取消 = 终结整批：
    *
-   * a) 存在「退回待重报」异动链（有被驳回的异动）：取消 = 终结整条链——
-   *    先二次确认，再调 POST /indicators/mutations/{instanceId}/cancel-returned
-   *    把该批次全部实例一次置为 CANCELLED（后端校验发起人），整链归入审批历史；
-   *    成功后清本地草稿（复用 cancelMutationDraft 既有路径）并刷新异动/审批数据。
+   * a) 存在「退回待重报」异动链（被驳回或发起人撤回退回）：先二次确认（确认文案说明
+   *    整链置为『已取消』、完整保留在审批中心『审批历史』、此后不可再重新发起），
+   *    再调 POST /indicators/mutations/{instanceId}/cancel-returned 把该批次全部实例
+   *    一次置为 CANCELLED（后端校验发起人），整链归入审批历史；成功后清本地草稿
+   *    （复用 cancelMutationDraft 既有路径）并刷新异动/审批数据 + 通知审批状态刷新。
    *    确认框提供「仅清空草稿」出口（distinguishCancelAndClose），不终结链；
    *    关闭（Esc/右上角）视为不操作。
    * b) 无在途/退回链：维持既有「清草稿」行为不变（cancelMutationDraft）。
+   * 失败提示中文化：后端「Cannot cancel: workflow is not returned for resubmission」
+   * 等英文校验文案映射为中文指路（其余未知 message 原样透出）。
    * 互斥锁（isMutationApprovalInFlight 只认 IN_REVIEW）与审批中心异动卡口径不受影响。
    */
   const handleCancelMutation = async () => {
@@ -4139,7 +4169,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
     try {
       await ElMessageBox.confirm(
-        `有 ${returnedMutationChainCount.value} 批异动已被驳回退回待重报。取消异动将终结该批审批链（整链归入审批历史），改动不再生效且本地未提交的修改草稿会一并丢弃。确认取消？`,
+        `有 ${returnedMutationChainCount.value} 批异动已退回待重报。取消异动将终结该批审批链：整链置为『已取消』并完整保留在审批中心『审批历史』（状态显示『已取消』），此后该批不可再重新发起；本地未提交的修改草稿会一并丢弃。确认取消？`,
         '取消异动',
         {
           confirmButtonText: '确认取消异动',
@@ -4149,7 +4179,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         }
       )
     } catch (action) {
-      // 仅清空草稿：保留退回链，之后仍可修改后重新发起
+      // 仅清空草稿：保留退回链，之后仍可按原内容重发或修改后再发
       if (action === 'cancel') {
         await cancelMutationDraft()
       }
@@ -4170,9 +4200,19 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       // 重拉异动审批与退回链清单（取消后按钮回到纯清草稿语义）
       void loadDepartmentMutationWorkflowEntities()
       void refreshTaskPageAfterIndicatorMutation()
+      // 2026-10-31（取消闭环收口）：取消异动改变了审批历史卡片集合，
+      // 与撤回路径同口径通知审批中心相关视图即时刷新
+      notifyApprovalStateRefresh({ source: 'strategic-task-mutation-cancel' })
     } catch (error) {
       const msg = (error as { message?: string })?.message
-      ElMessage.error(msg || '取消异动失败')
+      // 2026-10-31（失败提示中文化）：链被重新提交/终结后整批取消会被后端拒绝，
+      // 英文校验文案对填报人不友好，映射为可行动的中文指路；未知 message 原样透出
+      const notReturnedForResubmission = msg && msg.includes('not returned for resubmission')
+      ElMessage.error(
+        notReturnedForResubmission
+          ? '该批异动存在已重新提交或已终结的条目，无法整批取消，请刷新后重试'
+          : msg || '取消异动失败'
+      )
     } finally {
       mutationApiLoading.value = false
       // 与 submitMutationDraft 同款兜底：确认框残留时显式收起
@@ -4180,13 +4220,75 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
   }
 
+  // 2026-10-31 用户定案（重发 = 原地续链，零新增行）：「发起异动」无本地草稿时点击
+  // = 按上次提交的内容原样重新发起——逐批取退回链组内任一 instance_id 调
+  // POST /indicators/mutations/{instanceId}/resubmit，后端原地续链（业务锁重建 +
+  // 退回步骤原地复活），不生成新实例/新快照行、batch_id 不变；可选 items 改后重发
+  // 的能力后端已就绪，前端草稿重发路径暂不接线（调用保持原样）。
+  // 注意：此路径不做前端权重合计前置校验——内容未变不必重跑；后端侧仅改后重发
+  // （带 items）才重跑闭合校验。任一批失败时已成功批次不回滚，错误提示注明哪批失败。
+  const resubmitReturnedMutationBatches = async () => {
+    const batches = groupReturnedMutationChains()
+    if (batches.length === 0) {
+      ElMessage.info('暂无待提交的异动改动')
+      return
+    }
+    try {
+      await ElMessageBox.confirm('确认按上次提交的内容重新发起该批异动审批？', '发起异动', {
+        confirmButtonText: '确认发起',
+        cancelButtonText: '取消',
+        type: 'warning'
+      })
+    } catch {
+      return
+    }
+    try {
+      mutationApiLoading.value = true
+      const { mutationApi } = await import('@/features/indicator/api/mutationApi')
+      const failures: string[] = []
+      for (const batch of batches) {
+        try {
+          const response = await mutationApi.resubmit(batch.instance_id)
+          if (!response.success) {
+            failures.push(
+              `${batch.indicator_desc || '该批'}（实例 ${batch.instance_id}）：${response.message || '重新发起失败'}`
+            )
+          }
+        } catch (error) {
+          failures.push(
+            `${batch.indicator_desc || '该批'}（实例 ${batch.instance_id}）：${(error as Error)?.message || '重新发起失败'}`
+          )
+        }
+      }
+      if (failures.length > 0) {
+        // 已成功的批次不回滚：明确指出哪批失败，便于用户对照审批中心核对
+        ElMessage.error(`有 ${failures.length} 批重新发起未成功：${failures[0]}`)
+      } else {
+        ElMessage.success('异动已重新发起；审批期间其他模块不受影响')
+      }
+      // 成功与部分成功都要刷新：互斥锁（IN_REVIEW）/异动角标/退回链清单都依赖这份数据
+      void refreshTaskPageAfterIndicatorMutation()
+      void loadDepartmentMutationWorkflowEntities()
+    } finally {
+      mutationApiLoading.value = false
+      // 与既有提交路径同款兜底：确认框残留时显式收起
+      ElMessageBox.close()
+    }
+  }
+
   // 顶部「发起异动」：指标攒改 + 新增指标 + 战略任务改名一起上报
   // （2026-10-21 用户定案：不做拦截、整批校验）
+  // 2026-10-31 用户定案：退回填报人节点两按钮常驻，「发起异动」可不修改原样重发——
+  // 无本地草稿时点击走原样重发（resubmitReturnedMutationBatches），
+  // 有草稿时维持既有攒改提交路径不变（含权重合计前置校验、互斥锁校验）。
   const submitMutationDraft = async () => {
     const drafts = mutationDrafts.value
     const taskDrafts = taskNameDrafts.value
     const pendingCreates = pendingCreatedIndicatorIds.value
     if (drafts.length === 0 && taskDrafts.length === 0 && pendingCreates.length === 0) {
+      // 2026-10-31 用户定案：无草稿 = 原样重发退回的异动批次（按钮只在
+      // 「有草稿或有退回链」时出现；两者皆无时兜底给出反馈）
+      await resubmitReturnedMutationBatches()
       return
     }
 
@@ -4795,6 +4897,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       ElMessage.warning('计划正在审批中，暂不能新增：请等审批结束或先撤回本次审批')
       return
     }
+    // 2026-10-30 用户定案：异动审批在途同样锁新增（后端 isOrgLockedByMutation 同口径硬拦）。
+    // isMutationApprovalInFlight 只认 IN_REVIEW——退回待重报（WITHDRAWN 活链）不锁，
+    // 新增行会成为草稿/CREATE 条目随下次发起一起提交
+    if (isMutationApprovalInFlight.value) {
+      ElMessage.warning('异动审批进行中，暂不能新增：等审批结束或先撤回/取消本次异动')
+      return
+    }
     openNewRowDialog()
   }
 
@@ -4806,6 +4915,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   // 为指定任务新增指标（点击单元格右下角加号）
   const handleAddIndicatorToTask = (row: StrategicIndicator) => {
+    // 2026-10-30 用户定案：异动审批在途时右下角「+」同样锁（与「新增行」同款守卫，防绕过按钮）
+    if (isMutationApprovalInFlight.value) {
+      ElMessage.warning('异动审批进行中，暂不能新增：等审批结束或先撤回/取消本次异动')
+      return
+    }
     preservePrefilledTaskBindingOnce.value = true
     openNewRowDialog({
       taskId: getIndicatorTaskId(row),
@@ -5137,9 +5251,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 数据源 GET /indicators/mutations/returned（按当前部门查，只含退回填报人的
   // 活链：WITHDRAWN、completed_at 为空、存在退回提交步骤——2026-10-30 定案修订：
   // 发起人撤回与驳回退回同构，撤回后的链也被该清单认领）。消费方：
-  // ① 「取消异动」按钮可点性/分流（有退回链时点击=终结整链归审批历史）；
-  // ② 被驳回/撤回可感知提示（alert）；
-  // ③ 2026-10-30 定案修订：isEntityMutationInFlight 角标数据基础（链活着角标就亮）。
+  // ① 「发起异动」无草稿时按批原样重发（2026-10-31 定案：可不修改原样重发）；
+  // ② 「取消异动」按钮可点性/分流（2026-10-31 定案：按钮常驻、仅发起人可见，
+  //    isReturnedChainRequester 按 requester_id/submitter_name 预判；
+  //    有退回链时点击=终结整链归审批历史）；
+  // ③ 被驳回/撤回可感知提示（alert）；
+  // ④ 2026-10-30 定案修订：isEntityMutationInFlight 角标数据基础（链活着角标就亮）。
   // 不参与互斥锁（isMutationApprovalInFlight 只认 IN_REVIEW）。
   const returnedMutationChains = ref<
     Array<{
@@ -5148,6 +5265,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       entity_type?: 'INDICATOR' | 'TASK'
       batch_id?: string | null
       requester_id?: number | null
+      /** 发起人姓名（audit_instance.requester），供取消异动按钮发起人预判兜底比对 */
+      submitter_name?: string | null
       indicator_desc: string
       status: string
       created_at: string
@@ -5448,6 +5567,32 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     )
   }
 
+  // 2026-10-31 用户定案（退回态文案对齐上报审批退回实现）：异动链退回态判定——
+  // 只认 returnedMutationChains（驳回/发起人撤回退回待重报活链），且不与在审实例
+  // 重叠（命中 departmentMutationPendingApprovals 说明仍在审批中，不算退回）。
+  // 结构仿 isEntityMutationInFlight；角标亮色仍由 isEntityMutationInFlight 负责
+  // （链活着角标就亮，含退回态），本判定只供浮层/status 文案分态（已回退 vs 在异动当中）。
+  const isEntityMutationReturned = (
+    entityType: 'INDICATOR' | 'TASK',
+    entityId?: number | string | null
+  ): boolean => {
+    const id = Number(entityId)
+    if (!Number.isFinite(id) || id <= 0) {
+      return false
+    }
+    const hasInReviewInstance = departmentMutationPendingApprovals.value.some(
+      item => item.entityType === entityType && Number(item.entityId) === id
+    )
+    if (hasInReviewInstance) {
+      return false
+    }
+    return returnedMutationChains.value.some(
+      chain =>
+        String(chain.entity_type || 'INDICATOR').toUpperCase() === entityType &&
+        Number(chain.indicator_id) === id
+    )
+  }
+
   // 2026-10-24 用户定案（异动/上报互斥）：同一学院链上「上报审批在途」与「异动审批在途」
   // 二选一——上报在审时异动发起入口锁定；异动在审时上报提交被锁（另一方向同理）。
   // 信号源：当前部门上下文的上报审批摘要（workflowStatus 处于在途态即视为上报在审）。
@@ -5491,6 +5636,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   // 2026-10-28 迭代计划 M5（互斥可见化）：「发起异动」不再整体隐藏，改为置灰 + tooltip。
   // 拦截口径与 submitMutationDraft 的提交守卫一致，只是把「为什么不能点」亮给用户看。
+  // 2026-10-30 用户定案（退回可感知）：异动链退回发起人后按钮必须常驻可见。
+  // 2026-10-31 用户定案修订（退回填报人节点两按钮常驻）：「发起异动」与「取消异动」
+  // 并排常驻；发起异动可不修改原样重发（无草稿 = 按上次提交内容重发，见
+  // resubmitReturnedMutationBatches），置灰仅保留在审互斥口径（上报在审/异动在审）。
   const mutationSubmitBlocked = computed(
     () => isReportApprovalInFlight.value || isMutationApprovalInFlight.value
   )
@@ -5521,6 +5670,32 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   /** 存在被驳回退回的异动链（活链，可重新发起或取消），用于按钮分流与可感知提示。 */
   const returnedMutationChainCount = computed(() => groupReturnedMutationChains().length)
   const hasReturnedMutationChain = computed(() => returnedMutationChainCount.value > 0)
+
+  // 2026-10-31 用户定案：退回填报人节点两按钮常驻，「取消异动」是发起人专属动作——
+  // 退回链里存在 requester_id === 当前用户 id 的链才显示按钮（后端 cancel-returned
+  // 仍会二次校验 requester，这里只是前端预判）。id 取不到数值时兜底用 submitter_name
+  // 与当前用户姓名比对，口径同 canWithdrawMutationInFlight。
+  const isReturnedChainRequester = computed(() => {
+    const chains = returnedMutationChains.value
+    if (chains.length === 0) {
+      return false
+    }
+    const numericId = Number(
+      (authStore.user as { userId?: number | string; id?: number | string } | null)?.userId ??
+        (authStore.user as { id?: number | string } | null)?.id ??
+        NaN
+    )
+    if (Number.isFinite(numericId) && numericId > 0) {
+      return chains.some(chain => Number(chain.requester_id) === numericId)
+    }
+    const currentUserName = String(
+      authStore.user?.realName || authStore.user?.userName || ''
+    ).trim()
+    if (!currentUserName) {
+      return false
+    }
+    return chains.some(chain => String(chain.submitter_name || '').trim() === currentUserName)
+  })
 
   // 2026-10-28 迭代计划 M6：草稿丢失可感知——顶部横幅计数 + 离开/刷新前确认。
   const mutationDraftCount = computed(
@@ -7241,6 +7416,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     departmentMutationWorkflowEntities,
     loadDepartmentMutationWorkflowEntities,
     isEntityMutationInFlight,
+    isEntityMutationReturned,
     // 2026-10-30 修复：审批中心「计划审批」页签的异动卡片数据源此前从未导出——
     // 页面解构得到 undefined，抽屉 prop 落到默认空数组，卡片/审批按钮永远不渲染
     // （角标走模型闭包内的 isEntityMutationInFlight 不受影响，造成「角标亮、卡片无」）。
@@ -7263,9 +7439,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     submitMutationDraft,
     cancelMutationDraft,
     // 2026-10-30（取消闭环）：取消异动按退回链状态分流 + 被驳回可感知提示
+    // 2026-10-31 用户定案：取消异动按钮恢复常驻（两按钮并排），仅发起人可见
     handleCancelMutation,
+    isReturnedChainRequester,
     hasReturnedMutationChain,
     returnedMutationChainCount,
+    // 2026-10-30（审批中心退回卡）：退回链清单透传给审批抽屉
+    // returnedMutationApprovals prop——流程没终结前活链不得在审批中心消失
+    returnedMutationChains,
     handleOpenApproval,
     handleRejectCurrentIndicatorWorkflow,
     handleSelectionChange,

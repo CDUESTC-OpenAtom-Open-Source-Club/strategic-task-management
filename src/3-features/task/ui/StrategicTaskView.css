@@ -1525,6 +1525,22 @@
   border-color: transparent transparent var(--color-primary-dark) transparent;
 }
 
+/* 2026-10-30 用户定案：异动审批在途时新增入口置灰（与「新增行」按钮 disabled 同口径，
+   后端 isOrgLockedByMutation 硬拦的可见化；点击仍有模型层守卫弹 warning 兜底） */
+.add-indicator-trigger--locked {
+  border-color: transparent transparent rgba(144, 147, 153, 0.25) transparent;
+  cursor: not-allowed;
+}
+
+.add-indicator-trigger--locked:hover {
+  border-color: transparent transparent rgba(144, 147, 153, 0.25) transparent;
+  border-width: 0 0 20px 20px;
+}
+
+.add-indicator-trigger--locked:hover .trigger-icon {
+  color: transparent;
+}
+
 /* ========================================
      进度审批弹窗样式
      ======================================== */
@@ -2353,14 +2369,14 @@
   .progress-main {
     flex-direction: column;
     text-align: center;
-  }}
+  }
+}
 
 /* D2 孤立指标标记：父级已删除 */
 .orphan-parent-tag {
   margin-left: 6px;
   flex-shrink: 0;
 }
-
 
 /* 2026-10-11 二级学院表格化：未选学院时的空态提示
    （2026-10-13 增强版样式见文件末尾的中央空态引导区块） */

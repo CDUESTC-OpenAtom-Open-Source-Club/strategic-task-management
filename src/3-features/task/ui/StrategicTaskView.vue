@@ -3,10 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { TASK_TABLE_COLUMN_WIDTH } from '@/features/task/lib/tableColumns'
 import { useLatestIndicatorFill } from '@/features/indicator/model/useLatestIndicatorFill'
-import {
-  useIndicatorAppraisal,
-  type IndicatorAppraisalLevel
-} from '@/features/indicator/model/useIndicatorAppraisal'
+import { useIndicatorAppraisal } from '@/features/indicator/model/useIndicatorAppraisal'
+import { getAppraisalLevelDisplay } from '@/features/indicator/lib/appraisalGate'
 import TaskIndicatorTree from './TaskIndicatorTree.vue'
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
@@ -153,6 +151,8 @@ const {
   currentDetail,
   departmentMutationPendingApprovals,
   isEntityMutationInFlight,
+  // 2026-10-31 用户定案：异动链退回态判定（只认退回活链且不与在审实例重叠），角标浮层分态用
+  isEntityMutationReturned,
   currentDistributeGroup,
   currentDistributeItem,
   currentIndicator,
@@ -327,11 +327,14 @@ const {
   mutationDraftCount,
   reportMonth,
   submitMutationDraft,
-  // 2026-10-30（取消闭环）：取消入口改为 handleCancelMutation 按状态分流，
-  // 纯清草稿的 cancelMutationDraft 仍由 model 内部（分流 b 分支）复用
+  // 2026-10-31 用户定案（退回填报人节点两按钮常驻）：取消异动按钮恢复常驻，
+  // 与「发起异动」并排；仅发起人可见（isReturnedChainRequester 预判，后端二次校验）
   handleCancelMutation,
+  isReturnedChainRequester,
   hasReturnedMutationChain,
   returnedMutationChainCount,
+  // 2026-10-30（审批中心退回卡）：退回链清单透传给审批抽屉，流程未终结不得在审批中心消失
+  returnedMutationChains,
   registerTaskLocally,
   rejectIndicatorReview,
   resetApprovalSetupDialog,
@@ -377,12 +380,11 @@ const { latestFillNote, latestFillAttachments } = useLatestIndicatorFill(
 )
 
 // 2026-10-28：审批链行内鉴定——只有当前审批节点负责人可改（后端 canAppraise 判定）
+// 2026-10-31 定稿：点击格子先单条重查 context，canAppraise=true 才弹轻量等级选择器
 const {
   load: loadIndicatorAppraisalContexts,
-  canAppraise: canAppraiseIndicator,
   getLevel: getIndicatorAppraisalLevel,
-  getLockHint: getIndicatorAppraisalLockHint,
-  save: saveIndicatorAppraisalLevel
+  openAppraisalGate: openIndicatorAppraisalGate
 } = useIndicatorAppraisal()
 
 watch(
@@ -593,66 +595,30 @@ watch(
 const strategicBatchExportDialogVisible = ref(false)
 const selectedStrategicExportDepartments = ref<string[]>([])
 const strategicImportDialogVisible = ref(false)
-type ManualAlertSelectValue = Exclude<ManualAlertSeverity, null> | ''
-
-const manualAlertOptions: Array<{
-  label: string
-  value: ManualAlertSelectValue
-  type: 'success' | 'info' | 'warning' | 'danger'
-}> = [
-  // 进度等级三档（2026-09-17 定案）：存储码沿用 alert severity，新增 AHEAD/NORMAL
-  { label: '未评定', value: '', type: 'info' },
-  { label: '超前完成', value: 'AHEAD', type: 'success' },
-  { label: '正常', value: 'NORMAL', type: 'success' },
-  { label: '延期', value: 'DELAYED', type: 'warning' }
-]
-
-const getManualAlertOption = (severity?: ManualAlertSeverity) =>
-  manualAlertOptions.find(option => option.value === (severity ?? '')) || manualAlertOptions[0]
-
-const getManualAlertLabel = (severity?: ManualAlertSeverity) => getManualAlertOption(severity).label
+// 2026-10-31 定稿：等级选项收敛到共享 appraisalGate（只有超前完成/正常/延期三档），
+// 「未评定」退为初始空白显示态（不是选项），三视图同构。
+const getManualAlertLabel = (severity?: ManualAlertSeverity) =>
+  getAppraisalLevelDisplay(severity).label
 
 const getManualAlertTagType = (severity?: ManualAlertSeverity) =>
-  getManualAlertOption(severity).type
+  getAppraisalLevelDisplay(severity).type
 
 /**
- * 2026-10-28：行内调整审核进度。
- * 只有当前审批节点负责人能看到下拉；确认后写报告快照，后端同步 Alert。
+ * 2026-10-31 定稿：点击审核进度格子的统一入口（三视图同构）。
+ * 先单条重查该行 context → canAppraise=false 当场弹对应原因
+ * （优先后端 lockHint）→ 通过才弹轻量等级选择器 → 确认后保存并同步行数据。
  */
-const handleAppraisalChange = async (
-  row: { id: string | number; name?: string; manualAlertSeverity?: ManualAlertSeverity },
-  value: ManualAlertSelectValue
-) => {
-  const level: IndicatorAppraisalLevel = value === '' ? null : (value as IndicatorAppraisalLevel)
-  const previous = getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity ?? null)
-  if (previous === level) {
-    return
-  }
-
-  const label = getManualAlertLabel(level)
-  try {
-    await ElMessageBox.confirm(
-      `确认将「${row.name || '该指标'}」的审核进度调整为「${label}」？`,
-      '调整审核进度',
-      {
-        confirmButtonText: '确认调整',
-        cancelButtonText: '取消',
-        type: level ? 'warning' : 'info'
-      }
-    )
-    await saveIndicatorAppraisalLevel(row.id, level)
-    strategicStore.patchIndicator(String(row.id), { manualAlertSeverity: level })
-    ElMessage.success('审核进度已调整')
-  } catch (error) {
-    if (error !== 'cancel' && error !== 'close') {
-      ElMessage.error(error instanceof Error ? error.message : '调整审核进度失败')
+const handleAppraisalCellClick = async (row: {
+  id: string | number
+  name?: string
+  manualAlertSeverity?: ManualAlertSeverity
+}) => {
+  await openIndicatorAppraisalGate(row.id, {
+    indicatorName: row.name,
+    onSaved: level => {
+      strategicStore.patchIndicator(String(row.id), { manualAlertSeverity: level })
     }
-  }
-}
-
-/** 锁定状态点击只提示一次（不再用悬停提示，避免两套文案重复） */
-const handleAppraisalTagClick = (row: { id: string | number }) => {
-  ElMessage.info(getIndicatorAppraisalLockHint(row.id) || '上报期间才能解锁审核进度')
+  })
 }
 
 const allStrategicExportDepartmentsSelected = computed({
@@ -1225,20 +1191,26 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <!-- 2026-10-21 用户定案：编辑权只属于填报人，负责人/校领导只审批不编辑 -->
           <!-- 2026-10-23 用户定案：学院 tab 也能新增，但新增的是「该学院的子指标」，
                必须挂到所选核心指标下（复用指标下发与管理页的新增子指标契约） -->
+          <!-- 2026-10-30 用户定案（仿 M5 互斥可见化）：异动审批在途时新增入口置灰 + tooltip。
+               口径与后端 isOrgLockedByMutation 一致，只认 IN_REVIEW；
+               退回待重报（WITHDRAWN 活链）不锁——新增行会成为草稿随下次发起提交 -->
           <el-button
             type="primary"
             size="small"
             :disabled="
               !canEdit ||
               isCurrentPlanUnderApproval ||
+              isMutationApprovalInFlight ||
               (activeTaskTabName === 'college' && !selectedCollege)
             "
             :title="
               isCurrentPlanUnderApproval
                 ? '计划正在审批中，暂不能新增：请等审批结束或先撤回本次审批'
-                : activeTaskTabName === 'college' && !selectedCollege
-                  ? '请先在左侧选择学院'
-                  : ''
+                : isMutationApprovalInFlight
+                  ? '异动审批进行中，暂不能新增：等审批结束或先撤回/取消本次异动'
+                  : activeTaskTabName === 'college' && !selectedCollege
+                    ? '请先在左侧选择学院'
+                    : ''
             "
             @click.stop="handleAddNewRow"
           >
@@ -1297,7 +1269,10 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <!-- 编辑权只属于填报人：负责人/校领导不产生草稿，也不应看到提交入口 -->
           <!-- 2026-10-28 迭代计划 M5（互斥可见化）：上报/异动在审时按钮置灰 + tooltip 说明，
                取代此前「直接隐藏」——用户能看出为什么暂时不能发起，而不是入口凭空消失 -->
-          <template v-if="canEdit && hasMutationDraft">
+          <!-- 2026-10-30 用户定案（退回可感知）：有「退回待重报」异动链时按钮同样常驻。
+               2026-10-30 用户定案修订：退回态按钮直接可点、不做置灰引导；
+               :disabled 与 tooltip 仅保留在审互斥口径（上报在审/异动在审） -->
+          <template v-if="canEdit && (hasMutationDraft || hasReturnedMutationChain)">
             <el-tooltip
               :disabled="!mutationSubmitBlocked"
               :content="mutationSubmitBlockedReason"
@@ -1316,13 +1291,15 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
               </span>
             </el-tooltip>
           </template>
-          <!-- 2026-10-30（取消闭环）：取消异动按钮按状态分流（handleCancelMutation）——
-               有「退回待重报」异动链时可点（即使暂无草稿）：点击后整链终结归审批历史；
-               无在途/退回链时维持既有清草稿行为。 -->
+          <!-- 2026-10-31 用户定案（退回填报人节点两按钮常驻 + 原样重发）：「取消异动」恢复，
+               与「发起异动」并排、紧随其后。语义=整批终结：该批退回链一次置为 CANCELLED
+               并完整保留在审批中心「审批历史」（历史绝不删除）。仅异动发起人可见
+               （isReturnedChainRequester 按 requester_id 预判、兜底 submitter_name 比对；
+               后端 cancel-returned 仍会二次校验 requester）。此前 2026-10-30 的
+               「先隐藏待重新设计」口径作废，按钮已按定案语义放开。 -->
           <el-tooltip
-            v-if="canEdit && (hasMutationDraft || hasReturnedMutationChain)"
-            :disabled="!hasReturnedMutationChain"
-            content="存在被驳回退回的异动：点击「取消异动」可终结该批审批链并归入审批历史"
+            v-if="canEdit && hasReturnedMutationChain && isReturnedChainRequester"
+            content="点「取消异动」终结该批审批链：整链置为『已取消』并归入审批中心「审批历史」，此后该批不可再重新发起"
             placement="top"
           >
             <el-button size="small" :disabled="mutationApiLoading" @click="handleCancelMutation">
@@ -1460,8 +1437,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
 
       <!-- 2026-10-30（取消闭环）：被驳回退回待重报的异动链可感知提示。
            2026-10-30 定案修订：发起人撤回同样把链退回填报人（活链），
-           与驳回退回共用本横幅——链活着就提示可重报/可取消。
-           活链不进审批历史也不锁发起入口，填报人可修改后重新发起，或点「取消异动」终结 -->
+           与驳回退回共用本横幅——链活着就提示可重报。
+           2026-10-31 用户定案：退回填报人节点两按钮常驻——横幅同时指路
+           「发起异动」（可不修改原样重发）与「取消异动」（终结整批归审批历史） -->
       <el-alert
         v-if="canEdit && hasReturnedMutationChain"
         type="error"
@@ -1472,7 +1450,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
         <template #title>
           有
           {{ returnedMutationChainCount }}
-          批异动已退回待重报（驳回或发起人撤回）：可修改后点「发起异动」重新提交，或点「取消异动」终结该批异动（归入审批历史）
+          批异动已退回待重报（驳回或发起人撤回）：可点「发起异动」重新提交（可按原内容重发，也可修改后再发），或点「取消异动」终结该批异动（归入审批历史）
         </template>
       </el-alert>
 
@@ -1552,6 +1530,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                               :mutation-in-flight="
                                 isEntityMutationInFlight('TASK', getIndicatorTaskId(row))
                               "
+                              :mutation-returned="
+                                isEntityMutationReturned('TASK', getIndicatorTaskId(row))
+                              "
                             />
                           </div>
                         </div>
@@ -1559,9 +1540,16 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         <!-- 右下角新增指标三角形按钮
                              2026-10-20 用户定案：已下发计划也允许新增指标（走异动链），
                              不再限定 canWithdraw（该条件仅未下发时为真） -->
+                        <!-- 2026-10-30 用户定案：异动审批在途时置灰 + tooltip（同「新增行」口径） -->
                         <div
                           v-if="!isReadOnly"
                           class="add-indicator-trigger"
+                          :class="{ 'add-indicator-trigger--locked': isMutationApprovalInFlight }"
+                          :title="
+                            isMutationApprovalInFlight
+                              ? '异动审批进行中，暂不能新增：等审批结束或先撤回/取消本次异动'
+                              : ''
+                          "
                           @click="handleAddIndicatorToTask(row)"
                         >
                           <span class="trigger-icon">+</span>
@@ -1637,6 +1625,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                                 :indicator-id="row.id"
                                 :fields="MUTATION_FIELDS_INDICATOR_NAME"
                                 :mutation-in-flight="isEntityMutationInFlight('INDICATOR', row.id)"
+                                :mutation-returned="isEntityMutationReturned('INDICATOR', row.id)"
                               />
                             </div>
                           </template>
@@ -1681,6 +1670,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                             :indicator-id="row.id"
                             :fields="MUTATION_FIELDS_WEIGHT"
                             :mutation-in-flight="isEntityMutationInFlight('INDICATOR', row.id)"
+                            :mutation-returned="isEntityMutationReturned('INDICATOR', row.id)"
                           />
                         </div>
                       </div>
@@ -1711,47 +1701,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   >
                     <template #default="{ row }">
                       <div class="manual-alert-cell">
-                        <el-dropdown
-                          v-if="canAppraiseIndicator(row.id)"
-                          trigger="click"
-                          @command="
-                            value => handleAppraisalChange(row, value as ManualAlertSelectValue)
-                          "
-                        >
-                          <el-tag
-                            :type="
-                              getManualAlertTagType(
-                                getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
-                              )
-                            "
-                            :style="
-                              getProgressLevelTagStyle(
-                                getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
-                              )
-                            "
-                            size="small"
-                            class="manual-alert-tag--clickable"
-                          >
-                            {{
-                              getManualAlertLabel(
-                                getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
-                              )
-                            }}
-                          </el-tag>
-                          <template #dropdown>
-                            <el-dropdown-menu>
-                              <el-dropdown-item
-                                v-for="option in manualAlertOptions"
-                                :key="option.value || 'NONE'"
-                                :command="option.value"
-                              >
-                                {{ option.label }}
-                              </el-dropdown-item>
-                            </el-dropdown-menu>
-                          </template>
-                        </el-dropdown>
                         <el-tag
-                          v-else
                           :type="
                             getManualAlertTagType(
                               getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
@@ -1763,8 +1713,8 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                             )
                           "
                           size="small"
-                          class="manual-alert-tag--locked"
-                          @click="handleAppraisalTagClick(row)"
+                          class="manual-alert-tag--clickable"
+                          @click="handleAppraisalCellClick(row)"
                         >
                           {{
                             getManualAlertLabel(
@@ -1847,6 +1797,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                             :indicator-id="row.id"
                             :fields="MUTATION_FIELDS_REMARK"
                             :mutation-in-flight="isEntityMutationInFlight('INDICATOR', row.id)"
+                            :mutation-returned="isEntityMutationReturned('INDICATOR', row.id)"
                           />
                         </div>
                       </div>
@@ -2114,7 +2065,18 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                 <!-- 空状态 -->
                 <div v-else class="empty-state">
                   <el-empty description="当前部门暂无指标数据" :image-size="120">
-                    <el-button v-if="!isReadOnly" type="primary" @click="addNewRow">
+                    <!-- 2026-10-30 用户定案：异动审批在途时置灰 + tooltip（同「新增行」口径） -->
+                    <el-button
+                      v-if="!isReadOnly"
+                      type="primary"
+                      :disabled="isMutationApprovalInFlight"
+                      :title="
+                        isMutationApprovalInFlight
+                          ? '异动审批进行中，暂不能新增：等审批结束或先撤回/取消本次异动'
+                          : ''
+                      "
+                      @click="addNewRow"
+                    >
                       <el-icon><Plus /></el-icon>
                       新增指标
                     </el-button>
@@ -2396,6 +2358,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                             :indicator-id="row.id"
                             :fields="MUTATION_FIELDS_INDICATOR_NAME"
                             :mutation-in-flight="isEntityMutationInFlight('INDICATOR', row.id)"
+                            :mutation-returned="isEntityMutationReturned('INDICATOR', row.id)"
                           />
                           <!-- 上报历史小标（每次上报更新，不走异动链，悬停看历次上报+资料） -->
                         </div>
@@ -2437,6 +2400,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                               :indicator-id="row.id"
                               :fields="MUTATION_FIELDS_WEIGHT"
                               :mutation-in-flight="isEntityMutationInFlight('INDICATOR', row.id)"
+                              :mutation-returned="isEntityMutationReturned('INDICATOR', row.id)"
                             />
                           </div>
                         </div>
@@ -2465,47 +2429,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   >
                     <template #default="{ row }">
                       <div class="manual-alert-cell">
-                        <el-dropdown
-                          v-if="canAppraiseIndicator(row.id)"
-                          trigger="click"
-                          @command="
-                            value => handleAppraisalChange(row, value as ManualAlertSelectValue)
-                          "
-                        >
-                          <el-tag
-                            :type="
-                              getManualAlertTagType(
-                                getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
-                              )
-                            "
-                            :style="
-                              getProgressLevelTagStyle(
-                                getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
-                              )
-                            "
-                            size="small"
-                            class="manual-alert-tag--clickable"
-                          >
-                            {{
-                              getManualAlertLabel(
-                                getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
-                              )
-                            }}
-                          </el-tag>
-                          <template #dropdown>
-                            <el-dropdown-menu>
-                              <el-dropdown-item
-                                v-for="option in manualAlertOptions"
-                                :key="option.value || 'NONE'"
-                                :command="option.value"
-                              >
-                                {{ option.label }}
-                              </el-dropdown-item>
-                            </el-dropdown-menu>
-                          </template>
-                        </el-dropdown>
                         <el-tag
-                          v-else
                           :type="
                             getManualAlertTagType(
                               getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
@@ -2517,8 +2441,8 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                             )
                           "
                           size="small"
-                          class="manual-alert-tag--locked"
-                          @click="handleAppraisalTagClick(row)"
+                          class="manual-alert-tag--clickable"
+                          @click="handleAppraisalCellClick(row)"
                         >
                           {{
                             getManualAlertLabel(
@@ -2598,6 +2522,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                             :indicator-id="row.id"
                             :fields="MUTATION_FIELDS_REMARK"
                             :mutation-in-flight="isEntityMutationInFlight('INDICATOR', row.id)"
+                            :mutation-returned="isEntityMutationReturned('INDICATOR', row.id)"
                           />
                         </div>
                       </div>
@@ -3101,6 +3026,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
     <!-- 任务审批抽屉 -->
     <!-- 2026-10-30（纯附加）链路覆盖：异动卡数据源传合并视图（主计划 + 链下学院子计划），
          修正学院子计划异动在抽屉漏卡；发起异动互斥锁仍读 departmentMutationPendingApprovals -->
+    <!-- 2026-10-30 用户定案：退回待重报活链在流程终结前不得在审批中心消失——
+         退回链清单透传给抽屉，计划审批 tab 渲染「退回待重报」状态卡、
+         审批流程 tab 选择栏可选中查看该链 -->
     <DistributionApprovalProgressDrawer
       v-model="taskApprovalVisible"
       :indicators="approvalIndicators"
@@ -3117,6 +3045,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
       :secondary-workflow-entity-id="secondaryApprovalWorkflowEntityId"
       :mutation-workflow-entities="departmentMutationWorkflowEntities"
       :mutation-pending-approvals="allDepartmentMutationPendingApprovals"
+      :returned-mutation-approvals="returnedMutationChains"
       :related-workflow-entities="departmentPlanFamilyWorkflowEntities"
       approval-type="submission"
       @close="taskApprovalVisible = false"
