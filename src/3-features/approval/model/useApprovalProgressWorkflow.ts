@@ -1,10 +1,17 @@
 import { onMounted, onUnmounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElLoading, ElMessage, ElMessageBox } from 'element-plus'
 import { approvalApi } from '@/features/task/api/strategicApi'
 import { decideTask } from '@/features/workflow/api/mutations'
 import { indicatorFillApi } from '@/features/plan/api/planApi'
 import { tryGetUserById } from '@/features/user/api/query'
 import { APPROVAL_STATE_REFRESH_EVENT, notifyApprovalStateRefresh } from '@/features/approval/lib'
+import { normalizeApprovalEntityType } from '@/features/approval/model/approvalEntityTypes'
+import {
+  isUnfinishedAppraisalMessage,
+  resolveUnfinishedAppraisalJumpRoute,
+  showUnfinishedAppraisalNotice
+} from '@/features/approval/model/unfinishedAppraisalNotice'
 import { apiClient } from '@/shared/api'
 import type { ApiResponse } from '@/shared/types'
 import { logger } from '@/shared/lib/utils/logger'
@@ -34,11 +41,33 @@ interface UseApprovalProgressWorkflowOptions {
   state: ApprovalProgressState
 }
 
+/**
+ * 2026-10-31（C-6 实例 ID 前缀泄漏修复）：批量审批失败文案不再拼「{instanceId}: 」前缀。
+ * 实例 ID 是内部排查信息，整批同卡场景对用户无意义；用户 toast 只保留业务原文，
+ * 实例级完整信息改走 logger.warn 留在控制台供排查。
+ * 注意：failures 必须与失败实例一一对应（toast 的「有 N 项」计数依赖它），不去重。
+ *
+ * 2026-10-30 双弹修复约定：调用方在「抛错」路径必须先 markErrorHandled(error)——
+ * 失败已计入本汇总、由循环结束后统一弹一个，响应拦截器的兜底 toast 不再弹，
+ * 否则「单实例原文 + 批次汇总」双弹（用户实测缺陷）。
+ */
+function pushMutationApprovalFailure(
+  failures: string[],
+  instanceId: number | string,
+  rawMessage: string
+): void {
+  const message = String(rawMessage || '').trim() || '审批失败'
+  logger.warn('[ApprovalProgress] 批量审批失败实例详情:', { instanceId, message })
+  failures.push(message)
+}
+
 export function useApprovalProgressWorkflow({
   props,
   emit,
   state
 }: UseApprovalProgressWorkflowOptions) {
+  const router = useRouter()
+
   /**
    * ElMessageBox.prompt 被用户「取消 / 关闭」时，promise reject 的是字符串
    * 'cancel' / 'close'（不是 Error）。这类情况不是失败，不能弹错误提示。
@@ -65,14 +94,87 @@ export function useApprovalProgressWorkflow({
   }
 
   /**
+   * 当前抽屉上下文里能取到的 PLAN_REPORT 实例（「未完成审核」跳转的兜底上下文）。
+   * 抽屉锚定上报链时 planWorkflowDetail 即报告实例；否则退回关联上报摘要（仅 id）。
+   */
+  function resolveDrawerPlanReportContext(): Record<string, unknown> | null {
+    const detail = state.planWorkflowDetail.value
+    if (detail && normalizeApprovalEntityType(detail.businessEntityType) === 'PLAN_REPORT') {
+      return detail as unknown as Record<string, unknown>
+    }
+    const reportId = state.toPositiveNumber(state.relatedPlanReportSummary.value?.id)
+    if (reportId) {
+      return { entityType: 'PLAN_REPORT', entityId: reportId }
+    }
+    return null
+  }
+
+  /**
+   * 2026-10-30 用户定案：「未完成审核」拦截要能一键跳转。
+   *
+   * 命中「未完成审核」类拦截文案时改用 ElNotification（title「未完成审核」、
+   * message=后端原文原样、附「去完成鉴定」按钮），点击落到该报告填报部门的
+   * 指标填报页——路由复用审批卡片 routeTarget 的 resolveApprovalRoute 同一套口径，
+   * 部门/实例参数从被拒实例/卡片上下文提取（兜底取当前抽屉的 PLAN_REPORT 上下文）。
+   *
+   * 返回 true 表示已按拦截通知处理（调用方不要再弹普通 toast）；
+   * 返回 false 表示非该类拦截（或解析不出跳转路由），走原样错误 toast。
+   */
+  function showUnfinishedAppraisalBlockNotice(
+    message: string,
+    instance?: Record<string, unknown> | null
+  ): boolean {
+    if (!isUnfinishedAppraisalMessage(message)) {
+      return false
+    }
+
+    const routeTarget = resolveUnfinishedAppraisalJumpRoute(
+      instance ?? resolveDrawerPlanReportContext(),
+      {
+        viewerRole: state.authStore.effectiveRole || state.authStore.userRole,
+        currentDepartmentName:
+          state.normalizeDisplayName(
+            state.authStore.effectiveDepartment || state.authStore.user?.department
+          ) || null,
+        fallbackDepartmentName: props.departmentName || null
+      }
+    )
+    // 解析不出跳转路由（缺报告实体上下文）时退回普通 toast：文字保留，不承诺跳转
+    if (!routeTarget) {
+      return false
+    }
+
+    // 消息级去重：同一拦截不重复弹通知
+    if (!claimErrorToast(message)) {
+      return true
+    }
+    showUnfinishedAppraisalNotice({
+      message,
+      routeTarget,
+      onJump: target => {
+        // 与 navigateToPendingPlanApproval 同口径：先收抽屉再跳填报页
+        state.handleClose()
+        void router.push(target)
+      }
+    })
+    return true
+  }
+
+  /**
    * 提示一条审批失败信息（2026-10-29 N-02 修复）。
    *
    * - `markErrorHandled`：告诉响应拦截器「这条错误业务层已经提示过」，
    *   拦截器的兜底提示据此跳过 → 同一条错误只弹一次（实测 409 场景原本弹两条）。
    * - `claimErrorToast`：消息级去重，避免与其它层重复弹同一条文案。
    * - 后端原文优先透出（中文原文直接用；英文原文用中文兜底 + 原文附注）。
+   * - 2026-10-30 用户定案：「未完成审核」类拦截升级为带「去完成鉴定」跳转的
+   *   Notification（见 showUnfinishedAppraisalBlockNotice），其余错误保持普通 toast。
    */
-  function showApprovalErrorToast(error: unknown, fallbackText: string): void {
+  function showApprovalErrorToast(
+    error: unknown,
+    fallbackText: string,
+    instance?: Record<string, unknown> | null
+  ): void {
     markErrorHandled(error)
 
     const message = buildUserFacingErrorMessage(
@@ -81,10 +183,41 @@ export function useApprovalProgressWorkflow({
       (error as { status?: number } | null | undefined)?.status
     )
 
+    if (showUnfinishedAppraisalBlockNotice(message, instance)) {
+      return
+    }
+
     if (!claimErrorToast(message)) {
       return
     }
     ElMessage.error(message)
+  }
+
+  /**
+   * 2026-10-30 双弹修复 + 跳转增强：审批失败提示的统一出口——同一轮操作只弹一个错误弹窗。
+   *
+   * - 单实例失败：只弹该实例的错误原文（不再套「有 1 项…未成功」汇总前缀）；
+   * - 多实例失败：只弹汇总（首条原文 + 计数），失败明细已在 failures 里；
+   * - 「未完成审核」类拦截：升级为带「去完成鉴定」按钮的 Notification（后端原文原样展示）；
+   * - 其余错误保持原样 toast。
+   */
+  function showApprovalFailureMessage(
+    message: string,
+    instance?: Record<string, unknown> | null
+  ): void {
+    const normalized = String(message || '').trim()
+    if (!normalized) {
+      return
+    }
+
+    if (showUnfinishedAppraisalBlockNotice(normalized, instance)) {
+      return
+    }
+
+    if (!claimErrorToast(normalized)) {
+      return
+    }
+    ElMessage.error(normalized)
   }
 
   function normalizeWorkflowRuntimeStatus(value: unknown): string {
@@ -602,14 +735,24 @@ export function useApprovalProgressWorkflow({
         try {
           const response = await approvalApi.approvePlan(instanceId, userId, comment)
           if (!response.success) {
-            failures.push(`${instanceId}: ${response.message || '审批失败'}`)
+            pushMutationApprovalFailure(failures, instanceId, response.message || '审批失败')
           }
         } catch (error) {
-          failures.push(`${instanceId}: ${(error as Error)?.message || '审批失败'}`)
+          // 2026-10-30 双弹修复：失败已计入汇总、由循环结束后统一弹一个，
+          // 标记已处理让响应拦截器的兜底 toast 跳过（否则「单实例原文 + 汇总」双弹）
+          markErrorHandled(error)
+          pushMutationApprovalFailure(failures, instanceId, (error as Error)?.message || '审批失败')
         }
       }
       if (failures.length > 0) {
-        ElMessage.error(`有 ${failures.length} 项审批未成功：${failures[0]}`)
+        // 2026-10-30 用户定案：单实例失败只弹该实例的错误原文（「未完成审核」类带
+        // 「去完成鉴定」跳转）；多实例失败只弹汇总——一轮操作只弹一个错误弹窗。
+        showApprovalFailureMessage(
+          failures.length === 1
+            ? failures[0]
+            : `有 ${failures.length} 项审批未成功：${failures[0]}`,
+          item as unknown as Record<string, unknown>
+        )
         return
       }
       ElMessage.success(
@@ -675,17 +818,21 @@ export function useApprovalProgressWorkflow({
         try {
           const response = await approvalApi.rejectPlan(instanceId, userId, reason)
           if (!response.success) {
-            failures.push(`${instanceId}: ${response.message || '驳回失败'}`)
+            pushMutationApprovalFailure(failures, instanceId, response.message || '驳回失败')
           }
         } catch (error) {
-          failures.push(`${instanceId}: ${(error as Error)?.message || '驳回失败'}`)
+          // 2026-10-30 双弹修复：同 handleApproveMutation——标记已处理，拦截器不再兜底弹
+          markErrorHandled(error)
+          pushMutationApprovalFailure(failures, instanceId, (error as Error)?.message || '驳回失败')
         }
       }
       if (failures.length > 0) {
-        ElMessage.error(
-          `有 ${failures.length} 项驳回未成功：${failures[0]}${
-            failures.length > 1 ? '（其余可能已退回，请刷新确认）' : ''
-          }`
+        // 2026-10-30 用户定案：单实例失败只弹该实例的错误原文；多实例失败只弹汇总
+        showApprovalFailureMessage(
+          failures.length === 1
+            ? failures[0]
+            : `有 ${failures.length} 项驳回未成功：${failures[0]}（其余可能已退回，请刷新确认）`,
+          item as unknown as Record<string, unknown>
         )
         return
       }
@@ -747,7 +894,9 @@ export function useApprovalProgressWorkflow({
             value || '审批通过'
           )
           if (!response.success) {
-            ElMessage.error(response.message || '审批失败')
+            // 2026-10-30 用户定案：「未完成审核」类拦截走带跳转的 Notification，
+            // 其余保持原样 toast（单实例失败只弹这一条）
+            showApprovalFailureMessage(response.message || '审批失败')
             return
           }
           applyOptimisticPlanWorkflowPatch({
@@ -788,9 +937,16 @@ export function useApprovalProgressWorkflow({
     }
 
     if (state.scopedPlanApprovals.value.length === 0) {
-      ElMessage.warning('当前计划暂无待审批实例')
+      // 2026-10-31（C-4）空态守卫口径统一：还有历史/上报/异动/退回可展示条目时
+      // 不弹「暂无待审批实例」——避免与同屏卡片自相矛盾；真正空数据才提示。
+      if (!state.hasAnyDisplayableApprovalEntry.value) {
+        ElMessage.warning('当前计划暂无待审批实例')
+      }
       return
     }
+
+    // 2026-10-30 跳转增强：记录失败实例，供外层 catch 的「未完成审核」拦截通知解析跳转路由
+    let batchFailureInstance: Record<string, unknown> | null = null
 
     try {
       const { value } = await ElMessageBox.prompt(
@@ -813,13 +969,14 @@ export function useApprovalProgressWorkflow({
       try {
         const userId = state.authStore.user?.userId || state.authStore.user?.id || 1
         for (const instance of state.scopedPlanApprovals.value) {
+          batchFailureInstance = instance as Record<string, unknown>
           const response = await approvalApi.approvePlan(
             instance.instanceId,
             userId,
             value || '审批通过'
           )
           if (!response.success) {
-            ElMessage.error(response.message || '审批失败')
+            showApprovalFailureMessage(response.message || '审批失败', batchFailureInstance)
             // 2026-10-07：批量中途失败也要回源收尾——前面的实例已提交成功，
             // 跳过刷新会让抽屉停留旧状态
             await refreshPlanApprovalAfterMutation()
@@ -858,7 +1015,7 @@ export function useApprovalProgressWorkflow({
       }
       // 2026-10-29 修复（N-02）：批量通过时实例接口抛错原先被整个吞掉，
       // 用户只看到「点了没反应」。这里把后端原文透出。
-      showApprovalErrorToast(error, '审批失败')
+      showApprovalErrorToast(error, '审批失败', batchFailureInstance)
       // 批量中途失败也要回源收尾——前面的实例已提交成功，跳过刷新会让抽屉停留旧状态
       await refreshPlanApprovalAfterMutation().catch(() => undefined)
     }
@@ -907,7 +1064,8 @@ export function useApprovalProgressWorkflow({
             value
           )
           if (!response.success) {
-            ElMessage.error(response.message || '驳回失败')
+            // 2026-10-30 双弹修复：单实例失败只弹这一条（统一出口，含消息级去重）
+            showApprovalFailureMessage(response.message || '驳回失败')
             return
           }
           applyOptimisticPlanWorkflowPatch({
@@ -944,9 +1102,16 @@ export function useApprovalProgressWorkflow({
     }
 
     if (state.scopedPlanApprovals.value.length === 0) {
-      ElMessage.warning('当前计划暂无待审批实例')
+      // 2026-10-31（C-4）空态守卫口径统一：还有历史/上报/异动/退回可展示条目时
+      // 不弹「暂无待审批实例」——避免与同屏卡片自相矛盾；真正空数据才提示。
+      if (!state.hasAnyDisplayableApprovalEntry.value) {
+        ElMessage.warning('当前计划暂无待审批实例')
+      }
       return
     }
+
+    // 2026-10-30 双弹修复：记录失败实例，供外层 catch 的统一出口解析上下文
+    let batchFailureInstance: Record<string, unknown> | null = null
 
     try {
       const { value } = await ElMessageBox.prompt(
@@ -970,9 +1135,10 @@ export function useApprovalProgressWorkflow({
       try {
         const userId = state.authStore.user?.userId || state.authStore.user?.id || 1
         for (const instance of state.scopedPlanApprovals.value) {
+          batchFailureInstance = instance as Record<string, unknown>
           const response = await approvalApi.rejectPlan(instance.instanceId, userId, value)
           if (!response.success) {
-            ElMessage.error(response.message || '拒绝失败')
+            showApprovalFailureMessage(response.message || '拒绝失败', batchFailureInstance)
             // 2026-10-07：批量中途失败也要回源收尾，避免抽屉停留旧状态
             await refreshPlanApprovalAfterMutation()
             return
@@ -1006,7 +1172,7 @@ export function useApprovalProgressWorkflow({
       }
       // 2026-10-29 修复（N-02）：批量驳回时实例接口抛错原先被整个吞掉，
       // 用户只看到「点了没反应」。这里把后端原文透出。
-      showApprovalErrorToast(error, '驳回失败')
+      showApprovalErrorToast(error, '驳回失败', batchFailureInstance)
       // 批量中途失败也要回源收尾，避免抽屉停留旧状态
       await refreshPlanApprovalAfterMutation().catch(() => undefined)
     }
@@ -1139,11 +1305,9 @@ export function useApprovalProgressWorkflow({
   }
 
   async function openPlanApprovalDetails(item?: PlanApprovalDetailItem) {
-    if (
-      state.currentPlanApprovalItems.value.length === 0 &&
-      state.historicalPlanApprovalItems.value.length === 0 &&
-      !state.hasPlanWorkflowData.value
-    ) {
+    // 2026-10-31（C-4）空态守卫口径统一：上报待办/异动在审/退回待重报也是可查看
+    // 详情的数据源——只有全部可展示条目为空才提示空态（口径集中在 state 定义）。
+    if (!state.hasAnyDisplayableApprovalEntry.value) {
       ElMessage.warning('当前计划暂无待审批实例')
       return
     }

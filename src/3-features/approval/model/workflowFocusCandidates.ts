@@ -10,7 +10,13 @@
  *   · 计划自身：仅在审批中（PENDING/IN_REVIEW/SUBMITTED）才作为一条候选
  *   · 进行中的上报审批、进行中的异动审批：各占一条候选
  *   · 历史终态实例：一律不进选择栏
- *   · 只有一条候选 → 整栏隐藏；多条 → 统一编号 实例1、实例2、实例3…
+ *   · 2026-10-30 用户定案修订：退回待重报的异动活链（WITHDRAWN 且未终结）
+ *     同样进选择栏——流程没结束前不得在审批中心消失
+ *   · 2026-10-30 用户定案修订（二）：选择栏去掉「实例N」编号前缀，
+ *     每条标签自解释为「{审批类型} · source -> target」方向标题；
+ *     计划候选由调用方（useApprovalProgressState）拼好方向标题经 planLabel 传入，
+ *     上下文取不到时回退计划名
+ *   · 只有一条候选 → 整栏隐藏；多条 → 全部平铺展示
  */
 
 export type WorkflowFocusCandidateKind = 'plan' | 'report' | 'mutation' | 'history'
@@ -36,7 +42,10 @@ export function isInFlightWorkflowStatus(status: unknown): boolean {
 export interface BuildWorkflowFocusCandidatesInput {
   /** 计划自身是否仍在审批中 */
   isPlanPending: boolean
-  /** 计划名称（候选标题用） */
+  /**
+   * 计划候选标题。2026-10-30 起 calling 方（useApprovalProgressState）优先传
+   * 方向标题「{审批类型} · source -> target」，取不到上下文时回退计划名
+   */
   planLabel: string
   /** 部门名称（计划名称缺失时兜底） */
   departmentName?: string
@@ -44,6 +53,11 @@ export interface BuildWorkflowFocusCandidatesInput {
   reports?: Array<{ instanceId?: number | string; label: string; step?: string }>
   /** 进行中的异动审批实例 */
   mutations?: Array<{ instanceId?: number | string; label: string; step?: string }>
+  /**
+   * 2026-10-30 用户定案：退回待重报的异动活链（未终结）——
+   * 同样进选择栏，key 用 returned: 前缀与在审实例区分，避免撞 key
+   */
+  returnedMutations?: Array<{ instanceId?: number | string; label: string; step?: string }>
 }
 
 /**
@@ -88,6 +102,21 @@ export function buildWorkflowFocusCandidates(
     })
   }
 
+  // 2026-10-30 用户定案：退回待重报活链（未终结）与在审实例同 kind（mutation），
+  // key 前缀 returned: 避免与在审实例撞 key
+  for (const mutation of input.returnedMutations ?? []) {
+    if (!mutation.instanceId) {
+      continue
+    }
+    items.push({
+      key: `returned:${mutation.instanceId}`,
+      instanceId: mutation.instanceId,
+      label: mutation.label || '异动审批（退回待重报）',
+      step: mutation.step,
+      kind: 'mutation'
+    })
+  }
+
   return items
 }
 
@@ -96,11 +125,4 @@ export function buildWorkflowFocusCandidates(
  */
 export function shouldShowWorkflowInstanceSelector(candidates: unknown[]): boolean {
   return candidates.length > 1
-}
-
-/**
- * 选择栏上的序号文案：统一编号 实例1、实例2、实例3…
- */
-export function resolveWorkflowInstanceIndexLabel(index: number): string {
-  return `实例${index + 1}`
 }

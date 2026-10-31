@@ -6,6 +6,7 @@
 
 import type { Plan, StrategicIndicator } from '@/shared/types'
 import type { WorkflowInstanceDetailResponse } from '@/features/workflow/api/types'
+import type { ReturnedMutationChainItem } from '@/features/indicator/api/mutationApi'
 
 export interface ApprovalInstance {
   instanceId: number
@@ -188,6 +189,12 @@ export interface DistributionApprovalProgressDrawerProps {
   mutationWorkflowEntities?: Array<{ entityId: number | string; entityType?: 'INDICATOR' | 'TASK' }>
   /** 2026-10-21：审批中的异动实例（「计划审批」看板数据源），使发起人/部门视角可见异动 */
   mutationPendingApprovals?: Array<Record<string, any>>
+  /**
+   * 2026-10-30 用户定案：「退回待重报」的异动活链清单（计划审批 tab 退回状态卡 +
+   * 审批流程 tab 选择栏候选的数据源）。流程没终结（取消/整链通过）前，
+   * 这条活链不得在审批中心消失。
+   */
+  returnedMutationApprovals?: ReturnedMutationChainItem[]
   /**
    * 2026-10-26：部门计划族补充历史实体——
    * 部门卡片抽屉锚定的是本部门主计划（如 战略发展部→教务处），而

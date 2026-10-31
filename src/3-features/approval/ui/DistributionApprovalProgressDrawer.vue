@@ -12,7 +12,6 @@ import {
   resolvePlanApprovalTypeLabel,
   showAppraisalLevelForFlow
 } from '@/features/approval/lib/approval-utils'
-import { resolveWorkflowInstanceIndexLabel } from '@/features/approval/model/workflowFocusCandidates'
 import { getProgressLevelTagStyle } from '@/shared/lib/constants/progressLevel'
 import {
   useDistributionApprovalProgressDrawer,
@@ -41,6 +40,8 @@ const props = withDefaults(defineProps<DistributionApprovalProgressDrawerProps>(
   secondaryWorkflowEntityId: undefined,
   mutationWorkflowEntities: () => [],
   mutationPendingApprovals: () => [],
+  // 2026-10-30 用户定案：退回待重报活链（ReturnedMutationChainItem[]，见 types.ts）
+  returnedMutationApprovals: () => [],
   relatedWorkflowEntities: () => [],
   routeTarget: ''
 })
@@ -165,6 +166,8 @@ const {
   relevantDepartmentOrgIds,
   requiredPlanApprovalPermissionCode,
   requiredPlanApprovalPermissionCodes,
+  // 2026-10-30 用户定案：退回待重报活链状态卡（流程未终结不得在审批中心消失）
+  returnedMutationApprovalItems,
   resolveApprovalRouteTitle,
   resolveCandidateDisplayName,
   resolveExpectedApproverOrgId,
@@ -235,14 +238,18 @@ const formatMutationValue = (value: unknown): string => {
  * 详情弹窗条目数据源：与原版一致——选中实例时按 instanceId 在历史卡片中定位；
  * 异动卡片走同一查看详情入口，故追加在异动待审卡片中定位（计划实例不会落入其中）。
  * 未选中时保持原版口径：当前审批条目。
+ * 2026-10-30 用户定案：退回待重报活链的「查看详情」同样据此定位实例，
+ * 打开后可渲染该实例的审批步骤链。
  */
 const planDetailDialogItems = computed<PlanApprovalDetailItem[]>(() => {
   if (!selectedHistoryInstanceId.value) {
     return currentPlanApprovalItems.value
   }
-  return [...historicalPlanApprovalItems.value, ...pendingMutationApprovalItems.value].filter(
-    item => String(item.instanceId) === selectedHistoryInstanceId.value
-  )
+  return [
+    ...historicalPlanApprovalItems.value,
+    ...pendingMutationApprovalItems.value,
+    ...returnedMutationApprovalItems.value
+  ].filter(item => String(item.instanceId) === selectedHistoryInstanceId.value)
 })
 
 /** 当前弹窗选中的条目是否为异动（异动条目以「本次异动内容」替代业务快照区） */
@@ -470,7 +477,8 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 !planWorkflowDetailLoading &&
                 !showPlanPendingCard &&
                 !pendingMutationApprovalItems.length &&
-                !pendingReportApprovalItems.length
+                !pendingReportApprovalItems.length &&
+                !returnedMutationApprovalItems.length
               "
               description="暂无审批中的计划"
               :image-size="120"
@@ -533,6 +541,58 @@ const displayedCurrentPlanApprovalName = computed(() => {
                   <!-- 2026-10-30 用户定案：异动卡不再放「撤回」——撤回统一走战略任务页
                        工具栏的「撤回」按钮（多态撤回，异动在审时改指撤回异动），
                        卡片只保留查看详情与审批人操作 -->
+                </div>
+              </div>
+              <!-- 2026-10-30 用户定案：退回待重报活链在流程终结前不得在审批中心消失——
+                   被驳回/发起人撤回的异动链（WITHDRAWN、completed_at 为空）以 danger
+                   「已回退」状态卡常驻计划审批 tab（2026-10-31 定案：与上报审批退回态
+                   同词同样式），与在审异动卡同构（同一套 approval-card 结构）。
+                   无审批人可操作：不放审批通过/驳回按钮，仅保留「查看详情」
+                   （openPlanApprovalDetails 按 instanceId 定位，可渲染该实例步骤链），
+                   等填报人重新提交（转 IN_REVIEW 换回在审卡）或取消（归审批历史） -->
+              <div
+                v-for="item in returnedMutationApprovalItems"
+                :key="`${item.instanceId}-returned`"
+                class="approval-card"
+              >
+                <div class="card-header">
+                  <div class="plan-info">
+                    <el-icon class="plan-icon"><Document /></el-icon>
+                    <div class="info-text">
+                      <div class="plan-name">{{ item.routeTitle || item.title }}</div>
+                      <div class="plan-year">
+                        {{ item.flowName || '指标异动审批（战略发展部）' }}
+                      </div>
+                    </div>
+                  </div>
+                  <el-tag :type="item.statusType || 'danger'" size="small">
+                    {{ item.statusLabel || '已回退' }}
+                  </el-tag>
+                </div>
+                <div class="submit-info">
+                  <div class="info-row">
+                    <el-icon><User /></el-icon>
+                    <span class="label">提交人：</span>
+                    <span class="value">{{ item.submitterName }}</span>
+                  </div>
+                  <div class="info-row">
+                    <el-icon><Timer /></el-icon>
+                    <span class="label">提交时间：</span>
+                    <span class="value">{{ formatTime(item.createdAt) }}</span>
+                  </div>
+                  <div class="info-row">
+                    <el-icon><Right /></el-icon>
+                    <span class="label">流转方向：</span>
+                    <span class="value">{{ item.routeTitle || '--' }}</span>
+                  </div>
+                  <div class="info-row">
+                    <el-icon><Right /></el-icon>
+                    <span class="label">当前步骤：</span>
+                    <span class="value">{{ item.currentStepName }}</span>
+                  </div>
+                </div>
+                <div class="card-actions">
+                  <el-button @click="openPlanApprovalDetails(item)">查看详情</el-button>
                 </div>
               </div>
               <!-- 2026-10-23 修复（上报审批卡片不显示）：月报待办独立成卡。
@@ -712,7 +772,10 @@ const displayedCurrentPlanApprovalName = computed(() => {
                列出每条实例（标题+当前环节），点选切换展开渲染对应流程 -->
           <!-- 2026-10-27 用户定案：选择栏只承载「当前正在审批的实例」。
                已完成（已通过/已驳回/已撤回）的实例归「审批历史」页签，不在这里出现；
-               只有一条在审实例时整栏隐藏，多条时统一编号 实例1、实例2、实例3…。 -->
+               只有一条在审实例时整栏隐藏。
+               2026-10-30 用户定案：多条时不再编号「实例1/实例2」，每条标签
+               自解释为「{审批类型} · source -> target」方向标题（label 由
+               useApprovalProgressState 的 workflowFocusCandidates 统一拼好）。 -->
           <div v-if="workflowFocusCandidates.length > 1" class="workflow-instance-selector">
             <button
               v-for="(instance, idx) in workflowFocusCandidates"
@@ -722,7 +785,6 @@ const displayedCurrentPlanApprovalName = computed(() => {
               :class="{ active: idx === workflowFocusIdx }"
               @click="workflowFocusIdx = idx"
             >
-              <span class="option-index">{{ resolveWorkflowInstanceIndexLabel(idx) }}</span>
               <span class="option-title">{{ instance.label }}</span>
               <span v-if="instance.step" class="option-step">{{ instance.step }}</span>
             </button>

@@ -3836,6 +3836,18 @@ export function useApprovalProgressDrawer(
     ElMessage.error(message)
   }
 
+  // 2026-10-31（C-4 空态 toast 误弹修复）空态守卫口径统一：
+  // 「当前计划暂无待审批实例」只允许在真正的空数据时弹——
+  // 在审计划卡、历史卡、上报待办卡任一存在（或计划工作流详情已加载）即视为
+  // 有可展示条目；本文件无异动/退回数据源，其余口径与 useApprovalProgressState 对齐。
+  const hasAnyDisplayableApprovalEntry = computed(
+    () =>
+      currentPlanApprovalItems.value.length > 0 ||
+      historicalPlanApprovalItems.value.length > 0 ||
+      externalWorkflowTodoItems.value.length > 0 ||
+      hasPlanWorkflowData.value
+  )
+
   async function handleApprovePlanBatch() {
     if (!hasPlanApprovalPermission.value && !hasAnyPlanApprovalRole.value) {
       ElMessage.warning('当前角色或组织范围不匹配该审批节点，无法执行审批通过')
@@ -3909,7 +3921,11 @@ export function useApprovalProgressDrawer(
     }
 
     if (planScopedPlanApprovals.value.length === 0) {
-      ElMessage.warning('当前计划暂无待审批实例')
+      // 2026-10-31（C-4）空态守卫口径统一：还有历史/上报可展示条目时不再弹
+      // 「暂无待审批实例」——避免与同屏卡片自相矛盾；真正空数据才提示。
+      if (!hasAnyDisplayableApprovalEntry.value) {
+        ElMessage.warning('当前计划暂无待审批实例')
+      }
       return
     }
 
@@ -4042,7 +4058,11 @@ export function useApprovalProgressDrawer(
     }
 
     if (planScopedPlanApprovals.value.length === 0) {
-      ElMessage.warning('当前计划暂无待审批实例')
+      // 2026-10-31（C-4）空态守卫口径统一：还有历史/上报可展示条目时不再弹
+      // 「暂无待审批实例」——避免与同屏卡片自相矛盾；真正空数据才提示。
+      if (!hasAnyDisplayableApprovalEntry.value) {
+        ElMessage.warning('当前计划暂无待审批实例')
+      }
       return
     }
 
@@ -4379,11 +4399,9 @@ export function useApprovalProgressDrawer(
   }
 
   async function openPlanApprovalDetails(item?: PlanApprovalDetailItem) {
-    if (
-      currentPlanApprovalItems.value.length === 0 &&
-      historicalPlanApprovalItems.value.length === 0 &&
-      !hasPlanWorkflowData.value
-    ) {
+    // 2026-10-31（C-4）空态守卫口径统一：上报待办同样是可查看详情的数据源——
+    // 只有全部可展示条目为空才提示空态（口径见 hasAnyDisplayableApprovalEntry）。
+    if (!hasAnyDisplayableApprovalEntry.value) {
       ElMessage.warning('当前计划暂无待审批实例')
       return
     }

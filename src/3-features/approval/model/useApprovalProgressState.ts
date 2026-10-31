@@ -41,6 +41,7 @@ import {
 } from '@/features/approval/model/workflowFocusCandidates'
 import { normalizeApprovalEntityType } from '@/features/approval/model/approvalEntityTypes'
 import { usePlanStore } from '@/features/plan/model/store'
+import type { ReturnedMutationChainItem } from '@/features/indicator/api/mutationApi'
 import type {
   DistributionApprovalProgressDrawerEmit,
   DistributionApprovalProgressDrawerProps,
@@ -878,6 +879,62 @@ export function useApprovalProgressState(
           .filter(id => Number.isFinite(id) && id > 0),
         // 当前待办节点的审批组织：异动卡片按「组织 + 步骤名角色」判定审批按钮可见性
         approverOrgId: first.approverOrgId
+      } as PlanApprovalDetailItem
+    })
+  })
+
+  /**
+   * 2026-10-30 用户定案：「退回待重报」异动活链的状态卡条目（「计划审批」看板）。
+   * 被驳回/发起人撤回后的链 status=WITHDRAWN 且 completed_at 为空——流程没终结
+   * （取消 CANCELLED / 整链通过 APPROVED）前不得在审批中心消失。卡片结构与
+   * pendingMutationApprovalItems 同构（同一套 PlanApprovalDetailItem + 按 batch_id
+   * 聚合成批卡），但不带审批按钮（无审批人可操作，等填报人重报或取消）。
+   * 2026-10-31 用户定案：状态 tag 与上报审批退回态同词同样式——红色 danger
+   * 「已回退」（同 status-management.ts / model/constants.ts 的 REJECTED/RETURNED
+   * 口径），不再用橙色 warning「退回待重报」。
+   */
+  const returnedMutationApprovalItems = computed<PlanApprovalDetailItem[]>(() => {
+    const groups = new Map<string, ReturnedMutationChainItem[]>()
+    for (const item of props.returnedMutationApprovals ?? []) {
+      // 无批次号的历史实例按实例独立成卡，避免误聚合（与在审异动卡同口径）
+      const groupKey = normalizeDisplayName(item.batch_id) || `instance-${item.instance_id}`
+      const list = groups.get(groupKey) ?? []
+      list.push(item)
+      groups.set(groupKey, list)
+    }
+
+    return Array.from(groups.entries()).map(([_groupKey, items], index) => {
+      const first = items[0]
+      const entityType = String(first.entity_type || 'INDICATOR').toUpperCase() === 'TASK'
+
+      return {
+        instanceId: Number(first.instance_id) || index,
+        instanceNo: String(first.instance_id || ''),
+        title:
+          items.length > 1
+            ? `${normalizeDisplayName(first.indicator_desc) || '异动'} 等 ${items.length} 项`
+            : normalizeDisplayName(first.indicator_desc) || '异动审批',
+        // 与在审/历史异动卡同源：resolveApprovalRouteTitle 生成流向标题（起→止）
+        routeTitle: resolveApprovalRouteTitle({
+          flowCode: 'PLAN_MUTATION_STRATEGY',
+          sourceOrgName: first.source_org_name,
+          targetOrgName: first.target_org_name
+        }),
+        flowName: entityType ? '任务异动审批（战略发展部）' : '指标异动审批（战略发展部）',
+        flowCode: 'PLAN_MUTATION_STRATEGY',
+        submitterName: normalizeDisplayName(first.submitter_name) || '--',
+        // 链已退回填报人，等重新提交或取消——无流转中的审批步骤
+        currentStepName: '填报人修改（退回待重报）',
+        createdAt: first.created_at,
+        statusLabel: '已回退',
+        statusType: 'danger' as const,
+        entityId: first.indicator_id,
+        batchId: normalizeDisplayName(first.batch_id) || null,
+        changedFields: null,
+        mutationEntityType: entityType ? 'TASK' : 'INDICATOR',
+        mutationInstanceIds: items
+          .map(entry => Number(entry.instance_id))
+          .filter(id => Number.isFinite(id) && id > 0)
       } as PlanApprovalDetailItem
     })
   })
@@ -2427,11 +2484,53 @@ export function useApprovalProgressState(
   // 2026-10-27 用户定案（重做）：「审批流程」页签顶部的实例选择栏
   // 只承载「当前正在审批的实例」——已完成（已通过/已驳回/已撤回）的实例属于
   // 审批历史，不在这里出现。规则与实现见 workflowFocusCandidates.ts。
+  // 2026-10-30 修订：退回待重报的异动活链（WITHDRAWN 且未终结）同样进选择栏，
+  // 用户定案：流程没结束前不得在审批中心消失。
+  // 2026-10-30 用户定案（二）：去掉「实例N」编号后每条标签须自解释——
+  // 计划候选不再显示计划名，与上报/异动候选同为方向标题
+  // 「{审批类型} · source -> target」。取值口径与本文件 resolvePlanApprovalDisplayName
+  // / planReportApprovalContext 一致：
+  //   · flowCode 定方向前缀：planWorkflowDetail.flowCode -> activePlanWorkflow.flowCode
+  //     -> props.workflowCode（resolveApprovalRouteTitle 内部按 flowCode 选词与流向）
+  //   · source=流程发起方：planWorkflowDetail.sourceOrgName -> plan.createdByOrgName
+  //   · target=接收方：planWorkflowDetail.targetOrgName -> plan.targetOrgName/orgName
+  //     -> departmentName
+  // 起止任一取不到就放弃拼方向标题（resolveApprovalRouteTitle 的占位回退会编造流向），
+  // 回退显示计划名，绝不出现 undefined。
   const workflowFocusIdx = ref(0)
-  const workflowFocusCandidates = computed<WorkflowFocusCandidate[]>(() =>
-    buildWorkflowFocusCandidates({
+  const workflowFocusCandidates = computed<WorkflowFocusCandidate[]>(() => {
+    const detail = planWorkflowDetail.value
+    const workflowWithRouteFields = activePlanWorkflow.value as {
+      flowCode?: unknown
+      sourceOrgName?: unknown
+      targetOrgName?: unknown
+    } | null
+    const flowCode = normalizeWorkflowCode(
+      detail?.flowCode ||
+        workflowWithRouteFields?.flowCode ||
+        (Array.isArray(props.workflowCode) ? props.workflowCode[0] : props.workflowCode)
+    )
+    const sourceOrgName =
+      normalizeDisplayName(detail?.sourceOrgName) ||
+      normalizeDisplayName(workflowWithRouteFields?.sourceOrgName) ||
+      normalizeDisplayName(props.plan?.createdByOrgName)
+    const targetOrgName =
+      normalizeDisplayName(detail?.targetOrgName) ||
+      normalizeDisplayName(workflowWithRouteFields?.targetOrgName) ||
+      normalizeDisplayName(props.plan?.targetOrgName) ||
+      normalizeDisplayName(props.plan?.orgName) ||
+      normalizeDisplayName(props.departmentName)
+    const planRouteTitle =
+      flowCode && sourceOrgName && targetOrgName
+        ? resolveApprovalRouteTitle({ flowCode, sourceOrgName, targetOrgName })
+        : ''
+
+    return buildWorkflowFocusCandidates({
       isPlanPending: isPlanPendingApproval.value,
-      planLabel: normalizeDisplayName(props.planName) || normalizeDisplayName(props.departmentName),
+      planLabel:
+        planRouteTitle ||
+        normalizeDisplayName(props.planName) ||
+        normalizeDisplayName(props.departmentName),
       departmentName: normalizeDisplayName(props.departmentName),
       reports: reportWorkflowInstances.value.map(report => {
         const instanceId = report.workflowInstanceId || report.instanceId
@@ -2445,9 +2544,14 @@ export function useApprovalProgressState(
         instanceId: mutation.instanceId,
         label: normalizeDisplayName(mutation.routeTitle || mutation.title) || '异动审批',
         step: normalizeDisplayName(mutation.currentStepName) || undefined
+      })),
+      returnedMutations: returnedMutationApprovalItems.value.map(item => ({
+        instanceId: item.instanceId,
+        label: normalizeDisplayName(item.routeTitle || item.title) || '异动审批（退回待重报）',
+        step: '退回待重报'
       }))
     })
-  )
+  })
   const workflowFocusInstance = computed<WorkflowFocusCandidate | null>(() => {
     const items = workflowFocusCandidates.value
     if (items.length === 0) {
@@ -3120,6 +3224,22 @@ export function useApprovalProgressState(
     }
   }
 
+  // 2026-10-31（C-4 空态 toast 误弹修复）空态守卫口径统一：
+  // 「当前计划暂无待审批实例」只允许在真正的空数据时弹——
+  // 在审计划卡、历史卡、上报待办卡、异动在审卡、退回待重报卡任一存在
+  // （或计划工作流详情已加载）即视为有可展示条目。
+  // 此前各守卫点只查计划/历史两源，只有上报卡或异动卡时点「查看详情/一键审批」
+  // 会误弹空态提示，与同屏卡片自相矛盾。
+  const hasAnyDisplayableApprovalEntry = computed(
+    () =>
+      currentPlanApprovalItems.value.length > 0 ||
+      historicalPlanApprovalItems.value.length > 0 ||
+      pendingReportApprovalItems.value.length > 0 ||
+      pendingMutationApprovalItems.value.length > 0 ||
+      returnedMutationApprovalItems.value.length > 0 ||
+      hasPlanWorkflowData.value
+  )
+
   async function handleApprovePlanBatch() {
     if (!hasPlanApprovalPermission.value && !hasAnyPlanApprovalRole.value) {
       ElMessage.warning('当前角色或组织范围不匹配该审批节点，无法执行审批通过')
@@ -3195,7 +3315,11 @@ export function useApprovalProgressState(
 
     // 一键审批只针对计划实例：异动/月报有各自的审批入口，不能被批量带上
     if (planScopedPlanApprovals.value.length === 0) {
-      ElMessage.warning('当前计划暂无待审批实例')
+      // 2026-10-31（C-4）：还有历史/上报/异动/退回可展示条目时不再弹
+      // 「暂无待审批实例」空态——避免与同屏卡片自相矛盾；真正空数据才提示。
+      if (!hasAnyDisplayableApprovalEntry.value) {
+        ElMessage.warning('当前计划暂无待审批实例')
+      }
       return
     }
 
@@ -3327,7 +3451,11 @@ export function useApprovalProgressState(
 
     // 一键驳回只针对计划实例：异动/月报有各自的审批入口
     if (planScopedPlanApprovals.value.length === 0) {
-      ElMessage.warning('当前计划暂无待审批实例')
+      // 2026-10-31（C-4）：还有历史/上报/异动/退回可展示条目时不再弹
+      // 「暂无待审批实例」空态——避免与同屏卡片自相矛盾；真正空数据才提示。
+      if (!hasAnyDisplayableApprovalEntry.value) {
+        ElMessage.warning('当前计划暂无待审批实例')
+      }
       return
     }
 
@@ -3448,11 +3576,11 @@ export function useApprovalProgressState(
   }
 
   async function openPlanApprovalDetails(item?: PlanApprovalDetailItem) {
-    if (
-      currentPlanApprovalItems.value.length === 0 &&
-      historicalPlanApprovalItems.value.length === 0 &&
-      !hasPlanWorkflowData.value
-    ) {
+    // 2026-10-31（C-4）空态守卫口径统一：可展示条目=在审计划+历史+上报待办+
+    // 异动在审+退回待重报（+计划工作流详情），口径集中在 hasAnyDisplayableApprovalEntry。
+    // 2026-10-30 用户定案：退回待重报活链也是可查看详情的数据源——
+    // 只有退回链时同样放行详情弹窗（否则点「查看详情」被空态拦截）。
+    if (!hasAnyDisplayableApprovalEntry.value) {
       ElMessage.warning('当前计划暂无待审批实例')
       return
     }
@@ -3623,6 +3751,7 @@ export function useApprovalProgressState(
     handleUpdateApprover,
     hasApprovalData,
     hasDisplayableApprovalContent,
+    hasAnyDisplayableApprovalEntry,
     hasPlanApprovalPermission,
     hasAnyPlanApprovalRole,
     hasRelatedPlanReportActiveWorkflow,
@@ -3654,6 +3783,8 @@ export function useApprovalProgressState(
     pendingMutationApprovalItems,
     pendingReportApprovalItems,
     pendingPlanApprovals,
+    // 2026-10-30 用户定案：退回待重报活链状态卡（计划审批 tab + 选择栏候选）
+    returnedMutationApprovalItems,
     permissionUtil,
     planApprovalsLoading,
     planDetailDialogVisible,
