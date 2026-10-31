@@ -3646,28 +3646,30 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
   // 进度审批已统一迁移到真实工作流待办抽屉，避免前端直接改写审批状态。
 
-  // 批量撤回：仅允许撤回仍处于 pending 边界的子指标，和上级下发流程保持一致。
+  // 批量撤回（2026-10-31 撤回路径修复）：本按钮仅在计划的「下发审批在审且可撤回」
+  // 状态（pending_withdrawable）出现，语义是撤回「计划下发审批」本身，因此走与
+  // 战略任务页 handleWithdrawAll 相同的计划级撤回端点 POST /plans/{id}/withdraw——
+  // 由后端 withdrawPlan 撤销在审工作流步骤、计划回 DRAFT 并把指标同步回草稿。
+  // 此前实现调的是 /indicators/batch-withdraw（按 owner+target 撤指标）：下发审批
+  // 在审期间指标仍为 DRAFT，该端点只会返回 successCount=0 的空撤回，且不会取消
+  // 计划工作流，用户点撤回后计划永远停在 PENDING、再次发起下发审批直接报错。
+  // 计划级 withdrawPlan / 指标级 batch-withdraw 的既有业务逻辑均未改动，仅换本页
+  // 按钮调用的端点。
   const handleBatchWithdraw = async (college: string) => {
     if (!canWithdrawCurrentCollegePlan.value) {
       ElMessage.warning('当前计划不处于可撤回状态')
       return
     }
 
-    const childIndicators = getMyCollegeIndicators(college)
-    const withdrawableIndicators = childIndicators
-
-    // 分离出真实后端ID的指标和临时ID的指标
-    const realBackendIndicators = withdrawableIndicators.filter(i => /^\d+$/.test(i.id.toString()))
-    const tempIdIndicators = withdrawableIndicators.filter(i => !/^\d+$/.test(i.id.toString()))
-
-    if (withdrawableIndicators.length === 0) {
-      ElMessage.warning('当前没有可撤回的子指标')
+    const planId = Number(currentActiveCollegePlan.value?.id ?? NaN)
+    if (!Number.isFinite(planId) || planId <= 0) {
+      ElMessage.error('无法识别当前部门计划，不能执行撤回')
       return
     }
 
     try {
       await ElMessageBox.confirm(
-        `确认撤回【${college}】的 ${withdrawableIndicators.length} 个子指标？撤回后将恢复到可编辑状态。`,
+        `确认撤回【${college}】的下发审批申请？撤回后，当前计划将恢复为草稿状态，子指标恢复为可编辑。`,
         '批量撤回确认',
         {
           confirmButtonText: '确认撤回',
@@ -3679,99 +3681,28 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       return
     }
 
-    const errors: string[] = []
-
-    // 如果有真实后端ID的指标，使用批量撤回API
-    if (realBackendIndicators.length > 0) {
-      try {
-        const ownerOrgId = getOrgIdByDeptName(currentDept.value)
-        const targetOrgId = getOrgIdByDeptName(college)
-        const planId = Number(currentActiveCollegePlan.value?.id ?? NaN)
-
-        if (!ownerOrgId) {
-          throw new Error(`无法解析当前部门组织ID: ${currentDept.value}`)
-        }
-        if (!targetOrgId) {
-          throw new Error(`无法解析目标学院组织ID: ${college}`)
-        }
-        if (!Number.isFinite(planId) || planId <= 0) {
-          throw new Error('无法识别当前部门计划，不能执行批量撤回')
-        }
-
-        applyLocalCollegePlanReportSummaryPatch('withdrawn')
-
-        const result = await indicatorApi.batchWithdrawIndicators(
-          ownerOrgId,
-          targetOrgId,
-          planId,
-          '批量撤销下发'
-        )
-
-        if (result.success && result.data) {
-          const {
-            successCount,
-            failedCount,
-            withdrawnIndicatorIds,
-            errors: batchErrors
-          } = result.data
-
-          // 更新前端状态
-          for (const indicatorId of withdrawnIndicatorIds) {
-            strategicStore.addStatusAuditEntry(indicatorId.toString(), {
-              operator: authStore.user?.userId || 'admin',
-              operatorName: authStore.user?.name || '管理员',
-              operatorDept: currentDept.value,
-              action: 'withdraw',
-              comment: '批量撤销下发'
-            })
-            await strategicStore.updateIndicator(indicatorId.toString(), {
-              status: 'draft',
-              canWithdraw: true
-            })
-          }
-
-          if (failedCount > 0 && batchErrors?.length > 0) {
-            errors.push(...batchErrors)
-          }
-
-          if (failedCount === 0) {
-            ElMessage.success(`已成功撤销 ${successCount} 个指标`)
-          } else {
-            ElMessage.warning(`成功撤销 ${successCount} 个指标，失败 ${failedCount} 个`)
-          }
-        } else {
-          ElMessage.error(result.message || '批量撤回失败')
-        }
-      } catch (err: any) {
-        ElMessage.error(`批量撤回失败: ${err.message || err}`)
-      }
+    try {
+      isBatchDistributing.value = true
+      await planStore.withdrawPlan(planId)
+      applyLocalCollegePlanPatch({
+        status: 'DRAFT' as Plan['status'],
+        workflowStatus: 'WITHDRAWN',
+        canWithdraw: false,
+        currentTaskId: undefined,
+        currentStepName: undefined,
+        currentApproverId: undefined,
+        currentApproverName: undefined
+      })
+      applyLocalCollegePlanReportSummaryPatch('withdrawn')
+      await refreshDistributionData()
+      broadcastDistributionMutation({ todosChanged: true })
+    } catch (err) {
+      // planStore.withdrawPlan 失败时已弹过错误提示，这里仅兜底记录并刷新回真实状态
+      logger.error('[IndicatorDistributeView] batch withdraw failed:', err)
+      await refreshDistributionData()
+    } finally {
+      isBatchDistributing.value = false
     }
-
-    // 临时 ID 不应进入可撤回集合，这里仅兜底兼容旧本地状态数据。
-    for (const indicator of tempIdIndicators) {
-      try {
-        strategicStore.addStatusAuditEntry(indicator.id.toString(), {
-          operator: authStore.user?.userId || 'admin',
-          operatorName: authStore.user?.name || '管理员',
-          operatorDept: currentDept.value,
-          action: 'withdraw',
-          comment: '批量撤回下发'
-        })
-        strategicStore.patchIndicator(indicator.id.toString(), {
-          status: 'draft',
-          canWithdraw: true
-        })
-      } catch (err) {
-        errors.push(indicator.name)
-      }
-    }
-
-    if (errors.length > 0 && realBackendIndicators.length === 0) {
-      ElMessage.error(`以下指标撤销失败：${errors.join('、')}`)
-    }
-
-    await refreshDistributionData()
-    broadcastDistributionMutation({ todosChanged: true })
   }
 
   // 下发：针对学院下所有草稿状态的子指标
