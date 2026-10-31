@@ -91,6 +91,38 @@ export function resolveApprovalRouteTitle(
   return normalizeDisplayName(card.flowCode) || '审批流程'
 }
 
+/**
+ * 2026-10-31 用户定案（确认弹窗去计划编号）：计划类确认弹窗以
+ * 「{年份}年度 计划（{source} -> {target}）」口径指代计划（例：
+ * 「2026年度 计划（战略发展部 -> 科技处）」）。字段取不到就略写：
+ * 无年份只写「计划」，无流向只写计划本体，全缺时回退 fallback（如「当前计划」）。
+ * 绝不把「Plan 404457」这类后端自动生成的占位计划名/裸数字 ID 拼进弹窗。
+ */
+export function buildPlanReferenceLabel(params: {
+  year?: unknown
+  sourceOrgName?: unknown
+  targetOrgName?: unknown
+  fallback?: string
+}): string {
+  const sourceOrgName = normalizeDisplayName(params.sourceOrgName)
+  const targetOrgName = normalizeDisplayName(params.targetOrgName)
+  const year = Number(params.year)
+  const hasYear = Number.isFinite(year) && year > 0
+
+  const route =
+    sourceOrgName && targetOrgName
+      ? `（${sourceOrgName} -> ${targetOrgName}）`
+      : sourceOrgName || targetOrgName
+        ? `（${sourceOrgName || targetOrgName}）`
+        : ''
+  const label = `${hasYear ? `${year}年度 ` : ''}计划${route}`
+
+  if (label === '计划' && params.fallback && normalizeDisplayName(params.fallback)) {
+    return normalizeDisplayName(params.fallback)
+  }
+  return label
+}
+
 export function resolveHistoryStatusTag(status?: string): ApprovalStatusTag {
   const normalized = String(status || '').toUpperCase()
   if (normalized === 'APPROVED') {

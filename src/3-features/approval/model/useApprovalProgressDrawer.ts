@@ -86,7 +86,7 @@ import { getUserById, getUsersByOrgId, tryGetUserById } from '@/features/user/ap
 import { useAuthStore } from '@/features/auth/model/store'
 import { APPROVAL_STATE_REFRESH_EVENT, notifyApprovalStateRefresh } from '@/features/approval/lib'
 import { resolveApprovalRoute } from '@/features/approval/lib/approvalNotifications'
-import { toPositiveNumber } from '@/features/approval/lib/approval-utils'
+import { buildPlanReferenceLabel, toPositiveNumber } from '@/features/approval/lib/approval-utils'
 import {
   isMutationEntityType,
   normalizeApprovalEntityType,
@@ -401,6 +401,23 @@ export function useApprovalProgressDrawer(
     }
 
     return normalizeDisplayName(fallback) || '当前计划'
+  }
+
+  // 2026-10-31 用户定案（确认弹窗去计划编号）：审批通过/驳回确认弹窗以
+  // 「{年份}年度 计划（{source} -> {target}）」指代计划，不透传 props.plan?.name
+  // ——「Plan 404457」式占位计划名不再亮给用户（线上复测观察项 3）。
+  // 与 useApprovalProgressState / useApprovalProgressWorkflow 同口径；
+  // 年份/部门取不到就略写，全缺回退「当前计划」。
+  function resolvePlanReferenceLabel(): string {
+    const planRecord = props.plan as
+      (Plan & { year?: number | string; cycleId?: number | string }) | null | undefined
+    const detail = planWorkflowDetail.value
+    return buildPlanReferenceLabel({
+      year: planRecord?.year ?? timeContext.resolveCycleYear(planRecord?.cycleId),
+      sourceOrgName: detail?.sourceOrgName || planRecord?.createdByOrgName,
+      targetOrgName: detail?.targetOrgName || planRecord?.targetOrgName || planRecord?.orgName,
+      fallback: '当前计划'
+    })
   }
 
   function normalizeWorkflowCode(value: unknown): string {
@@ -3866,7 +3883,7 @@ export function useApprovalProgressDrawer(
 
       try {
         const { value } = await ElMessageBox.prompt(
-          `确认通过“${props.plan?.name || props.planName || '当前计划'}”的审批？`,
+          `确认通过“${resolvePlanReferenceLabel()}”的审批？`,
           '审批通过',
           {
             confirmButtonText: '确认通过',
@@ -4008,7 +4025,7 @@ export function useApprovalProgressDrawer(
 
       try {
         const { value } = await ElMessageBox.prompt(
-          `确认驳回“${props.plan?.name || props.planName || '当前计划'}”的审批？驳回只会退回上一审批节点，不会跳级；如需修改填报内容请打回给填报人。`,
+          `确认驳回“${resolvePlanReferenceLabel()}”的审批？驳回只会退回上一审批节点，不会跳级；如需修改填报内容请打回给填报人。`,
           '审批驳回',
           {
             confirmButtonText: '确认驳回',

@@ -1541,10 +1541,14 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                              2026-10-20 用户定案：已下发计划也允许新增指标（走异动链），
                              不再限定 canWithdraw（该条件仅未下发时为真） -->
                         <!-- 2026-10-30 用户定案：异动审批在途时置灰 + tooltip（同「新增行」口径） -->
+                        <!-- 2026-10-31 规范补齐：div 非按钮元素补 aria-disabled 真禁用语义；
+                             保留 hover title 提示与模型层守卫（handleAddIndicatorToTask
+                             在锁定态直接拦截并弹 warning），不改视觉、不误伤提示交互 -->
                         <div
                           v-if="!isReadOnly"
                           class="add-indicator-trigger"
                           :class="{ 'add-indicator-trigger--locked': isMutationApprovalInFlight }"
+                          :aria-disabled="isMutationApprovalInFlight ? 'true' : undefined"
                           :title="
                             isMutationApprovalInFlight
                               ? '异动审批进行中，暂不能新增：等审批结束或先撤回/取消本次异动'

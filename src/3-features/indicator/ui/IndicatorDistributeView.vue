@@ -1018,13 +1018,15 @@ const handleDistributionImportCommitted = async () => {
                       <el-icon><Plus /></el-icon>
                       新增指标
                     </el-button>
+                    <!-- 2026-10-31 规范补齐：锁定态从「is-disabled class + title」升级为
+                         真实 disabled 属性（线上复测观察项：键盘 Tab+Enter 理论可触发）。
+                         Element Plus 对 disabled 按钮自动补 is-disabled class 与
+                         aria-disabled，视觉不变；原生 title 在 disabled 下仍可悬停查看原因；
+                         模型层 handleBatchDistribute 的守卫弹窗保留作双保险 -->
                     <el-button
                       :type="distributionSubmitButtonType"
                       :loading="isBatchDistributing"
-                      :aria-disabled="Boolean(distributionSubmitButtonStableDisabledReason)"
-                      :class="{
-                        'is-disabled': Boolean(distributionSubmitButtonStableDisabledReason)
-                      }"
+                      :disabled="Boolean(distributionSubmitButtonStableDisabledReason)"
                       :title="distributionSubmitButtonStableDisabledReason"
                       @click="handleBatchDistribute(selectedCollege)"
                     >

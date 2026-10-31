@@ -6,6 +6,7 @@ import { decideTask } from '@/features/workflow/api/mutations'
 import { indicatorFillApi } from '@/features/plan/api/planApi'
 import { tryGetUserById } from '@/features/user/api/query'
 import { APPROVAL_STATE_REFRESH_EVENT, notifyApprovalStateRefresh } from '@/features/approval/lib'
+import { buildPlanReferenceLabel } from '@/features/approval/lib/approval-utils'
 import { normalizeApprovalEntityType } from '@/features/approval/model/approvalEntityTypes'
 import {
   isUnfinishedAppraisalMessage,
@@ -13,7 +14,7 @@ import {
   showUnfinishedAppraisalNotice
 } from '@/features/approval/model/unfinishedAppraisalNotice'
 import { apiClient } from '@/shared/api'
-import type { ApiResponse } from '@/shared/types'
+import type { ApiResponse, Plan } from '@/shared/types'
 import { logger } from '@/shared/lib/utils/logger'
 import {
   buildUserFacingErrorMessage,
@@ -74,6 +75,22 @@ export function useApprovalProgressWorkflow({
    */
   function isPromptDismissed(error: unknown): boolean {
     return error === 'cancel' || error === 'close'
+  }
+
+  // 2026-10-31 用户定案（确认弹窗去计划编号）：审批通过/驳回确认弹窗以
+  // 「{年份}年度 计划（{source} -> {target}）」指代计划，不透传 props.plan?.name
+  // ——「Plan 404457」式占位计划名不再亮给用户（线上复测观察项 3）。
+  // 与 useApprovalProgressState / useApprovalProgressDrawer 同口径。
+  function resolvePlanReferenceLabel(): string {
+    const planRecord = props.plan as
+      (Plan & { year?: number | string; cycleId?: number | string }) | null | undefined
+    const detail = state.planWorkflowDetail.value
+    return buildPlanReferenceLabel({
+      year: planRecord?.year,
+      sourceOrgName: detail?.sourceOrgName || planRecord?.createdByOrgName,
+      targetOrgName: detail?.targetOrgName || planRecord?.targetOrgName || planRecord?.orgName,
+      fallback: '当前计划'
+    })
   }
 
   /**
@@ -871,7 +888,7 @@ export function useApprovalProgressWorkflow({
 
       try {
         const { value } = await ElMessageBox.prompt(
-          `确认通过“${props.plan?.name || props.planName || '当前计划'}”的审批？`,
+          `确认通过“${resolvePlanReferenceLabel()}”的审批？`,
           '审批通过',
           {
             confirmButtonText: '确认通过',
@@ -1039,7 +1056,7 @@ export function useApprovalProgressWorkflow({
 
       try {
         const { value } = await ElMessageBox.prompt(
-          `确认驳回“${props.plan?.name || props.planName || '当前计划'}”的审批？`,
+          `确认驳回“${resolvePlanReferenceLabel()}”的审批？`,
           '审批驳回',
           {
             confirmButtonText: '确认驳回',
@@ -1376,6 +1393,12 @@ export function useApprovalProgressWorkflow({
     state.selectedHistoryInstanceDetailLoading.value = false
     void loadPendingPlanApprovals()
     void refreshPlanWorkflowContext({ retryActive })
+    // 2026-10-30（审批中心局部实时刷新）：焦点/上报实例详情强制回源——撤回/重发/
+    // 取消都是「同一实例」的状态迁移（instanceId 不变，选择栏 key 变了但 watch 不重跑），
+    // 不重载则审批流程页签步骤链停留在动作前状态（审批中 ↔ 已回退卡不切换）。
+    // force 绕开 30s WORKFLOW_DETAIL 缓存，保证动作链路（工具栏/抽屉内）实时到位。
+    state.refreshFocusWorkflowDetail()
+    state.refreshReportWorkflowDetail()
   }
 
   onMounted(() => {

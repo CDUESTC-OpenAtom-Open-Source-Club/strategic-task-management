@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildPlanReferenceLabel,
   isDistributionFlow,
   isSubmissionFlow,
   isTerminalHistoryStatus,
@@ -107,5 +108,35 @@ describe('approval-utils', () => {
     expect(shouldDisplayWorkflowHistoryItem({ action: 'START_PROCESS' })).toBe(false)
     expect(shouldDisplayWorkflowHistoryItem({ action: 'APPROVE_TASK' })).toBe(true)
     expect(shouldDisplayWorkflowHistoryItem(undefined)).toBe(true)
+  })
+
+  // 2026-10-31 用户定案（确认弹窗去计划编号）：以「年份 + 方向」指代计划，
+  // 绝不把「Plan 404457」式占位计划名/裸数字 ID 拼进确认弹窗
+  it('builds year+route plan reference labels for confirm dialogs (2026-10-31 口径)', () => {
+    // 年份 + 双向齐全：标准口径
+    expect(
+      buildPlanReferenceLabel({ year: 2026, sourceOrgName: '战略发展部', targetOrgName: '科技处' })
+    ).toBe('2026年度 计划（战略发展部 -> 科技处）')
+    // 年份是字符串数字（计划对象里可能以 string 存 year）同样可用
+    expect(
+      buildPlanReferenceLabel({
+        year: '2026',
+        sourceOrgName: '教务处',
+        targetOrgName: '计算机学院'
+      })
+    ).toBe('2026年度 计划（教务处 -> 计算机学院）')
+    // 取得到的字段略写：无年份
+    expect(buildPlanReferenceLabel({ sourceOrgName: '教务处', targetOrgName: '计算机学院' })).toBe(
+      '计划（教务处 -> 计算机学院）'
+    )
+    // 只有单侧流向：只写那一侧
+    expect(buildPlanReferenceLabel({ year: 2026, targetOrgName: '科技处' })).toBe(
+      '2026年度 计划（科技处）'
+    )
+    // 全缺：回退 fallback，不输出裸「计划」
+    expect(buildPlanReferenceLabel({ fallback: '当前计划' })).toBe('当前计划')
+    expect(
+      buildPlanReferenceLabel({ year: 'abc', sourceOrgName: '  ', fallback: '当前计划' })
+    ).toBe('当前计划')
   })
 })

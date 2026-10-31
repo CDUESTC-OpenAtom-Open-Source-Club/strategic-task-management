@@ -4274,6 +4274,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       // 成功与部分成功都要刷新：互斥锁（IN_REVIEW）/异动角标/退回链清单都依赖这份数据
       void refreshTaskPageAfterIndicatorMutation()
       void loadDepartmentMutationWorkflowEntities()
+      // 2026-10-30（审批中心局部实时刷新）：重发也接审批状态刷新通知——
+      // 审批中心抽屉开着时「已回退」卡换回在审卡、选择栏标签与步骤链节点
+      // 必须即时切换（与撤回/取消同口径）。通知前 refreshTaskPage... 已同步
+      // 失效 workflow.detail 缓存，抽屉强制回源拿到的是重发后的实例状态。
+      notifyApprovalStateRefresh({ source: 'strategic-task-mutation-resubmit' })
     } finally {
       mutationApiLoading.value = false
       // 与既有提交路径同款兜底：确认框残留时显式收起
@@ -4379,6 +4384,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       // （isMutationApprovalInFlight）与异动角标的「在异动当中」状态都依赖这份数据，
       // 不重拉则按钮仍可点（二次提交会被后端整批拒绝）、角标也不显示在途状态。
       void loadDepartmentMutationWorkflowEntities()
+      // 2026-10-30（审批中心局部实时刷新）：新发起同样接审批状态刷新通知——
+      // 审批中心抽屉开着时在审异动卡/选择栏候选/步骤链即时出现并同步
+      // （与撤回/取消/重发同口径；退回链重发走 resubmitReturnedMutationBatches）。
+      notifyApprovalStateRefresh({ source: 'strategic-task-mutation-submit' })
     } catch (error) {
       const msg = (error as { message?: string })?.message
       ElMessage.error(msg || '发起异动失败')

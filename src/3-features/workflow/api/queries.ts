@@ -222,10 +222,15 @@ export async function getWorkflowInstances(
  * @returns Detailed workflow instance with tasks and history
  */
 export async function getWorkflowInstanceDetail(
-  instanceId: string
+  instanceId: string,
+  options: { force?: boolean } = {}
 ): Promise<ApiResponse<WorkflowInstanceDetailResponse>> {
   return fetchWithCache({
     key: buildQueryKey('workflow', 'detail', withWorkflowContext({ instanceId })),
+    // 2026-10-30（审批中心局部实时刷新）：与 getWorkflowInstanceDetailByBusiness 对齐——
+    // 支持动作后强制回源，否则 30s WORKFLOW_DETAIL 缓存会让撤回/重发后的步骤链
+    // 继续渲染动作前的任务状态（同实例状态迁移不换 instanceId，只能靠 force 绕缓存）。
+    force: options.force === true,
     policy: {
       ...WORKFLOW_DETAIL_POLICY,
       tags: ['workflow.detail', `workflow.detail.${instanceId}`]

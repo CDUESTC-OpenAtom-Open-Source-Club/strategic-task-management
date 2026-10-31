@@ -21,6 +21,7 @@ import { indicatorFillApi } from '@/features/plan/api/planApi'
 import { getUserById, getUsersByOrgId, tryGetUserById } from '@/features/user/api/query'
 import { useAuthStore } from '@/features/auth/model/store'
 import {
+  buildPlanReferenceLabel,
   isDistributionFlow,
   isSubmissionFlow,
   isTerminalHistoryStatus,
@@ -336,6 +337,27 @@ export function useApprovalProgressState(
     }
 
     return resolvePlanDisplayName(activePlanWorkflow.value?.name, fallback)
+  }
+
+  // 2026-10-31 用户定案（确认弹窗去计划编号）：审批通过/驳回确认弹窗以
+  // 「{年份}年度 计划（{source} -> {target}）」指代计划，不再透传
+  // props.plan?.name——后端会对未命名计划生成「Plan 404457」式占位名，
+  // 直接拼接会把裸数字 ID 亮给用户（线上复测观察项 3）。
+  // 年份/部门从计划与工作流详情取，取不到就略写，全缺回退「当前计划」。
+  function resolvePlanReferenceLabel(): string {
+    const planRecord = props.plan as
+      (Plan & { year?: number | string; cycleId?: number | string }) | null | undefined
+    return buildPlanReferenceLabel({
+      year: planRecord?.year ?? timeContext.resolveCycleYear(planRecord?.cycleId),
+      sourceOrgName:
+        normalizeDisplayName(planWorkflowDetail.value?.sourceOrgName) ||
+        planRecord?.createdByOrgName,
+      targetOrgName:
+        normalizeDisplayName(planWorkflowDetail.value?.targetOrgName) ||
+        planRecord?.targetOrgName ||
+        planRecord?.orgName,
+      fallback: '当前计划'
+    })
   }
 
   function resolveSubmitterDisplayName(...candidates: unknown[]): string {
@@ -684,6 +706,39 @@ export function useApprovalProgressState(
   })
   const reportWorkflowDetail = ref<WorkflowInstanceDetailResponse | null>(null)
   const reportWorkflowDetailLoading = ref(false)
+  // 2026-10-30（审批中心局部实时刷新）：与焦点实例详情同款——上报实例的状态迁移
+  // （审批通过/退回）不换 instanceId，watch 不会重跑；动作后须可强制重载。
+  let reportWorkflowDetailRequestSeq = 0
+  const loadReportWorkflowDetail = async (
+    instanceKey: string,
+    options: { force?: boolean } = {}
+  ): Promise<void> => {
+    const requestSeq = ++reportWorkflowDetailRequestSeq
+    if (!instanceKey) {
+      reportWorkflowDetail.value = null
+      return
+    }
+    reportWorkflowDetailLoading.value = true
+    try {
+      const response = await getWorkflowInstanceDetail(instanceKey, {
+        force: options.force === true
+      })
+      if (requestSeq !== reportWorkflowDetailRequestSeq) {
+        return
+      }
+      reportWorkflowDetail.value = response?.success && response.data ? response.data : null
+    } catch (error) {
+      if (requestSeq !== reportWorkflowDetailRequestSeq) {
+        return
+      }
+      logger.warn('[ApprovalProgress] 加载上报实例流程详情失败:', error)
+      reportWorkflowDetail.value = null
+    } finally {
+      if (requestSeq === reportWorkflowDetailRequestSeq) {
+        reportWorkflowDetailLoading.value = false
+      }
+    }
+  }
   watch(
     () =>
       String(
@@ -691,24 +746,22 @@ export function useApprovalProgressState(
           selectedReportInstance.value?.workflowInstanceId ??
           ''
       ),
-    async instanceKey => {
-      if (!instanceKey) {
-        reportWorkflowDetail.value = null
-        return
-      }
-      reportWorkflowDetailLoading.value = true
-      try {
-        const response = await getWorkflowInstanceDetail(instanceKey)
-        reportWorkflowDetail.value = response?.success && response.data ? response.data : null
-      } catch (error) {
-        logger.warn('[ApprovalProgress] 加载上报实例流程详情失败:', error)
-        reportWorkflowDetail.value = null
-      } finally {
-        reportWorkflowDetailLoading.value = false
-      }
+    instanceKey => {
+      void loadReportWorkflowDetail(instanceKey)
     },
     { immediate: true }
   )
+  /** 动作后局部刷新入口（notifyApprovalStateRefresh 订阅回调调用）：强制回源当前上报实例 */
+  const refreshReportWorkflowDetail = (): void => {
+    void loadReportWorkflowDetail(
+      String(
+        selectedReportInstance.value?.instanceId ??
+          selectedReportInstance.value?.workflowInstanceId ??
+          ''
+      ),
+      { force: true }
+    )
+  }
 
   interface PendingPlanApprovalPreviewItem {
     key: string
@@ -2560,23 +2613,49 @@ export function useApprovalProgressState(
     return items[Math.min(workflowFocusIdx.value, items.length - 1)] || items[0]
   })
   const focusWorkflowDetail = ref<WorkflowInstanceDetailResponse | null>(null)
-  watch(
-    () => String(workflowFocusInstance.value?.instanceId ?? ''),
-    async instanceKey => {
-      if (!instanceKey) {
-        focusWorkflowDetail.value = null
+  // 2026-10-30（审批中心局部实时刷新）：焦点实例详情支持动作后强制重载。
+  // 此前详情只按 instanceId 变更拉取——撤回/重发是「同一实例」的状态迁移
+  // （IN_REVIEW ↔ WITHDRAWN），key 不变导致 watch 永不重跑，审批流程页签的
+  // 步骤链节点停留在动作前的「审批中」，必须整页强刷才更正。
+  let focusWorkflowDetailRequestSeq = 0
+  const loadFocusWorkflowDetail = async (
+    instanceKey: string,
+    options: { force?: boolean } = {}
+  ): Promise<void> => {
+    const requestSeq = ++focusWorkflowDetailRequestSeq
+    if (!instanceKey) {
+      focusWorkflowDetail.value = null
+      return
+    }
+    try {
+      const response = await getWorkflowInstanceDetail(instanceKey, {
+        force: options.force === true
+      })
+      if (requestSeq !== focusWorkflowDetailRequestSeq) {
         return
       }
-      try {
-        const response = await getWorkflowInstanceDetail(instanceKey)
-        focusWorkflowDetail.value = response?.success && response.data ? response.data : null
-      } catch (error) {
-        logger.warn('[ApprovalProgress] 加载流程焦点实例详情失败:', error)
-        focusWorkflowDetail.value = null
+      focusWorkflowDetail.value = response?.success && response.data ? response.data : null
+    } catch (error) {
+      if (requestSeq !== focusWorkflowDetailRequestSeq) {
+        return
       }
+      logger.warn('[ApprovalProgress] 加载流程焦点实例详情失败:', error)
+      focusWorkflowDetail.value = null
+    }
+  }
+  watch(
+    () => String(workflowFocusInstance.value?.instanceId ?? ''),
+    instanceKey => {
+      void loadFocusWorkflowDetail(instanceKey)
     },
     { immediate: true }
   )
+  /** 动作后局部刷新入口（notifyApprovalStateRefresh 订阅回调调用）：强制回源当前焦点实例 */
+  const refreshFocusWorkflowDetail = (): void => {
+    void loadFocusWorkflowDetail(String(workflowFocusInstance.value?.instanceId ?? ''), {
+      force: true
+    })
+  }
 
   // ============ 审批流程节点数据 ============
   const workflowNodes = computed<WorkflowNode[]>(() => {
@@ -3258,7 +3337,7 @@ export function useApprovalProgressState(
 
       try {
         const { value } = await ElMessageBox.prompt(
-          `确认通过“${props.plan?.name || props.planName || '当前计划'}”的审批？`,
+          `确认通过“${resolvePlanReferenceLabel()}”的审批？`,
           '审批通过',
           {
             confirmButtonText: '确认通过',
@@ -3401,7 +3480,7 @@ export function useApprovalProgressState(
 
       try {
         const { value } = await ElMessageBox.prompt(
-          `确认驳回“${props.plan?.name || props.planName || '当前计划'}”的审批？驳回只会退回上一审批节点，不会跳级。`,
+          `确认驳回“${resolvePlanReferenceLabel()}”的审批？驳回只会退回上一审批节点，不会跳级。`,
           '审批驳回',
           {
             confirmButtonText: '确认驳回',
@@ -3843,6 +3922,10 @@ export function useApprovalProgressState(
     selectedReportInstance,
     workflowFocusCandidates,
     workflowFocusIdx,
+    // 2026-10-30（审批中心局部实时刷新）：动作后强制重载焦点/上报实例详情，
+    // 步骤链节点状态随撤回/发起/取消即时切换（见 refreshFocusWorkflowDetail 注释）
+    refreshFocusWorkflowDetail,
+    refreshReportWorkflowDetail,
     reportWorkflowDetailLoading,
     workflowOrgRoleCandidateCache,
     workflowUserAvatarCache
