@@ -45,6 +45,7 @@ import {
   type PlanReportEntryLockState
 } from '@/features/indicator/model/planReportEntryLock'
 import {
+  buildSelfRatingGateMessage,
   collectExistingAttachmentIds,
   resolveBatchSelfRating,
   resolveSavedSelfRating
@@ -3253,9 +3254,11 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   })
 
   const showSubmitAllButton = computed(() => {
+    // 2026-10-30 用户定案（门禁前移，自评口径）：不再以「全部指标填报完整」为可见前提——
+    // 行内有未填自评的行时按钮保持可见但置灰（title 说明原因），让填报人看得见入口卡在哪。
+    // 完整性缺口仍由 handleSubmitAll 的前置校验 + 后端提交门禁兜底。
     return (
       showPlanBatchActions.value &&
-      allIndicatorsFilled.value &&
       !isCurrentPlanReportLocked.value &&
       (!usePlanReportFlow.value || currentPlanReportActionState.value === 'draft')
     )
@@ -4569,6 +4572,31 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }
   }
 
+  // 2026-10-31（P3 锁文案被吞修复）：响应拦截器对 HTTP 409 等错误 reject 的是
+  // 统一错误对象（{ message, code, ... } 普通对象），不是 Error 实例——
+  // `error instanceof Error` 判否会让后端原文（如「当前月份已有报告正在审批中，
+  // 请等待审批完成或先撤回」）被兜底文案吞掉。这里按优先级取 message：
+  // details.message（拦截器统一格式）→ response.data.message（Axios 原始格式）
+  // → message（Error / 普通对象通吃），后端有原文时永远优先透出。
+  const getApiErrorMessage = (error: unknown, fallback: string): string => {
+    const candidates = [
+      (error as { details?: { message?: unknown } } | null)?.details?.message,
+      (error as { response?: { data?: { message?: unknown } } } | null)?.response?.data?.message,
+      (error as { message?: unknown } | null)?.message
+    ]
+
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string') {
+        const trimmed = candidate.trim()
+        if (trimmed && trimmed !== '[object Object]') {
+          return trimmed
+        }
+      }
+    }
+
+    return fallback
+  }
+
   // 保存进度填报（设为待提交状态）
   const submitProgressReport = async () => {
     if (!currentReportIndicator.value) {
@@ -4726,9 +4754,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       closeReportDialog()
     } catch (error) {
       logger.error('[IndicatorListView] 保存进度填报失败:', error)
-      ElMessage.error(
-        error instanceof Error ? error.message || '保存失败，请稍后重试' : '保存失败，请稍后重试'
-      )
+      // 2026-10-31（P3）：后端有原文（如审批锁 409 文案）时优先透出，不再吞成兜底文案
+      ElMessage.error(getApiErrorMessage(error, '保存失败，请稍后重试'))
     } finally {
       isSavingReport.value = false
     }
@@ -5015,18 +5042,33 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     )
   }
 
-  // 2026-10-24：缺自评进度/进度说明的条数（一键提交提示用）
-  const missingSelfRatingCount = computed(
-    () =>
-      indicators.value.filter(
-        row => !String((row as { selfRating?: string | null }).selfRating || '').trim()
-      ).length
+  // 2026-10-30 用户定案（门禁前移到提交时，自评口径）：审核进度（评定等级）归审批人，
+  // 填报人提交前必须完成的是全部指标的「自评进度」。缺自评的行按名称点名拦截，
+  // 不弹收集说明的框、不发起请求（与后端提交门禁 BusinessConflictException 同口径）。
+  const missingSelfRatingRows = computed(() =>
+    indicators.value.filter(
+      row => !String((row as { selfRating?: string | null }).selfRating || '').trim()
+    )
   )
+  // 2026-10-24：缺自评进度/进度说明的条数（一键提交提示用）
+  const missingSelfRatingCount = computed(() => missingSelfRatingRows.value.length)
   const missingRemarkCount = computed(
     () =>
       indicators.value.filter(
         row => !String((row as { pendingRemark?: string | null }).pendingRemark || '').trim()
       ).length
+  )
+
+  // 一键提交按钮：行内有未填自评的行时置灰并给出原因；数据每次加载/保存后
+  // 随 overlay 响应式状态自动刷新。
+  const submitAllButtonDisabled = computed(
+    () =>
+      timeContext.isReadOnly || indicators.value.length === 0 || missingSelfRatingCount.value > 0
+  )
+  const submitAllDisabledTitle = computed(() =>
+    missingSelfRatingCount.value > 0
+      ? '存在未填写自评进度的指标，请先完成全部指标的自评进度评定，再提交上报'
+      : '提交前会校验每条指标的自评进度与进度说明'
   )
 
   // 宽松判定：本轮回有过填报动作（pendingProgress 有值即可，不要求自评/说明齐全）——
@@ -5229,6 +5271,21 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return
     }
 
+    // 2026-10-30 用户定案（门禁前移到提交时，自评口径）：先从已加载行校验自评进度——
+    // 存在未填自评的行时不弹收集提交说明的框、直接按指标名点名拦截、不发起请求
+    // （与后端提交门禁 BusinessConflictException 同口径：报名不报 ID、超 3 项列前 3 个 + 等 N 项）。
+    if (missingSelfRatingCount.value > 0) {
+      ElMessage.warning(
+        buildSelfRatingGateMessage(
+          missingSelfRatingRows.value.map(row => ({
+            name:
+              (row as StrategicIndicator & { indicator_desc?: string }).indicator_desc || row.name
+          }))
+        )
+      )
+      return
+    }
+
     // 检查是否所有指标都已填报（2026-10-24：自评进度与进度说明必须全部有值）
     if (!allIndicatorsFilled.value) {
       const parts: string[] = []
@@ -5287,10 +5344,13 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
             // 2026-10-07 裁决（逐月补签）：按「最早未提交草稿月」提交，
             // 不能默认当月——补签历史月份时按当月找草稿会 404。
             const draftMonth = await indicatorFillApi.getOpenDraftReportMonth(planId, reportOrgId)
+            // 2026-10-31（P4 重报说明透传）：弹窗强制收集的提交备注不再丢弃，
+            // 以 body JSON 字段 comment 随上报提交传给后端（驳回-重报闭环的审批意见来源）。
             updatedReportSummary = await indicatorFillApi.submitCurrentMonthPlanReport(
               planId,
               reportOrgId,
-              draftMonth ?? undefined
+              draftMonth ?? undefined,
+              submitComment
             )
           } else {
             await planStore.submitPlanForApproval(planId, {
@@ -5325,7 +5385,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           pendingPlanReportUiState.value = null
           writePlanReportUiState(null)
           logger.error('[IndicatorListView] Failed to submit plan approval:', error)
-          ElMessage.error(error instanceof Error ? error.message : '提交失败，请稍微重试')
+          // 2026-10-31（P3）：后端有原文（如审批锁 409 文案）时优先透出，
+          // 拦截器拒绝的统一错误对象不是 Error 实例，instanceof 判断会吞掉原文
+          ElMessage.error(getApiErrorMessage(error, '提交失败，请稍微重试'))
         } finally {
           loading.close()
         }
@@ -5621,6 +5683,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     loadCurrentPlanReportSummary,
     loadCurrentPlanWorkflowDetail,
     loadIndicatorWorkflowSnapshot,
+    missingSelfRatingCount,
+    missingSelfRatingRows,
     newRow,
     normalizePreviewCandidateDisplayName,
     normalizedCurrentPlanReportStatus,
@@ -5685,6 +5749,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     showSubmitAllButton,
     showWithdrawAllButton,
     strategicStore,
+    submitAllButtonDisabled,
+    submitAllDisabledTitle,
     submitProgressReport,
     syncBackendReportedProgress,
     syncReportAttachmentUrls,

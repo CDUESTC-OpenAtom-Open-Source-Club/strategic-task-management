@@ -45,10 +45,8 @@ import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
 import { MUTATION_FIELDS_INDICATOR_NAME } from '@/features/indicator/model/mutationHistory'
 import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
-import {
-  useIndicatorAppraisal,
-  type IndicatorAppraisalLevel
-} from '@/features/indicator/model/useIndicatorAppraisal'
+import { useIndicatorAppraisal } from '@/features/indicator/model/useIndicatorAppraisal'
+import { getAppraisalLevelDisplay } from '@/features/indicator/lib/appraisalGate'
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import {
   useIndicatorDistributeView,
@@ -115,7 +113,6 @@ const {
   childManualAlertLockHint,
   getChildManualAlertLabel,
   getChildManualAlertSeverity,
-  getChildManualAlertTagType,
   handleChildManualAlertChange,
   savingChildManualAlertId,
   colleges,
@@ -292,12 +289,11 @@ const { latestFillNote, latestFillAttachments } = useLatestIndicatorFill(
 )
 
 // 2026-10-28：审批链行内鉴定——只有当前审批节点负责人可改（后端 canAppraise 判定）
+// 2026-10-31 定稿：点击格子先单条重查 context，canAppraise=true 才弹轻量等级选择器
 const {
   load: loadIndicatorAppraisalContexts,
-  canAppraise: canAppraiseIndicator,
   getLevel: getIndicatorAppraisalLevel,
-  getLockHint: getIndicatorAppraisalLockHint,
-  save: saveIndicatorAppraisalLevel
+  openAppraisalGate: openIndicatorAppraisalGate
 } = useIndicatorAppraisal()
 
 watch(
@@ -325,65 +321,29 @@ type DistributionExportChild = Partial<StrategicIndicator> & {
   pendingAttachmentDetails?: unknown[]
 }
 
-// 审核进度（与战略任务管理页同一套选项；当前编辑权限仅战略部负责人/分管校领导/系统管理员）
-type ManualAlertSelectValue = Exclude<ManualAlertSeverity, null> | ''
-
-const manualAlertOptions: Array<{
-  label: string
-  value: ManualAlertSelectValue
-  type: 'success' | 'info' | 'warning' | 'danger'
-}> = [
-  // 进度等级三档（2026-09-17 定案）：存储码沿用 alert severity，新增 AHEAD/NORMAL
-  { label: '未评定', value: '', type: 'info' },
-  { label: '超前完成', value: 'AHEAD', type: 'success' },
-  { label: '正常', value: 'NORMAL', type: 'success' },
-  { label: '延期', value: 'DELAYED', type: 'warning' }
-]
+// 审核进度显示与门禁（2026-10-31 定稿）：等级选项收敛到共享 appraisalGate
+// （只有超前完成/正常/延期三档；「未评定」退为初始空白显示态，不是选项），三视图同构。
+// 注：此处改用 getAppraisalLevelDisplay 统一映射——原先 getChildManualAlertLabel/TagType
+// 的词表是 WARNING，context 返回的 DELAYED 会被误显示为「未评定」。
+const getChildAppraisalDisplay = (level: string | null | undefined) =>
+  getAppraisalLevelDisplay(level)
 
 /**
- * 2026-10-28：行内调整审核进度。
- * 只有当前审批节点负责人能看到下拉；确认后写报告快照，后端同步 Alert。
+ * 2026-10-31 定稿：点击审核进度格子的统一入口（三视图同构）。
+ * 先单条重查该行 context → canAppraise=false 当场弹对应原因 → 通过才弹等级选择器。
  */
-const handleAppraisalChange = async (
-  child: DistributionExportChild | StrategicIndicator | null | undefined,
-  value: ManualAlertSelectValue
+const handleAppraisalCellClick = async (
+  child: DistributionExportChild | StrategicIndicator | null | undefined
 ) => {
   if (!child?.id) {
     return
   }
-  const level: IndicatorAppraisalLevel = value === '' ? null : (value as IndicatorAppraisalLevel)
-  const previous = getIndicatorAppraisalLevel(
-    child.id,
-    (child as { manualAlertSeverity?: ManualAlertSeverity }).manualAlertSeverity ?? null
-  )
-  if (previous === level) {
-    return
-  }
-
-  const label = getChildManualAlertLabel(level)
-  try {
-    await ElMessageBox.confirm(
-      `确认将「${child.name || '该指标'}」的审核进度调整为「${label}」？`,
-      '调整审核进度',
-      {
-        confirmButtonText: '确认调整',
-        cancelButtonText: '取消',
-        type: level ? 'warning' : 'info'
-      }
-    )
-    await saveIndicatorAppraisalLevel(child.id, level)
-    strategicStore.patchIndicator(String(child.id), { manualAlertSeverity: level })
-    ElMessage.success('审核进度已调整')
-  } catch (error) {
-    if (error !== 'cancel' && error !== 'close') {
-      ElMessage.error(error instanceof Error ? error.message : '调整审核进度失败')
+  await openIndicatorAppraisalGate(child.id, {
+    indicatorName: child.name,
+    onSaved: level => {
+      strategicStore.patchIndicator(String(child.id), { manualAlertSeverity: level })
     }
-  }
-}
-
-/** 锁定状态点击只提示一次（不再用悬停提示，避免两套文案重复） */
-const handleAppraisalTagClick = (indicatorId: string | number | null | undefined) => {
-  ElMessage.info(getIndicatorAppraisalLockHint(indicatorId) || '上报期间才能解锁审核进度')
+  })
 }
 
 interface DistributionExportRow {
@@ -1255,64 +1215,17 @@ const handleDistributionImportCommitted = async () => {
                     </template>
                     <template v-else>
                       <div class="manual-alert-cell">
-                        <el-dropdown
-                          v-if="canAppraiseIndicator(row.child?.id)"
-                          trigger="click"
-                          @command="
-                            value =>
-                              handleAppraisalChange(row.child, value as ManualAlertSelectValue)
-                          "
-                        >
-                          <el-tag
-                            :type="
-                              getChildManualAlertTagType(
-                                getIndicatorAppraisalLevel(
-                                  row.child?.id,
-                                  getChildManualAlertSeverity(row.child)
-                                )
-                              )
-                            "
-                            :style="
-                              getProgressLevelTagStyle(
-                                getIndicatorAppraisalLevel(
-                                  row.child?.id,
-                                  getChildManualAlertSeverity(row.child)
-                                )
-                              )
-                            "
-                            size="small"
-                            class="manual-alert-tag--clickable"
-                          >
-                            {{
-                              getChildManualAlertLabel(
-                                getIndicatorAppraisalLevel(
-                                  row.child?.id,
-                                  getChildManualAlertSeverity(row.child)
-                                )
-                              )
-                            }}
-                          </el-tag>
-                          <template #dropdown>
-                            <el-dropdown-menu>
-                              <el-dropdown-item
-                                v-for="option in manualAlertOptions"
-                                :key="option.value || 'NONE'"
-                                :command="option.value"
-                              >
-                                {{ option.label }}
-                              </el-dropdown-item>
-                            </el-dropdown-menu>
-                          </template>
-                        </el-dropdown>
+                        <!-- 2026-10-31 定稿：点击格子先单条重查 context，canAppraise=true
+                             才弹等级选择器，不满足条件当场弹对应原因（三视图同构）；
+                             DELAYED 经共享 getAppraisalLevelDisplay 正确显示「延期」。 -->
                         <el-tag
-                          v-else
                           :type="
-                            getChildManualAlertTagType(
+                            getChildAppraisalDisplay(
                               getIndicatorAppraisalLevel(
                                 row.child?.id,
                                 getChildManualAlertSeverity(row.child)
                               )
-                            )
+                            ).type
                           "
                           :style="
                             getProgressLevelTagStyle(
@@ -1323,16 +1236,16 @@ const handleDistributionImportCommitted = async () => {
                             )
                           "
                           size="small"
-                          class="manual-alert-tag--locked"
-                          @click="handleAppraisalTagClick(row.child?.id)"
+                          class="manual-alert-tag--clickable"
+                          @click="handleAppraisalCellClick(row.child)"
                         >
                           {{
-                            getChildManualAlertLabel(
+                            getChildAppraisalDisplay(
                               getIndicatorAppraisalLevel(
                                 row.child?.id,
                                 getChildManualAlertSeverity(row.child)
                               )
-                            )
+                            ).label
                           }}
                         </el-tag>
                       </div>

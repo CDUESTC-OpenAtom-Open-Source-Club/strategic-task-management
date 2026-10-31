@@ -47,10 +47,8 @@ import {
   type IndicatorAttachmentSummaryMap
 } from '@/features/indicator/model/indicatorAttachmentSummary'
 import { ApprovalProgressDrawer } from '@/features/approval'
-import {
-  useIndicatorAppraisal,
-  type IndicatorAppraisalLevel
-} from '@/features/indicator/model/useIndicatorAppraisal'
+import { useIndicatorAppraisal } from '@/features/indicator/model/useIndicatorAppraisal'
+import { getAppraisalLevelDisplay } from '@/features/indicator/lib/appraisalGate'
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
 import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
@@ -299,6 +297,8 @@ const {
   showSubmitAllButton,
   showWithdrawAllButton,
   strategicStore,
+  submitAllButtonDisabled,
+  submitAllDisabledTitle,
   submitProgressReport,
   syncBackendReportedProgress,
   syncReportAttachmentUrls,
@@ -571,40 +571,27 @@ const handleExportAllCollegeDepartments = async () => {
   }
 }
 
-const manualAlertOptions: Array<{
-  label: string
-  value: ManualAlertSeverity
-  type: 'success' | 'info' | 'warning' | 'danger'
-}> = [
-  // 进度等级三档（与战略任务管理页 manualAlertOptions 一致）：存储码沿用 alert severity
-  { label: '未评定', value: null, type: 'info' },
-  { label: '超前完成', value: 'AHEAD', type: 'success' },
-  { label: '正常', value: 'NORMAL', type: 'success' },
-  { label: '延期', value: 'DELAYED', type: 'warning' }
-]
-
-const getManualAlertOption = (severity?: ManualAlertSeverity) =>
-  manualAlertOptions.find(option => option.value === (severity ?? null)) || manualAlertOptions[0]
-
-const getManualAlertLabel = (severity?: ManualAlertSeverity) => getManualAlertOption(severity).label
+// 2026-10-31 定稿：等级选项收敛到共享 appraisalGate（只有超前完成/正常/延期三档），
+// 「未评定」退为初始空白显示态（不是选项，空值仍显示「—」），三视图同构。
+const getManualAlertLabel = (severity?: ManualAlertSeverity) =>
+  getAppraisalLevelDisplay(severity).label
 
 const getManualAlertTagType = (severity?: ManualAlertSeverity) =>
-  getManualAlertOption(severity).type
+  getAppraisalLevelDisplay(severity).type
 
 // ============================================================================
 // 2026-10-30 P0-3：补「审核进度」写入位（上报审批链行内鉴定）
 //
 // 背景：审核进度此前只有战略任务管理页有写入入口，指标填报页这一列纯只读，
 // 导致「上报链可评级节点要求全部指标已评定」与「无人能评级」构成死锁
-// （本地上报实例实测 409：资源冲突：存在未评定的审核进度）。
+// （本地上报实例实测 409：存在未评定的审核进度拦截，2026-10-30 起文案改报指标名与操作指引）。
 // 此处复用 useIndicatorAppraisal（后端 canAppraise 判定谁能改），与战略任务页同构。
+// 2026-10-31 定稿：点击格子先单条重查 context，canAppraise=true 才弹轻量等级选择器。
 // ============================================================================
 const {
   load: loadIndicatorAppraisalContexts,
-  canAppraise: canAppraiseIndicator,
   getLevel: getIndicatorAppraisalLevel,
-  getLockHint: getIndicatorAppraisalLockHint,
-  save: saveIndicatorAppraisalLevel
+  openAppraisalGate: openIndicatorAppraisalGate
 } = useIndicatorAppraisal()
 
 watch(
@@ -615,40 +602,18 @@ watch(
   { immediate: true }
 )
 
-/** 行内调整审核进度：确认后写报告快照，后端同步 Alert 手动等级 */
-const handleAppraisalChange = async (
-  row: { id: string | number; name?: string; manualAlertSeverity?: ManualAlertSeverity },
-  value: ManualAlertSeverity
-) => {
-  const level: IndicatorAppraisalLevel = value === null ? null : (value as IndicatorAppraisalLevel)
-  const previous = getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity ?? null)
-  if (previous === level) {
-    return
-  }
-
-  const label = getManualAlertLabel(level)
-  try {
-    await ElMessageBox.confirm(
-      `确认将「${row.name || row.indicatorDesc || '该指标'}」的审核进度调整为「${label}」？`,
-      '调整审核进度',
-      {
-        confirmButtonText: '确认调整',
-        cancelButtonText: '取消',
-        type: level ? 'warning' : 'info'
-      }
-    )
-    await saveIndicatorAppraisalLevel(row.id, level)
-    ElMessage.success('审核进度已调整')
-  } catch (error) {
-    if (error !== 'cancel' && error !== 'close') {
-      ElMessage.error(error instanceof Error ? error.message : '调整审核进度失败')
-    }
-  }
-}
-
-/** 锁定状态点击只提示一次（与战略任务页同口径） */
-const handleAppraisalTagClick = (row: { id: string | number }) => {
-  ElMessage.info(getIndicatorAppraisalLockHint(row.id) || '上报期间才能解锁审核进度')
+/**
+ * 2026-10-31 定稿：点击审核进度格子的统一入口（三视图同构）。
+ * 先单条重查该行 context → canAppraise=false 当场弹对应原因 → 通过才弹等级选择器。
+ */
+const handleAppraisalCellClick = async (row: {
+  id: string | number
+  name?: string
+  indicatorDesc?: string
+}) => {
+  await openIndicatorAppraisalGate(row.id, {
+    indicatorName: row.name || row.indicatorDesc
+  })
 }
 const getMonthlyExpectedProgress = () => {
   const month = new Date().getMonth() + 1
@@ -866,13 +831,13 @@ const handleExportIndicatorList = async () => {
 
             <!-- 职能部门/二级学院的批量操作按钮 -->
             <template v-if="showPlanBatchActions">
-              <!-- 一键提交按钮（所有指标都已填报且未全部提交时显示） -->
+              <!-- 一键提交按钮（草稿态且未锁定时显示；行内有未填自评的行时置灰并提示原因） -->
               <el-button
                 v-if="showSubmitAllButton"
                 type="primary"
                 size="small"
-                :disabled="timeContext.isReadOnly || indicators.length === 0"
-                title="提交前会校验每条指标的自评进度与进度说明"
+                :disabled="submitAllButtonDisabled"
+                :title="submitAllDisabledTitle"
                 @click="handleSubmitAll"
               >
                 <el-icon><Upload /></el-icon>
@@ -1109,59 +1074,38 @@ const handleExportIndicatorList = async () => {
                 label-class-name="manual-level-header"
               >
                 <template #default="{ row }">
-                  <!-- 2026-10-30 P0-3：审批链行内鉴定（与战略任务管理页同构）。
-                       当前审批节点负责人可改（后端 canAppraise 判定）；其他人点击看锁定原因。
-                       未评定统一显示「—」（与自评进度/进度说明等空值同风格）；
-                       已评定保留彩色 tag（深绿/绿/橙视觉口径） -->
+                  <!-- 2026-10-30 P0-3 → 2026-10-31 定稿：审批链行内鉴定（三视图同构）。
+                       点击格子先单条重查 context，canAppraise=true 才弹等级选择器，
+                       不满足条件当场弹对应原因；未评定统一显示「—」（空值显示分支保留）。 -->
                   <div class="manual-alert-cell">
-                    <el-dropdown
-                      v-if="canAppraiseIndicator(row.id)"
-                      trigger="click"
-                      @command="value => handleAppraisalChange(row, value as ManualAlertSeverity)"
-                    >
-                      <el-tag
-                        :type="
-                          getManualAlertTagType(
-                            getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
-                          )
-                        "
-                        :style="
-                          getProgressLevelTagStyle(
-                            getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
-                          )
-                        "
-                        size="small"
-                        class="manual-alert-tag--clickable"
-                      >
-                        {{
-                          getManualAlertLabel(
-                            getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
-                          )
-                        }}
-                      </el-tag>
-                      <template #dropdown>
-                        <el-dropdown-menu>
-                          <el-dropdown-item
-                            v-for="option in manualAlertOptions"
-                            :key="option.value || 'NONE'"
-                            :command="option.value"
-                          >
-                            {{ option.label }}
-                          </el-dropdown-item>
-                        </el-dropdown-menu>
-                      </template>
-                    </el-dropdown>
                     <el-tag
-                      v-else-if="row.manualAlertSeverity"
-                      :type="getManualAlertTagType(row.manualAlertSeverity)"
-                      :style="getProgressLevelTagStyle(row.manualAlertSeverity)"
+                      v-if="getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)"
+                      :type="
+                        getManualAlertTagType(
+                          getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
+                        )
+                      "
+                      :style="
+                        getProgressLevelTagStyle(
+                          getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
+                        )
+                      "
                       size="small"
-                      class="manual-alert-tag--locked"
-                      @click="handleAppraisalTagClick(row)"
+                      class="manual-alert-tag--clickable"
+                      @click="handleAppraisalCellClick(row)"
                     >
-                      {{ getManualAlertLabel(row.manualAlertSeverity) }}
+                      {{
+                        getManualAlertLabel(
+                          getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
+                        )
+                      }}
                     </el-tag>
-                    <span v-else style="color: #909399" @click="handleAppraisalTagClick(row)">
+                    <span
+                      v-else
+                      style="color: #909399"
+                      class="manual-alert-tag--clickable"
+                      @click="handleAppraisalCellClick(row)"
+                    >
                       —
                     </span>
                   </div>

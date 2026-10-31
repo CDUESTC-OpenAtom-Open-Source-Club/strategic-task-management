@@ -40,6 +40,9 @@ export interface ReturnedMutationChainItem {
   created_at: string
   /** 最近一次驳回意见（审批节点驳回时填写），供被驳回可感知提示展示 */
   reject_comment?: string | null
+  /** 2026-10-30：起止部门名（供审批中心「退回待重报」卡片方向标题用） */
+  source_org_name?: string | null
+  target_org_name?: string | null
 }
 
 /**
@@ -155,5 +158,35 @@ export const mutationApi = {
    */
   async withdraw(instanceId: number | string): Promise<ApiResponse<number[]>> {
     return apiClient.post(`/indicators/mutations/${instanceId}/withdraw`, {})
+  },
+
+  /**
+   * 2026-10-31 用户定案（重发 = 原地续链，零新增行）：
+   * 「发起异动」无本地草稿时按「上次提交的内容」原样重新发起该批异动审批——后端
+   * 原地续链（业务锁重建 + 退回步骤原地复活），不生成新实例/新快照行、batch_id
+   * 不变。仅异动发起人可操作；实例须处于「退回待重报」活链（WITHDRAWN 且
+   * completed_at 为空）。
+   * 可选 items（结构同 initiateBatch 条目）：传了即「改后重发」——后端把本批既有
+   * audit_log 行原地 UPDATE（before 保留首轮原值）并重跑权重闭合校验；缺省即
+   * 「原样重发」，日志行一个字段都不动。
+   * 注意：当前调用点（useStrategicTaskView.resubmitReturnedMutationBatches）只走
+   * 原样重发；草稿改后重发路径暂不接线，本次仅后端能力就绪 + 类型支持。
+   */
+  async resubmit(
+    instanceId: number | string,
+    items?: Array<{
+      id: number | string
+      create?: boolean
+      entity_type?: 'INDICATOR' | 'TASK'
+      name?: string
+      indicator_desc?: string
+      weight_percent?: number
+      remark?: string
+    }>
+  ): Promise<ApiResponse<string[]>> {
+    return apiClient.post(
+      `/indicators/mutations/${instanceId}/resubmit`,
+      items && items.length > 0 ? { items } : {}
+    )
   }
 }

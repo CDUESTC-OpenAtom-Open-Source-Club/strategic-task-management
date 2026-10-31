@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildSelfRatingGateMessage,
   collectExistingAttachmentIds,
   resolveBatchSelfRating,
   resolveSavedSelfRating
@@ -112,5 +113,49 @@ describe('resolveSavedSelfRating（已存自评进度回填）', () => {
   it('空白等级视为无等级', () => {
     expect(resolveSavedSelfRating({}, false, { selfRating: '   ' })).toBeUndefined()
     expect(resolveSavedSelfRating({ selfRating: '' }, false, null)).toBeUndefined()
+  })
+})
+
+describe('buildSelfRatingGateMessage（一键提交自评门禁文案）', () => {
+  // 2026-10-30 用户定案（门禁前移到提交时，自评口径）：
+  // 与后端提交门禁 BusinessConflictException 同口径——报名不报 ID、
+  // 超 3 项列前 3 个 + 「等 N 项」、超 20 字截断、缺失兜底「未知指标」。
+  it('单项缺自评时点名该指标', () => {
+    expect(buildSelfRatingGateMessage([{ name: '科研产出增长率' }])).toBe(
+      '自评未完成：还有 1 项指标的自评进度未填写（『科研产出增长率』）。' +
+        '请先完成全部指标的自评进度评定，再提交上报。'
+    )
+  })
+
+  it('两项时全部点名', () => {
+    const message = buildSelfRatingGateMessage([{ name: '教学运行质量' }, { name: '科研产出' }])
+    expect(message).toContain('还有 2 项指标的自评进度未填写（『教学运行质量』『科研产出』）')
+    expect(message).not.toContain('等')
+  })
+
+  it('超 3 项时列前 3 个并以「等 N 项」收尾', () => {
+    const message = buildSelfRatingGateMessage([
+      { name: '教学运行质量' },
+      { name: '科研产出增长率' },
+      { name: '社会服务效能' },
+      { name: '师资队伍建设' }
+    ])
+    expect(message).toContain('还有 4 项指标的自评进度未填写')
+    expect(message).toContain('『教学运行质量』『科研产出增长率』『社会服务效能』 等 4 项')
+    expect(message).not.toContain('师资队伍建设')
+  })
+
+  it('超 20 字的指标名截断补省略号', () => {
+    const message = buildSelfRatingGateMessage([
+      { name: '指导思想贯彻情况落实与督查考核评价机制建设' }
+    ])
+    expect(message).toContain('…')
+    expect(message).not.toContain('督查考核评价机制建设』')
+  })
+
+  it('名称缺失或空白时兜底「未知指标」，不留空引号', () => {
+    expect(buildSelfRatingGateMessage([{}])).toContain('『未知指标』')
+    expect(buildSelfRatingGateMessage([{ name: '   ' }])).toContain('『未知指标』')
+    expect(buildSelfRatingGateMessage([{ name: null }])).toContain('『未知指标』')
   })
 })

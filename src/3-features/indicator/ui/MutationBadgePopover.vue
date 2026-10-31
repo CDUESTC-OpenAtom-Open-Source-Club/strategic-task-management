@@ -24,8 +24,21 @@ const props = withDefaults(
      * 由宿主按审批实例数据判定后传入；为 true 时浮层顶部打「在异动当中」状态、角标变警示色。
      */
     mutationInFlight?: boolean
+    /**
+     * 2026-10-31 用户定案：该实体异动链是否处于退回态（驳回/发起人撤回退回待重报）。
+     * 纯附加：默认 false，老调用方不传行为不变。词与样式对齐上报审批退回实现
+     * （REJECTED → 「已回退」+ danger 红 tag）。角标亮色仍由 mutationInFlight 控制
+     * （链活着角标就亮，含退回态），本 prop 只分态浮层/title 文案。
+     */
+    mutationReturned?: boolean
   }>(),
-  { indicatorId: null, taskId: null, fields: null, mutationInFlight: false }
+  {
+    indicatorId: null,
+    taskId: null,
+    fields: null,
+    mutationInFlight: false,
+    mutationReturned: false
+  }
 )
 
 const scope = computed(() => (props.taskId ? ('task' as const) : ('indicator' as const)))
@@ -46,6 +59,18 @@ const history = computed<MutationHistoryItem[]>(() =>
  */
 const visibleHistory = computed(() => projectMutationHistoryByFields(history.value, props.fields))
 const count = computed(() => countMutationHistoryByFields(history.value, props.fields))
+
+// 2026-10-31 用户定案：title 分态——退回态「已回退（退回待重报）」（词对齐上报审批
+// 退回实现：REJECTED → 已回退 + danger），在审态维持「在异动当中」，普通态只有计数。
+const badgeTitle = computed(() => {
+  if (props.mutationReturned) {
+    return `已回退（退回待重报），已更改 ${count.value} 次`
+  }
+  if (props.mutationInFlight) {
+    return `在异动当中，已更改 ${count.value} 次`
+  }
+  return `已更改 ${count.value} 次`
+})
 
 function fieldName(key: string): string {
   return MUTATION_FIELD_LABELS[key] || key
@@ -99,7 +124,7 @@ watch(mutationHistoryRevision, reload)
         class="mutation-badge__trigger"
         :class="{ 'mutation-badge__trigger--in-flight': mutationInFlight }"
         :aria-label="`${entityLabel}已更改 ${count} 次`"
-        :title="mutationInFlight ? `在异动当中，已更改 ${count} 次` : `已更改 ${count} 次`"
+        :title="badgeTitle"
         @click.stop
         @dblclick.stop
         @mousedown.stop
@@ -109,8 +134,17 @@ watch(mutationHistoryRevision, reload)
     </template>
     <div class="mutation-history">
       <div class="mutation-history__title">{{ entityLabel }}异动历史</div>
+      <!-- 2026-10-31 用户定案（退回态文案对齐上报审批退回实现）：退回态打 danger「已回退」
+           tag（词与样式照抄上报审批 REJECTED 分支），说明参照「已退回待重报」红横幅口径，
+           带可重新发起或取消异动的方向指引 -->
+      <div v-if="mutationReturned" class="mutation-history__in-flight">
+        <el-tag type="danger" size="small" effect="light">已回退</el-tag>
+        <span class="mutation-history__in-flight-text mutation-history__returned-text">
+          异动已退回待重报（驳回或发起人撤回），可点「发起异动」重新提交，或点「取消异动」终结该批异动
+        </span>
+      </div>
       <!-- 2026-10-30 用户定案：异动在途时打「在异动当中」状态——发起后审批进展一目了然 -->
-      <div v-if="mutationInFlight" class="mutation-history__in-flight">
+      <div v-else-if="mutationInFlight" class="mutation-history__in-flight">
         <el-tag type="warning" size="small" effect="light">在异动当中</el-tag>
         <span class="mutation-history__in-flight-text">正在异动审批中，通过后生效</span>
       </div>
@@ -195,6 +229,10 @@ watch(mutationHistoryRevision, reload)
 }
 .mutation-history-popper .mutation-history__in-flight-text {
   color: var(--el-color-warning);
+}
+/* 2026-10-31：退回态说明文字随 danger「已回退」tag 走红色，与在审态 warning 区分 */
+.mutation-history-popper .mutation-history__returned-text {
+  color: var(--el-color-danger);
 }
 .mutation-history-popper .mutation-history__item {
   border-top: 1px solid #f0f0f0;

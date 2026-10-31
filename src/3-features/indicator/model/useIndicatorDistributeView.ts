@@ -1109,17 +1109,34 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   }
   const hasMyPendingApprovalTasks = computed(() => myPendingApprovalTasks.value.length > 0)
 
+  // 2026-10-31 定稿（审批状态接上报链）：上报摘要状态提到下发链详情之前——
+  // 上报链有自己独立的生命周期（SUBMITTED/WITHDRAWN），不能被学院计划
+  // 下发链的实例状态（已完成/在审）遮住。
   const currentApprovalWorkflowStatus = computed(() => {
     return String(
-      currentCollegeWorkflowDetail.value?.status ||
-        currentActiveCollegePlan.value?.workflowStatus ||
-        currentCollegePlanReportSummary.value?.workflowStatus ||
+      currentCollegePlanReportSummary.value?.workflowStatus ||
         currentCollegePlanReportSummary.value?.status ||
+        currentCollegeWorkflowDetail.value?.status ||
+        currentActiveCollegePlan.value?.workflowStatus ||
         selectedCollegePlanUiStatus.value ||
         ''
     )
       .trim()
       .toUpperCase()
+  })
+
+  // 2026-10-31 定稿：当前审批状态是否来自上报链——
+  // 用于「上报审批中 · 节点名」「上报已撤回（待重新上报）」口径（与任务页 meta 同口径）。
+  // 仅认上报链的活状态；DRAFT/APPROVED 等不抢占下发链语境。
+  const currentApprovalStatusFromReportChain = computed(() => {
+    const reportStatus = String(
+      currentCollegePlanReportSummary.value?.workflowStatus ||
+        currentCollegePlanReportSummary.value?.status ||
+        ''
+    )
+      .trim()
+      .toUpperCase()
+    return ['SUBMITTED', 'IN_REVIEW', 'PENDING', 'WITHDRAWN'].includes(reportStatus)
   })
 
   const currentApprovalStepName = computed(() => {
@@ -1308,6 +1325,16 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       }
     }
 
+    // 2026-10-31 定稿（与任务页 meta 同口径）：上报链撤回单列——
+    // WITHDRAWN 在上报链语境是「上报已撤回，等重新上报」，不是计划链的「已回退」。
+    if (workflowStatus === 'WITHDRAWN' && currentApprovalStatusFromReportChain.value) {
+      return {
+        label: '上报已撤回（待重新上报）',
+        tagType: 'warning' as const,
+        description: '本轮上报已被撤回，等待重新上报。'
+      }
+    }
+
     if (
       workflowStatus === 'REJECTED' ||
       workflowStatus === 'RETURNED' ||
@@ -1326,8 +1353,16 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       approverName ||
       ['SUBMITTED', 'IN_REVIEW', 'PENDING'].includes(workflowStatus)
     ) {
+      // 2026-10-31 定稿：上报链在途 → 「上报审批中 · 节点名」；
+      // 下发链在途保持原「待X审批」口径
+      const label =
+        currentApprovalStatusFromReportChain.value &&
+        ['SUBMITTED', 'IN_REVIEW', 'PENDING'].includes(workflowStatus)
+          ? `上报审批中 · ${stepName}`.replace(/ ·\s*$/, '')
+          : formatPendingApprovalLabel(stepName)
+
       return {
-        label: formatPendingApprovalLabel(stepName),
+        label,
         tagType: 'warning' as const,
         description:
           candidateNames.length > 0

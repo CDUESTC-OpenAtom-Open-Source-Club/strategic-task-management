@@ -71,3 +71,41 @@ export function resolveSavedSelfRating(
   }
   return undefined
 }
+
+// ============================================================================
+// 一键提交门禁文案（2026-10-30 用户定案：门禁前移到提交时，自评口径）
+// ============================================================================
+
+/** 拦截文案里最多点名的指标数，超出部分用「等 N 项」收尾（与后端同口径）。 */
+export const GATE_NAME_PREVIEW_LIMIT = 3
+
+/** 指标名称超长截断长度（超出补省略号），避免文案被长名称撑爆（与后端同口径）。 */
+export const GATE_NAME_MAX_LENGTH = 20
+
+function truncateGateIndicatorName(name: string | null | undefined): string {
+  const trimmed = String(name ?? '').trim()
+  if (!trimmed) {
+    return '未知指标'
+  }
+  return trimmed.length <= GATE_NAME_MAX_LENGTH
+    ? trimmed
+    : `${trimmed.slice(0, GATE_NAME_MAX_LENGTH)}…`
+}
+
+/**
+ * 一键提交的前置拦截文案（与后端提交门禁 BusinessConflictException 同口径）：
+ * 「自评未完成：还有 N 项指标的自评进度未填写（『指标名A』『指标名B』等）。请先完成全部指标的自评进度评定，再提交上报。」
+ * 只报指标名不报 ID、超 3 项列前 3 个 + 「等 N 项」、超 20 字截断、缺失兜底「未知指标」。
+ */
+export function buildSelfRatingGateMessage(items: ReadonlyArray<{ name?: string | null }>): string {
+  const total = items.length
+  const preview = items
+    .slice(0, GATE_NAME_PREVIEW_LIMIT)
+    .map(item => `『${truncateGateIndicatorName(item?.name)}』`)
+    .join('')
+  const suffix = total > GATE_NAME_PREVIEW_LIMIT ? ` 等 ${total} 项` : ''
+  return (
+    `自评未完成：还有 ${total} 项指标的自评进度未填写（${preview}${suffix}）。` +
+    '请先完成全部指标的自评进度评定，再提交上报。'
+  )
+}
