@@ -23,6 +23,31 @@ function hasApiData<T>(response: { success?: boolean; code?: number; data?: T | 
   )
 }
 
+// 2026-10-31（P3 锁文案被吞修复）：响应拦截器对 HTTP 409 等错误 reject 的是
+// 统一错误对象（{ message, code, ... } 普通对象），不是 Error 实例——
+// `err instanceof Error` 判否会让后端原文（如「当前月份已有报告正在审批中，
+// 请等待审批完成或先撤回」）被兜底文案吞掉。这里按优先级取 message：
+// details.message（拦截器统一格式）→ response.data.message（Axios 原始格式）
+// → message（Error / 普通对象通吃），后端有原文时永远优先透出。
+function getApiErrorMessage(error: unknown, fallback: string): string {
+  const candidates = [
+    (error as { details?: { message?: unknown } } | null)?.details?.message,
+    (error as { response?: { data?: { message?: unknown } } } | null)?.response?.data?.message,
+    (error as { message?: unknown } | null)?.message
+  ]
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim()
+      if (trimmed && trimmed !== '[object Object]') {
+        return trimmed
+      }
+    }
+  }
+
+  return fallback
+}
+
 export const usePlanStore = defineStore('plan', () => {
   // ============ State ============
   const plans = ref<Plan[]>([])
@@ -833,7 +858,8 @@ export const usePlanStore = defineStore('plan', () => {
 
       throw new Error(response.message || '保存指标填报失败')
     } catch (err) {
-      error.value = err instanceof Error ? err.message : '保存指标填报失败'
+      // 2026-10-31（P3）：后端有原文（如审批锁 409 文案）时优先透出，不再吞成兜底文案
+      error.value = getApiErrorMessage(err, '保存指标填报失败')
       logger.error('[Plan Store] Failed to save indicator fill:', err)
       ElMessage.error(error.value)
       // 2026-10-30：业务层已提示，标记后响应拦截器不再重复弹同一条。
@@ -861,7 +887,8 @@ export const usePlanStore = defineStore('plan', () => {
 
       throw new Error(response.message || '提交指标填报失败')
     } catch (err) {
-      error.value = err instanceof Error ? err.message : '提交指标填报失败'
+      // 2026-10-31（P3）：后端有原文（如审批锁 409 文案）时优先透出，不再吞成兜底文案
+      error.value = getApiErrorMessage(err, '提交指标填报失败')
       logger.error('[Plan Store] Failed to submit indicator fill:', err)
       ElMessage.error(error.value)
       // 2026-10-30：业务层已提示，标记后响应拦截器不再重复弹同一条。

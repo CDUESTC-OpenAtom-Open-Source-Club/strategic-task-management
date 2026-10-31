@@ -2927,7 +2927,10 @@ export const indicatorFillApi = {
   async submitCurrentMonthPlanReport(
     planId: number | string,
     reportOrgId: number,
-    reportMonth: string = getCurrentReportMonth()
+    reportMonth: string = getCurrentReportMonth(),
+    // 2026-10-31（P4 重报说明透传）：一键提交弹窗强制收集的提交备注/重报说明
+    // 随本参数透传给后端；空说明不传字段，保持原有行为。
+    comment?: string
   ): Promise<PlanReportSimpleResponse> {
     invalidatePlanReportsCache(planId)
     const currentReport = await this.getCurrentMonthPlanReport(planId, reportOrgId, reportMonth)
@@ -2951,8 +2954,13 @@ export const indicatorFillApi = {
       throw new Error('当前登录用户缺少 userId，无法提交上报')
     }
 
+    const trimmedComment = String(comment ?? '').trim()
     const response = await apiClient.post<ApiResponse<PlanReportSimpleResponse>>(
-      `/reports/${currentReport.id}/submit?userId=${userId}`
+      `/reports/${currentReport.id}/submit?userId=${userId}`,
+      // 2026-10-31（P4）：提交说明按 body JSON 字段 comment 透传（后端 submit
+      // 端点暂未合入 comment 入参，按约定「body JSON 字段 comment」先行对齐）；
+      // 空说明不传字段——保持与原先无 body 请求完全一致的行为。
+      trimmedComment ? { comment: trimmedComment } : undefined
     )
     if (!hasApiData(response) || !response.data) {
       throw new Error(response.message || '提交上报失败')

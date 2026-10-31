@@ -292,7 +292,8 @@ describe('indicatorFillApi real report flow', () => {
 
     const response = await indicatorFillApi.submitCurrentMonthPlanReport(111, 39)
 
-    expect(apiPost).toHaveBeenCalledWith('/reports/12/submit?userId=124')
+    // 2026-10-31：重报说明透传后 submit 增加可选 body（comment）——空说明传 undefined body
+    expect(apiPost).toHaveBeenCalledWith('/reports/12/submit?userId=124', undefined)
     expect(response.id).toBe(12)
     expect(response.workflowInstanceId).toBe(901)
     expect(response.workflowStatus).toBe('IN_REVIEW')
