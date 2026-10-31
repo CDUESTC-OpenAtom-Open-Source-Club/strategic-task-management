@@ -254,6 +254,9 @@ export function useIndicatorAppraisal() {
   ): Promise<void> => {
     const key = String(indicatorId ?? '').trim()
     if (!/^\d+$/.test(key)) {
+      // 2026-10-31 线上 P0 回归：行数据异常（缺 id / 非数字 id）也不允许静默 return——
+      // 「点击格子后既不开选择器也不提示」的路径全部消灭，统一给兜底提示。
+      ElMessage.warning('未获取到有效指标，无法评定审核进度')
       return
     }
 

@@ -117,6 +117,8 @@ export const mutationApi = {
         current_step_name?: string
         source_org_name?: string
         target_org_name?: string
+        /** 2026-10-31 学院级联全锁信号：目标组织类型（sys_org.type，academic=学院） */
+        target_org_type?: string | null
         approver_org_id?: number
         source_org_id?: number
         target_org_id?: number

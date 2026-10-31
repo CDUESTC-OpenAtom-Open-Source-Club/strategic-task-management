@@ -68,6 +68,11 @@ import { getUsersByOrgId } from '@/features/user/api/query'
 import { sleep } from '@/5-shared/api/retry'
 import {
   GLOBAL_DATA_REFRESH_REQUEST_EVENT,
+  // 2026-10-31 线上 P0 回归：2604/4726 行调用了 requestGlobalDataRefresh 但 import 列表
+  // 从 9947a57（10-10）起就漏引了它——vite build 不做类型检查、type-check 脚本又是空转
+  // （根 tsconfig 为 solution-style，--noEmit 无输入文件直接退出 0），导致 ReferenceError
+  // 「requestGlobalDataRefresh is not defined」逃过静态检查直接上线。
+  requestGlobalDataRefresh,
   shouldRefreshForDomains,
   type GlobalDataRefreshDetail
 } from '@/5-shared/lib/dataFreshness'

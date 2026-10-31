@@ -1587,10 +1587,16 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   // 注意：必须按 target_org_id（异动实际作用的组织）精确过滤，不能把
   // owner_org_id 也算进来，否则会把与该部门无关的异动算上，造成过度置灰。
   const functionalDeptMutationInFlight = ref(false)
+  // 2026-10-31 缺陷修复（学院级联全锁，2026-10-11 定案口径）：学院子计划异动在审
+  // （异动条目 target_org 为学院，target_org_type='academic'）时，任何向学院的下发
+  // 都要锁——线上实证计算机学院异动在审时向商学院下发前端未置灰、后端受理成功。
+  // 判定数据源与后端 listMutationApprovals 同一份响应（已补 target_org_type 字段）。
+  const collegeMutationInFlight = ref(false)
   const loadFunctionalDeptMutationSignal = async () => {
     const orgId = Number(currentDepartmentOrgIdFromTable.value ?? NaN)
     if (!Number.isFinite(orgId) || orgId <= 0) {
       functionalDeptMutationInFlight.value = false
+      collegeMutationInFlight.value = false
       return
     }
 
@@ -1607,8 +1613,18 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
           Number(item.target_org_id) === orgId
         )
       })
+      collegeMutationInFlight.value = items.some(item => {
+        const status = String(item.status || '').toUpperCase()
+        return (
+          status === 'IN_REVIEW' &&
+          String(item.target_org_type || '')
+            .trim()
+            .toLowerCase() === 'academic'
+        )
+      })
     } catch {
       functionalDeptMutationInFlight.value = false
+      collegeMutationInFlight.value = false
     }
   }
 
@@ -1634,6 +1650,12 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       return '该职能部门的指标正在异动审批中，暂不能下发；请等异动审批结束或撤回后再操作'
     }
 
+    // 2026-10-31 学院级联全锁：任意学院子计划异动在审时，向学院下发统一置灰
+    // （文案与后端 PlanApplicationService 学院级联分支同口径）
+    if (collegeMutationInFlight.value) {
+      return '学院子计划的异动正在审批中，暂不能向学院下发；请等异动审批结束或撤回后再操作'
+    }
+
     if (collegeTotalWeight.value !== 100) {
       return '权重未等于百分之百'
     }
@@ -1652,13 +1674,16 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   // 2026-10-27 用户反馈：双击编辑保存后的强制刷新会让 store 指标短暂清空，
   // 权重合计瞬间归零，把「发起下发审批」按钮在 可下发(绿)/不可下发(灰) 之间
   // 打闪。刷新期间冻结按钮判定，沿用上一次稳定结论。
+  // 2026-10-31 缺陷修复（/distribution 首次进入偶发 TDZ 白屏，线上
+  // ReferenceError: Cannot access 'Cr' before initialization）：watch 的 source
+  // 是 computed，Vue 创建 watch 时会同步求值一次取初始值——该 getter 条件性
+  // 读取 collegeTotalWeight.value（其 const 声明在本文件 ~2400 行之后）。从
+  // 仪表盘热进入时 store 已有数据、getter 不会提前 return，直接命中 TDZ；
+  // 刷新后冷启动 store 为空、getter 提前 return 才侥幸不炸（间歇性的根源）。
+  // watch 本体移到 collegeTotalWeight 声明之后（见下方 stable 冻结块旁），
+  // 与既有同族缺陷（watch 参数插错位置访问未初始化 const）同口径收口。
   const isRefreshingDistribution = ref(false)
   const lastStableSubmitDisabledReason = ref('')
-  watch(distributionSubmitButtonDisabledReason, reason => {
-    if (!isRefreshingDistribution.value) {
-      lastStableSubmitDisabledReason.value = reason
-    }
-  })
   const distributionSubmitButtonStableDisabledReason = computed(() =>
     isRefreshingDistribution.value
       ? lastStableSubmitDisabledReason.value
@@ -3755,6 +3780,15 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       return
     }
 
+    // 2026-10-31 学院级联全锁兜底：任意学院子计划异动在审时直接拦截
+    // （与后端 PlanApplicationService 学院级联分支同文案）
+    if (collegeMutationInFlight.value) {
+      ElMessage.warning(
+        '学院子计划的异动正在审批中，暂不能向学院下发；请等异动审批结束或撤回后再操作'
+      )
+      return
+    }
+
     if (!canCurrentUserSubmitCurrentDepartmentDistribution.value) {
       ElMessage.warning('只有当前部门组织下的填报人才可以下发')
       return
@@ -3997,6 +4031,15 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   const collegeTotalWeightStable = computed(() =>
     isRefreshingDistribution.value ? lastStableCollegeTotalWeight.value : collegeTotalWeight.value
   )
+
+  // 2026-10-31 缺陷修复：本 watch 必须在 collegeTotalWeight 声明之后创建——
+  // watch 的 source（computed）创建时会同步求值一次，其 getter 条件性读取
+  // collegeTotalWeight.value，提前创建会在热进入时命中 TDZ（详见上方注释）。
+  watch(distributionSubmitButtonDisabledReason, reason => {
+    if (!isRefreshingDistribution.value) {
+      lastStableSubmitDisabledReason.value = reason
+    }
+  })
 
   // 下发/撤销统一处理函数
   const _handleDistributeOrWithdraw = (command: string) => {

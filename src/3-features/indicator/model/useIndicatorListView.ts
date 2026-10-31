@@ -1416,7 +1416,15 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       attachments?: Attachment[] | null
     }> | null
   } | null>(null)
-  const latestPlanReportSummary = ref<{ id: number } | null>(null)
+  // 2026-10-31：补齐欠声明字段（接口 PlanReportSimpleResponse 实际返回这些字段，
+  // 此前只声明 id 导致 currentApprovalStatusMeta 读 workflowStatus/currentStepName 时
+  // 出现 TS2339 基线噪音），声明与 PlanReportSimpleResponse 的可选字段保持同形。
+  const latestPlanReportSummary = ref<{
+    id: number
+    status?: string | null
+    workflowStatus?: string | null
+    currentStepName?: string | null
+  } | null>(null)
   // 填报入口锁定状态：基于「最早未填报月」的报告状态（null = 月份数据不可得，降级为当前月口径）
   const planReportEntryLockState = ref<PlanReportEntryLockState | null>(null)
   // 2026-10-27：该组织在该计划下的上报审批汇总（是否已有走完的一轮 → 「已上报」）
@@ -3131,10 +3139,14 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           }
         }
         if (['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(reportWorkflowStatus)) {
+          // 2026-10-31 对齐战略任务管理页口径：上报链在途 → 「上报审批中 · 节点名」
+          // （战略任务页同款拼接：上报审批中 · 分管校领导审批）。节点名只取上报链
+          // 汇总的 currentStepName，不混用下发链节点；缺失时回退「审批中」。
+          const reportStepName = String(reportSummary.currentStepName || '').trim()
           return {
-            label: '审批中',
+            label: reportStepName ? `上报审批中 · ${reportStepName}` : '审批中',
             type: 'warning' as const,
-            description: '本部门上报审批进行中。'
+            description: reportStepName ? `当前节点：${reportStepName}` : '本部门上报审批进行中。'
           }
         }
         if (['REJECTED', 'RETURNED'].includes(reportWorkflowStatus)) {

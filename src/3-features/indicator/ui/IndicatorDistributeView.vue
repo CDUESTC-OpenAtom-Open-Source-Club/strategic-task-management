@@ -331,17 +331,18 @@ const getChildAppraisalDisplay = (level: string | null | undefined) =>
 /**
  * 2026-10-31 定稿：点击审核进度格子的统一入口（三视图同构）。
  * 先单条重查该行 context → canAppraise=false 当场弹对应原因 → 通过才弹等级选择器。
+ * 2026-10-31 线上 P0 回归：取消本地静默 return——无效 id 统一交给 openAppraisalGate
+ * 兜底提示，三视图一致性核对结论：点击入口不允许存在「既不开选择器也不提示」的分支。
  */
 const handleAppraisalCellClick = async (
   child: DistributionExportChild | StrategicIndicator | null | undefined
 ) => {
-  if (!child?.id) {
-    return
-  }
-  await openIndicatorAppraisalGate(child.id, {
-    indicatorName: child.name,
+  await openIndicatorAppraisalGate(child?.id, {
+    indicatorName: child?.name,
     onSaved: level => {
-      strategicStore.patchIndicator(String(child.id), { manualAlertSeverity: level })
+      if (child?.id !== undefined && child?.id !== null) {
+        strategicStore.patchIndicator(String(child.id), { manualAlertSeverity: level })
+      }
     }
   })
 }
