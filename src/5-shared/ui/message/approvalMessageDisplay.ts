@@ -2,7 +2,7 @@ import type { Message } from '@/shared/types'
 
 type ApprovalMessageLike = Pick<
   Message,
-  'content' | 'currentStepName' | 'detailContent' | 'metadata' | 'senderDisplay'
+  'content' | 'currentStepName' | 'detailContent' | 'entityType' | 'metadata' | 'senderDisplay'
 >
 
 const normalizeDisplayText = (value: unknown): string =>
@@ -75,6 +75,11 @@ export const getApprovalDepartmentDisplay = (message: ApprovalMessageLike): stri
   return targetOrgName || sourceOrgName
 }
 
+// 2026-10-30 用户拍板：审批流向与审批中心抽屉卡片标题同口径——后端 metadata 的
+// source/target 存的是「下发方向」（下发方=source，见 ExecutionWorkflowBusinessContextAdapter），
+// 上报链（PLAN_REPORT）真实流向相反，须翻转为 target -> source
+// （同 DistributionApprovalProgressDrawer 月报卡「上报审批 · 接收方 -> 下发方」口径）；
+// 下发/异动链维持 source -> target 不变。
 export const getApprovalRouteDisplay = (message: ApprovalMessageLike): string => {
   const sourceOrgName = sanitizeDepartmentName(getMetadataText(message, 'sourceOrgName'))
   const targetOrgName = sanitizeDepartmentName(
@@ -82,7 +87,13 @@ export const getApprovalRouteDisplay = (message: ApprovalMessageLike): string =>
   )
 
   if (sourceOrgName && targetOrgName) {
-    return `${sourceOrgName} -> ${targetOrgName}`
+    const isPlanReport =
+      String(message.entityType || '')
+        .trim()
+        .toUpperCase() === 'PLAN_REPORT'
+    return isPlanReport
+      ? `${targetOrgName} -> ${sourceOrgName}`
+      : `${sourceOrgName} -> ${targetOrgName}`
   }
 
   return sourceOrgName || targetOrgName

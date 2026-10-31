@@ -589,6 +589,15 @@ function resolveApprovalRouteDisplay(message: Message): string {
   const targetOrgName = getMessageMetadataValue(message, 'targetOrgName')
 
   if (sourceOrgName && targetOrgName) {
+    // 2026-10-30 用户拍板：后端 metadata 存的是下发方向（下发方=source），上报链
+    // （PLAN_REPORT）按审批中心抽屉卡片标题同口径翻转（target -> source）；下发/异动链不变
+    if (
+      String(message.entityType || '')
+        .trim()
+        .toUpperCase() === 'PLAN_REPORT'
+    ) {
+      return `${targetOrgName} -> ${sourceOrgName}`
+    }
     return `${sourceOrgName} -> ${targetOrgName}`
   }
 
