@@ -20,31 +20,11 @@
       <div class="info-panel">
         <div class="school-brand">
           <div class="school-emblem">
-            <svg viewBox="0 0 80 80" class="emblem-svg">
-              <rect
-                x="10"
-                y="10"
-                width="60"
-                height="60"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              />
-              <rect
-                x="20"
-                y="20"
-                width="40"
-                height="40"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-              />
-              <path
-                d="M40 25 L40 55 M30 35 L50 35 M30 45 L50 45"
-                stroke="currentColor"
-                stroke-width="2"
-              />
-            </svg>
+            <img
+              class="emblem-img"
+              src="/sism-logo-header-white.png"
+              alt="电子科技大学成都学院徽标"
+            />
           </div>
           <div class="school-text">
             <h1 class="school-name">战略指标管理系统</h1>
@@ -520,13 +500,13 @@ onUnmounted(() => {
 .school-emblem {
   width: 64px;
   height: 64px;
-  color: var(--color-warning);
   flex-shrink: 0;
 }
 
-.emblem-svg {
+.emblem-img {
   width: 100%;
   height: 100%;
+  object-fit: contain;
 }
 
 .school-text {
