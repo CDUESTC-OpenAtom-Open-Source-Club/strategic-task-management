@@ -12,15 +12,66 @@ import { logger } from '@/shared/lib/utils/logger'
 import { buildQueryKey, fetchWithCache } from '@/shared/lib/utils/cache'
 import { createPersistentReferencePolicy } from '@/shared/lib/utils/cache-config'
 import { getCachedUserContext } from '@/shared/lib/utils/cacheContext'
+import { localStorage as storage } from '@/shared/lib/storage'
 import type { AssessmentCycle as AssessmentCycleVO } from '@/shared/types/backend-aligned'
+
+/**
+ * 年份选择的持久化（2026-10-31 用户拍板：跨刷新记忆）。
+ *
+ * - 只存「用户主动选择」的年份（YearSelector 的 set/switch 路径），初始化时读取；
+ *   非法值（非 4 位数字、超出合理区间）一律忽略并回退当前年。
+ * - 只读状态（isReadOnly）按年份与当前年比较推导，自然跟随，无需单独存。
+ * - localStorage 不可用（隐私模式等）时由 storage 包装层 try/catch 静默降级。
+ */
+const SELECTED_YEAR_STORAGE_KEY = 'sism.selectedYear'
+const MIN_VALID_YEAR = 2000
+const MAX_VALID_YEAR = 2100
+
+/**
+ * 是否为合法的可持久化年份（整数、4 位数字、合理区间 2000-2100）。
+ */
+function isValidSelectableYear(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= MIN_VALID_YEAR &&
+    value <= MAX_VALID_YEAR
+  )
+}
+
+/**
+ * 从 localStorage 读取上次选择的年份；无记录或值非法返回 null。
+ */
+export function readPersistedSelectedYear(): number | null {
+  const stored = storage.getItem<number>(SELECTED_YEAR_STORAGE_KEY)
+  return isValidSelectableYear(stored) ? stored : null
+}
+
+/**
+ * 持久化用户选择的年份（非法值不写，避免污染下次初始化）。
+ */
+function persistSelectedYear(year: number): void {
+  if (isValidSelectableYear(year)) {
+    storage.setItem(SELECTED_YEAR_STORAGE_KEY, year)
+  }
+}
+
+/**
+ * 清掉持久化的年份（回当前年时保持语义一致：不残留历史选择）。
+ */
+function clearPersistedSelectedYear(): void {
+  storage.removeItem(SELECTED_YEAR_STORAGE_KEY)
+}
 
 export const useTimeContextStore = defineStore('timeContext', () => {
   // ============ State ============
 
   /**
    * Current year being viewed (can be historical)
+   *
+   * 初始化时优先采用上次用户选择的年份（跨刷新记忆），无记录/非法则回退当前年。
    */
-  const currentYear = ref<number>(new Date().getFullYear())
+  const currentYear = ref<number>(readPersistedSelectedYear() ?? new Date().getFullYear())
 
   /**
    * Real current year (always the actual current year)
@@ -187,16 +238,22 @@ export const useTimeContextStore = defineStore('timeContext', () => {
 
   /**
    * Set the current year context
+   *
+   * 用户主动选择的年份持久化到 localStorage（跨刷新记忆）。
    */
   function setYear(year: number) {
     currentYear.value = year
+    persistSelectedYear(year)
   }
 
   /**
    * Reset to current year
+   *
+   * 回到当前年即放弃历史选择，同步清掉持久化记录，保证语义一致。
    */
   function resetToCurrentYear() {
     currentYear.value = realCurrentYear.value
+    clearPersistedSelectedYear()
   }
 
   /**
@@ -214,9 +271,12 @@ export const useTimeContextStore = defineStore('timeContext', () => {
 
   /**
    * Switch to a specific year
+   *
+   * 年份切换器（YearSelector）的入口，同样持久化用户选择。
    */
   async function switchYear(year: number) {
     currentYear.value = year
+    persistSelectedYear(year)
   }
 
   function resolveCycleYear(cycleId: unknown): number | null {
