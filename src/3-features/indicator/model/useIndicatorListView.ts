@@ -50,6 +50,7 @@ import {
   resolveBatchSelfRating,
   resolveSavedSelfRating
 } from '@/features/indicator/lib/reportBatch'
+import { resolveReportSubmitLockReason } from '@/features/indicator/lib/reportSubmitGate'
 import { getUsersByOrgId } from '@/features/user/api/query'
 import { ApprovalProgressDrawer } from '@/features/approval'
 import { approveTask, rejectTask } from '@/features/workflow/api'
@@ -64,6 +65,8 @@ import type {
   WorkflowTaskResponse
 } from '@/features/workflow/api/types'
 import { useDataValidator } from '@/shared/lib/validation/dataValidator'
+import { showCriticalErrorNotice } from '@/shared/lib/criticalErrorNotice'
+import { markErrorHandled } from '@/shared/lib/utils/errorToast'
 import { getPlanStatusDisplay, normalizePlanStatus } from '@/features/task/lib/planStatus'
 import type { StatusTagType } from '@/shared/lib/utils/formatters'
 import { formatPendingApprovalLabel } from '@/shared/lib/utils/workflowStepLabel'
@@ -2209,7 +2212,13 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return []
     }
 
+    // 2026-10-31 修复：补上流程 4（学院上报链）的「学院审核人审批」「分管职能部门
+    // 负责人审批」两节点（席位均为审核人，对照 audit_flow_def id=4 step 定义）——
+    // 此前映射缺失导致角色校验返回 [] 被静默跳过，角标退化为纯组织相等判定，
+    // 同学院填报人（仅 ROLE_REPORTER）被误亮。
     if (
+      stepName.includes('学院审核人审批') ||
+      stepName.includes('分管职能部门负责人审批') ||
       stepName.includes('职能部门审批') ||
       stepName.includes('职能部门终审') ||
       stepName.includes('二级学院审批')
@@ -2260,24 +2269,63 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     return null
   }
 
+  // 2026-10-31 审批角标口径改「轮到我」（对齐任务页 2026-10-30 定案的同族缺陷修法）：
+  // 优先采用 my-tasks 范式——复用 approvalStore.pendingApprovals（GET /workflows/my-tasks，
+  // 后端只返回 assignee=当前登录人的 PENDING 任务，既有刷新链已维护，不新增请求），
+  // 按 entityType/entityId 精确匹配当前链（上报链 PLAN_REPORT→上报单 id；传统链 PLAN→计划 id）：
+  // 「当前链出现在我的待办」⇔「当前节点轮到本人处理」，天然排除同组织但不在名单内的填报人。
+  // 当前链身份识别不了（摘要/计划 id 缺失）时返回 null，降级走既有「角色 + 组织」判定。
+  const currentApprovalChainInMyTasks = computed<boolean | null>(() => {
+    const chainKeys: Array<{ entityType: string; entityId: number }> = []
+    const reportId = Number(approvalWorkflowReportSummary.value?.id ?? NaN)
+    if (usePlanReportFlow.value && Number.isFinite(reportId) && reportId > 0) {
+      chainKeys.push({ entityType: 'PLAN_REPORT', entityId: reportId })
+    }
+    const planId = Number(currentUserPlanId.value ?? currentPlanDetails.value?.id ?? NaN)
+    if (!usePlanReportFlow.value && Number.isFinite(planId) && planId > 0) {
+      chainKeys.push({ entityType: 'PLAN', entityId: planId })
+    }
+    if (chainKeys.length === 0) {
+      return null
+    }
+    return approvalStore.pendingApprovals.some(approval => {
+      if (
+        String(approval.status || '')
+          .trim()
+          .toUpperCase() !== 'PENDING'
+      ) {
+        return false
+      }
+      const entityType = String(approval.entityType || '')
+        .trim()
+        .toUpperCase()
+      const entityId = Number(approval.entityId ?? NaN)
+      return chainKeys.some(key => key.entityType === entityType && key.entityId === entityId)
+    })
+  })
+
+  // 首屏兜底：既有刷新链不在初载时拉 my-tasks（任务页同款处理），补一次幂等回填，
+  // 避免首帧 pendingApprovals 为空导致角标信号缺失。
+  void approvalStore.loadPendingApprovals()
+
   const canCurrentUserHandlePlanApprovalOnPage = computed(() => {
     if (
       !hasPagePlanWorkflowData.value ||
       !isPagePlanPendingApproval.value ||
-      !hasPagePlanApprovalPermission.value ||
       !currentPagePendingPlanTask.value
     ) {
       return false
     }
 
-    const expectedApproverRoleCodes = resolveExpectedApproverRoleCodesForPage()
-    if (expectedApproverRoleCodes.length > 0) {
-      const hasExpectedRole = expectedApproverRoleCodes.some(roleCode =>
-        currentUserRoleCodes.value.includes(roleCode)
-      )
-      if (!hasExpectedRole) {
-        return false
-      }
+    // 「轮到我」主判定：my-tasks 命中即亮、未命中即灭（链身份可识别时一票定音）
+    const chainInMyTasks = currentApprovalChainInMyTasks.value
+    if (chainInMyTasks !== null) {
+      return chainInMyTasks
+    }
+
+    // 降级（待办匹配键缺失时）：既有「角色 + 审批组织」判定（映射表已补全流程 4 节点）
+    if (!hasPagePlanApprovalPermission.value) {
+      return false
     }
 
     const expectedApproverOrgId = resolveExpectedApproverOrgIdForPage()
@@ -2296,6 +2344,12 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   const approvalBadgeCount = computed(() => (canCurrentUserHandlePlanApprovalOnPage.value ? 1 : 0))
 
   const approvalEntryButtonText = computed(() => {
+    // 2026-10-31（角标口径「轮到我」配套，参考任务页二态）：轮到本人处理时用
+    // 「处理审批」语义；其余场景保留既有状态文案（审批中/审批记录/查看审批/审批进度），
+    // 按钮入口行为不变，不引入歧义。
+    if (canCurrentUserHandlePlanApprovalOnPage.value) {
+      return '处理审批'
+    }
     if (usePlanReportFlow.value) {
       return isCurrentPlanReportInApproval.value ? '审批中' : '审批记录'
     }
@@ -3382,7 +3436,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     const indicatorNames = pendingRows.map(ind => ind.name).join('、')
 
     ElMessageBox.prompt(
-      `确认对任务 "${group.taskContent}" 下的 ${pendingRows.length} 个指标进行批量提交？\n\n指标列表：${indicatorNames}\n\n请输入提交备注：`,
+      `确认对任务 "${group.taskContent}" 下的 ${pendingRows.length} 个指标进行批量提交？\n\n指标列表：${indicatorNames}\n\n*提交备注（必填）：`,
       '批量提交确认',
       {
         confirmButtonText: '确定提交',
@@ -3489,7 +3543,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     const indicatorNames = pendingRows.map(ind => ind.name).join('、')
 
     ElMessageBox.prompt(
-      `确认批量提交 ${pendingRows.length} 个指标的进度填报？\n\n指标列表：${indicatorNames}\n\n请输入提交备注：`,
+      `确认批量提交 ${pendingRows.length} 个指标的进度填报？\n\n指标列表：${indicatorNames}\n\n*提交备注（必填）：`,
       '批量提交确认',
       {
         confirmButtonText: '确定提交',
@@ -4366,7 +4420,12 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   const beforeReportUpload: UploadProps['beforeUpload'] = file => {
     const isLt30M = file.size / 1024 / 1024 < 30
     if (!isLt30M) {
-      ElMessage.error('附件大小不能超过 30MB')
+      // 2026-10-31：上传被拒属关键报错，不自动消失（手动关）
+      showCriticalErrorNotice({
+        title: '附件上传被拒',
+        message: '附件大小不能超过 30MB',
+        critical: true
+      })
     }
     return isLt30M
   }
@@ -4645,8 +4704,20 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           throw error
         }
 
+        // 2026-10-31：附件上传失败属关键报错，不自动消失（手动关）。
+        // 后端拒绝原因（如文件类型不支持）原文随通知透出；markErrorHandled 标记
+        // 原始拒绝对象（cause），响应拦截器的 3 秒兜底 toast 据此跳过，只弹这一条。
+        markErrorHandled(error.cause)
         logger.warn('[IndicatorListView] 附件上传失败，已阻止保存:', error.cause ?? error)
-        ElMessage.error('附件上传失败，未保存本次填报。请稍后重试，确认附件成功上传后再保存。')
+        const causeMessage = (error.cause as { message?: unknown } | null | undefined)?.message
+        const reasonText = typeof causeMessage === 'string' ? causeMessage.trim() : ''
+        showCriticalErrorNotice({
+          title: '附件上传失败',
+          message: reasonText
+            ? `附件上传失败，未保存本次填报。原因：${reasonText}`
+            : '附件上传失败，未保存本次填报。请稍后重试，确认附件成功上传后再保存。',
+          critical: true
+        })
         return
       }
 
@@ -5071,18 +5142,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       ).length
   )
 
-  // 一键提交按钮：行内有未填自评的行时置灰并给出原因；数据每次加载/保存后
-  // 随 overlay 响应式状态自动刷新。
-  const submitAllButtonDisabled = computed(
-    () =>
-      timeContext.isReadOnly || indicators.value.length === 0 || missingSelfRatingCount.value > 0
-  )
-  const submitAllDisabledTitle = computed(() =>
-    missingSelfRatingCount.value > 0
-      ? '存在未填写自评进度的指标，请先完成全部指标的自评进度评定，再提交上报'
-      : '提交前会校验每条指标的自评进度与进度说明'
-  )
-
   // 宽松判定：本轮回有过填报动作（pendingProgress 有值即可，不要求自评/说明齐全）——
   // 仅用于「一键提交」按钮的可见性；完整性与缺口提示走 hasReportContent + handleSubmitAll 拦截
   const hasReportDraftTrace = (row: StrategicIndicator): boolean => {
@@ -5191,6 +5250,26 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     void loadMutationInFlightSignal()
   })
 
+  // 2026-10-31「灰而可点」重构（用户拍板：异动锁并入置灰判定；点击弹原因的既有行为保留，
+  // 同今天落地的下发页 distributionSubmitGate 范式）：置灰原因收敛到共享纯函数
+  // resolveReportSubmitLockReason（lib/reportSubmitGate.ts），置灰判定 / 悬停 title /
+  // 点击 gate toast 三处共用同一份条件与优先级。
+  // 条件清单与优先级（第一条命中即用）：只读 → 空列表 → 本部门异动锁 → 自评缺口。
+  // 注意：本 computed 体内读取 mutationInFlightForCurrentDept（声明在上方），依赖
+  // computed 惰性求值，与既有 TDZ 收口口径一致——不得把本 computed 的求值提前到
+  // 该 const 声明之前（如用作 watch 的 source）。
+  const submitAllButtonDisabledReason = computed(() =>
+    resolveReportSubmitLockReason({
+      isReadOnly: timeContext.isReadOnly,
+      hasIndicators: indicators.value.length > 0,
+      mutationInFlight: mutationInFlightForCurrentDept.value,
+      missingSelfRatingCount: missingSelfRatingCount.value
+    })
+  )
+  const submitAllDisabledTitle = computed(
+    () => submitAllButtonDisabledReason.value || '提交前会校验每条指标的自评进度与进度说明'
+  )
+
   const isCurrentPlanReportLocked = computed(() => {
     if (!usePlanReportFlow.value) {
       return false
@@ -5252,6 +5331,19 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   const unfilledIndicatorsCount = computed(() => {
     return indicators.value.filter(row => !hasReportContent(row)).length
   })
+
+  // 2026-10-31「灰而可点」点击门禁（同 useIndicatorDistributeView.handleDistributionSubmitGate
+  // 范式）：按钮改 is-disabled 样式类后点击不再被原生 disabled 吞掉，统一进本 gate——
+  // 有锁定原因 → 当场 toast 第一条命中原因；无原因 → 走原 handleSubmitAll
+  // （其内部守卫全保留作双保险：空列表/异动锁/重复提交/自评缺口/后端门禁）。
+  const handleSubmitAllGate = () => {
+    const reason = submitAllButtonDisabledReason.value
+    if (reason) {
+      ElMessage.warning(reason)
+      return
+    }
+    handleSubmitAll()
+  }
 
   // 一键提交所有指标（职能部门/二级学院专用）
   const handleSubmitAll = () => {
@@ -5315,7 +5407,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }
 
     ElMessageBox.prompt(
-      `确认提交当前计划下的全部 ${indicators.value.length} 个指标吗？\n\n注意：该操作会发起本次上报审批，提交后将无法修改，需等待上级部门审批。\n\n请输入提交备注：`,
+      `确认提交当前计划下的全部 ${indicators.value.length} 个指标吗？\n\n注意：该操作会发起本次上报审批，提交后将无法修改，需等待上级部门审批。\n\n*提交备注（必填）：`,
       '一键提交确认',
       {
         confirmButtonText: '确定提交',
@@ -5656,6 +5748,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     handleReportFileRemove,
     handleSelectionChange,
     handleSubmitAll,
+    handleSubmitAllGate,
     handleViewDetail,
     handleWithdrawAllProgressApprovals,
     handleWithdrawIndicator,
@@ -5761,7 +5854,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     showSubmitAllButton,
     showWithdrawAllButton,
     strategicStore,
-    submitAllButtonDisabled,
+    submitAllButtonDisabledReason,
     submitAllDisabledTitle,
     submitProgressReport,
     syncBackendReportedProgress,

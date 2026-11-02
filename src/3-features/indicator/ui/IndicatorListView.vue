@@ -194,7 +194,7 @@ const {
   handleReportFileChange,
   handleReportFileRemove,
   handleSelectionChange,
-  handleSubmitAll,
+  handleSubmitAllGate,
   handleViewDetail,
   handleWithdrawAllProgressApprovals,
   handleWithdrawIndicator,
@@ -297,7 +297,7 @@ const {
   showSubmitAllButton,
   showWithdrawAllButton,
   strategicStore,
-  submitAllButtonDisabled,
+  submitAllButtonDisabledReason,
   submitAllDisabledTitle,
   submitProgressReport,
   syncBackendReportedProgress,
@@ -814,6 +814,14 @@ const handleExportIndicatorList = async () => {
                     <span class="approval-status-card__label">当前节点</span>
                     <span class="approval-status-card__value">{{ currentApprovalStepName }}</span>
                   </div>
+                  <!-- 2026-10-31（角标口径「轮到我」配套）：注明当前在等谁审批，
+                       与「可审批人」互补——名单是范围，这里是实例已定的当前审批人 -->
+                  <div v-if="currentApprovalApproverName" class="approval-status-card__row">
+                    <span class="approval-status-card__label">当前等待</span>
+                    <span class="approval-status-card__value">
+                      {{ currentApprovalApproverName }} 审批
+                    </span>
+                  </div>
                   <div
                     v-if="currentApprovalCandidateNames.length > 0"
                     class="approval-status-card__row"
@@ -831,14 +839,19 @@ const handleExportIndicatorList = async () => {
 
             <!-- 职能部门/二级学院的批量操作按钮 -->
             <template v-if="showPlanBatchActions">
-              <!-- 一键提交按钮（草稿态且未锁定时显示；行内有未填自评的行时置灰并提示原因） -->
+              <!-- 一键提交按钮（草稿态且未锁定时显示；2026-10-31「灰而可点」定案：
+                   异动锁并入置灰判定，不再用原生 disabled（会吞点击事件），
+                   改 is-disabled 样式类 + aria-disabled + 悬停 title（与下发页同款写法）；
+                   点击统一进 handleSubmitAllGate——有锁定原因当场 toast 第一条命中原因，
+                   无原因走 handleSubmitAll 原流程（内部守卫保留作双保险） -->
               <el-button
                 v-if="showSubmitAllButton"
                 type="primary"
                 size="small"
-                :disabled="submitAllButtonDisabled"
+                :class="{ 'is-disabled': Boolean(submitAllButtonDisabledReason) }"
+                :aria-disabled="Boolean(submitAllButtonDisabledReason)"
                 :title="submitAllDisabledTitle"
-                @click="handleSubmitAll"
+                @click="handleSubmitAllGate"
               >
                 <el-icon><Upload /></el-icon>
                 一键提交

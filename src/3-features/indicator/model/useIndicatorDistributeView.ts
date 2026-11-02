@@ -30,6 +30,7 @@ import { logger } from '@/shared/lib/utils/logger'
 import { alertApi, type ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import type { Plan } from '@/shared/types'
 import { canUseAsFunctionalParentIndicator } from '@/features/indicator/lib/scope'
+import { resolveDistributionSubmitLockReason } from '@/features/indicator/lib/distributionSubmitGate'
 import { getPlanStatusDisplay, normalizePlanStatus } from '@/features/task/lib/planStatus'
 import {
   MANUAL_ALERT_LOCKED_HINT,
@@ -1109,6 +1110,40 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   }
   const hasMyPendingApprovalTasks = computed(() => myPendingApprovalTasks.value.length > 0)
 
+  // 2026-10-31（P-11 状态串味守卫）：currentCollegeWorkflowDetail 可能短暂残留
+  // 上一学院的实例（切学院后 preload 完成前），状态兜底链不得采用与当前选中学院
+  // 不符的实例状态。判定口径与既有 currentSelectedCollegePlan 同款——实例的
+  // targetOrg（下发链收件学院）或 sourceOrg（上报链提交学院）命中当前选中学院
+  // （orgId 或 orgName 任一匹配）即采信；未选中学院时维持原行为。
+  const isCurrentCollegeWorkflowDetailMatched = computed(() => {
+    const detail = currentCollegeWorkflowDetail.value
+    if (!detail) {
+      return false
+    }
+
+    const collegeName = normalizeDepartmentName(selectedCollege.value)
+    if (!collegeName) {
+      return true
+    }
+
+    const detailTargetOrgName = normalizeDepartmentName(detail.targetOrgName)
+    const detailSourceOrgName = normalizeDepartmentName(detail.sourceOrgName)
+    if (detailTargetOrgName === collegeName || detailSourceOrgName === collegeName) {
+      return true
+    }
+
+    const collegeOrgId = getOrgIdByDeptName(collegeName)
+    if (collegeOrgId == null) {
+      return false
+    }
+    const detailTargetOrgId = Number(detail.targetOrgId ?? NaN)
+    const detailSourceOrgId = Number(detail.sourceOrgId ?? NaN)
+    return (
+      (Number.isFinite(detailTargetOrgId) && detailTargetOrgId === collegeOrgId) ||
+      (Number.isFinite(detailSourceOrgId) && detailSourceOrgId === collegeOrgId)
+    )
+  })
+
   // 2026-10-31 定稿（审批状态接上报链）：上报摘要状态提到下发链详情之前——
   // 上报链有自己独立的生命周期（SUBMITTED/WITHDRAWN），不能被学院计划
   // 下发链的实例状态（已完成/在审）遮住。
@@ -1116,7 +1151,10 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     return String(
       currentCollegePlanReportSummary.value?.workflowStatus ||
         currentCollegePlanReportSummary.value?.status ||
-        currentCollegeWorkflowDetail.value?.status ||
+        // 2026-10-31（P-11）：detail 归属学院与当前选中学院不符时不采用，防状态串味
+        (isCurrentCollegeWorkflowDetailMatched.value
+          ? currentCollegeWorkflowDetail.value?.status
+          : '') ||
         currentActiveCollegePlan.value?.workflowStatus ||
         selectedCollegePlanUiStatus.value ||
         ''
@@ -1437,7 +1475,12 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       return []
     }
 
+    // 2026-10-31 修复：补上流程 4（学院上报链）的「学院审核人审批」「分管职能部门
+    // 负责人审批」两节点（席位均为审核人）——映射缺失会让角色校验静默跳过，
+    // 红点退化为纯组织相等判定（与 /indicators 角标同族缺陷同修）。
     if (
+      stepName.includes('学院审核人审批') ||
+      stepName.includes('分管职能部门负责人审批') ||
       stepName.includes('职能部门审批') ||
       stepName.includes('职能部门终审') ||
       stepName.includes('二级学院审批')
@@ -1456,9 +1499,50 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     return []
   }
 
+  // 2026-10-31 同族顺修（与 /indicators 角标口径对齐，2026-10-30 任务页定案的修法）：
+  // 旧口径=「节点角色 + 审批组织与本人组织相等」，流程 4 两节点名不在映射表 → 角色校验
+  // 静默跳过 → 组织相等恒真（同组织填报人被误亮红点），且解析不出组织时无条件 return true。
+  // 现优先采用 my-tasks 范式：复用本模型既有 myPendingApprovalTasks
+  // （GET /workflows/my-tasks，后端只返回 assignee=当前登录人的 PENDING 任务，
+  // refreshDistributionData 已维护，不新增请求），按 entityType/entityId 匹配当前选中
+  // 学院的链（上报链 PLAN_REPORT→上报单 id；下发链 PLAN→学院计划 id）——
+  // 「当前链出现在我的待办」⇔「当前节点轮到本人处理」。链身份识别不了时降级走既有
+  // 「角色 + 组织」判定（映射表已补全），且兜底收紧为 false（名下确有待办时
+  // hasMyPendingApprovalTasks 仍会点亮红点，不丢信号）。
+  const currentApprovalChainInMyTasks = computed<boolean | null>(() => {
+    const chainKeys: Array<{ entityType: string; entityId: number }> = []
+    const reportSummary = hasPlanReportWorkflowContext(currentCollegePlanReportSummary.value)
+      ? currentCollegePlanReportSummary.value
+      : latestCollegePlanReportSummary.value
+    const reportId = Number(reportSummary?.id ?? NaN)
+    if (Number.isFinite(reportId) && reportId > 0) {
+      chainKeys.push({ entityType: 'PLAN_REPORT', entityId: reportId })
+    }
+    const planId = Number(currentActiveCollegePlan.value?.id ?? NaN)
+    if (Number.isFinite(planId) && planId > 0) {
+      chainKeys.push({ entityType: 'PLAN', entityId: planId })
+    }
+    if (chainKeys.length === 0) {
+      return null
+    }
+    return myPendingApprovalTasks.value.some(task => {
+      const entityType = String(task.entityType || '')
+        .trim()
+        .toUpperCase()
+      const entityId = Number(task.entityId ?? NaN)
+      return chainKeys.some(key => key.entityType === entityType && key.entityId === entityId)
+    })
+  })
+
   const canCurrentUserApproveCurrentPlan = computed(() => {
     if (!['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(selectedCollegePlanUiStatus.value)) {
       return false
+    }
+
+    // 「轮到我」主判定：my-tasks 命中即亮、未命中即灭（链身份可识别时一票定音）
+    const chainInMyTasks = currentApprovalChainInMyTasks.value
+    if (chainInMyTasks !== null) {
+      return chainInMyTasks
     }
 
     const currentStepName = String(
@@ -1473,7 +1557,11 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         return []
       }
 
+      // 2026-10-31 修复：补上流程 4 的「学院审核人审批」「分管职能部门负责人审批」
+      // （席位均为审核人），角色校验不再被映射缺失静默跳过
       if (
+        currentStepName.includes('学院审核人审批') ||
+        currentStepName.includes('分管职能部门负责人审批') ||
         currentStepName.includes('职能部门审批') ||
         currentStepName.includes('职能部门终审') ||
         currentStepName.includes('二级学院审批')
@@ -1522,7 +1610,9 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       return currentUserOrgId.value === currentOrgId
     }
 
-    return true
+    // 2026-10-31 收紧兜底：解析不出期望组织时不再无条件放行（宁缺勿滥；
+    // 名下确有待办时 hasMyPendingApprovalTasks 仍点亮红点，信号不丢）
+    return false
   })
 
   const hasCurrentCollegePendingApproval = computed(() => {
@@ -1592,11 +1682,17 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   // 都要锁——线上实证计算机学院异动在审时向商学院下发前端未置灰、后端受理成功。
   // 判定数据源与后端 listMutationApprovals 同一份响应（已补 target_org_type 字段）。
   const collegeMutationInFlight = ref(false)
+  // 2026-10-31「灰而可点」：锁信号同时留下命中条目的学院名/当前环节名，
+  // 供点击置灰按钮时的提示文案使用（判定谓词与判定范围不变，仅多带展示字段）。
+  const collegeMutationLockDetail = ref<{ collegeName: string; stepName: string } | null>(null)
+  const functionalMutationLockDetail = ref<{ stepName: string } | null>(null)
   const loadFunctionalDeptMutationSignal = async () => {
     const orgId = Number(currentDepartmentOrgIdFromTable.value ?? NaN)
     if (!Number.isFinite(orgId) || orgId <= 0) {
       functionalDeptMutationInFlight.value = false
       collegeMutationInFlight.value = false
+      collegeMutationLockDetail.value = null
+      functionalMutationLockDetail.value = null
       return
     }
 
@@ -1604,7 +1700,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       const { mutationApi } = await import('@/features/indicator/api/mutationApi')
       const response = await mutationApi.approvals(orgId)
       const items = Array.isArray(response.data) ? response.data : []
-      functionalDeptMutationInFlight.value = items.some(item => {
+      const functionalMatch = items.find(item => {
         const status = String(item.status || '').toUpperCase()
         const entityType = String(item.entity_type || 'INDICATOR').toUpperCase()
         return (
@@ -1613,7 +1709,11 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
           Number(item.target_org_id) === orgId
         )
       })
-      collegeMutationInFlight.value = items.some(item => {
+      functionalDeptMutationInFlight.value = Boolean(functionalMatch)
+      functionalMutationLockDetail.value = functionalMatch
+        ? { stepName: String(functionalMatch.current_step_name || '').trim() }
+        : null
+      const collegeMatch = items.find(item => {
         const status = String(item.status || '').toUpperCase()
         return (
           status === 'IN_REVIEW' &&
@@ -1622,9 +1722,18 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
             .toLowerCase() === 'academic'
         )
       })
+      collegeMutationInFlight.value = Boolean(collegeMatch)
+      collegeMutationLockDetail.value = collegeMatch
+        ? {
+            collegeName: String(collegeMatch.target_org_name || '').trim(),
+            stepName: String(collegeMatch.current_step_name || '').trim()
+          }
+        : null
     } catch {
       functionalDeptMutationInFlight.value = false
       collegeMutationInFlight.value = false
+      collegeMutationLockDetail.value = null
+      functionalMutationLockDetail.value = null
     }
   }
 
@@ -1633,38 +1742,28 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     void loadFunctionalDeptMutationSignal()
   })
 
+  // 2026-10-31「灰而可点」重构：置灰原因收敛到共享纯函数
+  // resolveDistributionSubmitLockReason（lib/distributionSubmitGate.ts），
+  // 置灰判定 / 悬停 title / 点击 gate toast 三处共用同一份条件与优先级。
+  // 条件清单与优先级（第一条命中即用）：只读 → 组织未匹配 → 非本部门填报人 →
+  // 本部门异动锁 → 学院级联异动锁 → 无子指标 → 权重合计≠100 → 下发在途。
+  // 注意：getter 体内读取 collegeTotalWeight / getMyCollegeIndicators（声明在
+  // 本文件更后方），依赖 computed 惰性求值，与既有 TDZ 收口口径一致——
+  // 不得把本 computed 的求值提前到这些 const 声明之前（如 watch 的 source）。
   const distributionSubmitButtonDisabledReason = computed(() => {
-    if (timeContext.isReadOnly) {
-      return '历史快照为只读状态'
-    }
-
-    if (!currentDepartmentOrgIdFromTable.value) {
-      return '当前部门未在组织表中匹配到有效组织，暂不能下发'
-    }
-
-    if (!canCurrentUserSubmitCurrentDepartmentDistribution.value) {
-      return '只有当前部门组织下的填报人才可以下发'
-    }
-
-    if (functionalDeptMutationInFlight.value) {
-      return '该职能部门的指标正在异动审批中，暂不能下发；请等异动审批结束或撤回后再操作'
-    }
-
-    // 2026-10-31 学院级联全锁：任意学院子计划异动在审时，向学院下发统一置灰
-    // （文案与后端 PlanApplicationService 学院级联分支同口径）
-    if (collegeMutationInFlight.value) {
-      return '学院子计划的异动正在审批中，暂不能向学院下发；请等异动审批结束或撤回后再操作'
-    }
-
-    if (collegeTotalWeight.value !== 100) {
-      return '权重未等于百分之百'
-    }
-
-    if (isBatchDistributing.value) {
-      return '正在下发中，请稍候'
-    }
-
-    return ''
+    return resolveDistributionSubmitLockReason({
+      isReadOnly: timeContext.isReadOnly,
+      hasDepartmentOrg: Boolean(currentDepartmentOrgIdFromTable.value),
+      canCurrentUserSubmit: canCurrentUserSubmitCurrentDepartmentDistribution.value,
+      functionalDeptMutationInFlight: functionalDeptMutationInFlight.value,
+      collegeMutationInFlight: collegeMutationInFlight.value,
+      collegeMutationLockCollegeName: collegeMutationLockDetail.value?.collegeName,
+      collegeMutationLockStepName: collegeMutationLockDetail.value?.stepName,
+      functionalMutationLockStepName: functionalMutationLockDetail.value?.stepName,
+      hasChildIndicators: getMyCollegeIndicators(selectedCollege.value || '').length > 0,
+      collegeTotalWeight: collegeTotalWeight.value,
+      isBatchDistributing: isBatchDistributing.value
+    })
   })
 
   const distributionSubmitButtonType = computed(() => {
@@ -3480,6 +3579,10 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         await waitForPageBootstrap()
         await loadCurrentSelectedCollegePlanDetails()
         await loadCurrentCollegePlanReportSummary()
+        // 2026-10-31（P-11 状态串味修复）：切学院后同步重预载工作流详情——
+        // 此前只刷 planDetails+reportSummary，currentCollegeWorkflowDetail
+        // 残留上一学院的实例，审批状态 chip / 流程状态卡短暂显示上一学院的状态
+        await preloadCurrentCollegeWorkflowDetail()
       })()
     },
     { immediate: true }
@@ -3902,6 +4005,24 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       loadingInstance?.close()
       isBatchDistributing.value = false
     }
+  }
+
+  /**
+   * 「发起下发审批」点击门禁（2026-10-31 用户定案「灰而可点」，同
+   * useIndicatorAppraisal.openAppraisalGate 范式：点击 → 校验 → 不满足当场弹原因，
+   * 满足才走原流程）。按钮不再用原生 disabled（原生 disabled 会吞掉点击事件），
+   * 置灰观感由 is-disabled 样式类保持；点击进本 gate：
+   * - 有条件不满足 → toast 弹第一条命中的原因（条件与优先级同按钮置灰判定，单一事实源）；
+   * - 条件全满足 → 走既有 handleBatchDistribute（其内部守卫保留作双保险）。
+   * 后端 assertXXX 守卫不动，本改动纯前端 UX 层。
+   */
+  const handleDistributionSubmitGate = (college: string) => {
+    const reason = distributionSubmitButtonStableDisabledReason.value
+    if (reason) {
+      ElMessage.warning(reason)
+      return
+    }
+    void handleBatchDistribute(college)
   }
 
   // 获取学院下子指标的统一状态（用于判断显示哪些批量操作按钮，只统计当前部门下发的）
@@ -4789,6 +4910,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     handleApprovalRefresh,
     handleApprovalStatusPopoverShow,
     handleBatchDistribute,
+    handleDistributionSubmitGate,
     handleBatchWithdraw,
     handleChildDblClick,
     handleCloseApprovalSetupDialog,

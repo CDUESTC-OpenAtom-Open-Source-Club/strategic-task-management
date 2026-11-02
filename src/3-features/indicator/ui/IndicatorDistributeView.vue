@@ -15,12 +15,14 @@ import {
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { StrategicIndicator } from '@/shared/types'
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
+import type { Cell } from 'write-excel-file/browser'
 import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
 import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
 import ReportCycleTag from '@/shared/ui/display/ReportCycleTag.vue'
 import {
   buildAttachmentNameCell,
   buildExportFileName,
+  buildWholeColumnMergedCell,
   exportRowsToExcel,
   normalizeExportAttachments,
   type ExcelExportColumn,
@@ -47,6 +49,7 @@ import { MUTATION_FIELDS_INDICATOR_NAME } from '@/features/indicator/model/mutat
 import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
 import { useIndicatorAppraisal } from '@/features/indicator/model/useIndicatorAppraisal'
 import { getAppraisalLevelDisplay } from '@/features/indicator/lib/appraisalGate'
+import { buildDistributionExportRowGrouping } from '@/features/indicator/lib/distributionExportGroups'
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import {
   useIndicatorDistributeView,
@@ -190,6 +193,7 @@ const {
   handleApprovalStatusPopoverShow,
   handleBatchDistribute,
   handleBatchWithdraw,
+  handleDistributionSubmitGate,
   handleChildDblClick,
   handleCloseApprovalSetupDialog,
   handleGlobalMousedown,
@@ -350,7 +354,6 @@ const handleAppraisalCellClick = async (
 interface DistributionExportRow {
   exportCollege: string
   type: 'child' | 'new-child'
-  taskTitle: string
   indicator: StrategicIndicator
   child: DistributionExportChild
   parentIndicatorId: string
@@ -385,50 +388,60 @@ const resolveDistributionExportAttachmentItems = (row: DistributionExportRow) =>
       : row.child.pendingAttachments
   )
 
+// 2026-10-31 定案（导出↔导入序号同口径）：
+// ①「序号」= 父级核心指标组号——同一父级核心指标的多行子指标共用一个组号（1、2、3…按父级
+//    核心指标出现顺序），组内竖向合并（锚点 rowSpan、从属格 null），与导入模板 mergeGroup
+//    写法一致；回导时延续行组列读回为空 → 解析器 sticky「留空=延续上一组」，序号天然对齐。
+// ②「父级战略任务」列移除（用户拍板，与导入模板同口径：学院只关心核心指标，任务归属由系统
+//    按名称反查）——旧实现取父指标 taskContent（任务长文本内容），同一核心指标存在多份记录
+//    （store 记录 + 计划快照记录，id 不同各算一组）时内容链回退结果不同，出现「同任务变两个任务」。
+// ③ 2026-10-31 终版表头加列：「任务类型」= 父级核心指标所属任务的类型（基础性/发展性），
+//    父级级属性、随父级组合并（与序号/父级核心指标共用分组跨度）；「学院」列整列合并
+//    （一份导出锁定一个学院，与导入模板同构，导出→回导两边对称）。
 const buildDistributionExportColumns = (
   rows: DistributionExportRow[],
   summaryMap: IndicatorAttachmentSummaryMap | null
 ): ExcelExportColumn<DistributionExportRow>[] => {
-  const parentSpanByIndex = new Map<number, number>()
-  rows.forEach((row, index) => {
-    const key = String(row.indicator?.id ?? row.indicator?.name ?? '-')
-    const prevKey =
-      index > 0
-        ? String(rows[index - 1].indicator?.id ?? rows[index - 1].indicator?.name ?? '-')
-        : null
-    if (prevKey === key) {
-      parentSpanByIndex.set(index, 0)
-      return
+  const { groupNumberByIndex, spanByIndex } = buildDistributionExportRowGrouping(
+    rows.map(row => String(row.indicator?.id ?? row.indicator?.name ?? '-'))
+  )
+
+  const buildMergedGroupCell = (index: number, value: string | number): Cell => {
+    const span = spanByIndex[index] ?? 1
+    if (span > 1) {
+      return { value, rowSpan: span, alignVertical: 'center' }
     }
-    let end = index + 1
-    while (
-      end < rows.length &&
-      String(rows[end].indicator?.id ?? rows[end].indicator?.name ?? '-') === key
-    ) {
-      end += 1
+    // 被上方合并覆盖的从属行：write-excel-file 要求传 null
+    if (span === 0) {
+      return null
     }
-    parentSpanByIndex.set(index, end - index)
-  })
+    return value
+  }
 
   return [
-    { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
-    { header: '学院', width: 20, getValue: row => row.exportCollege },
-    { header: '父级战略任务', width: 28, getValue: row => row.taskTitle || '-' },
+    {
+      header: '序号',
+      width: 8,
+      align: 'center',
+      getValue: (_row, index) => buildMergedGroupCell(index, groupNumberByIndex[index])
+    },
+    // 学院列整列合并：首行锚点 rowSpan=全部数据行，从属格传 null
+    {
+      header: '学院',
+      width: 20,
+      getValue: (row, index) => buildWholeColumnMergedCell(index, rows.length, row.exportCollege)
+    },
+    // 任务类型=父级核心指标所属任务的类型（父级级属性），随父级组合并
+    {
+      header: '任务类型',
+      width: 12,
+      align: 'center',
+      getValue: (row, index) => buildMergedGroupCell(index, getDistributionParentTaskType(row))
+    },
     {
       header: '父级核心指标',
       width: 32,
-      getValue: (row, index) => {
-        const text = row.indicator.name || '-'
-        const span = parentSpanByIndex.get(index) ?? 1
-        if (span > 1) {
-          return { value: text, rowSpan: span, alignVertical: 'center' }
-        }
-        // 被上方合并覆盖的从属行：write-excel-file 要求传 null
-        if (span === 0) {
-          return null
-        }
-        return text
-      }
+      getValue: (row, index) => buildMergedGroupCell(index, row.indicator.name || '-')
     },
     { header: '子指标名称', width: 32, getValue: row => row.child.name || '-' },
     {
@@ -483,6 +496,13 @@ const getDistributionChildTypeText = (child: DistributionExportChild): string =>
   return normalized || '-'
 }
 
+// 2026-10-31 终版表头加列：导出「任务类型」=父级核心指标所属任务的类型（基础性/发展性），
+// 与导入模板「任务类型」列同口径（父级锚点、随父级组合并）；取不到时显示「-」（不阻断导出）
+const getDistributionParentTaskType = (row: DistributionExportRow): string => {
+  const taskCategory = normalizeTaskTypeToCategory(resolveIndicatorTaskType(row.indicator))
+  return taskCategory || '-'
+}
+
 const matchesDistributionExportCollege = (
   indicator: StrategicIndicator,
   college: string
@@ -515,7 +535,6 @@ const getDistributionExportRowsByCollege = (college: string): DistributionExport
       data.push({
         exportCollege: college,
         type: 'child',
-        taskTitle: indicator.taskContent || '',
         indicator,
         child,
         parentIndicatorId: indicatorId
@@ -526,7 +545,6 @@ const getDistributionExportRowsByCollege = (college: string): DistributionExport
       data.push({
         exportCollege: college,
         type: 'new-child',
-        taskTitle: indicator.taskContent || '',
         indicator,
         child,
         parentIndicatorId: indicatorId
@@ -537,24 +555,8 @@ const getDistributionExportRowsByCollege = (college: string): DistributionExport
   return data
 }
 
-// 2026-10-19 用户定案：序号→内部ID 映射（导入时随预览请求传后端）。
-// 序号按导出行序编号（含草稿行占位）；草稿行尚无内部ID、不进映射，导入时按新行创建。
-const distributionSequenceEntries = computed(() => {
-  const college = selectedCollege.value
-  if (!college) {
-    return []
-  }
-  const entries: Array<{ seq: number; indicatorId: number | string }> = []
-  let seq = 0
-  getDistributionExportRowsByCollege(college).forEach(row => {
-    seq += 1
-    const childId = row.child?.id
-    if (row.type === 'child' && childId !== undefined && childId !== null) {
-      entries.push({ seq, indicatorId: childId })
-    }
-  })
-  return entries
-})
+// 2026-10-31 层级化定案：导入不再按序号匹配（序号=父级核心指标组号，落库按「父级+子指标名」匹配），
+// 序号→内部ID 映射（distributionSequenceEntries）随之移除。
 
 const getDistributionExportRowTone = (row: DistributionExportRow): ExcelRowTone => {
   if (row.type === 'new-child') {
@@ -756,7 +758,8 @@ const currentDistributionImportCycleId = computed(() => {
   return Number.isFinite(numericCycleId) && numericCycleId > 0 ? numericCycleId : null
 })
 
-// 导入入口暂不在页面显示，保留原有实现，后续恢复时只需切回 true。
+// 导入入口放开（2026-10-31 层级化模板改造：放开供职能部门→学院导入下发真实链路 E2E 测试；
+// disabled 门禁走现行逻辑：需先选中学院且周期信息可用）
 const distributionImportEnabled = true
 const distributionImportDisabledReason = '导入功能暂不启用'
 
@@ -1018,17 +1021,24 @@ const handleDistributionImportCommitted = async () => {
                       <el-icon><Plus /></el-icon>
                       新增指标
                     </el-button>
-                    <!-- 2026-10-31 规范补齐：锁定态从「is-disabled class + title」升级为
-                         真实 disabled 属性（线上复测观察项：键盘 Tab+Enter 理论可触发）。
-                         Element Plus 对 disabled 按钮自动补 is-disabled class 与
-                         aria-disabled，视觉不变；原生 title 在 disabled 下仍可悬停查看原因；
-                         模型层 handleBatchDistribute 的守卫弹窗保留作双保险 -->
+                    <!-- 2026-10-31「灰而可点」定案（用户拍板：置灰保持现状=异动期间锁下发是对的，
+                         但点击要有提示说明当前环节情况，不能点了没反应）：
+                         不再用原生 disabled 属性（原生 disabled 会吞掉点击事件），
+                         改为手动挂 is-disabled 样式类（Element Plus 置灰态正是这个 class，
+                         视觉与原 disabled 完全一致）+ aria-disabled + 悬停 title；
+                         点击统一进 handleDistributionSubmitGate 门禁——条件不满足当场 toast
+                         第一条命中的原因（异动锁报「学院名 · 环节名」），全满足才走
+                         handleBatchDistribute 原下发流程（其内部守卫保留作双保险）。
+                         同范式先例：useIndicatorAppraisal.openAppraisalGate。 -->
                     <el-button
                       :type="distributionSubmitButtonType"
                       :loading="isBatchDistributing"
-                      :disabled="Boolean(distributionSubmitButtonStableDisabledReason)"
+                      :class="{
+                        'is-disabled': Boolean(distributionSubmitButtonStableDisabledReason)
+                      }"
+                      :aria-disabled="Boolean(distributionSubmitButtonStableDisabledReason)"
                       :title="distributionSubmitButtonStableDisabledReason"
-                      @click="handleBatchDistribute(selectedCollege)"
+                      @click="handleDistributionSubmitGate(selectedCollege)"
                     >
                       <el-icon><Promotion /></el-icon>
                       {{ distributionSubmitButtonText }}
@@ -1150,7 +1160,7 @@ const handleDistributionImportCommitted = async () => {
                 <!-- 权重列 -->
                 <el-table-column
                   label="权重"
-                  width="58"
+                  width="72"
                   align="center"
                   class-name="weight-column-header"
                   label-class-name="weight-column-header"
@@ -1691,7 +1701,6 @@ const handleDistributionImportCommitted = async () => {
       :source-org-name="currentDept"
       :cycle-id="currentDistributionImportCycleId"
       :parent-indicators="availableParentIndicators"
-      :sequence-entries="distributionSequenceEntries"
       @committed="handleDistributionImportCommitted"
     />
 
