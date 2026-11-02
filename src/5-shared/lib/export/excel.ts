@@ -27,6 +27,26 @@ export interface ExportAttachment {
 
 type CellObject = Exclude<Cell, string | number | boolean | Date | null | undefined>
 
+/**
+ * 2026-10-31 用户拍板（部门/学院列整列合并）：一份导入/导出锁定一个部门或学院，
+ * 该列跨全部数据行合并成 1 格——首行携带 rowSpan=数据行数，其余行传 null
+ * （write-excel-file 语义同组内合并：被上方 rowSpan 覆盖的从属格必须传 null）。
+ * 解析兼容：合并从属格读空=默认当前部门/学院，既有语义不变。
+ */
+export function buildWholeColumnMergedCell(
+  index: number,
+  totalRows: number,
+  value: string | number
+): Cell {
+  if (totalRows <= 1 || index < 0 || index >= totalRows) {
+    return value
+  }
+  if (index === 0) {
+    return { value, rowSpan: totalRows, alignVertical: 'center' }
+  }
+  return null
+}
+
 const headerStyle = {
   fontWeight: 'bold' as const,
   textColor: '#ffffff',

@@ -2,10 +2,29 @@ import { describe, expect, it } from 'vitest'
 import {
   buildAttachmentCell,
   buildSheetData,
+  buildWholeColumnMergedCell,
   formatProgress,
   normalizeExportAttachments,
   normalizeSheetName
 } from './excel'
+
+describe('buildWholeColumnMergedCell (2026-10-31 部门/学院列整列合并定案)', () => {
+  it('多行时首行携带 rowSpan=数据行数，其余行传 null（从属格语义）', () => {
+    expect(buildWholeColumnMergedCell(0, 4, '教务处')).toEqual({
+      value: '教务处',
+      rowSpan: 4,
+      alignVertical: 'center'
+    })
+    expect(buildWholeColumnMergedCell(1, 4, '教务处')).toBeNull()
+    expect(buildWholeColumnMergedCell(3, 4, '教务处')).toBeNull()
+  })
+
+  it('单行或越界时原样返回值（无合并）', () => {
+    expect(buildWholeColumnMergedCell(0, 1, '教务处')).toBe('教务处')
+    expect(buildWholeColumnMergedCell(0, 0, '教务处')).toBe('教务处')
+    expect(buildWholeColumnMergedCell(2, 2, '教务处')).toBe('教务处')
+  })
+})
 
 describe('excel export helpers', () => {
   it('merges current and reported progress into one display field', () => {

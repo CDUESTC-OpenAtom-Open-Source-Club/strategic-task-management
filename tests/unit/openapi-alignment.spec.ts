@@ -33,7 +33,10 @@ const compatibilityWhitelist = [
   { method: 'post', path: '/api/v1/auth/password-reset/confirm' },
   { method: 'put', path: '/api/v1/alerts/indicator/{id}/manual-level' },
   { method: 'post', path: '/api/v1/indicators/{id}/mutation-for-create' },
-  { method: 'post', path: '/api/v1/indicators/mutations/batch' }
+  { method: 'post', path: '/api/v1/indicators/mutations/batch' },
+  // 2026-10-31 数据看板新口径（后端并行开发中，契约已钉死；openapi 基线落地前先挂白名单）
+  { method: 'get', path: '/api/v1/dashboard/college-levels' },
+  { method: 'get', path: '/api/v1/dashboard/college-levels-trend' }
 ] as const
 
 function normalizePathLiteral(rawPath: string): string | null {

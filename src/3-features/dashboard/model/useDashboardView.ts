@@ -1,5 +1,5 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
-import type { AlertSummary, DashboardData, UserRole, Indicator } from '@/shared/types'
+import type { DashboardData, UserRole, Indicator } from '@/shared/types'
 import { useStrategicStore } from '@/features/task/model/strategic'
 import { dashboardApi } from '@/features/dashboard/api/dashboardApi'
 import { useDashboardStore } from '@/features/dashboard/model/store'
@@ -12,7 +12,17 @@ import { useOrgStore } from '@/features/organization/model/store'
 // 加载状态管理 - Requirements 1.5, 1.6
 import { useLoadingState } from '@/shared/lib/loading/useLoadingState'
 import { logger } from '@/shared/lib/utils/logger'
-import { buildDashboardSummary, getIndicatorStatusAtMonth } from '@/features/dashboard/lib'
+import {
+  aggregateCollegeLevels,
+  getIndicatorStatusAtMonth,
+  toCollegeBarRows,
+  toCollegeRankingRows,
+  toCollegeTrendRows
+} from '@/features/dashboard/lib'
+import type {
+  DashboardCollegeLevelStat,
+  DashboardCollegeLevelsMonth
+} from '@/features/dashboard/api/dashboardApi'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
 import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
 import {
@@ -129,9 +139,18 @@ export function useDashboardView(props: DashboardViewProps) {
   const selectedMonthInCollegeDrillDown = ref<number | null>(null) // 学院下钻后选中的月份
   const showCollegeMonthIndicatorCard = ref(false) // 学院月份指标卡片显示
 
+  // ============ 学院等级统计（2026-10-31 新口径：后端唯一数据源）============
+  // 口径：①未填报学院整列不显示（接口不返回就不画）②只算已提交/已审批月报（后端过滤）
+  // ③等级只看上级鉴定（ahead/normal/delayed）④手动预警等级退出看板统计
+  const collegeLevels = ref<DashboardCollegeLevelStat[]>([]) // 当月（collegeSelectedMonth）学院等级
+  const collegeLevelsLoading = ref(false)
+  const collegeTrendMonths = ref<DashboardCollegeLevelsMonth[]>([]) // 年度趋势（只到最晚有数据月份）
+  const collegeTrendLoading = ref(false)
+
   // ============ 分院排名看板状态 ============
   const collegeRankingMonth = ref(previousMonthNumber) // 分院排名选中月份（默认上月）
-  const selectedOwnerDeptFilter = ref<string>('all') // 职能部门筛选（战略发展部用）
+  // 2026-10-31 新口径：分院排名改吃 college-levels 接口（无来源部门维度），
+  // 原 selectedOwnerDeptFilter 来源部门筛选随之移除
 
   // 状态颜色配置（2026-10-28：超前与正常都用绿，但超前更深，便于区分）
   const statusColors = {
@@ -458,57 +477,8 @@ export function useDashboardView(props: DashboardViewProps) {
 
   // ============ 学院看板数据计算（职能部门视角）============
 
-  // 获取某职能部门下发给各学院的指标统计
-  const getCollegeStatsForFunctionalDept = (ownerDept: string, month: number, year: number) => {
-    const strategicStore = useStrategicStore()
-    const timeContext = useTimeContextStore()
-    const currentYear = timeContext.currentYear
-    const realYear = timeContext.realCurrentYear
-
-    // 筛选：ownerDept === 职能部门 && responsibleDept 是二级学院
-    const indicators = strategicStore.indicators
-      .filter(i => {
-        const indicatorYear = resolveIndicatorYear(i, realYear)
-        return (
-          indicatorYear === currentYear &&
-          i.ownerDept === ownerDept &&
-          isSecondaryCollege(i.responsibleDept)
-        )
-      })
-      .map(i => ({
-        ...i,
-        status: getUnifiedIndicatorStatus(i, getIndicatorStatusAtMonth(i, month, year))
-      }))
-
-    // 按学院分组统计
-    const collegeMap = new Map<string, any>()
-    indicators.forEach(i => {
-      const college = i.responsibleDept
-      if (!collegeMap.has(college)) {
-        collegeMap.set(college, {
-          ahead: 0,
-          normal: 0,
-          warning: 0,
-          delayed: 0,
-          total: 0
-        })
-      }
-      const stats = collegeMap.get(college)
-      if (!stats) {
-        return
-      }
-      stats[i.status]++
-      stats.total++
-    })
-
-    return Array.from(collegeMap.entries()).map(([college, stats]) => ({
-      name: college.length > 8 ? college.slice(0, 8) + '...' : college,
-      fullName: college,
-      ...stats
-    }))
-  }
-
   // 学院看板堆叠数据（第一层：学院视图）
+  // 2026-10-31 新口径：数据来自 college-levels 接口（未填报学院接口不返回 → 整列不画）
   const collegeBarData = computed(() => {
     if (isCollegeDrillDown.value) {
       return []
@@ -516,111 +486,16 @@ export function useDashboardView(props: DashboardViewProps) {
     if (currentRole.value === 'secondary_college') {
       return []
     }
-
-    const strategicStore = useStrategicStore()
-    const timeContext = useTimeContextStore()
-    const currentYear = timeContext.currentYear
-
-    const ownerDept = currentDepartment.value
-
-    // 战略发展部视角：显示所有职能部门下发给学院的指标汇总
-    if (currentRole.value === 'strategic_dept') {
-      const realYear = timeContext.realCurrentYear
-
-      // 筛选：responsibleDept 是二级学院
-      const indicators = strategicStore.indicators
-        .filter(i => {
-          const indicatorYear = resolveIndicatorYear(i, realYear)
-          return indicatorYear === currentYear && isSecondaryCollege(i.responsibleDept)
-        })
-        .map(i => ({
-          ...i,
-          status: getUnifiedIndicatorStatus(
-            i,
-            getIndicatorStatusAtMonth(i, collegeSelectedMonth.value, currentYear)
-          )
-        }))
-
-      // 按学院分组统计（所有来源部门）
-      const collegeMap = new Map<string, any>()
-      indicators.forEach(i => {
-        const college = i.responsibleDept
-        if (!collegeMap.has(college)) {
-          collegeMap.set(college, {
-            ahead: 0,
-            normal: 0,
-            warning: 0,
-            delayed: 0,
-            total: 0
-          })
-        }
-        const stats = collegeMap.get(college)
-        if (!stats) {
-          return
-        }
-        stats[i.status]++
-        stats.total++
-      })
-
-      return Array.from(collegeMap.entries()).map(([college, stats]) => ({
-        name: college.length > 8 ? college.slice(0, 8) + '...' : college,
-        fullName: college,
-        ...stats
-      }))
-    }
-
-    // 职能部门视角：只看自己下发的
-    if (!ownerDept) {
-      logger.warn('[collegeBarData] 职能部门视角但 currentDepartment 为空,返回空数组')
-      return []
-    }
-
-    return getCollegeStatsForFunctionalDept(ownerDept, collegeSelectedMonth.value, currentYear)
+    return toCollegeBarRows(collegeLevels.value)
   })
 
   // 学院看板月度趋势数据（第二层：学院月度视图）
+  // 2026-10-31 新口径：数据来自 college-levels-trend 接口，x 轴只画接口返回的月份
   const collegeMonthlyStackedData = computed(() => {
     if (!isCollegeDrillDown.value || !drilledCollege.value) {
       return []
     }
-
-    const months = []
-    for (let m = 1; m <= collegeSelectedMonth.value; m++) {
-      months.push(m)
-    }
-
-    return months.map(month => {
-      const strategicStore = useStrategicStore()
-      const timeContext = useTimeContextStore()
-      const currentYear = timeContext.currentYear
-      const realYear = timeContext.realCurrentYear
-
-      let indicators = strategicStore.indicators
-        .filter(i => {
-          const indicatorYear = resolveIndicatorYear(i, realYear)
-          return indicatorYear === currentYear && i.responsibleDept === drilledCollege.value
-        })
-        .map(i => ({
-          ...i,
-          status: getUnifiedIndicatorStatus(i, getIndicatorStatusAtMonth(i, month, currentYear))
-        }))
-
-      // 职能部门视角：只看自己下发的
-      if (currentRole.value === 'functional_dept') {
-        const ownerDept = currentDepartment.value
-        indicators = indicators.filter(i => i.ownerDept === ownerDept)
-      }
-
-      return {
-        name: `${month}月`,
-        month,
-        ahead: indicators.filter(i => i.status === 'ahead').length,
-        normal: indicators.filter(i => i.status === 'normal').length,
-        warning: indicators.filter(i => i.status === 'warning').length,
-        delayed: indicators.filter(i => i.status === 'delayed').length,
-        total: indicators.length
-      }
-    })
+    return toCollegeTrendRows(collegeTrendMonths.value, drilledCollege.value)
   })
 
   // 学院下钻后的月份指标列表
@@ -695,109 +570,19 @@ export function useDashboardView(props: DashboardViewProps) {
 
   // ============ 分院排名看板数据计算 ============
 
-  // 计算二级学院的分数（权重 × 进度）
+  // 排名月份对应的学院等级（来自 college-levels-trend 的同源数据，切月无需重新请求）
+  const collegeRankingLevels = computed<DashboardCollegeLevelStat[]>(() => {
+    const match = collegeTrendMonths.value.find(m => m.month === collegeRankingMonth.value)
+    return match ? match.colleges : []
+  })
+
+  // 分院排名（2026-10-31 新口径：基于上级鉴定等级重排）
+  // 分数 = 完成率 = (超前 + 正常) / 总计 × 100；接口无来源部门维度，不再按 ownerDept 过滤
   const getCollegeRankingData = computed(() => {
     if (currentRole.value === 'secondary_college') {
       return []
     }
-
-    const strategicStore = useStrategicStore()
-    const timeContext = useTimeContextStore()
-    const currentYear = timeContext.currentYear
-    const realYear = timeContext.realCurrentYear
-    const month = collegeRankingMonth.value
-
-    // 筛选指标：responsibleDept 是二级学院
-    let indicators = strategicStore.indicators
-      .filter(i => {
-        const indicatorYear = resolveIndicatorYear(i, realYear)
-        return indicatorYear === currentYear && isSecondaryCollege(i.responsibleDept)
-      })
-      .map(i => ({
-        ...i,
-        status: getUnifiedIndicatorStatus(i, getIndicatorStatusAtMonth(i, month, currentYear))
-      }))
-
-    // 根据角色应用部门筛选
-    if (currentRole.value === 'functional_dept') {
-      // 职能部门：只看自己下发的
-      const ownerDept = currentDepartment.value
-      indicators = indicators.filter(i => i.ownerDept === ownerDept)
-    } else if (currentRole.value === 'strategic_dept' && selectedOwnerDeptFilter.value !== 'all') {
-      // 战略发展部：按选定的职能部门筛选
-      indicators = indicators.filter(i => i.ownerDept === selectedOwnerDeptFilter.value)
-    }
-
-    // 按学院分组计算分数
-    const collegeMap = new Map<
-      string,
-      {
-        score: number
-        totalIndicators: number
-        completedIndicators: number
-        ahead: number
-        normal: number
-        warning: number
-        delayed: number
-      }
-    >()
-
-    indicators.forEach(i => {
-      const college = i.responsibleDept
-      if (!collegeMap.has(college)) {
-        collegeMap.set(college, {
-          score: 0,
-          totalIndicators: 0,
-          completedIndicators: 0,
-          ahead: 0,
-          normal: 0,
-          warning: 0,
-          delayed: 0
-        })
-      }
-      const stats = collegeMap.get(college)
-      if (!stats) {
-        return
-      }
-      // 分数 = 权重 × 进度
-      const weight = parseFloat(i.weight) || 1
-      const progress = i.progress || 0
-      stats.score += (weight * progress) / 100
-      stats.totalIndicators++
-      if (progress >= 100) {
-        stats.completedIndicators++
-      }
-      stats[i.status]++
-    })
-
-    // 转换为数组并排序
-    return Array.from(collegeMap.entries())
-      .map(([college, stats]) => ({
-        name: college.length > 8 ? college.slice(0, 8) + '...' : college,
-        fullName: college,
-        value: Math.round(stats.score * 10) / 10, // 保留一位小数
-        total: stats.totalIndicators,
-        completed: stats.completedIndicators,
-        ahead: stats.ahead,
-        normal: stats.normal,
-        warning: stats.warning,
-        delayed: stats.delayed
-      }))
-      .sort((a, b) => b.value - a.value)
-  })
-
-  // 获取可用的职能部门列表（用于分院排名筛选）
-  const availableFunctionalDepts = computed(() => {
-    const strategicStore = useStrategicStore()
-    const depts = new Set<string>()
-
-    strategicStore.indicators.forEach(i => {
-      if (i.ownerDept && isSecondaryCollege(i.responsibleDept)) {
-        depts.add(i.ownerDept)
-      }
-    })
-
-    return Array.from(depts).sort()
+    return toCollegeRankingRows(collegeRankingLevels.value)
   })
 
   // 处理排名图表点击事件
@@ -833,6 +618,62 @@ export function useDashboardView(props: DashboardViewProps) {
   const timeContext = useTimeContextStore()
   const orgStore = useOrgStore()
   const messageStore = useMessageStore()
+
+  // ============================================================================
+  // 学院等级数据加载（2026-10-31 新口径：college-levels 系列接口，失败不造假数据）
+  // ============================================================================
+
+  /** 加载当前选中月份的学院等级（月份切换 / 挂载 / 切年时触发重新请求） */
+  const loadCollegeLevels = async () => {
+    collegeLevelsLoading.value = true
+    try {
+      const response = await dashboardApi.getCollegeLevels({
+        year: timeContext.currentYear,
+        month: collegeSelectedMonth.value
+      })
+      collegeLevels.value = response.colleges
+    } catch (error) {
+      // 接口失败：清空数据走空态 + 既有错误提示，不静默回退本地计算
+      collegeLevels.value = []
+      logger.error('[Dashboard] Failed to load college levels:', error)
+      ElMessage.error(
+        error instanceof Error && error.message
+          ? `学院等级数据加载失败：${error.message}`
+          : '学院等级数据加载失败，请稍后重试'
+      )
+    } finally {
+      collegeLevelsLoading.value = false
+    }
+  }
+
+  /** 加载年度学院等级趋势（挂载 / 切年时请求；趋势与分院排名共用同源数据） */
+  const loadCollegeLevelsTrend = async () => {
+    collegeTrendLoading.value = true
+    try {
+      const response = await dashboardApi.getCollegeLevelsTrend({ year: timeContext.currentYear })
+      collegeTrendMonths.value = response.months
+    } catch (error) {
+      collegeTrendMonths.value = []
+      logger.error('[Dashboard] Failed to load college levels trend:', error)
+      ElMessage.error(
+        error instanceof Error && error.message
+          ? `学院等级趋势加载失败：${error.message}`
+          : '学院等级趋势加载失败，请稍后重试'
+      )
+    } finally {
+      collegeTrendLoading.value = false
+    }
+  }
+
+  // 学院图表空态（当月无数据 / 趋势无数据时展示占位文案，不造假柱）
+  const collegeChartHasData = computed(() => {
+    const data = isCollegeDrillDown.value ? collegeMonthlyStackedData.value : collegeBarData.value
+    return data.length > 0
+  })
+  const collegeChartEmptyText = computed(() =>
+    isCollegeDrillDown.value ? '该学院暂无月度趋势数据' : '该月暂无学院上报数据'
+  )
+  const collegeRankingHasData = computed(() => getCollegeRankingData.value.length > 0)
 
   // ============================================================================
   // 加载状态管理 - Requirements 1.5, 1.6
@@ -1010,75 +851,30 @@ export function useDashboardView(props: DashboardViewProps) {
     return [currentDepartment.value]
   })
 
-  // 从 store 计算仪表盘数据
-  const databaseAlertSummary = computed<AlertSummary | null>(() => {
-    const stats = dashboardStore.alertStatsData
-
-    if (stats) {
-      const countBySeverity = stats.countBySeverity || {
-        CRITICAL: 0,
-        WARNING: 0,
-        INFO: 0
-      }
-      const severe = Number(countBySeverity.CRITICAL || 0)
-      const moderate = Number(countBySeverity.WARNING || 0) + Number(countBySeverity.MAJOR || 0)
-      const normal = Number(countBySeverity.INFO || 0) + Number(countBySeverity.MINOR || 0)
-
-      return {
-        severe,
-        moderate,
-        normal,
-        total: stats.totalOpen || severe + moderate + normal
-      }
-    }
-
-    if (dashboardStore.unclosedAlerts.length > 0) {
-      return dashboardStore.unclosedAlerts.reduce<AlertSummary>(
-        (summary, alert) => {
-          const status = String(alert.status).toUpperCase()
-          if (status === 'CLOSED' || status === 'RESOLVED') {
-            return summary
-          }
-
-          summary.total += 1
-          const severity = String(alert.severity).toUpperCase()
-          if (severity === 'CRITICAL') {
-            summary.severe += 1
-          } else if (severity === 'WARNING' || severity === 'MAJOR') {
-            summary.moderate += 1
-          } else {
-            summary.normal += 1
-          }
-          return summary
-        },
-        {
-          severe: 0,
-          moderate: 0,
-          normal: 0,
-          total: 0
-        }
-      )
-    }
-
-    return null
-  })
-
+  // 总览统计（2026-10-31 新口径）：等级分布 / 完成率改由 college-levels 接口供数
+  // （只算已提交/已审批月报 + 上级鉴定三档；alert_event/manualAlertSeverity 退出统计）
   const dashboardData = computed<DashboardData>(() => {
-    const indicators = dashboardStore.visibleIndicators
-    const summary = buildDashboardSummary(indicators, selectedMonth.value, timeContext.currentYear)
-    const alertSummary = databaseAlertSummary.value
-
-    if (!alertSummary) {
-      return summary
-    }
+    const aggregate = aggregateCollegeLevels(collegeLevels.value)
+    const completedIndicators = aggregate.ahead + aggregate.normal
 
     return {
-      ...summary,
-      warningCount: alertSummary.severe + alertSummary.moderate,
+      totalScore: 0,
+      basicScore: 0,
+      developmentScore: 0,
+      levelDistribution: {
+        ahead: aggregate.ahead,
+        normal: aggregate.normal,
+        delayed: aggregate.delayed
+      },
+      completionRate:
+        aggregate.total > 0 ? Math.round((completedIndicators / aggregate.total) * 100) : 0,
+      warningCount: aggregate.delayed,
+      totalIndicators: aggregate.total,
+      completedIndicators,
       alertIndicators: {
-        severe: alertSummary.severe,
-        moderate: alertSummary.moderate,
-        normal: alertSummary.normal
+        severe: aggregate.delayed,
+        moderate: 0,
+        normal: completedIndicators
       }
     }
   })
@@ -1993,10 +1789,12 @@ export function useDashboardView(props: DashboardViewProps) {
     })
   })
 
-  // 监听年份变化，重新渲染所有图表
+  // 监听年份变化：学院等级数据重新请求 + 重新渲染所有图表
   watch(
     () => timeContext.currentYear,
     () => {
+      void loadCollegeLevels()
+      void loadCollegeLevelsTrend()
       nextTick(() => {
         initBenchmarkChart()
         initCollegeChart()
@@ -2005,20 +1803,13 @@ export function useDashboardView(props: DashboardViewProps) {
     }
   )
 
-  // 监听指标数据变化，重新渲染学院相关图表
-  // 解决异步加载数据后图表不更新的问题
-  watch(
-    () => strategicStore.indicators.length,
-    (newLength, _oldLength) => {
-      if (newLength > 0) {
-        nextTick(() => {
-          initCollegeChart()
-          initCollegeRankingChart()
-        })
-      }
-    },
-    { immediate: true }
-  )
+  // 监听学院等级数据到达，重新渲染学院图与分院排名图
+  watch([collegeLevels, collegeTrendMonths], () => {
+    nextTick(() => {
+      initCollegeChart()
+      initCollegeRankingChart()
+    })
+  })
 
   // 监听部门汇总数据变化，重新渲染职能部门堆叠柱状图
   // 解决 departmentSummary 依赖多个 store 数据异步加载的问题
@@ -2046,20 +1837,6 @@ export function useDashboardView(props: DashboardViewProps) {
     { immediate: true }
   )
 
-  // 监听加载状态变化，当加载完成时重新渲染图表
-  watch(
-    () => strategicStore.loading,
-    (isLoading, wasLoading) => {
-      // 当从加载中变为加载完成时，重新渲染图表
-      if (wasLoading && !isLoading && strategicStore.indicators.length > 0) {
-        nextTick(() => {
-          initCollegeChart()
-          initCollegeRankingChart()
-        })
-      }
-    }
-  )
-
   // 监听部门/角色切换，重新渲染所有图表
   // 直接监听 authStore 的 effectiveRole 和 effectiveDepartment，确保响应性
   watch(
@@ -2081,8 +1858,8 @@ export function useDashboardView(props: DashboardViewProps) {
     })
   })
 
-  // 监听分院排名月份和部门筛选变化
-  watch([collegeRankingMonth, selectedOwnerDeptFilter], () => {
+  // 监听分院排名月份变化（排名与趋势同源，切月无需重新请求）
+  watch(collegeRankingMonth, () => {
     nextTick(() => {
       initCollegeRankingChart()
     })
@@ -2149,13 +1926,13 @@ export function useDashboardView(props: DashboardViewProps) {
             tooltip += `${params[0].name}<br/>`
             tooltip += `<span style="color: ${statusColors.ahead}">●</span> 超前: ${dataItem?.ahead || 0}<br/>`
             tooltip += `<span style="color: ${statusColors.normal}">●</span> 正常: ${dataItem?.normal || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.delayed}">●</span> 延期: ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}<br/>`
+            tooltip += `<span style="color: ${statusColors.delayed}">●</span> 延期: ${dataItem?.delayed || 0}<br/>`
             tooltip += `总计: ${dataItem?.total || 0}`
           } else {
             tooltip += `${collegeSelectedMonth.value}月完成情况<br/>`
             tooltip += `<span style="color: ${statusColors.ahead}">■</span> 超前: ${dataItem?.ahead || 0}<br/>`
             tooltip += `<span style="color: ${statusColors.normal}">■</span> 正常: ${dataItem?.normal || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.delayed}">■</span> 延期: ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}<br/>`
+            tooltip += `<span style="color: ${statusColors.delayed}">■</span> 延期: ${dataItem?.delayed || 0}<br/>`
             tooltip += `总计: ${dataItem?.total || 0}<br/>`
             tooltip += `<span style="color: #409eff; font-size: 11px;">点击查看月度趋势</span>`
           }
@@ -2230,7 +2007,7 @@ export function useDashboardView(props: DashboardViewProps) {
           data: data.map(d => d.normal || 0)
         },
         {
-          // 三档口径：原「预警」桶并入「延期」展示
+          // 三档口径：延期直接来自接口 delayed（上级鉴定）
           name: '延期',
           type: 'bar',
           stack: 'total',
@@ -2239,7 +2016,7 @@ export function useDashboardView(props: DashboardViewProps) {
             color: statusColors.delayed,
             borderRadius: isCollegeDrillDown.value ? [0, 0, 0, 0] : [0, 4, 4, 0]
           },
-          data: data.map(d => (d.warning || 0) + (d.delayed || 0))
+          data: data.map(d => d.delayed || 0)
         }
       ]
     })
@@ -2277,7 +2054,7 @@ export function useDashboardView(props: DashboardViewProps) {
     })
   }
 
-  // 处理学院看板月份变化
+  // 处理学院看板月份变化（2026-10-31 新口径：切月触发重新请求）
   const handleCollegeMonthChange = () => {
     showCollegeMonthIndicatorCard.value = false
     selectedMonthInCollegeDrillDown.value = null
@@ -2285,6 +2062,7 @@ export function useDashboardView(props: DashboardViewProps) {
       isCollegeDrillDown.value = false
       drilledCollege.value = ''
     }
+    void loadCollegeLevels()
     nextTick(() => {
       initCollegeChart()
     })
@@ -2353,7 +2131,7 @@ export function useDashboardView(props: DashboardViewProps) {
                 <div style="margin-top: 6px; padding-top: 6px; border-top: 1px dashed #e4e7ed;">
                   <span style="color: #67c23a; margin-right: 8px;">超前 ${dataItem?.ahead || 0}</span>
                   <span style="color: #409eff; margin-right: 8px;">正常 ${dataItem?.normal || 0}</span>
-                  <span style="color: #f56c6c;">延期 ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}</span>
+                  <span style="color: #f56c6c;">延期 ${dataItem?.delayed || 0}</span>
                 </div>`
         }
       },
@@ -2424,15 +2202,8 @@ export function useDashboardView(props: DashboardViewProps) {
     })
   }
 
-  // 处理分院排名月份变化
+  // 处理分院排名月份变化（排名与趋势同源，切月仅重绘）
   const handleCollegeRankingMonthChange = () => {
-    nextTick(() => {
-      initCollegeRankingChart()
-    })
-  }
-
-  // 处理分院排名部门筛选变化
-  const handleOwnerDeptFilterChange = () => {
     nextTick(() => {
       initCollegeRankingChart()
     })
@@ -2513,6 +2284,10 @@ export function useDashboardView(props: DashboardViewProps) {
     } catch (err) {
       logger.error('[Dashboard] Initial load failed:', err)
     }
+
+    // 学院等级数据（2026-10-31 新口径）：与指标加载并行，不阻塞首屏图表
+    void loadCollegeLevels()
+    void loadCollegeLevelsTrend()
 
     await nextTick()
     await initRadarChart()
@@ -2603,18 +2378,22 @@ export function useDashboardView(props: DashboardViewProps) {
     _showFilterFeature,
     applyFilters,
     authStore,
-    availableFunctionalDepts,
     baseDelayedTasks,
     benchmarkChartRef,
     benchmarkSectionRef,
     benchmarkData,
     canViewAllDepartments,
     collegeBarData,
+    collegeChartHasData,
+    collegeChartEmptyText,
     collegeChartRef,
+    collegeLevelsLoading,
+    collegeTrendLoading,
     collegeMonthIndicatorStats,
     collegeMonthIndicators,
     collegeMonthlyStackedData,
     collegeRankingChartRef,
+    collegeRankingHasData,
     collegeRankingMonth,
     collegeSelectedMonth,
     createChartInstance,
@@ -2630,9 +2409,10 @@ export function useDashboardView(props: DashboardViewProps) {
     filteredDeptIndicators,
     filteredMonthIndicators,
     getCollegeRankingData,
-    getCollegeStatsForFunctionalDept,
     getCurrentTargetProgress,
     getDeptStatsAtMonth,
+    loadCollegeLevels,
+    loadCollegeLevelsTrend,
     getIndicatorStatus,
     getStatusClass,
     getStatusText,
@@ -2649,7 +2429,6 @@ export function useDashboardView(props: DashboardViewProps) {
     handleExport,
     exportComprehensiveReport,
     handleMonthChange,
-    handleOwnerDeptFilterChange,
     handleResize,
     handleSankeyLinkClick,
     handleSankeyNodeClick,
@@ -2690,7 +2469,6 @@ export function useDashboardView(props: DashboardViewProps) {
     loadMutationSummary,
     selectedMonthInCollegeDrillDown,
     selectedMonthInDrillDown,
-    selectedOwnerDeptFilter,
     selectedStatusFilter,
     pageHasError,
     showSkeleton,

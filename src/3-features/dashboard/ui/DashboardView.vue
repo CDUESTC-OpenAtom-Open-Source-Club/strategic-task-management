@@ -37,18 +37,22 @@ const {
   _showFilterFeature,
   applyFilters,
   authStore,
-  availableFunctionalDepts,
   baseDelayedTasks,
   benchmarkChartRef,
   benchmarkSectionRef,
   benchmarkData,
   canViewAllDepartments,
   collegeBarData,
+  collegeChartHasData,
+  collegeChartEmptyText,
   collegeChartRef,
+  collegeLevelsLoading,
+  collegeTrendLoading,
   collegeMonthIndicatorStats,
   collegeMonthIndicators,
   collegeMonthlyStackedData,
   collegeRankingChartRef,
+  collegeRankingHasData,
   collegeRankingMonth,
   collegeSelectedMonth,
   createChartInstance,
@@ -64,7 +68,6 @@ const {
   filteredDeptIndicators,
   filteredMonthIndicators,
   getCollegeRankingData,
-  getCollegeStatsForFunctionalDept,
   getDeptStatsAtMonth,
   getIndicatorStatus,
   getStatusClass,
@@ -83,7 +86,6 @@ const {
   exportComprehensiveReport,
   exporting,
   handleMonthChange,
-  handleOwnerDeptFilterChange,
   handleResize,
   handleSankeyLinkClick,
   handleSankeyNodeClick,
@@ -122,7 +124,6 @@ const {
   selectedMonth,
   selectedMonthInCollegeDrillDown,
   selectedMonthInDrillDown,
-  selectedOwnerDeptFilter,
   selectedStatusFilter,
   pageHasError,
   showSkeleton,
@@ -813,7 +814,14 @@ function openApprovalCenterFromDashboard() {
                 </div>
               </div>
             </template>
-            <div ref="collegeChartRef" class="college-chart"></div>
+            <div v-loading="collegeLevelsLoading || collegeTrendLoading" class="college-chart-body">
+              <div v-show="collegeChartHasData" ref="collegeChartRef" class="college-chart"></div>
+              <el-empty
+                v-if="!collegeChartHasData"
+                :description="collegeChartEmptyText"
+                :image-size="80"
+              />
+            </div>
           </el-card>
         </div>
 
@@ -992,7 +1000,7 @@ function openApprovalCenterFromDashboard() {
                       <span class="title-tag-italic">RANKING</span>
                     </span>
                     <el-tooltip
-                      content="展示各二级学院的指标完成分数排名，分数 = Σ(权重 × 进度)"
+                      content="展示各二级学院的指标完成分数排名，分数 = 完成率 =（超前 + 正常）/ 总计 × 100，等级只看上级鉴定"
                       placement="top"
                       effect="light"
                     >
@@ -1015,29 +1023,22 @@ function openApprovalCenterFromDashboard() {
                         <el-option v-for="m in 12" :key="m" :label="`${m}月`" :value="m" />
                       </el-select>
                     </div>
-                    <!-- 职能部门筛选（仅战略发展部可见） -->
-                    <div v-if="currentRole === 'strategic_dept'" class="dept-filter">
-                      <span class="filter-label">来源部门:</span>
-                      <el-select
-                        v-model="selectedOwnerDeptFilter"
-                        size="small"
-                        class="dept-select"
-                        @change="handleOwnerDeptFilterChange"
-                      >
-                        <el-option label="全部" value="all" />
-                        <el-option
-                          v-for="dept in availableFunctionalDepts"
-                          :key="dept"
-                          :label="dept"
-                          :value="dept"
-                        />
-                      </el-select>
-                    </div>
                   </div>
                 </div>
               </div>
             </template>
-            <div ref="collegeRankingChartRef" class="college-ranking-chart"></div>
+            <div v-loading="collegeTrendLoading" class="college-ranking-body">
+              <div
+                v-show="collegeRankingHasData"
+                ref="collegeRankingChartRef"
+                class="college-ranking-chart"
+              ></div>
+              <el-empty
+                v-if="!collegeRankingHasData"
+                description="该月暂无学院上报数据"
+                :image-size="80"
+              />
+            </div>
           </el-card>
         </el-col>
       </div>

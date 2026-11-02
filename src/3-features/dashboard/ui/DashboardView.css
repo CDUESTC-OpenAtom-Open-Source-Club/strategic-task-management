@@ -368,6 +368,15 @@
   height: 350px;
 }
 
+/* 学院图/分院排名空态容器：占位文案垂直居中，高度与图表一致 */
+.college-chart-body,
+.college-ranking-body {
+  min-height: 350px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
 /* 学院卡片边框样式 */
 .college-card {
   border-left: 3px solid #e6a23c; /* 橙色边框区分学院看板 */
