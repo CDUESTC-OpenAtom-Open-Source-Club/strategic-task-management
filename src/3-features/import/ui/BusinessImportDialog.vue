@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { Download, Upload, UploadFilled } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import type { UploadFile, UploadFiles } from 'element-plus'
+import { ElMessage, ElMessageBox, genFileId } from 'element-plus'
+import type { UploadFile, UploadFiles, UploadInstance, UploadRawFile } from 'element-plus'
 import {
   businessImportApi,
   type BusinessImportType,
@@ -17,7 +17,10 @@ import {
   getImportTemplateGuide,
   type ImportTemplateParentSeed
 } from '@/features/import/lib/importTemplate'
+import { buildPreviewGroupSpans } from '@/features/import/lib/previewGroupSpan'
 import { exportSheetsToExcel, type ExcelExportSheet } from '@/shared/lib/export/excel'
+import { showCriticalErrorNotice } from '@/shared/lib/criticalErrorNotice'
+import { markErrorHandled } from '@/shared/lib/utils/errorToast'
 import { useAuthStore } from '@/features/auth/model/store'
 
 const props = defineProps<{
@@ -28,16 +31,15 @@ const props = defineProps<{
   sourceOrgId?: number | null
   sourceOrgName?: string | null
   cycleId?: number | null
-  /** 2026-10-14 P10：当前职能部门已接收的父级核心指标，用于下载模板时自动带出预填行 */
+  /** 2026-10-14 P10：当前职能部门已接收的父级核心指标，用于下载模板时自动带出预填行；
+   *  2026-10-31 终版表头：type1（定量/定性）用于「核心指标类型」列预填，
+   *  type2（基础性/发展性）用于「任务类型」列预填（锚点只读，改了阻断点名） */
   parentIndicators?: Array<{
     name?: string
     taskContent?: string
+    type1?: string
+    type2?: string
   }> | null
-  /**
-   * 2026-10-19 用户定案：序号→内部ID 映射（按导出同款排序生成，序号从 1 开始）。
-   * 上传预览时随请求传给后端，导入按序号还原内部ID做唯一性匹配（同名指标各按各的序号归属）。
-   */
-  sequenceEntries?: Array<{ seq: number; indicatorId: number | string }> | null
 }>()
 
 const emit = defineEmits<{
@@ -55,6 +57,7 @@ const selectedFile = ref<UploadFile | null>(null)
 const previewResult = ref<ImportPreviewResponse | null>(null)
 const previewing = ref(false)
 const committing = ref(false)
+const uploadRef = ref<UploadInstance>()
 // 2026-10-10 测试0927 第016条落地：凡导入的 Excel 视为已经过审批，
 // 默认自动跑完下发审批链（后端 autoSubmitAndApprove 以系统管理员身份逐节点通过）
 const autoSubmitAndApprove = ref(true)
@@ -105,14 +108,35 @@ const footerActionTip = computed(() => {
 
 const visibleRows = computed(() => previewResult.value?.rows.slice(0, 20) ?? [])
 
+// 2026-11-01 缺陷修复（E2E 实测）：预览表与导入模板同款视觉——同组的「序号」与
+// 「父级指标/战略任务」竖向合并（锚点行 rowSpan=组行数，从属行不渲染该格）。
+// 只改展示：分组用解析器 sticky 继承后的组号+组值复合键，相邻同组合并、非相邻不跨合并。
+const previewGroupSpans = computed(() => buildPreviewGroupSpans(visibleRows.value, props.type))
+
+const previewSpanMethod = ({
+  rowIndex,
+  columnIndex
+}: {
+  rowIndex: number
+  columnIndex: number
+}) => {
+  // 组列 = 序号（第 0 列）与父级指标/战略任务（第 2 列，两类模板各含其一）
+  if (columnIndex !== 0 && columnIndex !== 2) {
+    return { rowspan: 1, colspan: 1 }
+  }
+  const rowSpan = previewGroupSpans.value[rowIndex] ?? 1
+  return { rowspan: rowSpan, colspan: rowSpan > 0 ? 1 : 0 }
+}
+
 const formatCommitBlockedMessage = (result: ImportCommitResponse) => {
   const reason = result.workflow?.message?.trim() || '本次导入未执行'
 
   if (reason.includes('已下发') || reason.includes('重复导入')) {
     return '当前任务已下发，不能重复导入或下发。'
   }
-  if (reason.includes('权重合计必须为100')) {
-    return `本次导入未写入：下发前权重校验未通过，基础属性权重合计必须等于 100%。${reason}`
+  // 2026-10-31 用户拍板：后端权重拦截文案改为计划级口径并点名父级核心指标，两种口径都识别
+  if (reason.includes('权重合计必须为100') || reason.includes('基础性指标权重全计划合计须为 100')) {
+    return `本次导入未写入：下发前权重校验未通过，基础性指标权重全计划合计须为 100%。${reason}`
   }
   if (reason.includes('未产生可审批计划')) {
     return '本次导入未写入：没有生成可审批计划，请检查导入目标和数据。'
@@ -125,8 +149,9 @@ const formatAutoDispatchBlockedMessage = (result: ImportCommitResponse) => {
   const importSummary = `导入成功：新增 ${result.createdCount} 条，更新 ${result.updatedCount} 条`
   const reason = result.workflow?.message?.trim() || '自动下发未完成'
 
-  if (reason.includes('权重合计必须为100')) {
-    return `${importSummary}；下发已阻止：权重校验未通过，基础属性权重合计必须等于 100%。${reason}`
+  // 2026-10-31 用户拍板：后端权重拦截文案改为计划级口径并点名父级核心指标，两种口径都识别
+  if (reason.includes('权重合计必须为100') || reason.includes('基础性指标权重全计划合计须为 100')) {
+    return `${importSummary}；下发已阻止：基础性指标权重全计划合计须为 100%。${reason}`
   }
   if (reason.includes('已下发') || reason.includes('重复发起')) {
     return `${importSummary}；下发已阻止：当前任务已处于已下发状态，不能重复下发。`
@@ -150,12 +175,16 @@ const downloadTemplate = async () => {
     const guide = getImportTemplateGuide(props.type)
 
     // 2026-10-14 用户定案（P10）：学院子指标模板自动带出"当前职能部门已接收的父级核心指标"行
-    // （由父页面传入 availableParentIndicators，与导入校验的父级匹配口径完全一致），含内部 ID；
-    // 用户在行右侧补写子指标即可。未传/为空时退回通用示例行，不阻断下载。
+    // （由父页面传入 availableParentIndicators，与导入校验的父级匹配口径完全一致）；
+    // 2026-10-31 层级化定案：预填行带序号（=组号）与当前选中学院，用户在行内补写子指标，
+    // 再向下加「序号/组列留空」延续行即可拆多个子指标。未传/为空时退回通用示例行，不阻断下载。
+    // 2026-10-31 终版表头加列：type2 →「任务类型」列预填（父级所属任务类型，锚点只读）。
     const parentSeeds: ImportTemplateParentSeed[] | undefined = props.parentIndicators?.length
       ? props.parentIndicators.map(item => ({
           parentIndicator: String(item.name || '').trim(),
-          parentStrategicTask: String(item.taskContent || '').trim()
+          college: String(props.targetOrgName || '').trim(),
+          parentIndicatorType: String(item.type1 || '').trim(),
+          taskType: String(item.type2 || '').trim()
         }))
       : undefined
 
@@ -181,7 +210,7 @@ const downloadTemplate = async () => {
     )
     ElMessage.success(
       parentSeeds?.length
-        ? `模板下载成功：已自动带出 ${parentSeeds.length} 条父级核心指标，请在右侧补写子指标`
+        ? `模板下载成功：已自动带出 ${parentSeeds.length} 个父级核心指标（序号=组号，任务类型/核心指标/核心指标类型已预填），在行内补写第一个子指标，拆多个子指标时向下加“序号与组列留空”的延续行`
         : '模板下载成功，请按模板填写后上传'
     )
   } catch {
@@ -192,31 +221,30 @@ const downloadTemplate = async () => {
 }
 
 const handleFileChange = (uploadFile: UploadFile, uploadFiles: UploadFiles) => {
+  // 2026-10-31 用户定案：重选新文件时重置上一份文件的预览态——previewResult 内含
+  // 行数据、错误/警告计数与阻断标记，置空即整包重置，确认按钮随之禁用，防止沿用旧预览确认新文件
   fileList.value = uploadFiles.slice(-1)
   selectedFile.value = fileList.value[0] ?? uploadFile
   previewResult.value = null
+}
+
+// 2026-10-31 用户定案：limit=1 下未删除旧文件就再选新文件时，el-upload 触发的是 exceed 而非
+// change——这里手动清掉旧文件并让新文件走 handleStart（内部会 emit change），从而复用
+// handleFileChange 的「重选即重置预览态」逻辑，保证弹窗里预览结果永远对应最新选择的文件
+const handleFileExceed = (files: File[], _uploadFiles: UploadFiles) => {
+  const file = files[0] as UploadRawFile | undefined
+  if (!file) {
+    return
+  }
+  uploadRef.value?.clearFiles()
+  file.uid = genFileId()
+  uploadRef.value?.handleStart(file)
 }
 
 const handleFileRemove = (_uploadFile: UploadFile, uploadFiles: UploadFiles) => {
   fileList.value = uploadFiles
   selectedFile.value = uploadFiles[0] ?? null
   previewResult.value = null
-}
-
-// 2026-10-19：把调用方传入的序号映射序列化为后端可解析的 JSON（{"1":2001,"2":2002,...}）
-const buildSequenceMapJson = (): string | undefined => {
-  const entries = props.sequenceEntries
-  if (!entries || entries.length === 0) {
-    return undefined
-  }
-  const map: Record<string, number> = {}
-  entries.forEach(entry => {
-    const id = Number(entry.indicatorId)
-    if (Number.isFinite(id) && id > 0 && Number.isFinite(entry.seq) && entry.seq > 0) {
-      map[String(entry.seq)] = id
-    }
-  })
-  return Object.keys(map).length > 0 ? JSON.stringify(map) : undefined
 }
 
 const handlePreview = async () => {
@@ -231,22 +259,28 @@ const handlePreview = async () => {
 
   previewing.value = true
   try {
-    const sequenceMapJson = buildSequenceMapJson()
+    // 2026-10-31 层级化定案：不再传序号→内部ID 映射，落库匹配键按名称
+    // （职能部门=任务+核心指标名，学院=父级核心指标+子指标名），同名更新、新名新增。
     previewResult.value = isStrategicImport.value
       ? await businessImportApi.previewStrategicTaskImport(selectedFile.value.raw, {
           cycleId: props.cycleId,
-          targetOrgId: props.targetOrgId,
-          sequenceMapJson
+          targetOrgId: props.targetOrgId
         })
       : await businessImportApi.previewDistributionImport(selectedFile.value.raw, {
           cycleId: props.cycleId,
           sourceOrgId: props.sourceOrgId || undefined,
-          targetCollegeOrgId: props.targetOrgId,
-          sequenceMapJson
+          targetCollegeOrgId: props.targetOrgId
         })
   } catch (error) {
+    // 2026-10-31：解析预览失败（含文件类型/大小被拒等后端原文）属关键报错，
+    // 不自动消失；markErrorHandled 让响应拦截器的 3 秒兜底 toast 跳过，只弹这一条。
+    markErrorHandled(error)
     const msg = (error as { message?: string })?.message
-    ElMessage.error(msg || '导入解析失败')
+    showCriticalErrorNotice({
+      title: '导入解析失败',
+      message: msg || '导入解析失败，请检查文件内容或稍后重试',
+      critical: true
+    })
   } finally {
     previewing.value = false
   }
@@ -273,7 +307,20 @@ const handleCommit = async () => {
           type: 'warning'
         }
       )
-    } catch {
+    } catch (error) {
+      // 2026-10-31（P-01）：区分用户取消与真实异常——ElMessageBox.confirm 拒绝值为
+      // 'cancel'/'close' 字符串属用户反悔（正常路径，静默返回）；其余异常透传既有错误提示并留痕。
+      if (error === 'cancel' || error === 'close') {
+        return
+      }
+      console.error('[BusinessImportDialog] 导入确认框异常:', error)
+      // 2026-10-31：确认框异常属关键报错，不自动消失（取消分支仍保持静默）
+      const msg = (error as { message?: string })?.message
+      showCriticalErrorNotice({
+        title: '确认导入失败',
+        message: msg || '确认导入失败，请稍后重试',
+        critical: true
+      })
       return
     }
   }
@@ -291,7 +338,13 @@ const handleCommit = async () => {
       : await businessImportApi.commitDistributionImport(previewResult.value.batchId, request)
 
     if (result.status === 'COMMIT_BLOCKED') {
-      ElMessage.warning(formatCommitBlockedMessage(result))
+      // 2026-10-31：导入被阻断（「本次导入未写入」+ 后端原因）属关键报错，不自动消失
+      showCriticalErrorNotice({
+        title: '导入未写入',
+        message: formatCommitBlockedMessage(result),
+        type: 'warning',
+        critical: true
+      })
       return
     }
 
@@ -310,8 +363,15 @@ const handleCommit = async () => {
   } catch (error) {
     // 2026-10-20：apiClient 抛的是 AppError 对象（非 Error 实例），
     // 后端业务拦截原因（如异动审批锁、权重不符）必须透传给用户
+    // 2026-10-31：确认提交异常属关键报错，不自动消失；markErrorHandled
+    // 让响应拦截器的兜底 toast 跳过，只弹这一条持久通知。
+    markErrorHandled(error)
     const msg = (error as { message?: string })?.message
-    ElMessage.error(msg || '确认导入失败')
+    showCriticalErrorNotice({
+      title: '确认导入失败',
+      message: msg || '确认导入失败，请稍后重试',
+      critical: true
+    })
   } finally {
     committing.value = false
   }
@@ -398,6 +458,7 @@ watch(
       </el-steps>
 
       <el-upload
+        ref="uploadRef"
         drag
         accept=".xlsx"
         :auto-upload="false"
@@ -405,6 +466,7 @@ watch(
         :file-list="fileList"
         :on-change="handleFileChange"
         :on-remove="handleFileRemove"
+        :on-exceed="handleFileExceed"
       >
         <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
         <div class="el-upload__text">拖拽 Excel 文件到这里，或点击选择</div>
@@ -485,7 +547,13 @@ watch(
           title="预览通过，可以确认导入"
         />
 
-        <el-table :data="visibleRows" max-height="320" class="preview-table">
+        <!-- 2026-11-01 缺陷修复：同组「序号」「父级指标/战略任务」rowSpan 合并，与导入模板同款视觉 -->
+        <el-table
+          :data="visibleRows"
+          max-height="320"
+          class="preview-table"
+          :span-method="previewSpanMethod"
+        >
           <!-- 2026-10-19 用户定案：预览首列展示文件里的「序号」（1、2、3…），不再用 Excel 物理行号 -->
           <el-table-column prop="rowNo" label="序号" width="70" />
           <el-table-column label="动作" width="80">
@@ -531,7 +599,7 @@ watch(
 
       <div class="commit-options">
         <el-tooltip
-          content="默认为追加模式：文件内容作为新数据写入；勾选后，与现有指标同名的行会更新原数据，而不是重复新增。"
+          content="同名指标=更新、新名称=新增始终生效；勾选后，当前范围内未出现在文件中的既有指标会被删除（真覆盖）。"
           placement="top"
         >
           <el-checkbox v-model="overwriteExisting">覆盖已有数据</el-checkbox>

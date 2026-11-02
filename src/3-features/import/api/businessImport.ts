@@ -91,8 +91,6 @@ export interface StrategicImportPreviewParams {
   cycleId: number
   targetOrgId: number
   sheetName?: string
-  /** 2026-10-19：序号→内部ID 映射（JSON 字符串 {"1":2001,...}，前端按导出同款排序生成） */
-  sequenceMapJson?: string
 }
 
 export interface DistributionImportPreviewParams {
@@ -100,8 +98,6 @@ export interface DistributionImportPreviewParams {
   targetCollegeOrgId: number
   sourceOrgId?: number
   sheetName?: string
-  /** 2026-10-19：序号→内部ID 映射（JSON 字符串） */
-  sequenceMapJson?: string
 }
 
 function unwrap<T>(response: ApiResponse<T>): T {
