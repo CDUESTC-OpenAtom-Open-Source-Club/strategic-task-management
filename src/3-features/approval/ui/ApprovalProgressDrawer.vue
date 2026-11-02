@@ -574,8 +574,13 @@ const displayedCurrentPlanApprovalName = computed(() => {
 
         <!-- 历史记录视图 -->
         <ElTabPane name="history" label="审批历史">
+          <!-- 2026-10-31（P-10② 审批历史按实体全实例）：历史可见性不再只看
+               hasPlanWorkflowData（它依赖查看者上下文装配，学院侧/纯上报卡会误判空）——
+               按实体拉到的历史卡存在时同样展示 -->
           <ElEmpty
-            v-if="!hasApprovalData && !hasPlanWorkflowData"
+            v-if="
+              !hasApprovalData && !hasPlanWorkflowData && historicalPlanApprovalItems.length === 0
+            "
             description="暂无审批历史"
             :image-size="120"
           />

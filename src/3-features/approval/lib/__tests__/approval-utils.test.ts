@@ -11,6 +11,7 @@ import {
   resolveApprovalRouteTitle,
   resolveHistoryStatusTag,
   resolvePlanApprovalTypeLabel,
+  resolvePlanConfirmWorkflowName,
   shouldDisplayWorkflowHistoryItem,
   showAppraisalLevelForFlow,
   toPositiveNumber
@@ -110,6 +111,20 @@ describe('approval-utils', () => {
     expect(shouldDisplayWorkflowHistoryItem(undefined)).toBe(true)
   })
 
+  // 2026-10-31 用户拍板（确认弹窗审批流程行）：按 flowCode 映射完整中文流程名，
+  // 绝不透出后端 workflowName 的「Plan xxx」英文占位；缺 code 兜底「计划下发审批」
+  it('maps confirm-dialog workflow names to full Chinese labels (2026-10-31 口径)', () => {
+    expect(resolvePlanConfirmWorkflowName('PLAN_DISPATCH_STRATEGY')).toBe('计划下发审批')
+    expect(resolvePlanConfirmWorkflowName('PLAN_DISPATCH_FUNCDEPT')).toBe('计划下发审批')
+    expect(resolvePlanConfirmWorkflowName('PLAN_MUTATION_STRATEGY')).toBe('计划异动审批')
+    expect(resolvePlanConfirmWorkflowName('PLAN_APPROVAL_FUNCDEPT')).toBe('计划上报审批')
+    expect(resolvePlanConfirmWorkflowName('PLAN_APPROVAL_COLLEGE')).toBe('计划上报审批')
+    // 缺 code 时按弹窗主场景（下发链）兜底，同样不出现英文
+    expect(resolvePlanConfirmWorkflowName('')).toBe('计划下发审批')
+    expect(resolvePlanConfirmWorkflowName(undefined)).toBe('计划下发审批')
+    expect(resolvePlanConfirmWorkflowName('CUSTOM_FLOW')).toBe('计划下发审批')
+  })
+
   // 2026-10-31 用户定案（确认弹窗去计划编号）：以「年份 + 方向」指代计划，
   // 绝不把「Plan 404457」式占位计划名/裸数字 ID 拼进确认弹窗
   it('builds year+route plan reference labels for confirm dialogs (2026-10-31 口径)', () => {
@@ -138,5 +153,58 @@ describe('approval-utils', () => {
     expect(
       buildPlanReferenceLabel({ year: 'abc', sourceOrgName: '  ', fallback: '当前计划' })
     ).toBe('当前计划')
+  })
+
+  // 2026-10-31（P-09 方向铁律）：source/target 是下发方向字段，上报链确认弹窗
+  // 必须按「提交方 -> 接收方」展示（target -> source）；下发/异动/缺 code 维持原方向
+  it('flips source/target to target -> source for submission flows (P-09 口径)', () => {
+    // 上报链：内部交换 → 提交方（target）在前
+    expect(
+      buildPlanReferenceLabel({
+        year: 2026,
+        sourceOrgName: '战略发展部',
+        targetOrgName: '计算机学院',
+        flowCode: 'PLAN_APPROVAL_COLLEGE'
+      })
+    ).toBe('2026年度 计划（计算机学院 -> 战略发展部）')
+    expect(
+      buildPlanReferenceLabel({
+        sourceOrgName: '教务处',
+        targetOrgName: '计算机学院',
+        flowCode: 'plan_approval_funcdept'
+      })
+    ).toBe('计划（计算机学院 -> 教务处）')
+    // 下发链维持原方向
+    expect(
+      buildPlanReferenceLabel({
+        year: 2026,
+        sourceOrgName: '战略发展部',
+        targetOrgName: '科技处',
+        flowCode: 'PLAN_DISPATCH_STRATEGY'
+      })
+    ).toBe('2026年度 计划（战略发展部 -> 科技处）')
+    // 异动链维持原方向
+    expect(
+      buildPlanReferenceLabel({
+        sourceOrgName: '战略发展部',
+        targetOrgName: '计算机学院',
+        flowCode: 'PLAN_MUTATION_STRATEGY'
+      })
+    ).toBe('计划（战略发展部 -> 计算机学院）')
+    // 缺 flowCode 维持原方向（保守回退，不改既有行为）
+    expect(
+      buildPlanReferenceLabel({
+        sourceOrgName: '战略发展部',
+        targetOrgName: '科技处',
+        flowCode: ''
+      })
+    ).toBe('计划（战略发展部 -> 科技处）')
+    // 上报链单侧流向：交换后仍只显示那一侧
+    expect(
+      buildPlanReferenceLabel({
+        targetOrgName: '计算机学院',
+        flowCode: 'PLAN_APPROVAL_COLLEGE'
+      })
+    ).toBe('计划（计算机学院）')
   })
 })

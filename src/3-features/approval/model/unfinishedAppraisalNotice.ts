@@ -18,8 +18,9 @@
  * 部门与实例参数从被拒实例/卡片上下文（PLAN_REPORT 实例记录）提取。
  */
 import { h } from 'vue'
-import { ElButton, ElNotification } from 'element-plus'
+import { ElButton } from 'element-plus'
 import type { NotificationHandle } from 'element-plus'
+import { showCriticalErrorNotice } from '@/shared/lib/criticalErrorNotice'
 import { resolveApprovalRoute } from '@/features/approval/lib/approvalNotifications'
 import { toPositiveNumber } from '@/features/approval/lib/approval-utils'
 import { normalizeApprovalEntityType } from '@/features/approval/model/approvalEntityTypes'
@@ -98,8 +99,9 @@ export function resolveUnfinishedAppraisalJumpRoute(
 /**
  * 弹「未完成审核」拦截通知：后端原文 + 「去完成鉴定」按钮。
  *
- * duration=0 常驻（文案是指引性长文，自动消失会看不完），右上角可手动关闭；
- * 点击按钮先关通知再执行 onJump（由调用方注入路由跳转，模块本身不依赖 router 实例）。
+ * 2026-10-31 统一走共享 criticalErrorNotice（critical=true → duration 0 常驻、
+ * 右上角可手动关闭，与三族关键报错同一形态）；点击按钮先关通知再执行 onJump
+ * （由调用方注入路由跳转，模块本身不依赖 router 实例）。
  */
 export function showUnfinishedAppraisalNotice(options: {
   /** 后端原文（原样展示，不改写） */
@@ -108,18 +110,17 @@ export function showUnfinishedAppraisalNotice(options: {
   routeTarget: string
   /** 执行跳转（如 router.push） */
   onJump: (routeTarget: string) => void
-}): NotificationHandle {
+}): NotificationHandle | null {
   let notification: NotificationHandle | null = null
   const jumpToIndicatorFillPage = () => {
     notification?.close()
     options.onJump(options.routeTarget)
   }
 
-  notification = ElNotification({
+  notification = showCriticalErrorNotice({
     title: '未完成审核',
     type: 'warning',
-    duration: 0,
-    showClose: true,
+    critical: true,
     message: h('div', [
       h(
         'p',

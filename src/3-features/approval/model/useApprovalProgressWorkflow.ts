@@ -7,14 +7,14 @@ import { indicatorFillApi } from '@/features/plan/api/planApi'
 import { tryGetUserById } from '@/features/user/api/query'
 import { APPROVAL_STATE_REFRESH_EVENT, notifyApprovalStateRefresh } from '@/features/approval/lib'
 import { buildPlanReferenceLabel } from '@/features/approval/lib/approval-utils'
+// 2026-10-31（P-04）：「未完成审核」拦截通知抽成共享 lib，与审批中心宿主
+// useApprovalProgressDrawer 共用同一出口（本文件只保留宿主上下文装配）
+import { showUnfinishedAppraisalBlockNotice as showSharedUnfinishedAppraisalBlockNotice } from '@/features/approval/lib/unfinishedAppraisalBlockNotice'
 import { normalizeApprovalEntityType } from '@/features/approval/model/approvalEntityTypes'
-import {
-  isUnfinishedAppraisalMessage,
-  resolveUnfinishedAppraisalJumpRoute,
-  showUnfinishedAppraisalNotice
-} from '@/features/approval/model/unfinishedAppraisalNotice'
 import { apiClient } from '@/shared/api'
 import type { ApiResponse, Plan } from '@/shared/types'
+import { useTimeContextStore } from '@/shared/lib/timeContext'
+import { showCriticalErrorNotice } from '@/shared/lib/criticalErrorNotice'
 import { logger } from '@/shared/lib/utils/logger'
 import {
   buildUserFacingErrorMessage,
@@ -68,6 +68,7 @@ export function useApprovalProgressWorkflow({
   state
 }: UseApprovalProgressWorkflowOptions) {
   const router = useRouter()
+  const timeContext = useTimeContextStore()
 
   /**
    * ElMessageBox.prompt 被用户「取消 / 关闭」时，promise reject 的是字符串
@@ -81,14 +82,21 @@ export function useApprovalProgressWorkflow({
   // 「{年份}年度 计划（{source} -> {target}）」指代计划，不透传 props.plan?.name
   // ——「Plan 404457」式占位计划名不再亮给用户（线上复测观察项 3）。
   // 与 useApprovalProgressState / useApprovalProgressDrawer 同口径。
+  // 2026-10-31（P-09 方向铁律 + 年份兜底）：传 flowCode 让上报链在 lib 内部
+  // 按「提交方 -> 接收方」（target -> source）展示；planRecord 无年份时
+  // 依次兜底 cycleId → 实例详情上的周期字段（后端可能附带未入 type 的字段）。
   function resolvePlanReferenceLabel(): string {
     const planRecord = props.plan as
       (Plan & { year?: number | string; cycleId?: number | string }) | null | undefined
     const detail = state.planWorkflowDetail.value
     return buildPlanReferenceLabel({
-      year: planRecord?.year,
+      year:
+        planRecord?.year ??
+        timeContext.resolveCycleYear(planRecord?.cycleId) ??
+        timeContext.resolveCycleYear((detail as { cycleId?: unknown } | null)?.cycleId),
       sourceOrgName: detail?.sourceOrgName || planRecord?.createdByOrgName,
       targetOrgName: detail?.targetOrgName || planRecord?.targetOrgName || planRecord?.orgName,
+      flowCode: detail?.flowCode,
       fallback: '当前计划'
     })
   }
@@ -129,10 +137,9 @@ export function useApprovalProgressWorkflow({
   /**
    * 2026-10-30 用户定案：「未完成审核」拦截要能一键跳转。
    *
-   * 命中「未完成审核」类拦截文案时改用 ElNotification（title「未完成审核」、
-   * message=后端原文原样、附「去完成鉴定」按钮），点击落到该报告填报部门的
-   * 指标填报页——路由复用审批卡片 routeTarget 的 resolveApprovalRoute 同一套口径，
-   * 部门/实例参数从被拒实例/卡片上下文提取（兜底取当前抽屉的 PLAN_REPORT 上下文）。
+   * 2026-10-31（P-04）：判断命中/路由解析/去重/弹通知的实现抽到共享 lib
+   * （approval/lib/unfinishedAppraisalBlockNotice），审批中心宿主抽屉同步接入；
+   * 本函数只负责装配本抽屉的宿主上下文（查看者角色/部门/关抽屉跳转）。
    *
    * 返回 true 表示已按拦截通知处理（调用方不要再弹普通 toast）；
    * 返回 false 表示非该类拦截（或解析不出跳转路由），走原样错误 toast。
@@ -141,40 +148,22 @@ export function useApprovalProgressWorkflow({
     message: string,
     instance?: Record<string, unknown> | null
   ): boolean {
-    if (!isUnfinishedAppraisalMessage(message)) {
-      return false
-    }
-
-    const routeTarget = resolveUnfinishedAppraisalJumpRoute(
-      instance ?? resolveDrawerPlanReportContext(),
-      {
-        viewerRole: state.authStore.effectiveRole || state.authStore.userRole,
-        currentDepartmentName:
-          state.normalizeDisplayName(
-            state.authStore.effectiveDepartment || state.authStore.user?.department
-          ) || null,
-        fallbackDepartmentName: props.departmentName || null
-      }
-    )
-    // 解析不出跳转路由（缺报告实体上下文）时退回普通 toast：文字保留，不承诺跳转
-    if (!routeTarget) {
-      return false
-    }
-
-    // 消息级去重：同一拦截不重复弹通知
-    if (!claimErrorToast(message)) {
-      return true
-    }
-    showUnfinishedAppraisalNotice({
+    return showSharedUnfinishedAppraisalBlockNotice({
       message,
-      routeTarget,
+      // 实例上下文缺省时退回当前抽屉的 PLAN_REPORT 上下文（锚定上报链时即报告实例）
+      instance: instance ?? resolveDrawerPlanReportContext(),
+      viewerRole: state.authStore.effectiveRole || state.authStore.userRole,
+      currentDepartmentName:
+        state.normalizeDisplayName(
+          state.authStore.effectiveDepartment || state.authStore.user?.department
+        ) || null,
+      fallbackDepartmentName: props.departmentName || null,
       onJump: target => {
         // 与 navigateToPendingPlanApproval 同口径：先收抽屉再跳填报页
         state.handleClose()
         void router.push(target)
       }
     })
-    return true
   }
 
   /**
@@ -186,6 +175,8 @@ export function useApprovalProgressWorkflow({
    * - 后端原文优先透出（中文原文直接用；英文原文用中文兜底 + 原文附注）。
    * - 2026-10-30 用户定案：「未完成审核」类拦截升级为带「去完成鉴定」跳转的
    *   Notification（见 showUnfinishedAppraisalBlockNotice），其余错误保持普通 toast。
+   * - 2026-10-31：审批失败属关键报错——回退提示从 3 秒 ElMessage.error 升级为
+   *   持久 Notification（critical=true，手动关），title 用动作名（审批失败/驳回失败）。
    */
   function showApprovalErrorToast(
     error: unknown,
@@ -207,7 +198,7 @@ export function useApprovalProgressWorkflow({
     if (!claimErrorToast(message)) {
       return
     }
-    ElMessage.error(message)
+    showCriticalErrorNotice({ title: fallbackText, message, critical: true })
   }
 
   /**
@@ -216,7 +207,7 @@ export function useApprovalProgressWorkflow({
    * - 单实例失败：只弹该实例的错误原文（不再套「有 1 项…未成功」汇总前缀）；
    * - 多实例失败：只弹汇总（首条原文 + 计数），失败明细已在 failures 里；
    * - 「未完成审核」类拦截：升级为带「去完成鉴定」按钮的 Notification（后端原文原样展示）；
-   * - 其余错误保持原样 toast。
+   * - 2026-10-31：其余失败属关键报错，从 3 秒 toast 升级为持久 Notification（手动关）。
    */
   function showApprovalFailureMessage(
     message: string,
@@ -234,7 +225,7 @@ export function useApprovalProgressWorkflow({
     if (!claimErrorToast(normalized)) {
       return
     }
-    ElMessage.error(normalized)
+    showCriticalErrorNotice({ title: '审批操作失败', message: normalized, critical: true })
   }
 
   function normalizeWorkflowRuntimeStatus(value: unknown): string {
