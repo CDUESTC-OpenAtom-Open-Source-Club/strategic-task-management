@@ -31,19 +31,26 @@ import { logger } from '@/shared/lib/utils/logger'
 import AppAvatar from '@/shared/ui/avatar/AppAvatar.vue'
 import ReportCycleTag from '@/shared/ui/display/ReportCycleTag.vue'
 import { DistributionApprovalProgressDrawer } from '@/features/approval'
+import {
+  buildPlanReferenceLabel,
+  resolvePlanConfirmWorkflowName
+} from '@/features/approval/lib/approval-utils'
 import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
 import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
 import type { StrategicIndicator } from '@/shared/types'
+import type { Cell } from 'write-excel-file/browser'
 import {
   buildAttachmentNameCell,
   buildExportFileName,
+  buildWholeColumnMergedCell,
   exportRowsToExcel,
   normalizeExportAttachments,
   type ExcelExportColumn,
   type ExcelExportSheet,
   type ExcelRowTone
 } from '@/shared/lib/export/excel'
+import { buildDistributionExportRowGrouping } from '@/features/indicator/lib/distributionExportGroups'
 import { getProgressLevelTagStyle } from '@/shared/lib/constants/progressLevel'
 import {
   buildAttachmentRelativeDir,
@@ -372,6 +379,27 @@ const {
   currentDetailId
 } = useStrategicTaskView(props)
 
+// 2026-10-31 用户拍板（「确认审批流程」弹窗去计划编号）：
+// ①「当前计划」行不读 currentPlan.name / taskName —— 后端占位名是「Plan 4036」式，
+//   以「{年份}年度 计划（{source} -> {target}）」口径指代（approval-utils 同款），
+//   年份用视图统一的 resolvePlanYear，目标缺省落到选中部门，最终兜底「当前计划」。
+// ②「审批流程」行按 flowCode 映射中文流程名，绝不透出英文 workflowName。
+const approvalSetupPlanReference = computed(() => {
+  const plan = currentPlan.value as Record<string, unknown> | null
+  if (!plan) {
+    return ''
+  }
+  return buildPlanReferenceLabel({
+    year: resolvePlanYear(plan),
+    sourceOrgName: plan.createdByOrgName,
+    targetOrgName: plan.targetOrgName || selectedDepartment.value,
+    fallback: selectedDepartment.value || '当前计划'
+  })
+})
+const approvalSetupWorkflowName = computed(() =>
+  resolvePlanConfirmWorkflowName(PLAN_APPROVAL_SUBMIT_WORKFLOW_CODE)
+)
+
 const { latestFillNote, latestFillAttachments } = useLatestIndicatorFill(
   computed(() => (currentDetail as any)?.value?.id ?? null),
   // 实时值：按 id 从当前行数组取**最新**行对象（行对象异步加载后会被替换，
@@ -639,6 +667,8 @@ const strategicExportDepartmentsIndeterminate = computed(
 // 导出与界面同构：同一战略任务的多行在「战略任务」列合并为一个单元格。
 // 2026-10-18 用户定案（晚间修订）：导出不含「内部ID」——系统内部主键对导出读者无意义，
 // 行对齐由「序号」承担；回导匹配走「任务名+指标名」名称匹配。
+// 2026-10-31 三页统一（用户拍板）：序号升级为任务组号并随任务组竖向合并，
+// 部门列整列合并，任务类别列统一为任务类型（列序对齐导入模板）。
 type StrategicExportAttachmentSource = StrategicExportRow & {
   pendingAttachments?: unknown
   pendingAttachmentDetails?: unknown[]
@@ -657,49 +687,54 @@ const buildStrategicExportColumns = (
   rows: StrategicExportRow[],
   summaryMap: IndicatorAttachmentSummaryMap | null
 ): ExcelExportColumn<StrategicExportRow>[] => {
-  // 计算「战略任务」连续分组的合并行数：仅组首行携带 rowSpan，其余行为被合并的从属行
-  const taskSpanByIndex = new Map<number, number>()
-  rows.forEach((row, index) => {
-    const key = row.taskContent || '-'
-    const prevKey = index > 0 ? rows[index - 1].taskContent || '-' : null
-    if (prevKey === key) {
-      taskSpanByIndex.set(index, 0)
-      return
+  // 2026-10-31 三页统一（用户拍板）：序号=任务组号（同任务多行共用、按任务出现顺序递增，
+  // 消灭「同一任务被编成多个序号」的老问题）；序号/战略任务/任务类型按任务组竖向合并
+  // （相邻同任务行合并，与下发页 IndicatorDistributeView 的 rowSpan 分组写法一致）；
+  // 分组跨度复用下发页纯函数 buildDistributionExportRowGrouping（键=战略任务名）。
+  const { groupNumberByIndex, spanByIndex } = buildDistributionExportRowGrouping(
+    rows.map(row => row.taskContent || '-')
+  )
+
+  const buildMergedGroupCell = (index: number, value: string | number): Cell => {
+    const span = spanByIndex[index] ?? 1
+    if (span > 1) {
+      return { value, rowSpan: span, alignVertical: 'center' }
     }
-    let end = index + 1
-    while (end < rows.length && (rows[end].taskContent || '-') === key) {
-      end += 1
+    // 被上方合并覆盖的从属行：write-excel-file 要求传 null
+    if (span === 0) {
+      return null
     }
-    taskSpanByIndex.set(index, end - index)
-  })
+    return value
+  }
 
   return [
-    { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
-    { header: '部门', width: 18, getValue: row => row.exportDepartment },
+    {
+      header: '序号',
+      width: 8,
+      align: 'center',
+      getValue: (_row, index) => buildMergedGroupCell(index, groupNumberByIndex[index])
+    },
+    // 2026-10-31 用户拍板：部门列整列合并（一份导出锁定一个部门）
+    {
+      header: '部门',
+      width: 18,
+      getValue: (row, index) => buildWholeColumnMergedCell(index, rows.length, row.exportDepartment)
+    },
     {
       header: '战略任务',
       width: 28,
-      getValue: (row, index) => {
-        const text = row.taskContent || '-'
-        const span = taskSpanByIndex.get(index) ?? 1
-        if (span > 1) {
-          return { value: text, rowSpan: span, alignVertical: 'center' }
-        }
-        // 被上方合并覆盖的从属行：write-excel-file 要求传 null
-        if (span === 0) {
-          return null
-        }
-        return text
-      }
+      getValue: (row, index) => buildMergedGroupCell(index, row.taskContent || '-')
+    },
+    // 2026-10-31 三页统一：原「任务类别」列（本就是任务级）统一为「任务类型」，
+    // 表头与位置对齐导入模板（战略任务之后），随任务组竖向合并
+    {
+      header: '任务类型',
+      width: 12,
+      align: 'center',
+      getValue: (row, index) => buildMergedGroupCell(index, getCategoryText(row.type2))
     },
     { header: '核心指标', width: 32, getValue: row => row.name || '-' },
     { header: '指标类型', width: 12, align: 'center', getValue: row => row.type1 || '-' },
-    {
-      header: '任务类别',
-      width: 12,
-      align: 'center',
-      getValue: row => getCategoryText(row.type2)
-    },
     { header: '下发备注', width: 24, getValue: row => row.remark || '-' },
     // 2026-10-20 用户定案：表头直接标出权重可接受的写法，避免用户猜格式
     {
@@ -839,17 +874,8 @@ const getStrategicExportRowsByDepartment = (
   })
 }
 
-// 2026-10-19 用户定案：序号→内部ID 映射（导入时随预览请求传后端，序号与导出文件完全一致）
-const strategicSequenceEntries = computed(() => {
-  const department = selectedDepartment.value
-  if (!department) {
-    return []
-  }
-  return getStrategicExportRowsByDepartment(department).map((row, index) => ({
-    seq: index + 1,
-    indicatorId: row.id
-  }))
-})
+// 2026-10-31 层级化定案：导入不再按序号匹配（序号=任务组号，落库按「任务+核心指标名」匹配），
+// 序号→内部ID 映射（strategicSequenceEntries）随之移除。
 
 const getStrategicTaskTypeRank = (indicator: StrategicIndicator): number => {
   const taskType = getIndicatorMappedTaskType(indicator)
@@ -1204,13 +1230,15 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
               (activeTaskTabName === 'college' && !selectedCollege)
             "
             :title="
-              isCurrentPlanUnderApproval
-                ? '计划正在审批中，暂不能新增：请等审批结束或先撤回本次审批'
-                : isMutationApprovalInFlight
-                  ? '异动审批进行中，暂不能新增：等审批结束或先撤回/取消本次异动'
-                  : activeTaskTabName === 'college' && !selectedCollege
-                    ? '请先在左侧选择学院'
-                    : ''
+              !canEdit
+                ? '当前角色仅可查看，填报人才能新增'
+                : isCurrentPlanUnderApproval
+                  ? '计划正在审批中，暂不能新增：请等审批结束或先撤回本次审批'
+                  : isMutationApprovalInFlight
+                    ? '异动审批进行中，暂不能新增：等审批结束或先撤回/取消本次异动'
+                    : activeTaskTabName === 'college' && !selectedCollege
+                      ? '请先在左侧选择学院'
+                      : ''
             "
             @click.stop="handleAddNewRow"
           >
@@ -2931,7 +2959,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
       :target-org-id="currentStrategicImportOrgId"
       :target-org-name="selectedDepartment"
       :cycle-id="currentStrategicImportCycleId"
-      :sequence-entries="strategicSequenceEntries"
       @committed="handleStrategicImportCommitted"
     />
 
@@ -2946,15 +2973,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
         <div v-if="currentPlan" class="approval-setup-summary">
           <div class="summary-row">
             <span class="summary-label">当前计划：</span>
-            <span class="summary-value">{{
-              currentPlan.name || currentPlan.taskName || selectedDepartment || '当前计划'
-            }}</span>
+            <span class="summary-value">{{ approvalSetupPlanReference }}</span>
           </div>
           <div class="summary-row">
             <span class="summary-label">审批流程：</span>
-            <span class="summary-value">
-              {{ approvalWorkflowPreview?.workflowName || PLAN_APPROVAL_SUBMIT_WORKFLOW_CODE }}
-            </span>
+            <span class="summary-value">{{ approvalSetupWorkflowName }}</span>
           </div>
         </div>
 

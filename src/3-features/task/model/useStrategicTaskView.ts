@@ -821,6 +821,19 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 整体状态：直接使用 Plan 的状态，不再根据指标状态混合计算
   // 兼容后端大写状态和 Plan 模块的小写状态
   const overallStatus = computed(() => {
+    // 2026-10-31 P-02-①（学院页签计划状态纠偏）：学院页签头部展示的是
+    // 「当前职能部门 → 选中学院」的 FUNC_TO_COLLEGE 子计划状态
+    // （resolveSelectedCollegeReportScope 同源解析），不再误读职能部门自身
+    // STRAT_TO_FUNC 计划——自身计划回退草稿时头部曾误显「草稿」。
+    // 子计划解析失败（未匹配）保守显示「未下发」。职能页签口径原样保留。
+    if (isCollegePlanContextActive.value) {
+      const collegeStatus = effectivePlanStatus.value
+      if (!collegeStatus) {
+        return { label: '未下发', type: 'info' }
+      }
+      return getPlanStatusDisplay(collegeStatus) || { label: String(collegeStatus), type: 'info' }
+    }
+
     const planStatus = currentPlanStatus.value
     if (!planStatus) {
       return { label: '暂无指标', type: 'info' }
@@ -2412,6 +2425,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // - 草稿状态 → 下发
   // - 待审批/已下发状态 → 撤回
   const distributeButtonText = computed(() => {
+    // 2026-10-31 P-05（多态撤回·相位解耦）：异动审批在途且当前用户为发起人（未过
+    // 撤回窗口）时，无论计划相位如何都暴露「撤回异动」——学院子计划异动在审而自身
+    // 计划回退草稿时，按钮此前误显「发起审批」、点击进计划审批弹窗，撤回分支不可达。
+    // canWithdrawMutationInFlight 已含发起人（submitter_name 比对）与撤回窗口判定。
+    if (canWithdrawMutationInFlight.value) {
+      return '撤回异动'
+    }
     if (planUiPhase.value === 'draft') {
       return '发起审批'
     }
@@ -2420,20 +2440,26 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   // 下发/撤回按钮类型
   const distributeButtonType = computed(() => {
+    // 2026-10-31 P-05：撤回异动分支优先于相位判定（与文案/点击分流同口径），
+    // 草稿相位的 success 绿不再盖过异动在审的 warning 黄。
+    if (canWithdrawMutationInFlight.value) {
+      return 'warning'
+    }
     if (planUiPhase.value === 'draft') {
       return 'success'
     }
     // 2026-10-30 用户反馈：异动在审且可撤（发起人、未过窗口）时按钮用警告黄，
     // 与 pending_withdrawable（上报审批撤回窗口）同一 warning 预设（#E6A23C），
     // 不再落「已下发」分支的 info 灰；既有 draft/pending 分支原样保留。
-    if (canWithdrawMutationInFlight.value) {
-      return 'warning'
-    }
     return planUiPhase.value === 'pending_withdrawable' ? 'warning' : 'info'
   })
 
   // 下发/撤回按钮图标
   const distributeButtonIcon = computed(() => {
+    // 2026-10-31 P-05：撤回异动分支优先于相位判定（撤回语义图标）
+    if (canWithdrawMutationInFlight.value) {
+      return RefreshLeft
+    }
     if (planUiPhase.value === 'draft') {
       return Promotion
     }
@@ -2443,6 +2469,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const distributeButtonDisabledReason = computed(() => {
     if (isReadOnly.value) {
       return '历史快照为只读状态'
+    }
+
+    // 2026-10-31 P-05：异动在审且当前用户为发起人（未过撤回窗口）时撤回恒可点，
+    // 不再受计划相位影响（草稿相位「权重未等于百分之百」「非填报人」等理由不再
+    // 拦撤回）——与按钮文案/图标/点击分流同口径。下方既有相位分支原样保留。
+    if (canWithdrawMutationInFlight.value) {
+      return ''
     }
 
     if (planUiPhase.value === 'draft' && !canCurrentUserSubmitCurrentPlan.value) {
@@ -2639,6 +2672,15 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       return
     }
 
+    // 2026-10-31 P-05（多态撤回·相位解耦）：异动审批在途且当前用户为发起人时，
+    // 撤回先于计划相位判定分流——学院子计划异动在审而自身计划为草稿时，旧逻辑
+    // 走 DRAFT 分支误开计划审批弹窗，撤回分支永不可达。已下发相位下与 2026-10-30
+    // 的异动分支行为一致（彼时该分支本就先于 canWithdrawPlan 执行）。
+    if (canWithdrawMutationInFlight.value) {
+      void handleWithdrawMutationBatch()
+      return
+    }
+
     const status = currentPlanStatus.value
 
     if (status === 'DRAFT' || !status) {
@@ -2646,13 +2688,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       void openApprovalSetupDialog()
     } else {
       // 待审批/已下发状态：撤回
-      // 2026-10-30（多态撤回·异动分支）：异动审批在途且当前用户为发起人时，
-      // 撤回改指「撤回异动」——与审批中心异动卡撤回同源（逐实例 POST /workflows/{id}/cancel）。
-      // 异动只在已下发计划上发起、与上报/计划审批互斥，草稿与计划待审撤回分支不受影响。
-      if (canWithdrawMutationInFlight.value) {
-        void handleWithdrawMutationBatch()
-        return
-      }
+      //（2026-10-30 多态撤回·异动分支已上提到相位判定之前，此处仅剩计划审批撤回；
+      //  异动在审时可撤判定见上方 canWithdrawMutationInFlight 分流。）
       if (canWithdrawPlan.value) {
         handleWithdrawAll()
       }
@@ -4404,11 +4441,18 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     if (!canEdit.value) {
       return
     }
+    // 2026-10-31 P-02-②（学院页签保守锁）：学院页签子计划未解析到（未匹配）→
+    // 既不进异动草稿分支、也不允许直写——直写会绕过审批改库，宁可不可编辑。
+    if (collegeSubPlanUnresolved.value) {
+      return
+    }
     // 2026-10-14 用户定案：已下发指标双击进入就地编辑，改动攒入异动草稿，
     // 由顶部「发起异动」按钮统一提交；未下发指标维持原有直接落库编辑。
     // 2026-10-21 用户定案：战略任务列（taskContent）与指标字段同构——
     // 已下发后同样可双击改名，攒入草稿随「发起异动」一起上报，不再锁死。
-    if (hasDistributedIndicators.value) {
+    // 2026-10-31 P-02-②：判定改读「当前生效计划上下文」——学院页签按
+    // FUNC_TO_COLLEGE 子计划状态，职能页签维持现行 hasDistributedIndicators。
+    if (effectiveHasDistributedIndicators.value) {
       const isTaskNameField = field === 'taskContent'
       const mapping = MUTATION_FIELD_MAP[field]
       if (!mapping && !isTaskNameField) {
@@ -4458,6 +4502,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       return
     }
 
+    // 2026-10-31 P-02-②（学院页签保守锁）：子计划未解析到 → 不落任何写路径，
+    // 与 handleIndicatorDblClick 同一口径（编辑器本就不该被打开，这里只兜底）。
+    if (collegeSubPlanUnresolved.value) {
+      cancelIndicatorEdit()
+      return
+    }
+
     // 前端字段名到后端字段名的映射
     const fieldMapping: Record<string, string> = {
       name: 'indicatorDesc',
@@ -4470,7 +4521,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     // 2026-10-14 用户定案：已下发指标的就地编辑只攒入异动草稿（内存态，不落库），
     // 由顶部「发起异动」按钮一次性提交走审批；刷新页面即丢弃未发起的改动。
     // 2026-10-21 用户定案：战略任务改名同构——有 taskId 时攒草稿，没有则维持原直写。
-    if (hasDistributedIndicators.value && MUTATION_FIELD_MAP[field]) {
+    // 2026-10-31 P-02-②：守卫改读「当前生效计划上下文」（学院页签按子计划状态）。
+    if (effectiveHasDistributedIndicators.value && MUTATION_FIELD_MAP[field]) {
       const value = editingIndicatorValue.value
       // 2026-10-29 修复（未改值却误建异动草稿）：cancelIndicatorEdit() 会把
       // editingIndicatorOriginal 清空，而原值快照正是在 applyMutationDraftChange
@@ -4483,7 +4535,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       return
     }
 
-    if (hasDistributedIndicators.value && field === 'taskContent') {
+    // 2026-10-31 P-02-②：守卫改读「当前生效计划上下文」（学院页签按子计划状态）。
+    if (effectiveHasDistributedIndicators.value && field === 'taskContent') {
       // 有真实 taskId 的任务走异动草稿；无 taskId 的临时任务仍按原路径直写
       if (getIndicatorTaskId(row)) {
         const value = editingIndicatorValue.value
@@ -5260,6 +5313,68 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 渲染期间抛 ReferenceError 导致整页白屏/表格清空。
   const departmentMutationPendingApprovals = ref<Array<Record<string, any>>>([])
   const collegeFillStatusScope = ref(false)
+
+  // ==================== 2026-10-31 P-02/P-05：当前生效计划上下文 ====================
+  // 背景：职能部门用户在「二级学院战略任务管理」页签看到的是「职能部门 → 选中学院」的
+  // FUNC_TO_COLLEGE 子计划（resolveSelectedCollegeReportScope 已有权威解析），而
+  // currentPlan 恒为职能部门自身 STRAT_TO_FUNC 计划（findCurrentPlanByDepartment 只按
+  // selectedDepartment 过滤）。教务处自身计划回退 DRAFT 时：
+  // ① 头部「计划状态」误显自身计划的「草稿」（P-02-①）；
+  // ② 已下发学院的子指标双击误走直写分支（PUT /indicators/{id} 绕过异动审批，P-02-②），
+  //    异动草稿攒不出来 → 「发起异动」按钮前提（hasMutationDraft）永不成立（P-02-③）；
+  // ③ 学院子计划异动在审时，工具栏撤回入口被计划相位（planUiPhase 读自身计划）锁死（P-05，
+  //    解耦改动见 distributeButton* 与 handleDistributeOrWithdraw）。
+  // 本上下文只服务指定消费点（头部状态 / 双击编辑分流）；职能页签一律回落现行口径；
+  // 学院页签解析失败（未匹配子计划）按保守值：不可编辑、不直写、状态显示「未下发」。
+  // 注：computed 惰性求值 + 本文件既有前向引用模式（distributeButtonType 前向引用
+  // canWithdrawMutationInFlight 同款），此处声明顺序不影响渲染期取值。
+  const isCollegePlanContextActive = computed(
+    () => collegeFillStatusScope.value && Boolean(selectedCollege.value)
+  )
+
+  const effectivePlanContext = computed<{
+    source: 'college' | 'functional'
+    plan: Record<string, unknown> | null
+  }>(() => {
+    if (!isCollegePlanContextActive.value) {
+      return { source: 'functional', plan: (currentPlan.value as Record<string, unknown>) ?? null }
+    }
+    const scope = resolveSelectedCollegeReportScope()
+    if (!scope) {
+      return { source: 'college', plan: null }
+    }
+    const plan = planStore.plans.find(
+      p => Number((p as Record<string, unknown>).id) === Number(scope.planId)
+    )
+    return { source: 'college', plan: (plan as Record<string, unknown>) ?? null }
+  })
+
+  // 学院页签保守锁：子计划未解析到 → 双击既不进异动草稿、也不允许直写
+  const collegeSubPlanUnresolved = computed(
+    () => effectivePlanContext.value.source === 'college' && !effectivePlanContext.value.plan
+  )
+
+  // 生效计划状态：职能页签 = 现行 currentPlanStatus（口径不变）；学院页签 = 子计划状态
+  const effectivePlanStatus = computed(() => {
+    const context = effectivePlanContext.value
+    if (context.source === 'functional') {
+      return currentPlanStatus.value
+    }
+    return normalizePlanStatus(context.plan?.status)
+  })
+
+  // 双击编辑分流判定：职能页签 = 现行 hasDistributedIndicators（口径不变）；
+  // 学院页签按子计划状态——DISTRIBUTED/PENDING 视为已下发（走异动草稿分支），
+  // 其余（草稿/未知）不视为已下发。职能版兜底的 indicators.some(isIndicatorInFlowStage)
+  // 仅职能页签保留；学院页签解析失败时已先被保守锁拦下，不会落到直写分支。
+  const effectiveHasDistributedIndicators = computed(() => {
+    const context = effectivePlanContext.value
+    if (context.source === 'functional') {
+      return hasDistributedIndicators.value
+    }
+    const status = effectivePlanStatus.value
+    return status === 'DISTRIBUTED' || status === 'PENDING'
+  })
 
   // 2026-10-30 用户定案（异动驳回后重报/取消闭环）：「退回待重报」异动链清单。
   // 数据源 GET /indicators/mutations/returned（按当前部门查，只含退回填报人的
