@@ -94,7 +94,12 @@ const routes: RouteRecordRaw[] = [
         path: 'strategic-tasks',
         name: 'StrategicTasks',
         component: () => import('@/features/task/ui/StrategicTaskView.vue'),
-        meta: { roles: ['strategic_dept'], title: '战略任务 - 战略指标管理系统' }
+        // 2026-11-05：职能部门对战略任务页只读（页内按登录角色禁用写操作），
+        // 但必须能进得来——否则「只读」无意义。学院角色仍不可见。
+        meta: {
+          roles: ['strategic_dept', 'functional_dept'],
+          title: '战略任务 - 战略指标管理系统'
+        }
       },
       {
         path: 'indicators',
@@ -106,7 +111,12 @@ const routes: RouteRecordRaw[] = [
         path: 'distribution',
         name: 'Distribution',
         component: () => import('@/features/indicator/ui/IndicatorDistributeView.vue'),
-        meta: { roles: ['functional_dept'], title: '指标分配 - 战略指标管理系统' }
+        // 2026-11-05：操作能力已移交战略发展部，但路由保留（铃铛/审批深链指向它，
+        // 删了深链会失效）；职能部门进来是只读（页内按登录角色控制，仅保留「撤回」）。
+        meta: {
+          roles: ['strategic_dept', 'functional_dept'],
+          title: '指标下发 - 战略指标管理系统'
+        }
       },
       {
         path: 'messages',

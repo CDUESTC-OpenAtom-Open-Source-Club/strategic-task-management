@@ -140,6 +140,7 @@ const {
   canEdit,
   isCurrentPlanUnderApproval,
   canEditIndicators,
+  canWriteStrategicTask,
   canWithdrawPlan,
   cancelAdd,
   cancelEdit,
@@ -1074,7 +1075,8 @@ const currentStrategicImportCycleId = computed(() => {
   }
 
   const cycle = timeContext.cycles.find(item => Number(item.year) === timeContext.currentYear) as
-    { cycleId?: number | string; id?: number | string } | undefined
+    | { cycleId?: number | string; id?: number | string }
+    | undefined
   const numericCycleId = Number(cycle?.cycleId ?? cycle?.id)
   return Number.isFinite(numericCycleId) && numericCycleId > 0 ? numericCycleId : null
 })
@@ -1117,6 +1119,18 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
 
 <template>
   <div class="strategic-task-container page-fade-enter">
+    <!-- 2026-11-05（战略部直发学院指标）：职能部门对本页只读 → 顶部只读提示。
+         判定用**真实登录角色**（不能用视角角色，否则战略部切视角会被误判成只读）。 -->
+    <el-alert
+      v-if="!canWriteStrategicTask"
+      type="info"
+      :closable="false"
+      show-icon
+      style="margin: 12px 16px"
+    >
+      当前角色对战略任务管理页仅可查看，不能新增、编辑、发起异动或下发撤回
+    </el-alert>
+
     <!-- 侧边栏遮罩层 -->
     <div class="sidebar-backdrop"></div>
 
@@ -1290,7 +1304,13 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             <el-icon><Download /></el-icon>
             导出
           </el-button>
-          <el-button size="small" :icon="Upload" @click="openStrategicImportDialog">
+          <el-button
+            size="small"
+            :icon="Upload"
+            :disabled="!canWriteStrategicTask"
+            :title="canWriteStrategicTask ? '' : '当前角色仅可查看，不能导入指标'"
+            @click="openStrategicImportDialog"
+          >
             导入
           </el-button>
           <!-- 2026-10-21 用户定案：全部攒改一起上报；按钮就叫「发起异动」 -->

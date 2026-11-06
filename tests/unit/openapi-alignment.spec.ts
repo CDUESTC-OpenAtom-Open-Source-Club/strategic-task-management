@@ -86,8 +86,13 @@ describe('OpenAPI alignment guard', () => {
   })
 
   it('runtime source request paths should match OpenAPI or explicit compatibility whitelist', () => {
+    // 2026-11-05 Windows 兼容修复：原来用单引号包裹 glob（-g '!**/*.md'）。
+    // execSync 在 Windows 走 cmd.exe，cmd **不剥离单引号**，rg 会收到带引号的字面量
+    // '!**/*.md' → 匹配不到任何文件 → rg 退出码 1 且无输出 → execSync 抛错，
+    // 该用例在 Windows 上从来就没通过过（POSIX shell 会剥离单引号，故只在 Linux/macOS 有效）。
+    // 改用双引号后 cmd 与 POSIX 都会剥离，两边都能跑。
     const files = execSync(
-      "rg --files src -g '!**/*.md' -g '!**/*.test.*' -g '!**/*.spec.*' -g '!**/back.back'",
+      'rg --files src -g "!**/*.md" -g "!**/*.test.*" -g "!**/*.spec.*" -g "!**/back.back"',
       { cwd: repoRoot }
     )
       .toString()

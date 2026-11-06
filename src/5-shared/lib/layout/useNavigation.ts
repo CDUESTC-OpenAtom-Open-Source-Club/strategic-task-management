@@ -27,11 +27,16 @@ export interface TabConfig {
 const ROLE_BASED_TABS: Record<UserRole, TabConfig[]> = {
   strategic_dept: [
     { id: 'dashboard', label: '数据看板', icon: DataAnalysis, path: '/dashboard' },
-    { id: 'strategic', label: '战略任务管理', icon: List, path: '/strategic-tasks' }
+    { id: 'strategic', label: '战略任务管理', icon: List, path: '/strategic-tasks' },
+    // 2026-11-05：指标下发的操作能力整体移交战略发展部 → tab 从 functional_dept 组移入本组
+    { id: 'distribution', label: '指标下发与审批', icon: Promotion, path: '/distribution' }
   ],
   functional_dept: [
     { id: 'dashboard', label: '数据看板', icon: DataAnalysis, path: '/dashboard' },
     { id: 'indicators', label: '指标填报', icon: Edit, path: '/indicators' },
+    // 2026-11-05（战略部直发学院指标）：下发的**操作能力**移交战略发展部，但本页仍是
+    // 职能部门「查看历史下发 + 撤回自己在审计划」的唯一入口——撤回按钮只存在于本页。
+    // 页面内按登录角色只读化（写操作仅战略部），因此保留 tab 不会给出新的写权限。
     { id: 'distribution', label: '指标下发与审批', icon: Promotion, path: '/distribution' }
   ],
   secondary_college: [
@@ -40,17 +45,42 @@ const ROLE_BASED_TABS: Record<UserRole, TabConfig[]> = {
   ]
 }
 
-export function useNavigation(viewingRole: ComputedRef<UserRole | null>) {
+export function useNavigation(
+  viewingRole: ComputedRef<UserRole | null>,
+  loginRole?: ComputedRef<UserRole | null>
+) {
   const router = useRouter()
   const route = useRoute()
 
-  // 根据当前视角角色获取对应的标签页
+  // 标签页 = 「登录角色组」∪「视角角色组」（按 id 去重，登录角色组在前）
+  //
+  // 2026-11-05（学院指标直发改造）：战略发展部的「指标下发」能力整体承接了职能部门原
+  // 「指标分发」页的操作，但战略部用户可以用头部部门切换器切到职能部门 / 学院视角。
+  // 若只按视角角色分组，战略部一切换视角就会同时失去「战略任务管理」与「指标下发与审批」
+  // 两个入口 —— 也就是「职能部门的操作能力补充给战略部」这条需求在切视角后落空。
+  // 因此改为取两组并集：登录角色决定「这个账号拥有哪些页面」（放在前面，位置稳定，
+  // 切回本部门视角时顺序不变）；视角角色只额外补充「当前视角下要看哪些页面」（追加在后面）。
+  //
+  // 非战略部用户的 viewingRole 恒等于其登录角色（见 useDepartmentSwitcher.ts:51-57），
+  // 并集结果与改造前完全一致 → 职能部门与学院视角零变化。
   const tabs = computed<TabConfig[]>(() => {
     const role = viewingRole.value
     if (!role) {
       return []
     }
-    return ROLE_BASED_TABS[role] || []
+    const login = loginRole?.value
+    if (!login || login === role) {
+      return ROLE_BASED_TABS[role] || []
+    }
+    const merged: TabConfig[] = [...(ROLE_BASED_TABS[login] || [])]
+    const existingIds = new Set(merged.map(tab => tab.id))
+    for (const tab of ROLE_BASED_TABS[role] || []) {
+      if (!existingIds.has(tab.id)) {
+        existingIds.add(tab.id)
+        merged.push(tab)
+      }
+    }
+    return merged
   })
 
   // 当前激活的tab基于路由

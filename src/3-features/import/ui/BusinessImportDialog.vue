@@ -437,7 +437,9 @@ watch(
           <strong>{{ targetOrgName || '未选择' }}</strong>
         </div>
         <div v-if="!isStrategicImport">
-          <span class="summary-label">来源职能部门</span>
+          <!-- 2026-11-05：来源方不再固定为职能部门（学院指标下发现由战略发展部统一发起），
+               文案改为中性的「来源部门」，实际取值仍按真实数据显示 -->
+          <span class="summary-label">来源部门</span>
           <strong>{{ sourceOrgName || '当前账号部门' }}</strong>
         </div>
         <div>

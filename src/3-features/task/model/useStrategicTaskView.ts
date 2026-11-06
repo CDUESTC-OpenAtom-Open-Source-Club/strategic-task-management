@@ -27,6 +27,11 @@ import { useAuthStore } from '@/features/auth/model/store'
 import { useTimeContextStore } from '@/shared/lib/timeContext'
 import { useOrgStore } from '@/features/organization/model/store'
 import { usePermission } from '@/5-shared/lib/permissions'
+import {
+  canOperateStrategicTaskPage,
+  isDispatchOwnerVisible,
+  STRATEGIC_DEPT_ROLE
+} from '@/5-shared/lib/permissions/strategyDispatchAccess'
 import AppAvatar from '@/shared/ui/avatar/AppAvatar.vue'
 import { logger } from '@/shared/lib/utils/logger'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
@@ -145,6 +150,21 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const isReadOnly = computed(() => timeContext.isReadOnly)
 
   /**
+   * 2026-11-05（战略部直发学院指标）：真实登录角色 vs 视角角色。
+   *
+   * - 登录角色（authStore.userRole）：恒为账号真实角色 → 判断「能不能操作」只用它。
+   * - 视角角色（props.selectedRole / viewingRole）：战略部切部门视角时会变 →
+   *   只用于判断「数据属于哪个部门」。
+   *
+   * 改造后：职能部门对战略任务页**只读**（新增行/双击编辑/发起异动/发起下发/撤回全禁用）；
+   * 战略部保持原有全部能力。
+   */
+  const isStrategicDeptLogin = computed(() => authStore.userRole === STRATEGIC_DEPT_ROLE)
+
+  /** 本页是否允许写操作（仅战略部） */
+  const canWriteStrategicTask = computed(() => canOperateStrategicTaskPage(authStore.userRole))
+
+  /**
    * 编辑权只属于填报人（2026-10-21 用户定案）。
    *
    * 口径：从草稿计划到已下发计划，能改数据的始终只有填报人——草稿阶段是他填报，
@@ -163,6 +183,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   const canEdit = computed(() => {
     if (isReadOnly.value) {
+      return false
+    }
+    // 2026-11-05：职能部门登录时本页只读——新增行/双击编辑/发起异动全部禁用。
+    // 判定用**真实登录角色**（authStore.userRole），不能用视角角色，
+    // 否则战略部切到职能部门视角会被误锁成只读。
+    if (!canWriteStrategicTask.value) {
       return false
     }
     return isReporter.value
@@ -308,6 +334,21 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
     return departmentNameIdMap.value.get(normalized) ?? null
   }
+
+  /**
+   * 战略发展部组织 ID（org 35）：改造后学院指标统一由战略发展部下发，
+   * 学院 tab 的 owner 口径在战略部视角下取它（职能部门视角仍取当前选中部门）。
+   */
+  const strategicDeptOrgId = computed(() => {
+    const byName = resolveDepartmentIdByName(orgStore.getStrategicDeptName())
+    if (byName) {
+      return byName
+    }
+    return 35
+  })
+
+  /** 战略发展部名称（owner 口径比对用） */
+  const strategicDeptName = computed(() => orgStore.getStrategicDeptName())
 
   const ensureInitialSelectedDepartment = (departments: string[]): void => {
     if (departments.length === 0 || selectedDepartment.value) {
@@ -1439,12 +1480,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       options.collegeScope === true
         ? Number(collegeScope?.orgId ?? NaN)
         : Number(currentDepartmentOrgId.value ?? NaN)
-    if (!(
-      Number.isFinite(planId) &&
-      planId > 0 &&
-      Number.isFinite(reportOrgId) &&
-      reportOrgId > 0
-    )) {
+    if (
+      !(Number.isFinite(planId) && planId > 0 && Number.isFinite(reportOrgId) && reportOrgId > 0)
+    ) {
       currentPlanReportSummary.value = null
       latestPlanReportSummary.value = null
       return
@@ -2276,7 +2314,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         return
       }
       retainedRouteApprovalEntityType.value = routeApprovalEntityType.value as
-        'PLAN' | 'PLAN_REPORT' | undefined
+        | 'PLAN'
+        | 'PLAN_REPORT'
+        | undefined
       retainedRouteApprovalEntityId.value = routeApprovalEntityId.value
       try {
         await syncSelectedDepartmentFromRoute()
@@ -2469,6 +2509,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const distributeButtonDisabledReason = computed(() => {
     if (isReadOnly.value) {
       return '历史快照为只读状态'
+    }
+
+    // 2026-11-05：职能部门登录时本页只读 → 发起下发/撤回/撤回异动一律禁用。
+    // 判定用**真实登录角色**，不能用视角角色（战略部切视角后仍要可操作）。
+    if (!canWriteStrategicTask.value) {
+      return '当前角色仅可查看，不能发起下发或撤回'
     }
 
     // 2026-10-31 P-05：异动在审且当前用户为发起人（未过撤回窗口）时撤回恒可点，
@@ -3174,12 +3220,16 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 2026-10-19 修复（二级学院链路组织错配）：二级学院表展示的是「当前职能部门 → 选中学院」
   // 的上报，报告挂在 FUNC_TO_COLLEGE 计划（如 纪委办→计算机学院 403757）下，
   // 与左侧选中职能部门的 STRAT_TO_FUNC 计划不同。解析失败时返回 null（宁可空，不串数据）。
+  // 2026-11-05（战略部直发学院指标）：FUNC_TO_COLLEGE 计划的创建方口径按登录角色分流——
+  // 战略部登录 → 创建方是战略发展部（org 35）；职能部门登录 → 仍是当前选中职能部门（零变化）。
+  // 仍然是**严格等值**匹配（不放开为「任意 createdByOrgId」），宁可空，不串数据。
   const resolveSelectedCollegeReportScope = (): { planId: number; orgId: number } | null => {
     const collegeOrgId = resolveDepartmentIdByName(selectedCollege.value)
     const funcOrgId = resolveDepartmentIdByName(selectedDepartment.value)
     if (!collegeOrgId || !funcOrgId) {
       return null
     }
+    const creatorOrgId = isStrategicDeptLogin.value ? strategicDeptOrgId.value : funcOrgId
     const planCombination = plan => {
       const planAny = plan as Record<string, unknown>
       const level = String(planAny.planLevel ?? planAny.plan_level ?? '')
@@ -3189,7 +3239,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         match:
           level === 'FUNC_TO_COLLEGE' &&
           Number(planAny.targetOrgId ?? planAny.orgId ?? NaN) === collegeOrgId &&
-          Number(planAny.createdByOrgId ?? planAny.created_by_org_id ?? NaN) === funcOrgId,
+          Number(planAny.createdByOrgId ?? planAny.created_by_org_id ?? NaN) === creatorOrgId,
         year: resolvePlanYear(planAny)
       }
     }
@@ -3614,10 +3664,15 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
    * 子指标 ownerDept=职能部门、responsibleDept=学院。
    * 因此「当前职能部门可下发给该学院的核心指标」= 无父指标 + responsibleDept=当前职能部门。
    * 学院只作为接收方（targetOrgId），不参与父指标筛选。
+   *
+   * 2026-11-05（战略部直发学院指标）：口径按**登录角色**分流——
+   * - 战略部登录：父级核心指标 = ownerDept=战略发展部 的那一批（「战略发展部 → 职能部门」），
+   *   与左侧选中的职能部门无关（战略部可挂到任一核心指标下）；
+   * - 职能部门登录：沿用原口径（核心指标责任部门 == 当前选中职能部门），零变化。
    */
   const collegeParentIndicatorOptions = computed(() => {
     const ownerDept = normalizeDepartmentName(selectedDepartment.value || '')
-    if (!ownerDept) {
+    if (!isStrategicDeptLogin.value && !ownerDept) {
       return []
     }
     const seen = new Set<string>()
@@ -3630,14 +3685,24 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         targetDepartment?: string
         targetOrgName?: string
         responsibleDept?: string
+        ownerDept?: string
       }
-      const deptName = normalizeDepartmentName(
-        String(
-          candidate.targetDepartment ?? candidate.targetOrgName ?? candidate.responsibleDept ?? ''
+      if (isStrategicDeptLogin.value) {
+        if (
+          normalizeDepartmentName(candidate.ownerDept) !==
+          normalizeDepartmentName(strategicDeptName.value)
+        ) {
+          return
+        }
+      } else {
+        const deptName = normalizeDepartmentName(
+          String(
+            candidate.targetDepartment ?? candidate.targetOrgName ?? candidate.responsibleDept ?? ''
+          )
         )
-      )
-      if (deptName !== ownerDept && !deptName.includes(ownerDept)) {
-        return
+        if (deptName !== ownerDept && !deptName.includes(ownerDept)) {
+          return
+        }
       }
       const key = String(item.id)
       if (seen.has(key)) {
@@ -3669,10 +3734,16 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       ElMessage.warning('关联的核心指标无效')
       return
     }
-    const ownerOrgId = resolveDepartmentIdByName(selectedDepartment.value)
+    const ownerOrgId = isStrategicDeptLogin.value
+      ? strategicDeptOrgId.value
+      : resolveDepartmentIdByName(selectedDepartment.value)
     const targetOrgId = resolveDepartmentIdByName(selectedCollege.value)
     if (!ownerOrgId) {
-      ElMessage.warning(`无法解析当前职能部门：${selectedDepartment.value}`)
+      ElMessage.warning(
+        isStrategicDeptLogin.value
+          ? '无法解析战略发展部组织'
+          : `无法解析当前职能部门：${selectedDepartment.value}`
+      )
       return
     }
     if (!targetOrgId) {
@@ -5201,6 +5272,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const selectedCollege = ref('')
 
   // 当前职能部门（职能部门 tab 左侧选中项）下发给学院的全部目标学院
+  // 2026-11-05：owner 口径按登录角色分流——战略部登录 → 「本下发方 + 存量兼容」
+  // （战略发展部下发的 + 职能部门历史存量的学院都要能看到）；职能部门登录 → 口径不变。
   const collegeDepartmentsScoped = computed(() => {
     const allColleges = collegeDepartments.value
     const ownerDept = normalizeDepartmentName(selectedDepartment.value || '')
@@ -5209,7 +5282,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
     const scoped = new Set<string>()
     for (const item of normalizedIndicators.value) {
-      if (item.ownerDept !== ownerDept) {
+      const ownerMatches = item.ownerDept === ownerDept
+      if (
+        !isDispatchOwnerVisible({
+          loginRole: authStore.userRole,
+          ownerMatchesCurrentDept: ownerMatches
+        })
+      ) {
         continue
       }
       const candidate = item as {
@@ -5265,7 +5344,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     return normalizedIndicators.value
       .map(item => applyReportDetailOverlayToRow(item))
       .filter(item => {
-        if (ownerDept && item.ownerDept !== ownerDept) {
+        // 2026-11-05：owner 口径按登录角色分流（战略部 → 本下发方 + 存量兼容；职能部门 → 不变）
+        const ownerMatches = !ownerDept || item.ownerDept === ownerDept
+        if (
+          !isDispatchOwnerVisible({
+            loginRole: authStore.userRole,
+            ownerMatchesCurrentDept: ownerMatches
+          })
+        ) {
           return false
         }
         const candidate = item as {
@@ -7431,6 +7517,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     canDistribute,
     canEdit,
     canEditIndicators,
+    canWriteStrategicTask,
+    isStrategicDeptLogin,
     canWithdrawPlan,
     cancelAdd,
     cancelEdit,
