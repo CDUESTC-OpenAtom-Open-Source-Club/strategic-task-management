@@ -30,6 +30,7 @@ import { usePermission } from '@/5-shared/lib/permissions'
 import {
   canOperateStrategicTaskPage,
   isDispatchOwnerVisible,
+  resolveRowOwnerDept as resolveRowOwnerDeptPure,
   STRATEGIC_DEPT_ROLE
 } from '@/5-shared/lib/permissions/strategyDispatchAccess'
 import AppAvatar from '@/shared/ui/avatar/AppAvatar.vue'
@@ -349,6 +350,46 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   /** 战略发展部名称（owner 口径比对用） */
   const strategicDeptName = computed(() => orgStore.getStrategicDeptName())
+
+  /**
+   * 解析一行指标的「归属部门」（页面按所选部门下钻时用）。
+   *
+   * 2026-11-05（codex P2-5）：改造后学院子指标由战略发展部下发，其 ownerDept = 战略发展部，
+   * 但它在业务上归属于「其父级核心指标所下发的那个职能部门」。若直接按 ownerDept 下钻，
+   * 战略部在学院 tab 会把两个职能部门的历史行混在一起，页面「按所选部门下钻」失效，
+   * 且行可能在错误上下文被操作。
+   *
+   * 口径：
+   * - 存量行（owner = 职能部门）→ 归属部门 = ownerDept（保持原语义）
+   * - 战略部自有行（owner = 战略发展部）→ 归属部门 = 父级核心指标的目标部门
+   *   （父级核心指标 owner=战略部、target=职能部门，其 responsibleDept 即该职能部门）
+   * - 职能部门登录 → ownerDept 原样返回（行为零变化）
+   */
+  const resolveRowOwnerDept = (item: {
+    id?: number | string
+    ownerDept?: string
+    parentIndicatorId?: number | string
+  }): string => {
+    const ownerDept = normalizeDepartmentName(item.ownerDept || '')
+    const parentId = Number(item.parentIndicatorId ?? NaN)
+    let parentTarget = ''
+    if (Number.isFinite(parentId) && parentId > 0) {
+      const parent = normalizedIndicators.value.find(
+        candidate => Number(candidate.id ?? NaN) === parentId
+      ) as
+        | { responsibleDept?: string; targetDepartment?: string; targetOrgName?: string }
+        | undefined
+      parentTarget = normalizeDepartmentName(
+        String(parent?.responsibleDept ?? parent?.targetDepartment ?? parent?.targetOrgName ?? '')
+      )
+    }
+    return resolveRowOwnerDeptPure({
+      loginRole: authStore.userRole,
+      strategicDeptName: strategicDeptName.value,
+      rowOwnerDept: ownerDept,
+      parentTargetDept: parentTarget
+    })
+  }
 
   const ensureInitialSelectedDepartment = (departments: string[]): void => {
     if (departments.length === 0 || selectedDepartment.value) {
@@ -5282,11 +5323,18 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
     const scoped = new Set<string>()
     for (const item of normalizedIndicators.value) {
-      const ownerMatches = item.ownerDept === ownerDept
+      // 2026-11-05（codex P2-5）：可见性仍按「战略部可见全部」放宽，
+      // 但**下钻作用域**按「行的归属部门」判定 —— 存量行归属其 owner 职能部门，
+      // 战略部自有行归属其父级核心指标的目标部门。否则两个职能部门的历史行会混在一起，
+      // 页面「按左侧所选部门下钻」失效。
+      const rowOwnerDept = resolveRowOwnerDept(item)
+      if (!rowOwnerDept) {
+        continue
+      }
       if (
         !isDispatchOwnerVisible({
           loginRole: authStore.userRole,
-          ownerMatchesCurrentDept: ownerMatches
+          ownerMatchesCurrentDept: rowOwnerDept === ownerDept
         })
       ) {
         continue
@@ -5344,8 +5392,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     return normalizedIndicators.value
       .map(item => applyReportDetailOverlayToRow(item))
       .filter(item => {
-        // 2026-11-05：owner 口径按登录角色分流（战略部 → 本下发方 + 存量兼容；职能部门 → 不变）
-        const ownerMatches = !ownerDept || item.ownerDept === ownerDept
+        // 2026-11-05（codex P2-5）：可见性放宽、作用域按归属部门收紧（见 resolveRowOwnerDept）
+        const rowOwnerDept = resolveRowOwnerDept(item)
+        const ownerMatches = !ownerDept || rowOwnerDept === ownerDept
         if (
           !isDispatchOwnerVisible({
             loginRole: authStore.userRole,

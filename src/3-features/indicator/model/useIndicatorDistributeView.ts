@@ -49,7 +49,9 @@ import {
 import { buildQueryKey, invalidateQueries } from '@/shared/lib/utils/cache'
 import {
   canOperateDistributionPage,
+  canWithdrawDispatchPlan,
   canWithdrawDistributionPlan,
+  canWriteDispatchOwnedRow,
   canWriteDistributionPage,
   isDispatchOwnerVisible,
   STRATEGIC_DEPT_ROLE
@@ -527,7 +529,14 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     }
 
     const collegeOrgId = getOrgIdByDeptName(collegeName)
-    const currentOrgId = currentDepartmentOrgId.value
+    // 2026-11-05（codex P2-3）：学院下发计划的「创建方」是**下发方**，不是当前视角部门。
+    // 改造前下发方=职能部门，用 currentDepartmentOrgId（视角部门）比对恰好正确；
+    // 改造后下发方=战略部，若仍用视角部门比对，战略部切到职能部门/学院视角时会
+    // 选中遗留的职能部门计划、或一条都选不中 → 编辑能进行但提交用错 plan ID。
+    // 故：战略部登录用 dispatchOwnerOrgId（=战略部），职能部门登录保持原口径（零变化）。
+    const currentOrgId = isStrategicDeptLogin.value
+      ? dispatchOwnerOrgId.value
+      : currentDepartmentOrgId.value
 
     // 2026-10-19 缺陷修复：此处只应取「职能部门→学院」这一层级的计划。
     // 此前未校验 planLevel，当同一对部门之间同时存在 STRAT_TO_FUNC 空草稿
@@ -902,9 +911,20 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       currentCollegePlanReportSummary.value?.canWithdraw ??
       currentActiveCollegePlan.value?.canWithdraw
 
+    // 2026-11-05（codex P1-2）：撤回是「撤销自己刚提交的下发」，
+    // 战略发展部账号未必持有 ROLE_REPORTER（填报人角色）——若此处仍强制该角色，
+    // 战略部提交下发后计划进入 pending_locked，撤回按钮消失，即便后端返回
+    // canWithdraw=true 也无法撤回，审批卡死只能等他人处理。
+    // 口径：登录角色是战略发展部时放行（该页对战略部本就可操作）；
+    // 职能部门仍按原口径要求 ROLE_REPORTER（行为零变化）。
+    const canWithdrawByRole = canWithdrawDispatchPlan({
+      loginRole: loginRole.value,
+      isReporter: isCurrentUserReporter.value
+    })
+
     return (
       ['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(selectedCollegePlanUiStatus.value) &&
-      isCurrentUserReporter.value &&
+      canWithdrawByRole &&
       Boolean(canWithdraw)
     )
   })
@@ -4515,6 +4535,28 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     return 'draft'
   }
 
+  /**
+   * 该子指标是否由「本次下发方」拥有（可写）。
+   *
+   * 2026-11-05（codex P1-1）：可见性已按「战略部可见全部」放宽（isDispatchOwnerVisible），
+   * 但写闸门若只看「计划状态=draft + 指标状态=draft」，战略部就能改写/删除**职能部门 owner
+   * 的存量行** —— 而需求 4 要求存量保留为只读历史。
+   * 因此可见性放宽、写入收紧：只有归属本次下发方的行才可写。
+   *
+   * 职能部门登录时 dispatchOwnerDept 等于当前部门，本判定与改造前的
+   * 「ownerDept === 当前部门」逐字等价 → 职能部门视角零变化。
+   */
+  const isDispatchOwnedChild = (child: StrategicIndicator | undefined): boolean => {
+    if (!child) {
+      return false
+    }
+    return canWriteDispatchOwnedRow({
+      loginRole: loginRole.value,
+      rowOwnerDept: readIndicatorOwnerDept(child) || '',
+      dispatchOwnerDept: dispatchOwnerDept.value
+    })
+  }
+
   const canManageChildDraft = (child: StrategicIndicator | undefined): boolean => {
     if (!child || !canEditChild.value) {
       return false
@@ -4523,6 +4565,11 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     // 该页面按“学院维度”统一下发与撤回；
     // 一旦学院整体已进入待审批/进行中，不再允许对单条草稿指标做逐条编辑或删除。
     if (currentCollegePlanActionState.value !== 'draft') {
+      return false
+    }
+
+    // 2026-11-05（codex P1-1）：只允许改「本次下发方」的指标，其余（职能部门 owner 的存量行）只读。
+    if (!isDispatchOwnedChild(child)) {
       return false
     }
 
@@ -5045,6 +5092,10 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     currentDepartmentOrgId,
     currentDepartmentOrgIdFromTable,
     currentDepartmentPlan,
+    // 2026-11-05（codex P2-4）：导入来源必须是「本次下发方」——
+    // 后端已收紧为「来源组织必须是战略部」，若仍传视角部门，切到职能部门/学院视角时导入必被拒。
+    dispatchOwnerOrgId,
+    dispatchOwnerDept,
     currentDepartmentPlanDetails,
     currentDepartmentPlanIndicators,
     currentDept,

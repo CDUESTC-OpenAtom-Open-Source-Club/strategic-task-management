@@ -115,3 +115,80 @@ export function shouldApplyOwnerDeptFilter(params: {
   // 过滤值与任何一行都对不上 → 不过滤（避免把整页滤空）
   return params.matchedCount > 0
 }
+
+/**
+ * 一行子指标是否**由本次下发方拥有**（因而可写）。
+ *
+ * 2026-11-05（codex P1-1）：可见性已按「战略部可见全部」放宽，但写入必须收紧——
+ * 战略部不得改写/删除职能部门 owner 的存量行（需求 4：存量保留为只读历史）。
+ *
+ * - 战略部登录：只有 ownerDept === 本下发方（战略发展部）的行可写；
+ *   其余（职能部门 owner 的存量行）只读。取不到归属部门时保守拒绝。
+ * - 职能部门登录：dispatchOwnerDept === 当前部门，本判定与改造前的
+ *   「ownerDept === 当前部门」逐字等价 → 行为零变化。
+ */
+export function canWriteDispatchOwnedRow(params: {
+  loginRole: DispatchLoginRole
+  rowOwnerDept: string
+  dispatchOwnerDept: string
+}): boolean {
+  const rowOwner = String(params.rowOwnerDept || '').trim()
+  const dispatchOwner = String(params.dispatchOwnerDept || '').trim()
+  if (!rowOwner || !dispatchOwner) {
+    return false
+  }
+  if (params.loginRole === STRATEGIC_DEPT_ROLE) {
+    return rowOwner === dispatchOwner
+  }
+  // 职能部门：沿用改造前口径（归属部门 == 当前部门即可写）
+  return rowOwner === dispatchOwner
+}
+
+/**
+ * 是否允许撤回本次下发的计划。
+ *
+ * 2026-11-05（codex P1-2）：撤回是「撤销自己刚提交的下发」。战略发展部账号未必持有
+ * ROLE_REPORTER（填报人角色）——若强制该角色，战略部提交后计划进入 pending_locked，
+ * 撤回按钮消失，即便后端返回 canWithdraw=true 也无法撤回，审批卡死。
+ *
+ * - 战略部登录：放行（该页对战略部本就可操作）。
+ * - 职能部门登录：仍要求 ROLE_REPORTER（行为零变化）。
+ */
+export function canWithdrawDispatchPlan(params: {
+  loginRole: DispatchLoginRole
+  isReporter: boolean
+}): boolean {
+  if (params.loginRole === STRATEGIC_DEPT_ROLE) {
+    return true
+  }
+  return params.isReporter
+}
+
+/**
+ * 学院 tab 一行指标的「归属部门」（按所选部门下钻用）。
+ *
+ * 2026-11-05（codex P2-5）：改造后学院子指标 ownerDept = 战略发展部，但它业务上归属于
+ * 「其父级核心指标所下发的那个职能部门」。若直接按 ownerDept 下钻，战略部会把两个职能
+ * 部门的历史行混在一起，页面「按所选部门下钻」失效。
+ *
+ * - 存量行（owner = 职能部门）→ 归属部门 = ownerDept（原语义不变）
+ * - 战略部自有行（owner = 战略发展部）→ 归属部门 = 父级核心指标的目标部门
+ * - 职能部门登录 → ownerDept 原样返回（零变化）
+ */
+export function resolveRowOwnerDept(params: {
+  loginRole: DispatchLoginRole
+  strategicDeptName: string
+  rowOwnerDept: string
+  parentTargetDept: string
+}): string {
+  const owner = String(params.rowOwnerDept || '').trim()
+  const strategic = String(params.strategicDeptName || '').trim()
+  if (params.loginRole !== STRATEGIC_DEPT_ROLE) {
+    return owner
+  }
+  if (!strategic || owner !== strategic) {
+    return owner
+  }
+  const parentTarget = String(params.parentTargetDept || '').trim()
+  return parentTarget || owner
+}

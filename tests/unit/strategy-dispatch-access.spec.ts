@@ -10,10 +10,13 @@ import { describe, expect, it } from 'vitest'
 import {
   canOperateDistributionPage,
   canOperateStrategicTaskPage,
+  canWithdrawDispatchPlan,
   canWithdrawDistributionPlan,
+  canWriteDispatchOwnedRow,
   canWriteDistributionPage,
   isDispatchOwnerVisible,
   isDistributionPageReadOnly,
+  resolveRowOwnerDept,
   shouldApplyOwnerDeptFilter
 } from '@/5-shared/lib/permissions/strategyDispatchAccess'
 
@@ -108,5 +111,123 @@ describe('strategyDispatchAccess · 来源部门筛选', () => {
     expect(shouldApplyOwnerDeptFilter({ filterOwnerDept: '战略发展部', matchedCount: 0 })).toBe(
       false
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 2026-11-05（codex PR 审查 R1/R2/R5）：可见性放宽后，写闸门与作用域必须同步收紧。
+// 这三条是本次改造的系统性风险点，单独成组以免被后续改动无声破坏。
+// ---------------------------------------------------------------------------
+
+describe('strategyDispatchAccess · 行级写闸门（R1 / codex P1-1）', () => {
+  it('战略部只能写本次下发方（战略发展部）自己的行', () => {
+    expect(
+      canWriteDispatchOwnedRow({
+        loginRole: 'strategic_dept',
+        rowOwnerDept: '战略发展部',
+        dispatchOwnerDept: '战略发展部'
+      })
+    ).toBe(true)
+  })
+
+  it('战略部不能改写/删除职能部门 owner 的存量行（需求4：存量只读历史）', () => {
+    expect(
+      canWriteDispatchOwnedRow({
+        loginRole: 'strategic_dept',
+        rowOwnerDept: '继续教育部',
+        dispatchOwnerDept: '战略发展部'
+      })
+    ).toBe(false)
+  })
+
+  it('职能部门登录时口径与改造前等价（归属部门 == 当前部门即可写）', () => {
+    expect(
+      canWriteDispatchOwnedRow({
+        loginRole: 'functional_dept',
+        rowOwnerDept: '继续教育部',
+        dispatchOwnerDept: '继续教育部'
+      })
+    ).toBe(true)
+    expect(
+      canWriteDispatchOwnedRow({
+        loginRole: 'functional_dept',
+        rowOwnerDept: '计算机学院',
+        dispatchOwnerDept: '继续教育部'
+      })
+    ).toBe(false)
+  })
+
+  it('归属部门缺失时保守拒绝写入', () => {
+    expect(
+      canWriteDispatchOwnedRow({
+        loginRole: 'strategic_dept',
+        rowOwnerDept: '',
+        dispatchOwnerDept: '战略发展部'
+      })
+    ).toBe(false)
+    expect(
+      canWriteDispatchOwnedRow({
+        loginRole: 'functional_dept',
+        rowOwnerDept: '继续教育部',
+        dispatchOwnerDept: ''
+      })
+    ).toBe(false)
+  })
+})
+
+describe('strategyDispatchAccess · 撤回闸门（R5 / codex P1-2）', () => {
+  it('战略部无 ROLE_REPORTER 也能撤回自己刚提交的下发（否则审批卡死）', () => {
+    expect(canWithdrawDispatchPlan({ loginRole: 'strategic_dept', isReporter: false })).toBe(true)
+  })
+
+  it('职能部门仍必须持 ROLE_REPORTER 才能撤回（行为零变化）', () => {
+    expect(canWithdrawDispatchPlan({ loginRole: 'functional_dept', isReporter: false })).toBe(false)
+    expect(canWithdrawDispatchPlan({ loginRole: 'functional_dept', isReporter: true })).toBe(true)
+  })
+})
+
+describe('strategyDispatchAccess · 学院 tab 归属部门（R2 / codex P2-5）', () => {
+  it('存量行归属其 owner 职能部门', () => {
+    expect(
+      resolveRowOwnerDept({
+        loginRole: 'strategic_dept',
+        strategicDeptName: '战略发展部',
+        rowOwnerDept: '继续教育部',
+        parentTargetDept: '计算机学院'
+      })
+    ).toBe('继续教育部')
+  })
+
+  it('战略部自有行归属其父级核心指标的目标部门', () => {
+    expect(
+      resolveRowOwnerDept({
+        loginRole: 'strategic_dept',
+        strategicDeptName: '战略发展部',
+        rowOwnerDept: '战略发展部',
+        parentTargetDept: '继续教育部'
+      })
+    ).toBe('继续教育部')
+  })
+
+  it('父级缺失时退回 owner（不误杀）', () => {
+    expect(
+      resolveRowOwnerDept({
+        loginRole: 'strategic_dept',
+        strategicDeptName: '战略发展部',
+        rowOwnerDept: '战略发展部',
+        parentTargetDept: ''
+      })
+    ).toBe('战略发展部')
+  })
+
+  it('职能部门登录时原样返回 owner（零变化）', () => {
+    expect(
+      resolveRowOwnerDept({
+        loginRole: 'functional_dept',
+        strategicDeptName: '战略发展部',
+        rowOwnerDept: '继续教育部',
+        parentTargetDept: '计算机学院'
+      })
+    ).toBe('继续教育部')
   })
 })
