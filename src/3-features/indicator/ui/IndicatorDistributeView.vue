@@ -209,12 +209,17 @@ const {
   isCurrentUserReporter,
   isDeletingChild,
   isFunctionalDept,
+  isFunctionalDeptLogin,
   isInteractingWithCollegeSelect,
   isQualitativeIndicator,
   isSameDepartment,
   isSavingChildCell,
   isSavingIndicator,
   isStrategicDept,
+  isStrategicDeptLogin,
+  canOperateDistribution,
+  canWriteDistribution,
+  canWithdrawDistribution,
   lastEditTime,
   latestCollegePlanReportSummary,
   loadCurrentCollegePlanReportSummary,
@@ -753,7 +758,8 @@ const currentDistributionImportCycleId = computed(() => {
   }
 
   const cycle = timeContext.cycles.find(item => Number(item.year) === timeContext.currentYear) as
-    { cycleId?: number | string; id?: number | string } | undefined
+    | { cycleId?: number | string; id?: number | string }
+    | undefined
   const numericCycleId = Number(cycle?.cycleId ?? cycle?.id)
   return Number.isFinite(numericCycleId) && numericCycleId > 0 ? numericCycleId : null
 })
@@ -808,14 +814,17 @@ const handleDistributionImportCommitted = async () => {
 <template>
   <div class="distribution-view page-fade-enter">
     <!-- 只读提示 -->
+    <!-- 2026-11-05：提示按**登录角色**分文案（不再按视角角色）：
+         - 战略部：可操作，不显示只读提示；
+         - 职能部门：本页只读（学院指标下发现由战略发展部统一发起），但保留撤回。 -->
     <el-alert
-      v-if="isStrategicDept"
+      v-if="isFunctionalDeptLogin"
       type="info"
       :closable="false"
       show-icon
       style="margin-bottom: 16px"
     >
-      当前以战略发展部身份查看，数据为只读状态
+      学院指标下发现由战略发展部统一发起，本部门仅可查看历史数据
     </el-alert>
     <el-alert
       v-else-if="timeContext.isReadOnly"
@@ -830,7 +839,7 @@ const handleDistributionImportCommitted = async () => {
     <div class="distribution-export-bar">
       <el-button
         v-if="
-          isFunctionalDept &&
+          canWriteDistribution &&
           !timeContext.isReadOnly &&
           canEditChild &&
           selectedCollege &&
@@ -982,9 +991,10 @@ const handleDistributionImportCommitted = async () => {
                 <el-icon><Download /></el-icon>
                 导出
               </el-button>
-              <!-- 导入入口已恢复启用（distributionImportEnabled = true，2026-09-17 定案） -->
+              <!-- 导入入口已恢复启用（distributionImportEnabled = true，2026-09-17 定案）；
+                   2026-11-05：改造后下发起源统一为战略发展部，职能部门在本页只读 → 导入入口仅战略部可见 -->
               <el-button
-                v-if="distributionImportEnabled"
+                v-if="distributionImportEnabled && canWriteDistribution"
                 :icon="Upload"
                 @click="openDistributionImportDialog"
               >
@@ -996,7 +1006,13 @@ const handleDistributionImportCommitted = async () => {
                 - 有指标时 → 审批入口始终可见
                 - 编辑/下发按钮仅在草稿态显示
               -->
-              <template v-if="isFunctionalDept && !timeContext.isReadOnly">
+              <!--
+                2026-11-05（战略部直发学院指标）：闸门由视角角色改为**登录角色**——
+                - 战略部：可新增/编辑/发起下发审批（写操作由 canEditChild 把关）；
+                - 职能部门：本页只读（canEditChild 恒 false → 新增/下发按钮不出现），
+                  但「撤回」保留——职能部门历史上发起的在审计划要能撤回。
+              -->
+              <template v-if="canOperateDistribution && !timeContext.isReadOnly">
                 <template v-if="collegeOverallStatus.label === '暂无指标' && canEditChild">
                   <el-button type="primary" @click="openAddIndicatorForm">
                     <el-icon><Plus /></el-icon>
@@ -1044,7 +1060,7 @@ const handleDistributionImportCommitted = async () => {
                       {{ distributionSubmitButtonText }}
                     </el-button>
                   </template>
-                  <template v-else-if="withdrawButtonVisible">
+                  <template v-else-if="canWithdrawDistribution && withdrawButtonVisible">
                     <el-button
                       :type="withdrawButtonType"
                       :loading="isBatchDistributing"
@@ -1697,8 +1713,8 @@ const handleDistributionImportCommitted = async () => {
       type="distribution"
       :target-org-id="currentDistributionImportOrgId"
       :target-org-name="selectedCollege"
-      :source-org-id="currentDepartmentOrgId"
-      :source-org-name="currentDept"
+      :source-org-id="dispatchOwnerOrgId"
+      :source-org-name="dispatchOwnerDept"
       :cycle-id="currentDistributionImportCycleId"
       :parent-indicators="availableParentIndicators"
       @committed="handleDistributionImportCommitted"
