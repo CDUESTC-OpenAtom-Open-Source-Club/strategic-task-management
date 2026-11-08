@@ -1,33 +1,30 @@
 import { describe, expect, it } from 'vitest'
-import {
-  buildImportTemplateSheet,
-  getImportTemplateGuide,
-  type ImportTemplateParentSeed
-} from '../importTemplate'
+import { buildImportTemplateSheet, getImportTemplateGuide } from '../importTemplate'
 
-describe('getImportTemplateGuide 学院模板加「任务类型」列（2026-10-31 终版表头加列定案）', () => {
-  it('学院模板 9 列：任务类型位于学院之后、核心指标之前', () => {
+describe('getImportTemplateGuide 学院模板（2026-11-08 单层口径：无父级 + 归口职能部门）', () => {
+  it('学院模板 8 列：不再有核心指标/核心指标类型，末尾是归口职能部门', () => {
     const guide = getImportTemplateGuide('distribution')
 
     expect(guide.columns.map(column => column.label)).toEqual([
       '序号',
       '学院',
       '任务类型',
-      '核心指标',
-      '核心指标类型',
-      '子指标名称',
+      '指标名称',
       '指标类型',
       '权重（可填 10 / 10% / 0.1）',
-      '下发备注'
+      '下发备注',
+      '归口职能部门'
     ])
   })
 
-  it('学院模板合并口径：学院列整列合并（mergeAll），任务类型随组合并（mergeGroup）', () => {
+  it('学院模板合并口径：只有学院列整列合并（mergeAll），无任何随组列', () => {
     const guide = getImportTemplateGuide('distribution')
 
     expect(guide.columns.find(column => column.key === 'college')?.mergeAll).toBe(true)
     expect(guide.columns.find(column => column.key === 'college')?.mergeGroup).toBeFalsy()
-    expect(guide.columns.find(column => column.key === 'taskType')?.mergeGroup).toBe(true)
+    // 2026-11-08（单层口径）：没有「组」了，任务类型/序号都不再随组合并
+    expect(guide.columns.find(column => column.key === 'taskType')?.mergeGroup).toBeFalsy()
+    expect(guide.columns.find(column => column.key === 'serial')?.mergeGroup).toBeFalsy()
   })
 
   it('职能部门模板合并口径：部门列整列合并（mergeAll），战略任务/任务类型随组合并', () => {
@@ -40,19 +37,17 @@ describe('getImportTemplateGuide 学院模板加「任务类型」列（2026-10-
   })
 })
 
-describe('buildImportTemplateSheet 学院模板（任务类型列 + 学院整列合并）', () => {
-  it('任务类型随组竖向合并：组锚点 rowSpan=组行数、从属格 null', () => {
+describe('buildImportTemplateSheet 学院模板（单层口径：无父级 + 学院整列合并）', () => {
+  it('任务类型不再随组竖向合并：每行各自携带自己的任务类型', () => {
     const sheet = buildImportTemplateSheet('distribution')
 
-    expect(sheet.rows.length).toBe(5)
+    // 2026-11-08（单层口径）：学院模板的 3 条示例是独立指标，不再有「组」，
+    // 序号/任务类型都不做组内合并
+    expect(sheet.rows.length).toBe(3)
     const taskTypeColumn = sheet.columns[2]
-    // 组 1（前 3 行，基础性）：锚点 rowSpan=3，从属格 null
-    expect(taskTypeColumn.getValue(sheet.rows[0], 0)).toMatchObject({ value: '基础性', rowSpan: 3 })
-    expect(taskTypeColumn.getValue(sheet.rows[1], 1)).toBeNull()
-    expect(taskTypeColumn.getValue(sheet.rows[2], 2)).toBeNull()
-    // 组 2（后 2 行，发展性）：锚点 rowSpan=2，从属格 null
-    expect(taskTypeColumn.getValue(sheet.rows[3], 3)).toMatchObject({ value: '发展性', rowSpan: 2 })
-    expect(taskTypeColumn.getValue(sheet.rows[4], 4)).toBeNull()
+    expect(taskTypeColumn.getValue(sheet.rows[0], 0)).toBe('基础性')
+    expect(taskTypeColumn.getValue(sheet.rows[1], 1)).toBe('基础性')
+    expect(taskTypeColumn.getValue(sheet.rows[2], 2)).toBe('发展性')
   })
 
   it('学院列整列合并：首行 rowSpan=全部数据行，其余行 null', () => {
@@ -61,39 +56,21 @@ describe('buildImportTemplateSheet 学院模板（任务类型列 + 学院整列
     const collegeColumn = sheet.columns[1]
     expect(collegeColumn.getValue(sheet.rows[0], 0)).toMatchObject({
       value: '计算机学院',
-      rowSpan: 5
+      rowSpan: 3
     })
     for (let index = 1; index < sheet.rows.length; index += 1) {
       expect(collegeColumn.getValue(sheet.rows[index], index)).toBeNull()
     }
   })
 
-  it('模板下载预填（parentSeeds）：任务类型按父级所属任务预填进「任务类型」列', () => {
-    const parentSeeds: ImportTemplateParentSeed[] = [
-      {
-        parentIndicator: '完善课程建设与专业评估机制',
-        college: '工学院',
-        parentIndicatorType: '定性',
-        taskType: '基础性'
-      },
-      {
-        parentIndicator: '让我出说说花花。',
-        college: '工学院',
-        parentIndicatorType: '定量',
-        taskType: '发展性'
-      }
-    ]
-    const sheet = buildImportTemplateSheet('distribution', parentSeeds)
+  it('单层口径：表头不含任何父级列，含「归口职能部门」', () => {
+    const sheet = buildImportTemplateSheet('distribution')
+    const headers = sheet.columns.map(column => column.header)
 
-    expect(sheet.rows).toHaveLength(2)
-    expect(sheet.rows[0]).toMatchObject({
-      serial: '1',
-      college: '工学院',
-      taskType: '基础性',
-      parentIndicator: '完善课程建设与专业评估机制',
-      parentIndicatorType: '定性'
-    })
-    expect(sheet.rows[1].taskType).toBe('发展性')
+    expect(headers).not.toContain('核心指标')
+    expect(headers).not.toContain('核心指标类型')
+    expect(headers).toContain('归口职能部门')
+    expect(headers).toContain('任务类型')
   })
 })
 

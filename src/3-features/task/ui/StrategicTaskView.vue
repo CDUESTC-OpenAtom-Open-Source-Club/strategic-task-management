@@ -24,7 +24,9 @@ import {
   ArrowLeftBold,
   Check,
   Loading,
-  Upload
+  Upload,
+  // 2026-11-08（单层下发）：学院页签「发起下发审批」按钮图标
+  Promotion
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { logger } from '@/shared/lib/utils/logger'
@@ -486,11 +488,21 @@ const activeTaskTabName = ref<'functional' | 'college'>('functional')
  * <p>战略部登录：沿用 collegeDispatchDisabledReason（未选学院 / 周期不可用时置灰）；
  * 计划缺失属于业务性拒绝，交给点击时的 toast（与上一版组件口径一致）。</p>
  */
-const collegeTabDistributeDisabledReason = computed(() =>
-  isStrategicDeptLogin.value
-    ? collegeDispatchDisabledReason.value
-    : '职能部门只审批学院上报，不再下发'
-)
+const collegeTabDistributeDisabledReason = computed(() => {
+  if (!isStrategicDeptLogin.value) {
+    return '职能部门只审批学院上报，不再下发'
+  }
+  // 2026-11-08（审查 blocking 修复）：必须先并入既有只读守卫。
+  // 原实现只判断「未选学院 / 周期不可用」，但历史快照年份（isReadOnly=true）同样能取到
+  // cycleId 与匹配到计划 → 历史只读年份仍能发起下发审批，等于绕过只读。
+  if (isReadOnly.value) {
+    return '历史快照为只读状态'
+  }
+  if (!canWriteStrategicTask.value) {
+    return '当前角色仅可查看，不能发起下发审批'
+  }
+  return collegeDispatchDisabledReason.value
+})
 
 /**
  * 2026-11-08（单层下发）：工具栏「下发/撤回」按钮的点击分流。
@@ -500,9 +512,17 @@ const collegeTabDistributeDisabledReason = computed(() =>
  * （与学院上报作用域同源），流程码固定 PLAN_DISPATCH_STRATEGY。</p>
  * <p>注意：本函数体只在点击时求值，因此引用下方声明的 model 函数不会有 TDZ 风险。</p>
  */
+// 2026-11-08（审查 blocking 修复）：提交防重。
+// 发起下发审批会推进计划状态并生成待办，提交后到数据刷新完成之间若允许再点，
+// 会二次提交同一计划（上一版 CollegeDispatchActions 有 submitting 标记，迁移时漏了）。
+const collegeDispatchSubmitting = ref(false)
+
 const handleDistributeOrWithdrawClick = async () => {
   if (activeTaskTabName.value !== 'college') {
     handleDistributeOrWithdraw()
+    return
+  }
+  if (collegeDispatchSubmitting.value) {
     return
   }
   if (collegeTabDistributeDisabledReason.value) {
@@ -524,6 +544,7 @@ const handleDistributeOrWithdrawClick = async () => {
   } catch {
     return
   }
+  collegeDispatchSubmitting.value = true
   try {
     const response = await planApi.submitPlanForApproval(planId, {
       workflowCode: 'PLAN_DISPATCH_STRATEGY'
@@ -536,6 +557,8 @@ const handleDistributeOrWithdrawClick = async () => {
     }
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '发起下发审批失败')
+  } finally {
+    collegeDispatchSubmitting.value = false
   }
 }
 
@@ -1475,11 +1498,12 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <!-- 2026-11-08（单层下发）：同一按钮按页签分流——职能部门页签沿用计划的
                下发/撤回；二级学院页签由战略部「发起下发审批」，职能部门置灰只审批上报。 -->
           <el-button
-            :type="distributeButtonType"
+            :type="activeTaskTabName === 'college' ? 'primary' : distributeButtonType"
             size="small"
+            :loading="activeTaskTabName === 'college' ? collegeDispatchSubmitting : undefined"
             :disabled="
               activeTaskTabName === 'college'
-                ? Boolean(collegeTabDistributeDisabledReason)
+                ? Boolean(collegeTabDistributeDisabledReason) || collegeDispatchSubmitting
                 : distributeButtonDisabled
             "
             :title="
@@ -1489,8 +1513,14 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             "
             @click.stop="handleDistributeOrWithdrawClick"
           >
-            <el-icon><component :is="distributeButtonIcon" /></el-icon>
-            {{ distributeButtonText }}
+            <!-- 2026-11-08（审查 blocking 修复）：学院页签的文案/类型/图标必须独立。
+                 原实现沿用 distributeButtonText 等「职能部门计划相位」的取值，
+                 战略部先在职能部门页签选中一个已下发/审批中的部门再切到学院页签时，
+                 按钮会显示「撤回」「撤回异动」，点下去却是提交下发审批 → 误操作且可能重复提交。 -->
+            <el-icon
+              ><component :is="activeTaskTabName === 'college' ? Promotion : distributeButtonIcon"
+            /></el-icon>
+            {{ activeTaskTabName === 'college' ? '发起下发审批' : distributeButtonText }}
           </el-button>
           <div class="approval-entry-wrapper">
             <!-- 审批进度按钮（带徽章） -->
