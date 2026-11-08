@@ -79,6 +79,8 @@ import {
 } from '@/features/task/lib/warning-level'
 import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
 import type { ImportCommitResponse } from '@/features/import/api/businessImport'
+// 2026-11-05（issue #96 · 1.3）：学院下发操作区（导入 / 下载模板 / 导出 / 发起下发审批）
+import CollegeDispatchActions from '@/features/task/ui/CollegeDispatchActions.vue'
 
 const props = defineProps<StrategicTaskViewProps>()
 const strategicStore = useStrategicStore()
@@ -221,6 +223,12 @@ const {
   collegeAddMode,
   collegeParentIndicatorOptions,
   indicatorById,
+  // 2026-11-05（issue #96 · 1.3）：学院下发操作区所需的 model 数据
+  isStrategicDeptLogin,
+  strategicDeptOrgId,
+  strategicDeptName,
+  selectedCollegeDispatchPlanId,
+  selectedCollegeDispatchParentIndicators,
   collegeSpanMethod,
   getCategoryColor,
   getCategoryText,
@@ -379,6 +387,51 @@ const {
   reportHistoryOpen,
   currentDetailId
 } = useStrategicTaskView(props)
+
+// 2026-11-05（issue #96 · 1.3）：学院下发操作区（CollegeDispatchActions）的入参。
+// 单独在这里聚合，避免把「学院页签工具栏」的细节塞进 7000+ 行的 useStrategicTaskView。
+const collegeDispatchCycleId = computed(() => {
+  const cycle = timeContext.cycles.find(
+    item => Number((item as { year?: number | string }).year) === timeContext.currentYear
+  ) as { cycleId?: number | string; id?: number | string } | undefined
+  const numericCycleId = Number(cycle?.cycleId ?? cycle?.id)
+  return Number.isFinite(numericCycleId) && numericCycleId > 0 ? numericCycleId : null
+})
+
+const collegeDispatchCollegeOrgId = computed(() =>
+  selectedCollege.value ? resolveDepartmentIdByName(selectedCollege.value) : null
+)
+
+/**
+ * 学院下发操作区何时置灰。
+ *
+ * 口径：只有「未选学院 / 周期不可用」这两种前置条件不足才置灰，
+ * 业务性拒绝（无核心指标、无计划）交给点击时的 toast 与后端校验 ——
+ * 一律置灰会让用户看不出「到底缺什么」。
+ */
+const collegeDispatchDisabledReason = computed(() => {
+  if (!isStrategicDeptLogin.value) {
+    return '学院指标下发由战略发展部操作'
+  }
+  if (!selectedCollege.value) {
+    return '请先在左侧选择学院'
+  }
+  if (!collegeDispatchCycleId.value) {
+    return '当前周期信息不可用，暂不能下发'
+  }
+  return ''
+})
+
+/** 由父级核心指标 id 解析名称（导出「核心指标」列用）。 */
+const resolveCollegeParentName = (parentIndicatorId?: string | number): string => {
+  if (parentIndicatorId === undefined || parentIndicatorId === null || parentIndicatorId === '') {
+    return '-'
+  }
+  // indicatorById 的 key 可能是原始 id，也可能是字符串化后的 id（数据来源不统一），两种都试
+  const parent =
+    indicatorById.value.get(parentIndicatorId) ?? indicatorById.value.get(String(parentIndicatorId))
+  return parent?.name ? String(parent.name) : '-'
+}
 
 // 2026-10-31 用户拍板（「确认审批流程」弹窗去计划编号）：
 // ①「当前计划」行不读 currentPlan.name / taskName —— 后端占位名是「Plan 4036」式，
@@ -2606,6 +2659,22 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
               </div>
               <div class="excel-status-bar">
                 <div class="status-left">共 {{ collegeTableIndicators.length }} 条记录</div>
+                <!-- 2026-11-05（issue #96 · 1.1/1.3）：学院指标下发的操作入口迁到本页「二级学院」页签 ——
+                     战略发展部在这里完成 导入 / 下载模板 / 导出 / 发起下发审批，范围=当前所选职能部门 → 所选学院。
+                     /distribution 页的同类写功能随之取消（见 issue 1.2）。 -->
+                <CollegeDispatchActions
+                  v-if="isStrategicDeptLogin"
+                  :cycle-id="collegeDispatchCycleId"
+                  :college-name="selectedCollege"
+                  :college-org-id="collegeDispatchCollegeOrgId"
+                  :strategy-org-id="strategicDeptOrgId"
+                  :strategy-org-name="strategicDeptName"
+                  :parent-indicators="selectedCollegeDispatchParentIndicators"
+                  :rows="collegeTableIndicators"
+                  :plan-id="selectedCollegeDispatchPlanId"
+                  :disabled-reason="collegeDispatchDisabledReason"
+                  :resolve-parent-name="resolveCollegeParentName"
+                />
               </div>
 
               <!-- 2026-10-23：学院 tab 的新增子指标表单（与职能部门面板同构，仅保留子指标字段）。

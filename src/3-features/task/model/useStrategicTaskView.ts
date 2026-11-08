@@ -3300,6 +3300,18 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     return { planId: Number(matchedPlan.id), orgId: collegeOrgId }
   }
 
+  /**
+   * 2026-11-05（issue #96 · 1.3）：本学院的下发计划 id（战略部在学院页签「发起下发审批」用）。
+   *
+   * <p>口径与 resolveSelectedCollegeReportScope 一致：战略部登录 → 计划创建方是战略发展部；
+   * 职能部门登录 → 计划创建方仍是当前选中职能部门（零变化）。
+   * 找不到计划时返回 null —— 组件据此提示「当前学院还没有可提交审批的下发计划」。
+   */
+  const selectedCollegeDispatchPlanId = computed<number | null>(() => {
+    const scope = resolveSelectedCollegeReportScope()
+    return scope ? scope.planId : null
+  })
+
   // 从 Store 获取指标列表（带里程碑），按年份和部门过滤，按任务类型和战略任务分组排序
   const indicators = computed(() => {
     // 过滤当前年份的指标
@@ -3735,6 +3747,18 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         ) {
           return
         }
+        // 2026-11-05（issue #96 · 1.3）：父级锚点必须限定在「当前所选职能部门已接收的
+        // 核心指标」——下发范围是「所选职能部门 → 所选学院」，父级属于哪个职能部门就决定了
+        // 这次下发覆盖谁。若不限部门，战略部会把所有职能部门的核心指标都当成可选父级，
+        // 导入模板预填出行数失控，且子指标挂错父级。
+        const targetDeptName = normalizeDepartmentName(
+          String(
+            candidate.targetDepartment ?? candidate.targetOrgName ?? candidate.responsibleDept ?? ''
+          )
+        )
+        if (ownerDept && targetDeptName !== ownerDept && !targetDeptName.includes(ownerDept)) {
+          return
+        }
       } else {
         const deptName = normalizeDepartmentName(
           String(
@@ -3757,6 +3781,22 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       })
     })
     return options
+  })
+
+  /**
+   * 2026-11-05（issue #96 · 1.3）：所选部门已接收的核心指标（导入模板预填 + 父级锚点）。
+   *
+   * <p>collegeParentIndicatorOptions 给出的是「{id, name, taskContent}」的轻量选项，
+   * 而导入弹窗需要完整的指标对象（要带 type1 / 任务类型等列）。这里按 id 回查指标表还原。
+   *
+   * <p>声明位置在 collegeParentIndicatorOptions 之后 —— computed 虽然惰性求值，
+   * 但仍是块级作用域的 const，提前引用会踩 TDZ（见 AGENTS.md §13.1）。
+   */
+  const selectedCollegeDispatchParentIndicators = computed<StrategicIndicator[]>(() => {
+    const optionIds = new Set(collegeParentIndicatorOptions.value.map(option => String(option.id)))
+    return normalizedIndicators.value.filter(
+      item => !item.parentIndicatorId && optionIds.has(String(item.id))
+    ) as StrategicIndicator[]
   })
 
   /** 二级学院 tab 新增子指标：校验 → 调后端 createIndicator → 进待发起异动列表 */
@@ -7568,6 +7608,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     canEditIndicators,
     canWriteStrategicTask,
     isStrategicDeptLogin,
+    // 2026-11-05（issue #96 · 1.3）：学院下发操作区需要下发方（战略发展部）的 id 与名称
+    strategicDeptOrgId,
+    strategicDeptName,
     canWithdrawPlan,
     cancelAdd,
     cancelEdit,
@@ -7773,6 +7816,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     planStore,
     planUiPhase,
     preloadApprovalWorkflowDetail,
+    // 2026-11-05（issue #96 · 1.3）：学院下发操作区需要「本学院的下发计划 id」
+    // 与「所选部门的核心指标对象」（导入模板预填 + 父级锚点）。
+    selectedCollegeDispatchPlanId,
+    selectedCollegeDispatchParentIndicators,
     preloadedPlanWorkflowDetail,
     preservePrefilledTaskBindingOnce,
     primaryApprovalWorkflowEntityId,

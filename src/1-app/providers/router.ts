@@ -111,10 +111,13 @@ const routes: RouteRecordRaw[] = [
         path: 'distribution',
         name: 'Distribution',
         component: () => import('@/features/indicator/ui/IndicatorDistributeView.vue'),
-        // 2026-11-05：操作能力已移交战略发展部，但路由保留（铃铛/审批深链指向它，
-        // 删了深链会失效）；职能部门进来是只读（页内按登录角色控制，仅保留「撤回」）。
+        // 2026-11-05（issue #96 · 1.2/N1）：战略发展部不再有本页入口，路由层面同样收紧 ——
+        // 直接输 URL 也进不去（roles 不匹配会走统一的未授权重定向到首页）。
+        // 路由本身保留：职能部门的审批深链仍指向它（铃铛/待办跳转），删了深链会失效。
         meta: {
-          roles: ['strategic_dept', 'functional_dept'],
+          roles: ['functional_dept'],
+          // 按登录角色关闭：战略部即使把视角切到职能部门也进不来（见 routeAccess 注释）
+          deniedLoginRoles: ['strategic_dept'],
           title: '指标下发 - 战略指标管理系统'
         }
       },
@@ -257,6 +260,9 @@ router.beforeEach(async (to, _from, next) => {
     userRole: authStore.userRole,
     effectiveRole: authStore.effectiveRole,
     allowedRoles: Array.isArray(to.meta['roles']) ? (to.meta['roles'] as string[]) : undefined,
+    deniedLoginRoles: Array.isArray(to.meta['deniedLoginRoles'])
+      ? (to.meta['deniedLoginRoles'] as string[])
+      : undefined,
     path: to.path
   })
 

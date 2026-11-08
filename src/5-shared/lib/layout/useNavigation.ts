@@ -23,20 +23,35 @@ export interface TabConfig {
   path: string
 }
 
+/**
+ * 2026-11-05（issue #96 · 1.2）：按**登录角色**彻底隐藏的导航项。
+ *
+ * <p>为什么不能只靠 ROLE_BASED_TABS 的移除：tabs 取「登录角色组 ∪ 视角角色组」的并集，
+ * 战略发展部把顶部部门切换器切到职能部门视角后，视角组会把「指标下发与审批」并回来。
+ * 该页的写功能已全部迁到「战略任务管理 → 二级学院页签」，战略部没有理由再看到它。
+ *
+ * <p>判定用登录角色（不受视角切换影响），与路由层 deniedLoginRoles 同一口径。
+ */
+const HIDDEN_TABS_BY_LOGIN_ROLE: Partial<Record<UserRole, string[]>> = {
+  strategic_dept: ['distribution']
+}
+
 /** 基于角色的页面配置 */
 const ROLE_BASED_TABS: Record<UserRole, TabConfig[]> = {
   strategic_dept: [
     { id: 'dashboard', label: '数据看板', icon: DataAnalysis, path: '/dashboard' },
-    { id: 'strategic', label: '战略任务管理', icon: List, path: '/strategic-tasks' },
-    // 2026-11-05：指标下发的操作能力整体移交战略发展部 → tab 从 functional_dept 组移入本组
-    { id: 'distribution', label: '指标下发与审批', icon: Promotion, path: '/distribution' }
+    // 2026-11-05（issue #96 · 1.2）：战略发展部**不出现**「指标下发与审批」入口。
+    // 学院指标下发的全部操作（导入 / 下载模板 / 导出 / 发起下发审批）已迁到
+    // 「战略任务管理 → 二级学院页签」，本页对战略部已无用途。
+    { id: 'strategic', label: '战略任务管理', icon: List, path: '/strategic-tasks' }
   ],
   functional_dept: [
     { id: 'dashboard', label: '数据看板', icon: DataAnalysis, path: '/dashboard' },
     { id: 'indicators', label: '指标填报', icon: Edit, path: '/indicators' },
-    // 2026-11-05（战略部直发学院指标）：下发的**操作能力**移交战略发展部，但本页仍是
-    // 职能部门「查看历史下发 + 撤回自己在审计划」的唯一入口——撤回按钮只存在于本页。
-    // 页面内按登录角色只读化（写操作仅战略部），因此保留 tab 不会给出新的写权限。
+    // 2026-11-05（issue #96 · 1.2）：职能部门**保留**本页 —— 页面内下发相关写功能
+    // （导入 / 复制其他学院指标 / 新增指标 / 下发）已随 1.3 移植走、原地不再保留；
+    // 但仍有两个不可替代的用途：① 处理落到本部门的存量审批实例（审批抽屉）；
+    // ② 撤回自己在审的存量下发计划（撤回按钮只存在于本页）。
     { id: 'distribution', label: '指标下发与审批', icon: Promotion, path: '/distribution' }
   ],
   secondary_college: [
@@ -63,25 +78,36 @@ export function useNavigation(
   //
   // 非战略部用户的 viewingRole 恒等于其登录角色（见 useDepartmentSwitcher.ts:51-57），
   // 并集结果与改造前完全一致 → 职能部门与学院视角零变化。
+  //
+  // 2026-11-05（issue #96 · 1.2）：并集有反作用 —— 战略部把视角切到职能部门后，
+  // 视角组会把「指标下发与审批」重新并进来，等于导航限制被视角切换绕过。
+  // 因此再加一层「按登录角色彻底隐藏」的黑名单，在合并结果上统一过滤。
   const tabs = computed<TabConfig[]>(() => {
     const role = viewingRole.value
     if (!role) {
       return []
     }
     const login = loginRole?.value
-    if (!login || login === role) {
-      return ROLE_BASED_TABS[role] || []
+    const merged: TabConfig[] =
+      !login || login === role ? [...(ROLE_BASED_TABS[role] || [])] : buildMergedTabs(login, role)
+    const denied = login ? HIDDEN_TABS_BY_LOGIN_ROLE[login] : undefined
+    if (!denied?.length) {
+      return merged
     }
-    const merged: TabConfig[] = [...(ROLE_BASED_TABS[login] || [])]
-    const existingIds = new Set(merged.map(tab => tab.id))
+    return merged.filter(tab => !denied.includes(tab.id))
+  })
+
+  function buildMergedTabs(login: UserRole, role: UserRole): TabConfig[] {
+    const base: TabConfig[] = [...(ROLE_BASED_TABS[login] || [])]
+    const existingIds = new Set(base.map(tab => tab.id))
     for (const tab of ROLE_BASED_TABS[role] || []) {
       if (!existingIds.has(tab.id)) {
         existingIds.add(tab.id)
-        merged.push(tab)
+        base.push(tab)
       }
     }
-    return merged
-  })
+    return base
+  }
 
   // 当前激活的tab基于路由
   // 即使 viewingRole 暂时为 null，也能正确显示激活状态
