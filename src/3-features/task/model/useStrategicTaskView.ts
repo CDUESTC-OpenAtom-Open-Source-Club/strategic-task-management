@@ -3805,13 +3805,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       ElMessage.warning('请先在左侧选择学院')
       return
     }
+    // 2026-11-08（单层下发）：学院指标不再挂在核心指标下 —— 父级从「必填」改为「可选」。
+    // 单层结构正常新增时 parentIndicatorId 为空；保留解析是为了兼容仍带父级的存量行。
     const parentIdRaw = String(newRow.value.parentIndicatorId || '').trim()
-    if (!parentIdRaw) {
-      ElMessage.warning('请选择关联的核心指标')
-      return
-    }
-    const parentIndicatorId = Number(parentIdRaw)
-    if (!Number.isFinite(parentIndicatorId) || parentIndicatorId <= 0) {
+    const parentIndicatorId = parentIdRaw ? Number(parentIdRaw) : null
+    if (
+      parentIndicatorId !== null &&
+      (!Number.isFinite(parentIndicatorId) || parentIndicatorId <= 0)
+    ) {
       ElMessage.warning('关联的核心指标无效')
       return
     }
@@ -3831,14 +3832,22 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       ElMessage.warning(`无法解析目标学院：${selectedCollege.value}`)
       return
     }
-    const parentOption = collegeParentIndicatorOptions.value.find(o => o.id === parentIdRaw)
-    const parentRow = strategicStore.indicators.find(
-      item => String(item.id) === String(parentIndicatorId)
-    )
-    const taskId = Number(getIndicatorTaskId(parentRow as StrategicIndicator))
-    if (!Number.isFinite(taskId) || taskId <= 0) {
-      ElMessage.warning('关联的核心指标缺少有效任务，无法新增子指标')
-      return
+    const parentOption = parentIdRaw
+      ? collegeParentIndicatorOptions.value.find(o => o.id === parentIdRaw)
+      : undefined
+    // 任务 id：单层结构下没有父级可继承「战略任务 / 任务类型」，此处不再要求 taskId，
+    // 由后端按当前周期与计划归属补全；仅存量「父级 → 子指标」路径沿用父级任务。
+    let taskId: number | undefined
+    if (parentIndicatorId !== null) {
+      const parentRow = strategicStore.indicators.find(
+        item => String(item.id) === String(parentIndicatorId)
+      )
+      const resolvedTaskId = Number(getIndicatorTaskId(parentRow as StrategicIndicator))
+      if (!Number.isFinite(resolvedTaskId) || resolvedTaskId <= 0) {
+        ElMessage.warning('关联的核心指标缺少有效任务，无法新增子指标')
+        return
+      }
+      taskId = resolvedTaskId
     }
 
     const loading = ElLoading.service({
@@ -3858,7 +3867,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         progress: 0,
         year: timeContext.currentYear,
         canWithdraw: false,
-        parentIndicatorId,
+        // 单层结构：没有父级就不传（undefined 即不落 parent_indicator_id）
+        parentIndicatorId: parentIndicatorId ?? undefined,
         type: newRow.value.type1
       })
       if (!createResp.success || !createResp.data) {
@@ -5357,6 +5367,15 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // （战略发展部下发的 + 职能部门历史存量的学院都要能看到）；职能部门登录 → 口径不变。
   const collegeDepartmentsScoped = computed(() => {
     const allColleges = collegeDepartments.value
+    // 2026-11-05（issue #96 · 1.1，首次下发死锁修复）：战略发展部是**下发方**，
+    // 必须能选中「还没下发过的学院」才能发起第一次下发。
+    // 而下面的口径是「按已有下发数据反推学院列表」——首次下发前一行数据都没有，
+    // 列表恒为空 → 选不中学院 → 表格区退化成空提示 → 下发操作区根本不渲染，
+    // 形成「没下发过就永远选不到学院、选不到学院就永远没法下发」的死锁。
+    // 故战略部登录时列出全部学院；职能部门仍按原口径（只列本部门已下发的学院，零变化）。
+    if (isStrategicDeptLogin.value) {
+      return [...allColleges].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+    }
     const ownerDept = normalizeDepartmentName(selectedDepartment.value || '')
     if (!ownerDept) {
       return allColleges
@@ -6101,46 +6120,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     { immediate: true }
   )
 
-  // 二级学院 tab：核心指标列合并单元格元数据（同属一个核心指标的行首行 rowspan=组内行数）
-  const collegeSpanMetaMap = computed(() => {
-    const meta = new Map<number, { rowspan: number; colspan: number }>()
-    const rows = collegeTableIndicators.value
-    let index = 0
-    while (index < rows.length) {
-      const head = rows[index]
-      const parentKey = String(head?.parentIndicatorId ?? head?.id ?? '')
-      let end = index + 1
-      while (end < rows.length) {
-        const candidate = rows[end]
-        if (!candidate || String(candidate.parentIndicatorId ?? candidate.id ?? '') !== parentKey) {
-          break
-        }
-        end += 1
-      }
-      meta.set(index, { rowspan: end - index, colspan: 1 })
-      for (let i = index + 1; i < end; i += 1) {
-        meta.set(i, { rowspan: 0, colspan: 0 })
-      }
-      index = end
-    }
-    return meta
-  })
-
-  const collegeSpanMethod = ({
-    rowIndex,
-    columnIndex
-  }: {
-    row: Record<string, unknown>
-    column: unknown
-    rowIndex: number
-    columnIndex: number
-  }) => {
-    // 仅核心指标列（第 0 列）合并
-    if (columnIndex === 0) {
-      return collegeSpanMetaMap.value.get(rowIndex) ?? { rowspan: 1, colspan: 1 }
-    }
-    return { rowspan: 1, colspan: 1 }
-  }
+  // 2026-11-08（单层下发）：学院指标不再有父级核心指标，学院表格的「核心指标」列与其
+  // 合并单元格（collegeSpanMetaMap / collegeSpanMethod，按 parentIndicatorId 分组）一并移除。
+  // 每行自成一条学院指标，表格按行平铺即可，不再需要 span-method。
 
   const _selectTask = (index: number) => {
     currentTaskIndex.value = index
@@ -7685,7 +7667,6 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     collegeTableIndicators,
     collegeDepartmentsScoped,
     indicatorById,
-    collegeSpanMethod,
     collegeFillStatusScope,
     refreshCurrentPlanFillApprovalSummary,
     isReportApprovalInFlight,

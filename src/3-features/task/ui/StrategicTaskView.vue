@@ -79,8 +79,7 @@ import {
 } from '@/features/task/lib/warning-level'
 import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
 import type { ImportCommitResponse } from '@/features/import/api/businessImport'
-// 2026-11-05（issue #96 · 1.3）：学院下发操作区（导入 / 下载模板 / 导出 / 发起下发审批）
-import CollegeDispatchActions from '@/features/task/ui/CollegeDispatchActions.vue'
+import { planApi } from '@/features/plan/api/planApi'
 
 const props = defineProps<StrategicTaskViewProps>()
 const strategicStore = useStrategicStore()
@@ -222,14 +221,11 @@ const {
   collegeDepartmentsScoped,
   collegeAddMode,
   collegeParentIndicatorOptions,
-  indicatorById,
-  // 2026-11-05（issue #96 · 1.3）：学院下发操作区所需的 model 数据
+  // 2026-11-08（单层下发）：学院页签「导入 / 导出 / 发起下发审批」所需的 model 数据
   isStrategicDeptLogin,
   strategicDeptOrgId,
   strategicDeptName,
   selectedCollegeDispatchPlanId,
-  selectedCollegeDispatchParentIndicators,
-  collegeSpanMethod,
   getCategoryColor,
   getCategoryText,
   getDisplayedReportedProgress,
@@ -388,7 +384,7 @@ const {
   currentDetailId
 } = useStrategicTaskView(props)
 
-// 2026-11-05（issue #96 · 1.3）：学院下发操作区（CollegeDispatchActions）的入参。
+// 2026-11-08（单层下发）：学院页签「导入 / 导出 / 发起下发审批」所需的周期与组织入参。
 // 单独在这里聚合，避免把「学院页签工具栏」的细节塞进 7000+ 行的 useStrategicTaskView。
 const collegeDispatchCycleId = computed(() => {
   const cycle = timeContext.cycles.find(
@@ -422,16 +418,18 @@ const collegeDispatchDisabledReason = computed(() => {
   return ''
 })
 
-/** 由父级核心指标 id 解析名称（导出「核心指标」列用）。 */
-const resolveCollegeParentName = (parentIndicatorId?: string | number): string => {
-  if (parentIndicatorId === undefined || parentIndicatorId === null || parentIndicatorId === '') {
-    return '-'
-  }
-  // indicatorById 的 key 可能是原始 id，也可能是字符串化后的 id（数据来源不统一），两种都试
-  const parent =
-    indicatorById.value.get(parentIndicatorId) ?? indicatorById.value.get(String(parentIndicatorId))
-  return parent?.name ? String(parent.name) : '-'
-}
+/**
+ * 2026-11-08（单层下发）：二级学院页签「导入」弹窗的父级锚点。
+ *
+ * 新口径下学院指标由战略部直接下发、没有父级核心指标，故固定传空数组。
+ * 用模块级常量而不是模板里写字面量 []，避免每次渲染产生新引用触发子组件重算。
+ */
+const COLLEGE_IMPORT_PARENT_INDICATORS: Array<{
+  name?: string
+  taskContent?: string
+  type1?: string
+  type2?: string
+}> = []
 
 // 2026-10-31 用户拍板（「确认审批流程」弹窗去计划编号）：
 // ①「当前计划」行不读 currentPlan.name / taskName —— 后端占位名是「Plan 4036」式，
@@ -478,6 +476,68 @@ watch(
 )
 
 const activeTaskTabName = ref<'functional' | 'college'>('functional')
+
+/**
+ * 2026-11-08（单层下发）：二级学院页签「下发/撤回」按钮的置灰口径。
+ *
+ * <p>职能部门登录：按钮置灰并说明「只审批学院上报，不再下发」—— 新口径下学院指标的
+ * 下发方只有战略发展部，职能部门保留的只是学院上报的审批权，若仍可点会误导成
+ * 「还能下发」。</p>
+ * <p>战略部登录：沿用 collegeDispatchDisabledReason（未选学院 / 周期不可用时置灰）；
+ * 计划缺失属于业务性拒绝，交给点击时的 toast（与上一版组件口径一致）。</p>
+ */
+const collegeTabDistributeDisabledReason = computed(() =>
+  isStrategicDeptLogin.value
+    ? collegeDispatchDisabledReason.value
+    : '职能部门只审批学院上报，不再下发'
+)
+
+/**
+ * 2026-11-08（单层下发）：工具栏「下发/撤回」按钮的点击分流。
+ *
+ * <p>职能部门页签 → 原样交给 model 的 handleDistributeOrWithdraw（行为零变化）；
+ * 二级学院页签 → 战略部在此**发起下发审批**，计划取 selectedCollegeDispatchPlanId
+ * （与学院上报作用域同源），流程码固定 PLAN_DISPATCH_STRATEGY。</p>
+ * <p>注意：本函数体只在点击时求值，因此引用下方声明的 model 函数不会有 TDZ 风险。</p>
+ */
+const handleDistributeOrWithdrawClick = async () => {
+  if (activeTaskTabName.value !== 'college') {
+    handleDistributeOrWithdraw()
+    return
+  }
+  if (collegeTabDistributeDisabledReason.value) {
+    ElMessage.warning(collegeTabDistributeDisabledReason.value)
+    return
+  }
+  const planId = selectedCollegeDispatchPlanId.value
+  if (!planId) {
+    ElMessage.warning('当前学院还没有可提交审批的下发计划')
+    return
+  }
+  // 发起审批会推进计划状态并生成待办，必须让用户确认一次（文案沿用上一版学院下发操作区）
+  try {
+    await ElMessageBox.confirm(
+      `确认对「${selectedCollege.value || '当前学院'}」发起下发审批？提交后进入：战略发展部负责人 → 分管校领导。`,
+      '发起下发审批',
+      { type: 'warning', confirmButtonText: '确认发起', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  try {
+    const response = await planApi.submitPlanForApproval(planId, {
+      workflowCode: 'PLAN_DISPATCH_STRATEGY'
+    })
+    if (response.code === 200) {
+      ElMessage.success('已发起下发审批')
+      await refreshCurrentDepartmentView({ force: true })
+    } else {
+      ElMessage.error(response.message || '发起下发审批失败')
+    }
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '发起下发审批失败')
+  }
+}
 
 /**
  * 2026-10-24 用户定案：卡片视图暂无业务需求，入口从工具栏隐藏（代码保留）。
@@ -563,12 +623,26 @@ watch(activeTaskTabName, tab => {
 
 // 2026-10-13 用户定案：二级学院 tab 未选学院时的左侧入口引导（呼吸高亮 + 指向气泡），选中后消失
 // 仅当当前职能部门确实有下发学院时才引导（列表为空时引导会指向空列表，反而更困惑）
+//
+// 2026-11-05（用户反馈）：气泡在**鼠标移到左侧入口区域后立即消失**。
+// 气泡的用途是「不知道下一步该点哪里」时指路；用户已经把鼠标移到入口上，说明已经找到了，
+// 再让它一直贴在入口旁边就是挡路。呼吸高亮保留（不占位、不挡视线）。
+const collegeGuideHoverDismissed = ref(false)
+const dismissCollegeGuide = () => {
+  collegeGuideHoverDismissed.value = true
+}
 const showCollegeGuide = computed(
   () =>
     activeTaskTabName.value === 'college' &&
     !selectedCollege.value &&
+    !collegeGuideHoverDismissed.value &&
     collegeDepartmentsScoped.value.length > 0
 )
+
+// 切换页签时重置，下次进入「二级学院」页签仍会给出一次引导（否则一次悬停就永久失效）
+watch(activeTaskTabName, () => {
+  collegeGuideHoverDismissed.value = false
+})
 
 // 2026-10-18 用户定案：审核进度是上报审批过程中的状态——
 // 仅「计划已下发 + 上报审批流程进行中」可调整；平时（流程未发起/已结束/已退回）锁死。
@@ -992,7 +1066,66 @@ const buildStrategicExportAttachmentGroups = (
     })
   )
 
+/**
+ * 2026-11-08（单层下发）：二级学院页签的导出 =「战略发展部 → 当前所选学院」的指标表。
+ *
+ * <p>数据源直接用页面学院表格同一份 collegeTableIndicators，保证「看到什么就导出什么」。
+ * 列按新口径给出：指标名称 / 指标类型 / 任务类型 / 权重 / 状态 —— 单层结构下学院指标
+ * 没有父级核心指标，因此不再有「核心指标」列。</p>
+ */
+const handleExportCollegeIndicators = async () => {
+  const college = selectedCollege.value
+  if (!college) {
+    ElMessage.warning('请先在左侧选择学院')
+    return
+  }
+  const rows = collegeTableIndicators.value
+  if (rows.length === 0) {
+    ElMessage.warning('当前部门与该学院范围内暂无可导出的指标')
+    return
+  }
+  strategicExporting.value = true
+  try {
+    await exportRowsToExcel(
+      {
+        sheetName: '指标下发与管理',
+        rows,
+        columns: [
+          { header: '指标名称', width: 36, getValue: row => String(row.name || '') },
+          {
+            header: '指标类型',
+            width: 12,
+            align: 'center',
+            getValue: row => String(row.type1 || '定量')
+          },
+          {
+            header: '任务类型',
+            width: 12,
+            align: 'center',
+            getValue: row => getCategoryText(getIndicatorCategoryLabel(row))
+          },
+          { header: '权重', width: 10, align: 'center', getValue: row => String(row.weight ?? '') },
+          { header: '状态', width: 14, getValue: row => String(row.status || '') }
+        ],
+        emptyMessage: '当前学院暂无可导出的指标数据'
+      },
+      buildExportFileName('指标下发与管理', college)
+    )
+    ElMessage.success('导出成功')
+  } catch {
+    ElMessage.error('导出失败，请稍后重试')
+  } finally {
+    strategicExporting.value = false
+  }
+}
+
 const handleExportCurrentStrategicDepartment = async () => {
+  // 2026-11-08（单层下发）：页签分流——学院页签导出的是「战略部 → 当前所选学院」的指标表，
+  // 与职能部门页签的「按部门导出战略任务」不是同一份数据，故在此分流而非新增按钮。
+  if (activeTaskTabName.value === 'college') {
+    await handleExportCollegeIndicators()
+    return
+  }
   const department = selectedDepartment.value
   if (!department) {
     ElMessage.warning('请先选择部门')
@@ -1135,6 +1268,21 @@ const currentStrategicImportCycleId = computed(() => {
 })
 
 const openStrategicImportDialog = () => {
+  // 2026-11-08（单层下发）：页签分流。
+  // 二级学院页签的「导入」= 战略部直接把学院指标下发给当前所选学院（distribution 类型），
+  // 不再经过「职能部门核心指标」这一层，因此既不校验职能部门计划，也不要求父级锚点。
+  if (activeTaskTabName.value === 'college') {
+    if (collegeDispatchDisabledReason.value) {
+      ElMessage.warning(collegeDispatchDisabledReason.value)
+      return
+    }
+    if (!collegeDispatchCollegeOrgId.value) {
+      ElMessage.warning('请先在左侧选择要下发的学院')
+      return
+    }
+    strategicImportDialogVisible.value = true
+    return
+  }
   if (!selectedDepartment.value || !currentStrategicImportOrgId.value) {
     ElMessage.warning('请先选择要导入的职能部门')
     return
@@ -1188,7 +1336,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
     <div class="sidebar-backdrop"></div>
 
     <!-- 左侧任务列表 - 动态隐藏 -->
-    <aside class="task-sidebar">
+    <aside class="task-sidebar" @mouseenter="dismissCollegeGuide">
       <div class="sidebar-header">
         <div class="task-list-title">
           {{ activeTaskTabName === 'functional' ? '部门列表' : '学院列表' }}
@@ -1225,7 +1373,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
     </aside>
     <!-- 展开箭头独立于侧边栏 - 使用SVG图标 -->
     <!-- 2026-10-13 用户定案：二级学院 tab 未选学院时，左侧入口加呼吸高亮引导（3 次后转静态） -->
-    <div class="sidebar-toggle" :class="{ 'sidebar-toggle--guide': showCollegeGuide }">
+    <div
+      class="sidebar-toggle"
+      :class="{ 'sidebar-toggle--guide': showCollegeGuide }"
+      @mouseenter="dismissCollegeGuide"
+    >
       <svg class="toggle-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
         <path
           d="M9 6L15 12L9 18"
@@ -1236,7 +1388,14 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           fill="none"
         />
       </svg>
-      <span class="toggle-hint">{{ selectedDepartment || functionalDepartments[0] || '' }}</span>
+      <!-- 2026-11-05（用户反馈）：竖条的提示文字必须跟随当前页签。
+           原实现恒取 selectedDepartment（职能部门），切到「二级学院」页签后
+           列表标题已变成「学院列表」，竖条却还挂着职能部门名，两处对不上。 -->
+      <span class="toggle-hint">{{
+        activeTaskTabName === 'college'
+          ? selectedCollege || collegeDepartmentsScoped[0] || ''
+          : selectedDepartment || functionalDepartments[0] || ''
+      }}</span>
     </div>
     <!-- 左侧入口引导气泡（指向真实交互入口，点击学院后消失） -->
     <transition name="el-fade-in">
@@ -1313,12 +1472,22 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             新增行
           </el-button>
           <!-- 下发/撤回合并按钮 -->
+          <!-- 2026-11-08（单层下发）：同一按钮按页签分流——职能部门页签沿用计划的
+               下发/撤回；二级学院页签由战略部「发起下发审批」，职能部门置灰只审批上报。 -->
           <el-button
             :type="distributeButtonType"
             size="small"
-            :disabled="distributeButtonDisabled"
-            :title="distributeButtonDisabledReason"
-            @click.stop="handleDistributeOrWithdraw"
+            :disabled="
+              activeTaskTabName === 'college'
+                ? Boolean(collegeTabDistributeDisabledReason)
+                : distributeButtonDisabled
+            "
+            :title="
+              activeTaskTabName === 'college'
+                ? collegeTabDistributeDisabledReason
+                : distributeButtonDisabledReason
+            "
+            @click.stop="handleDistributeOrWithdrawClick"
           >
             <el-icon><component :is="distributeButtonIcon" /></el-icon>
             {{ distributeButtonText }}
@@ -1349,6 +1518,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
               {{ approvalEntryButtonText }}
             </el-button>
           </div>
+          <!-- 2026-11-08（单层下发）：还原为两个页签都显示「导出 / 导入」。
+               具体动作由点击处理按页签分流（职能部门 = 部门维度；二级学院 = 战略部 → 所选学院），
+               不再隐藏按钮、也不再另外挂一套学院专用按钮组。 -->
           <el-button
             size="small"
             :loading="strategicExporting"
@@ -2335,6 +2507,15 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                 </div>
               </template>
               <!-- 当前职能部门未下发学院：引导切换部门而不是选学院 -->
+              <template v-else-if="isStrategicDeptLogin">
+                <!-- 2026-11-05（issue #96 · 1.1）：战略部是下发方，这里是「还没给任何学院下发过」，
+                     不能沿用职能部门那句「请切换职能部门 —— 或先完成指标下发」，
+                     否则用户看不出自己就是那个该去做下发的人。 -->
+                <div class="college-empty-main">该职能部门尚未向任何二级学院下发指标</div>
+                <div class="college-empty-sub">
+                  在左侧选择要下发的学院，然后用页签下方的「导入学院指标」发起本次下发
+                </div>
+              </template>
               <template v-else>
                 <div class="college-empty-main">当前职能部门暂未向学院下发指标</div>
                 <div class="college-empty-sub">
@@ -2346,57 +2527,10 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
               <div class="table-container">
                 <el-table
                   :data="collegeTableIndicators"
-                  :span-method="collegeSpanMethod"
                   border
                   highlight-current-row
                   class="unified-table"
                 >
-                  <el-table-column
-                    label="核心指标"
-                    :width="TASK_TABLE_COLUMN_WIDTH.coreIndicatorFixed"
-                  >
-                    <template #default="{ row }">
-                      <!-- 2026-10-13 用户定案：与职能部门 tab 核心指标列同构——同核心指标合并单元格、定性/定量配色；悬停看全文 -->
-                      <el-tooltip
-                        :content="
-                          row.parentIndicatorId &&
-                          indicatorById.get(row.parentIndicatorId)?.type1 === '定性'
-                            ? '定性指标'
-                            : row.parentIndicatorId &&
-                                indicatorById.get(row.parentIndicatorId)?.type1 === '定量'
-                              ? '定量指标'
-                              : '未设置类型'
-                        "
-                        placement="top"
-                      >
-                        <FullTextPanel
-                          :text="
-                            (row.parentIndicatorId &&
-                              indicatorById.get(row.parentIndicatorId)?.name) ||
-                            ''
-                          "
-                        >
-                          <span
-                            class="indicator-name-text"
-                            :class="
-                              row.parentIndicatorId &&
-                              indicatorById.get(row.parentIndicatorId)?.type1 === '定性'
-                                ? 'indicator-qualitative'
-                                : row.parentIndicatorId &&
-                                    indicatorById.get(row.parentIndicatorId)?.type1 === '定量'
-                                  ? 'indicator-quantitative'
-                                  : ''
-                            "
-                            >{{
-                              (row.parentIndicatorId &&
-                                indicatorById.get(row.parentIndicatorId)?.name) ||
-                              '—'
-                            }}</span
-                          >
-                        </FullTextPanel>
-                      </el-tooltip>
-                    </template>
-                  </el-table-column>
                   <el-table-column
                     prop="name"
                     label="子指标名称"
@@ -2659,22 +2793,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
               </div>
               <div class="excel-status-bar">
                 <div class="status-left">共 {{ collegeTableIndicators.length }} 条记录</div>
-                <!-- 2026-11-05（issue #96 · 1.1/1.3）：学院指标下发的操作入口迁到本页「二级学院」页签 ——
-                     战略发展部在这里完成 导入 / 下载模板 / 导出 / 发起下发审批，范围=当前所选职能部门 → 所选学院。
-                     /distribution 页的同类写功能随之取消（见 issue 1.2）。 -->
-                <CollegeDispatchActions
-                  v-if="isStrategicDeptLogin"
-                  :cycle-id="collegeDispatchCycleId"
-                  :college-name="selectedCollege"
-                  :college-org-id="collegeDispatchCollegeOrgId"
-                  :strategy-org-id="strategicDeptOrgId"
-                  :strategy-org-name="strategicDeptName"
-                  :parent-indicators="selectedCollegeDispatchParentIndicators"
-                  :rows="collegeTableIndicators"
-                  :plan-id="selectedCollegeDispatchPlanId"
-                  :disabled-reason="collegeDispatchDisabledReason"
-                  :resolve-parent-name="resolveCollegeParentName"
-                />
               </div>
 
               <!-- 2026-10-23：学院 tab 的新增子指标表单（与职能部门面板同构，仅保留子指标字段）。
@@ -2687,37 +2805,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                 <h3 class="form-title">新增子指标（挂到核心指标下）</h3>
                 <div class="add-form-content">
                   <el-form label-width="80px">
-                    <el-row :gutter="16">
-                      <el-col :span="24">
-                        <el-form-item class="required-form-item">
-                          <template #label
-                            ><span class="required-asterisk">*</span>关联指标</template
-                          >
-                          <el-select
-                            v-model="newRow.parentIndicatorId"
-                            filterable
-                            placeholder="选择要挂靠的核心指标"
-                            style="width: 100%"
-                            :teleported="false"
-                          >
-                            <el-option
-                              v-for="opt in collegeParentIndicatorOptions"
-                              :key="opt.id"
-                              :label="opt.name"
-                              :value="opt.id"
-                            >
-                              <span>{{ opt.name }}</span>
-                              <span class="parent-indicator-option__task">{{
-                                opt.taskContent
-                              }}</span>
-                            </el-option>
-                          </el-select>
-                          <div v-if="collegeParentIndicatorOptions.length === 0" class="form-hint">
-                            当前职能部门尚未向「{{ selectedCollege }}」下发核心指标，无法新增子指标
-                          </div>
-                        </el-form-item>
-                      </el-col>
-                    </el-row>
                     <el-row :gutter="16">
                       <el-col :span="4">
                         <el-form-item class="required-form-item">
@@ -3042,12 +3129,25 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
       </template>
     </el-dialog>
 
+    <!-- 2026-11-08（单层下发）：同一个导入弹窗按页签切换口径，不新增第二个实例。
+         职能部门页签 = strategic-task（战略部 → 职能部门，原行为不变）；
+         二级学院页签 = distribution（战略部 → 所选学院），单层结构没有父级核心指标，
+         故 parent-indicators 固定传空数组。 -->
     <BusinessImportDialog
       v-model:visible="strategicImportDialogVisible"
-      type="strategic-task"
-      :target-org-id="currentStrategicImportOrgId"
-      :target-org-name="selectedDepartment"
-      :cycle-id="currentStrategicImportCycleId"
+      :type="activeTaskTabName === 'college' ? 'distribution' : 'strategic-task'"
+      :target-org-id="
+        activeTaskTabName === 'college' ? collegeDispatchCollegeOrgId : currentStrategicImportOrgId
+      "
+      :target-org-name="activeTaskTabName === 'college' ? selectedCollege : selectedDepartment"
+      :source-org-id="activeTaskTabName === 'college' ? strategicDeptOrgId : undefined"
+      :source-org-name="activeTaskTabName === 'college' ? strategicDeptName : undefined"
+      :cycle-id="
+        activeTaskTabName === 'college' ? collegeDispatchCycleId : currentStrategicImportCycleId
+      "
+      :parent-indicators="
+        activeTaskTabName === 'college' ? COLLEGE_IMPORT_PARENT_INDICATORS : undefined
+      "
       @committed="handleStrategicImportCommitted"
     />
 
