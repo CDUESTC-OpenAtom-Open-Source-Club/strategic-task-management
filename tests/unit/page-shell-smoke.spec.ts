@@ -4,9 +4,27 @@ import { ref } from 'vue'
 
 const noop = vi.fn()
 
+/**
+ * 各页面 view model 的按用例覆盖（2026-11-05 战略部直发学院指标）：
+ * 分发页 / 战略任务页的「能不能操作」一律按**登录角色**判定，
+ * 用例需要能分别模拟「战略部登录」与「职能部门登录」。
+ */
+const viewModelOverrides = vi.hoisted(() => ({
+  distribute: {} as Record<string, unknown>,
+  strategicTask: {} as Record<string, unknown>
+}))
+
 function createViewModel(overrides: Record<string, unknown> = {}) {
   const base = {
     timeContext: { isReadOnly: false, currentYear: 2026, cycles: [] },
+    // 2026-11-05：默认按「战略部登录」渲染（真实登录角色）
+    canWriteStrategicTask: true,
+    isStrategicDeptLogin: true,
+    isFunctionalDeptLogin: false,
+    canOperateDistribution: true,
+    canWriteDistribution: true,
+    canWithdrawDistribution: true,
+    canEditChild: true,
     authStore: {
       userRole: 'strategic_dept',
       effectiveRole: 'strategic_dept',
@@ -133,12 +151,12 @@ function createViewModel(overrides: Record<string, unknown> = {}) {
 }
 
 vi.mock('@/features/task/model/useStrategicTaskView', () => ({
-  useStrategicTaskView: () => createViewModel(),
+  useStrategicTaskView: () => createViewModel(viewModelOverrides.strategicTask),
   type: {}
 }))
 
 vi.mock('@/features/indicator/model/useIndicatorDistributeView', () => ({
-  useIndicatorDistributeView: () => createViewModel(),
+  useIndicatorDistributeView: () => createViewModel(viewModelOverrides.distribute),
   type: {}
 }))
 
@@ -194,7 +212,7 @@ describe('page shell smoke', () => {
 
   it('renders IndicatorDistributeView shell', () => {
     const wrapper = shallowMount(IndicatorDistributeView, {
-      props: { viewingRole: 'functional_dept', viewingDept: '教务处' },
+      props: { viewingRole: 'strategic_dept', viewingDept: '战略发展部' },
       ...mountOptions
     })
 
@@ -203,11 +221,63 @@ describe('page shell smoke', () => {
 
   it('exposes IndicatorDistributeView distribution shell', () => {
     const wrapper = shallowMount(IndicatorDistributeView, {
-      props: { viewingRole: 'functional_dept', viewingDept: '教务处' },
+      props: { viewingRole: 'strategic_dept', viewingDept: '战略发展部' },
       ...mountOptions
     })
 
     expect(wrapper.text()).toContain('学院列表')
+  })
+
+  it('keeps the distribution page writable for strategic department logins', () => {
+    // 2026-11-05：分发页操作能力移交战略发展部 → 战略部登录不显示只读提示
+    viewModelOverrides.distribute = {
+      isStrategicDeptLogin: true,
+      isFunctionalDeptLogin: false,
+      canOperateDistribution: true,
+      canWriteDistribution: true,
+      canEditChild: true
+    }
+    const wrapper = shallowMount(IndicatorDistributeView, {
+      props: { viewingRole: 'strategic_dept', viewingDept: '战略发展部' },
+      ...mountOptions
+    })
+
+    expect(wrapper.text()).not.toContain('学院指标审批由战略发展部统一组织')
+    viewModelOverrides.distribute = {}
+  })
+
+  it('shows the read-only notice and hides write actions for functional department logins', () => {
+    // 2026-11-05：职能部门在分发页只读（导入/新增/编辑/下发禁用，撤回保留）
+    viewModelOverrides.distribute = {
+      isStrategicDeptLogin: false,
+      isFunctionalDeptLogin: true,
+      canOperateDistribution: true,
+      canWriteDistribution: false,
+      canWithdrawDistribution: true,
+      canEditChild: false
+    }
+    const wrapper = shallowMount(IndicatorDistributeView, {
+      props: { viewingRole: 'functional_dept', viewingDept: '教务处' },
+      ...mountOptions
+    })
+
+    expect(wrapper.text()).toContain('学院指标审批由战略发展部统一组织，本部门仅可查看历史数据')
+    expect(wrapper.text()).not.toContain('新增指标')
+    expect(wrapper.text()).not.toContain('发起下发审批')
+    expect(wrapper.text()).not.toContain('复制其他学院指标')
+    viewModelOverrides.distribute = {}
+  })
+
+  it('shows the read-only notice on the strategic task page for functional department logins', () => {
+    // 2026-11-05：职能部门对战略任务页只读
+    viewModelOverrides.strategicTask = { canWriteStrategicTask: false }
+    const wrapper = shallowMount(StrategicTaskView, {
+      props: { selectedRole: 'functional_dept' },
+      ...mountOptions
+    })
+
+    expect(wrapper.text()).toContain('当前角色对战略任务管理页仅可查看')
+    viewModelOverrides.strategicTask = {}
   })
 
   it('renders IndicatorListView shell', () => {
