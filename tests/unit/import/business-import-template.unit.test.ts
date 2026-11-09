@@ -141,7 +141,10 @@ describe('import/lib/importTemplate', () => {
     expect(guide.rows[0].taskType).toBe('基础性')
     // 归口职能部门只填首行（同学院共用），这是上报审批席位的唯一来源
     expect(guide.rows[0].functionalOrg).toBe('教务处')
-    expect(guide.rows[1].functionalOrg).toBe('')
+    // 2026-11-09：后端逐行校验「归口职能部门」必填（漏填即阻断），
+    // 所以示例每行都要填，且整份文件填同一个部门（计划级字段，只能有一个值）
+    expect(guide.rows[1].functionalOrg).toBe('教务处')
+    expect(guide.rows[2].functionalOrg).toBe('教务处')
     // 学院列整列合并：从属行留空
     expect(guide.rows[1].college).toBe('')
     // 每行都有自己的指标名与类型（不再是延续行）
