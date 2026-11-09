@@ -2613,29 +2613,39 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       :disabled="item.count === 0"
                       :style="{
                         color:
-                          item.status === 'reported'
-                            ? '#67c23a'
-                            : item.status === 'pending'
-                              ? '#e6a23c'
-                              : item.status === 'none'
-                                ? '#c0c4cc'
+                          item.count === 0
+                            ? '#c0c4cc'
+                            : item.reportStatus === 'reported'
+                              ? '#67c23a'
+                              : item.dispatchStatus === 'dispatching' ||
+                                  item.reportStatus === 'reporting'
+                                ? '#e6a23c'
                                 : undefined
                       }"
                     >
                       <span class="college-dept-filter-name">{{ item.dept }}</span>
+                      <!-- 下发维度（战略部 → 该学院）：进行中才标记；已下发按用户要求正常显示、不标记 -->
                       <el-tag
-                        v-if="item.status === 'reported'"
+                        v-if="item.dispatchStatus === 'dispatching'"
+                        type="warning"
+                        size="small"
+                        class="college-dept-filter-tag"
+                        >下发中</el-tag
+                      >
+                      <!-- 上报维度（该学院 → 审批）：进行中=橙、已完成=绿 -->
+                      <el-tag
+                        v-if="item.reportStatus === 'reporting'"
+                        type="warning"
+                        size="small"
+                        class="college-dept-filter-tag"
+                        >上报中</el-tag
+                      >
+                      <el-tag
+                        v-else-if="item.reportStatus === 'reported'"
                         type="success"
                         size="small"
                         class="college-dept-filter-tag"
                         >已上报</el-tag
-                      >
-                      <el-tag
-                        v-else-if="item.status === 'pending'"
-                        type="warning"
-                        size="small"
-                        class="college-dept-filter-tag"
-                        >审批中</el-tag
                       >
                     </el-dropdown-item>
                   </el-dropdown-menu>

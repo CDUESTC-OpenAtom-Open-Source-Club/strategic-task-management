@@ -5563,9 +5563,23 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const collegeDeptDispatchOptions = computed(() => {
     const target = normalizeDepartmentName(selectedCollege.value || '')
     if (!target) {
-      return [] as Array<{ dept: string; count: number; status: 'normal' | 'reported' | 'pending' }>
+      return [] as Array<{
+        dept: string
+        count: number
+        dispatchStatus: 'none' | 'dispatching' | 'dispatched'
+        reportStatus: 'none' | 'reporting' | 'reported'
+      }>
     }
-    const byDept = new Map<string, { count: number; pending: boolean; reported: boolean }>()
+    const byDept = new Map<
+      string,
+      {
+        count: number
+        dispatching: boolean
+        dispatched: boolean
+        reporting: boolean
+        reported: boolean
+      }
+    >()
     for (const item of normalizedIndicators.value) {
       const candidate = item as {
         targetDepartment?: string
@@ -5581,13 +5595,28 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         continue
       }
       const dept = resolveRowOwnerDept(item) || strategicDeptName.value || '未归属部门'
-      const entry = byDept.get(dept) ?? { count: 0, pending: false, reported: false }
+      const entry = byDept.get(dept) ?? {
+        count: 0,
+        dispatching: false,
+        dispatched: false,
+        reporting: false,
+        reported: false
+      }
       entry.count += 1
-      // 状态取自真实的上报记录聚合（见 refreshCollegeDeptFillStates），
-      // 不再用 indicator 上的 status/selfRating —— 那两个字段判断不出「已上报/审批中」。
+      // 下发状态：取指标自身的下发状态（PENDING=下发审批中 / DISTRIBUTED=已下发）。
+      // 这是「战略部 → 该学院」这一侧的进度，与上报状态是两个维度。
+      const indicatorStatus = String((item as { status?: unknown }).status ?? '').toUpperCase()
+      if (indicatorStatus.includes('PENDING') || indicatorStatus.includes('REVIEW')) {
+        entry.dispatching = true
+      }
+      if (indicatorStatus === 'DISTRIBUTED') {
+        entry.dispatched = true
+      }
+      // 上报状态：取自真实的上报记录聚合（见 refreshCollegeDeptFillStates），
+      // 不能用 indicator 上的 status/selfRating —— 那两个字段判断不出「已上报/上报中」。
       const fillState = collegeDeptFillStates.value[dept]
       if (fillState && fillState.submitted > 0) {
-        entry.pending = true
+        entry.reporting = true
       }
       if (fillState && fillState.approved > 0) {
         entry.reported = true
@@ -5604,11 +5633,18 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       .map(([dept, entry]) => ({
         dept,
         count: entry.count,
-        status: entry.pending
-          ? ('pending' as const)
+        // 下发维度（战略部 → 该学院）：进行中 / 已完成
+        dispatchStatus: entry.dispatching
+          ? ('dispatching' as const)
+          : entry.dispatched
+            ? ('dispatched' as const)
+            : ('none' as const),
+        // 上报维度（该学院 → 审批）：进行中 / 已完成
+        reportStatus: entry.reporting
+          ? ('reporting' as const)
           : entry.reported
             ? ('reported' as const)
-            : ('normal' as const)
+            : ('none' as const)
       }))
       .sort((left, right) => {
         const leftIndex = deptOrder.get(left.dept) ?? Number.MAX_SAFE_INTEGER
@@ -5632,7 +5668,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     const items: Array<{
       dept: string
       count: number
-      status: 'normal' | 'reported' | 'pending' | 'none'
+      dispatchStatus: 'none' | 'dispatching' | 'dispatched'
+      reportStatus: 'none' | 'reporting' | 'reported'
     }> = []
     const seen = new Set<string>()
     for (const dept of functionalDepartments.value) {
@@ -5645,14 +5682,20 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       items.push({
         dept: name,
         count: hit?.count ?? 0,
-        status: hit ? hit.status : 'none'
+        dispatchStatus: hit?.dispatchStatus ?? 'none',
+        reportStatus: hit?.reportStatus ?? 'none'
       })
     }
     // 归属部门可能不在「职能部门」清单里（例如战略部直发的存量行），补在后面，
-    // 否则这些行在「全部」里能看到、却无法被单独筛出来。
+    // 否则这些行在列表里能看到、却无法被单独筛出来。
     for (const [dept, hit] of dispatchByDept.entries()) {
       if (!seen.has(dept)) {
-        items.push({ dept, count: hit.count, status: hit.status })
+        items.push({
+          dept,
+          count: hit.count,
+          dispatchStatus: hit.dispatchStatus,
+          reportStatus: hit.reportStatus
+        })
       }
     }
     return items
