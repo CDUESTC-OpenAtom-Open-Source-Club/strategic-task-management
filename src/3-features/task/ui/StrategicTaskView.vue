@@ -217,6 +217,8 @@ const {
   selectedCollege,
   selectCollege,
   collegeTableIndicators,
+  // 2026-11-09（页签分流）：二级学院页签的「基础性权重合计」（学院口径，分母固定 100）
+  collegeBasicWeightTotal,
   collegeFillStatusScope,
   isReportApprovalInFlight,
   isMutationApprovalInFlight,
@@ -478,6 +480,23 @@ watch(
 )
 
 const activeTaskTabName = ref<'functional' | 'college'>('functional')
+
+/**
+ * 2026-11-09（页签分流）：页头「基础性权重合计」按页签分流。
+ *
+ * <p>职能部门页签沿用部门口径（departmentTotalWeight：该部门下基础性任务权重合计）；
+ * 二级学院页签改用学院口径（collegeBasicWeightTotal：所选学院在当前计划下全部基础性
+ * 指标的权重合计，分母固定 100）。文案与样式类名保持不变，只换计算来源。</p>
+ *
+ * <p>两处口径都做了空值兜底：页面 shell 单测用的 view-model mock 不提供这两个字段，
+ * 直接取 .value 会抛错并让整个页面渲染失败（模板里直接比较 undefined 不会报错，
+ * 挪进 computed 后才会）。</p>
+ */
+const headerBasicWeightTotal = computed(() =>
+  activeTaskTabName.value === 'college'
+    ? (collegeBasicWeightTotal?.value ?? 0)
+    : (departmentTotalWeight?.value ?? 0)
+)
 
 /**
  * 2026-11-08（单层下发）：二级学院页签「下发/撤回」按钮的置灰口径。
@@ -1200,6 +1219,14 @@ const handleExportCurrentStrategicDepartment = async () => {
 }
 
 const openStrategicBatchExportDialog = () => {
+  // 2026-11-09（页签分流）：二级学院页签的「全部导出」导出的是该学院的指标数据，
+  // 与工具栏「导出」完全同口径（复用同一个 handleExportCollegeIndicators，数据源同为
+  // collegeTableIndicators），不再弹职能部门多选框——学院页签根本没有「职能部门维度」
+  // 可选。职能部门页签行为保持原样，一行都不改。
+  if (activeTaskTabName.value === 'college') {
+    void handleExportCollegeIndicators()
+    return
+  }
   selectedStrategicExportDepartments.value = [...functionalDepartments.value]
   strategicBatchExportDialogVisible.value = true
 }
@@ -1692,17 +1719,17 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           </el-popover>
           <el-tag
             :type="
-              departmentTotalWeight > 100
+              headerBasicWeightTotal > 100
                 ? 'danger'
-                : departmentTotalWeight === 100
+                : headerBasicWeightTotal === 100
                   ? 'success'
                   : 'info'
             "
-            :class="{ 'weight-tag--overlimit': departmentTotalWeight > 100 }"
+            :class="{ 'weight-tag--overlimit': headerBasicWeightTotal > 100 }"
             size="small"
             style="margin-right: 12px"
           >
-            基础性权重合计: {{ departmentTotalWeight }} / 100
+            基础性权重合计: {{ headerBasicWeightTotal }} / 100
           </el-tag>
           <!-- 2026-10-28 迭代计划 M2：看板显示当前填报周期（数据归属周期一目了然）。
                2026-10-30 起文案/样式由共享组件 ReportCycleTag 统一，三页一致 -->

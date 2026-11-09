@@ -519,6 +519,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   // 后端任务类型映射：taskId -> taskType（BASIC/DEVELOPMENT/...）
   const backendTaskTypeMap = ref<Record<string, string>>({})
+  // 2026-11-09（页签分流）：taskId -> planId。
+  // 为什么需要它：指标本身不带计划字段，指标归属哪个计划由 task.plan_id 决定
+  // （后端指标查询即以 t.plan_id 关联 plan）。学院口径要求「该学院该计划下」的行集，
+  // 只能顺着 指标 → taskId → task.plan_id 找到它所属的计划。
+  const backendTaskPlanMap = ref<Record<string, number>>({})
   const currentPlanTaskTypeMap = ref<Record<string, string>>({})
   const currentPlanTaskIdSet = ref<Set<string>>(new Set())
 
@@ -655,6 +660,28 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       .filter(Boolean)
   }
 
+  /**
+   * 2026-11-09（页签分流）：taskId -> planId 映射。
+   *
+   * <p>后端 TaskResponse 直接带 planId（任务表的 plan_id 外键），前端据此把「指标」和
+   * 「计划」关联起来：学院口径要按「该学院该计划」圈定行集，而指标行上没有计划字段。</p>
+   */
+  const buildTaskPlanMap = (tasks: Array<Record<string, unknown>>): Record<string, number> => {
+    const map: Record<string, number> = {}
+    tasks.forEach(task => {
+      const taskId = normalizeTaskId(
+        (task as { taskId?: string | number; id?: string | number }).taskId
+      )
+      const fallbackTaskId = normalizeTaskId((task as { id?: string | number }).id)
+      const planId = Number((task as { planId?: number | string | null }).planId)
+      const key = taskId || fallbackTaskId
+      if (key && Number.isFinite(planId) && planId > 0) {
+        map[key] = planId
+      }
+    })
+    return map
+  }
+
   const loadBackendTaskTypeMap = async (options: { force?: boolean } = {}) => {
     taskTypeMapLoading.value = true
     try {
@@ -666,24 +693,28 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         Array.isArray(byYearResponse.data) &&
         byYearResponse.data.length > 0
       ) {
-        backendTaskTypeMap.value = buildTaskTypeMap(
-          byYearResponse.data as Array<Record<string, unknown>>
-        )
+        const taskRows = byYearResponse.data as Array<Record<string, unknown>>
+        backendTaskTypeMap.value = buildTaskTypeMap(taskRows)
+        // 2026-11-09（页签分流）：同一次任务列表同时建立「task → 计划」映射，
+        // 学院口径要靠它判断一行指标是否属于该学院的当前计划。不额外发请求。
+        backendTaskPlanMap.value = buildTaskPlanMap(taskRows)
         return
       }
 
       // 兼容回退：部分环境按年查询任务为空（周期口径不一致），改用全量任务建立映射
       const allTasksResponse = await strategicApi.getAllTasks({ force: options.force })
       if (allTasksResponse?.success && Array.isArray(allTasksResponse.data)) {
-        backendTaskTypeMap.value = buildTaskTypeMap(
-          allTasksResponse.data as Array<Record<string, unknown>>
-        )
+        const taskRows = allTasksResponse.data as Array<Record<string, unknown>>
+        backendTaskTypeMap.value = buildTaskTypeMap(taskRows)
+        backendTaskPlanMap.value = buildTaskPlanMap(taskRows)
         return
       }
 
       backendTaskTypeMap.value = {}
+      backendTaskPlanMap.value = {}
     } catch (error) {
       backendTaskTypeMap.value = {}
+      backendTaskPlanMap.value = {}
       logger.error('[StrategicTaskView] 加载后端任务类型失败:', error)
     } finally {
       taskTypeMapLoading.value = false
@@ -5497,6 +5528,53 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       })
   })
 
+  /**
+   * 2026-11-09（页签分流）：一行学院指标是否属于「该学院的当前计划」。
+   *
+   * <p>归属链：指标 → taskId → task.plan_id → 与学院当前计划 id 比对。指标行本身不带
+   * 计划字段，后端也是以 t.plan_id 关联 plan 来判定指标归属，所以只能顺着 task 找。</p>
+   *
+   * <p>取不到归属信息时（学院计划解析不出来 / 任务映射尚未加载 / 指标没有 task）
+   * 一律**不过滤**该行：宁可多显示几行，也不能让学院口径直接显示成 0 / 100——
+   * 这与本文件既有的「宁可多显示，不可显示为空」口径一致。</p>
+   */
+  const isIndicatorInCollegePlanScope = (row: StrategicIndicator, scopePlanId: number): boolean => {
+    if (!Number.isFinite(scopePlanId) || scopePlanId <= 0) {
+      return true
+    }
+    const taskId = getIndicatorTaskId(row)
+    if (!taskId) {
+      return true
+    }
+    const rowPlanId = Number(backendTaskPlanMap.value[taskId] ?? Number.NaN)
+    if (!Number.isFinite(rowPlanId) || rowPlanId <= 0) {
+      return true
+    }
+    return rowPlanId === scopePlanId
+  }
+
+  /**
+   * 2026-11-09（页签分流）：二级学院页签的「基础性权重合计」。
+   *
+   * <p>口径 = 所选学院在当前计划下全部基础性指标的权重合计（分母固定 100）。
+   * 与职能部门口径（departmentTotalWeight：该部门下基础性任务权重合计）互不串台。</p>
+   *
+   * <p>为什么必须按计划圈行：战略部直发后，学院可能同时残留「职能部门历史下发」的行
+   * （owner=职能部门）。不按计划过滤会把存量行一起算进来，合计永远大于 100，
+   * 与需求口径「该学院该计划下全部基础性指标合计 100」不符。</p>
+   */
+  const collegeBasicWeightTotal = computed(() => {
+    if (!selectedCollege.value) {
+      return 0
+    }
+    const scope = resolveSelectedCollegeReportScope()
+    const scopePlanId = scope ? Number(scope.planId) : Number.NaN
+    return collegeTableIndicators.value
+      .filter(row => isIndicatorInCollegePlanScope(row as StrategicIndicator, scopePlanId))
+      .filter(row => isBasicIndicatorForCurrentRules(row as StrategicIndicator))
+      .reduce((sum, row) => sum + Number(row.weight || 0), 0)
+  })
+
   // PR#83 头部「审批状态」与二级学院页签「上报状态」列一致性：
   // 「上报状态」列只存在于学院页签表格（数据源即 collegeTableIndicators），且学院链路
   // 查看的是「职能部门→学院」的上报（collegeScope），因此聚合只在该页签激活时进行，
@@ -7665,6 +7743,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     selectedCollege,
     selectCollege,
     collegeTableIndicators,
+    // 2026-11-09（页签分流）：二级学院页签的「基础性权重合计」（学院口径，分母 100）
+    collegeBasicWeightTotal,
     collegeDepartmentsScoped,
     indicatorById,
     collegeFillStatusScope,
