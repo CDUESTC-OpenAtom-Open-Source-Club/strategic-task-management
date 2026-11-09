@@ -96,6 +96,7 @@ import {
   resolveCollegePlanSourceDept
 } from '@/features/indicator/lib/collegePlanModule'
 import { canViewReceivedPlanContent as canViewReceivedPlanContentByStatus } from '@/features/indicator/lib/visibility'
+import { shouldApplyOwnerDeptFilter } from '@/5-shared/lib/permissions/strategyDispatchAccess'
 import {
   PROGRESS_APPROVAL_STATUS_VALUES,
   type ProgressApprovalStatusValue
@@ -1043,6 +1044,29 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   const filterType2 = ref('') // 任务类型筛选
   const filterType1 = ref('') // 指标类型筛选
   const filterOwnerDept = ref('') // 来源部门筛选（仅学院使用）
+
+  /**
+   * 学院「来源部门」筛选（2026-11-05 战略部直发学院指标）。
+   *
+   * 改造后来源部门可能是「战略发展部」（新量）或「职能部门」（存量），两者都要保留。
+   * 但筛选值一旦与可见数据完全对不上（例如计划口径只算出「战略发展部」，而行上的
+   * ownerDept 仍是存量职能部门），再按它硬过滤会把学院指标**全部滤空**——
+   * 此时不过滤（宁可多显示，不可显示为空）。
+   */
+  const filterIndicatorsByOwnerDept = <T extends object>(list: T[]): T[] => {
+    const filter = filterOwnerDept.value.trim()
+    if (!filter) {
+      return list
+    }
+
+    const matched = list.filter(
+      item => (item as { ownerDept?: string | null }).ownerDept === filter
+    )
+    if (!shouldApplyOwnerDeptFilter({ filterOwnerDept: filter, matchedCount: matched.length })) {
+      return list
+    }
+    return matched
+  }
   const collegePlanDetailsMap = ref<Record<string, Plan>>({})
   const collegePlanDetailsLoading = ref(false)
 
@@ -2044,8 +2068,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       list = filterIndicatorsForCurrentViewer(list)
     }
 
-    if (isSecondaryCollege.value && filterOwnerDept.value) {
-      list = list.filter(i => i.ownerDept === filterOwnerDept.value)
+    // 学院角色：按来源部门筛选（2026-11-05：筛选值与数据对不上时不过滤，避免整页滤空）
+    if (isSecondaryCollege.value) {
+      list = filterIndicatorsByOwnerDept(list)
     }
 
     // 审批人：返回待审批的指标 + 有历史记录的指标（确保历史记录能正常显示）
@@ -2085,8 +2110,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       list = filterIndicatorsForCurrentViewer(list)
     }
 
-    if (isSecondaryCollege.value && filterOwnerDept.value) {
-      list = list.filter(i => i.ownerDept === filterOwnerDept.value)
+    // 学院角色：按来源部门筛选（2026-11-05：筛选值与数据对不上时不过滤，避免整页滤空）
+    if (isSecondaryCollege.value) {
+      list = filterIndicatorsByOwnerDept(list)
     }
 
     // 只统计待审批状态的指标数量
@@ -2560,9 +2586,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       if (filterType1.value) {
         list = list.filter(i => i.type1 === filterType1.value)
       }
-      // 学院角色：按来源部门筛选
-      if (isSecondaryCollege.value && filterOwnerDept.value) {
-        list = list.filter(i => i.ownerDept === filterOwnerDept.value)
+      // 学院角色：按来源部门筛选（2026-11-05：筛选值与数据对不上时不过滤，避免整页滤空）
+      if (isSecondaryCollege.value) {
+        list = filterIndicatorsByOwnerDept(list)
       }
 
       // 2026-10-07：等级/说明/附件回显覆盖（草稿明细优先）
@@ -2678,9 +2704,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     if (filterType1.value) {
       list = list.filter(i => i.type1 === filterType1.value)
     }
-    // 学院角色：按来源部门筛选
-    if (isSecondaryCollege.value && filterOwnerDept.value) {
-      list = list.filter(i => i.ownerDept === filterOwnerDept.value)
+    // 学院角色：按来源部门筛选（2026-11-05：筛选值与数据对不上时不过滤，避免整页滤空）
+    if (isSecondaryCollege.value) {
+      list = filterIndicatorsByOwnerDept(list)
     }
 
     // 2026-10-28 用户定案：学院端按「核心指标 → 子指标」同序规则排列
@@ -4170,7 +4196,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     // 2026-10-20 修复：自评进度保存后重开弹窗显示为空——回显取刚刷新的草稿明细等级，
     // 无草稿明细时依次退回列表行（覆盖层已算）与服务端快照的已存等级
     const draftDetail = reportDetailOverlay.value[String(row.id)] as
-      { selfRating?: string | null } | undefined
+      | { selfRating?: string | null }
+      | undefined
     reportForm.value = {
       newProgress: Math.max(actualProgress, Number(preferredProgress) || 0),
       remark: row.pendingRemark ?? persistedDraft?.remark ?? '',
@@ -5435,7 +5462,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           }
 
           let updatedReportSummary:
-            (typeof currentPlanReportSummary.value extends infer T ? T : never) | null = null
+            | (typeof currentPlanReportSummary.value extends infer T ? T : never)
+            | null = null
           if (usePlanReportFlow.value) {
             const reportOrgId = Number(currentViewingOrgId.value ?? NaN)
             if (!Number.isFinite(reportOrgId) || reportOrgId <= 0) {
@@ -5548,7 +5576,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           }
 
           let updatedReportSummary:
-            (typeof currentPlanReportSummary.value extends infer T ? T : never) | null = null
+            | (typeof currentPlanReportSummary.value extends infer T ? T : never)
+            | null = null
           if (usePlanReportFlow.value) {
             const reportOrgId = Number(currentViewingOrgId.value ?? NaN)
             if (!Number.isFinite(reportOrgId) || reportOrgId <= 0) {

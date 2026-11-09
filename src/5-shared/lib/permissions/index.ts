@@ -5,4 +5,5 @@
  */
 
 export * from './check-permission'
+export * from './strategyDispatchAccess'
 export * from './usePermission'
