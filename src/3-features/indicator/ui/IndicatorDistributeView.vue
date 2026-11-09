@@ -816,7 +816,9 @@ const handleDistributionImportCommitted = async () => {
     <!-- 只读提示 -->
     <!-- 2026-11-05：提示按**登录角色**分文案（不再按视角角色）：
          - 战略部：可操作，不显示只读提示；
-         - 职能部门：本页只读（学院指标下发现由战略发展部统一发起），但保留撤回。 -->
+         - 职能部门：本页只读，但保留撤回。
+         2026-11-09（用户要求）：文案去掉「下发」，只保留审批口径 —— 学院指标的下发权
+         已统一归战略发展部，本页对职能部门只剩审批相关用途。 -->
     <el-alert
       v-if="isFunctionalDeptLogin"
       type="info"
@@ -824,7 +826,7 @@ const handleDistributionImportCommitted = async () => {
       show-icon
       style="margin-bottom: 16px"
     >
-      学院指标下发现由战略发展部统一发起，本部门仅可查看历史数据
+      学院指标审批由战略发展部统一组织，本部门仅可查看历史数据
     </el-alert>
     <el-alert
       v-else-if="timeContext.isReadOnly"

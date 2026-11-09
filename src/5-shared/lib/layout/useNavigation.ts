@@ -52,7 +52,10 @@ const ROLE_BASED_TABS: Record<UserRole, TabConfig[]> = {
     // （导入 / 复制其他学院指标 / 新增指标 / 下发）已随 1.3 移植走、原地不再保留；
     // 但仍有两个不可替代的用途：① 处理落到本部门的存量审批实例（审批抽屉）；
     // ② 撤回自己在审的存量下发计划（撤回按钮只存在于本页）。
-    { id: 'distribution', label: '指标下发与审批', icon: Promotion, path: '/distribution' }
+    // 2026-11-09（用户要求）：导航文案去掉「下发」，只保留「指标审批」——
+    // 学院指标的下发权已统一归战略发展部，本页对职能部门只剩审批相关用途
+    // （处理存量审批实例、撤回自己在审的存量计划），继续叫「指标下发与审批」会误导。
+    { id: 'distribution', label: '指标审批', icon: Promotion, path: '/distribution' }
   ],
   secondary_college: [
     { id: 'dashboard', label: '数据看板', icon: DataAnalysis, path: '/dashboard' },

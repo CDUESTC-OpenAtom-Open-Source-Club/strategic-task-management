@@ -562,7 +562,7 @@ const handleExportAllCollegeDepartments = async () => {
     })
     collegeExportDialogVisible.value = false
     ElMessage.success(
-      `导出成功：${payloads.length} 个来源部门各一个 Excel，${countExportAttachments(payloads)} 个附件已一并打包`
+      `导出成功：${payloads.length} 个职能部门各一个 Excel，${countExportAttachments(payloads)} 个附件已一并打包`
     )
   } catch {
     ElMessage.error('导出失败，请稍后重试')

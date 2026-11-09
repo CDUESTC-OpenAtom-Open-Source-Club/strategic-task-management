@@ -5473,18 +5473,256 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     return map
   })
 
+  /**
+   * 2026-11-09（用户要求）：学院页签右侧的「职能部门」下拉筛选器。
+   *
+   * <p>用户口径：点进学院后**默认按职能部门顺序显示该学院全部指标**，
+   * 再由这个下拉单独筛某个部门的下发任务情况。因此学院表格不再跟左侧所选部门过滤
+   * （左侧只负责「看哪个学院」），改由本 ref 控制。
+   */
+  const collegeDispatchDeptFilter = ref('')
+
+  /**
+   * 2026-11-09（修复关键 bug）：各「归属部门」在本学院的真实上报状态。
+   *
+   * <p><b>为什么必须单独维护</b>：indicator 行上<b>没有</b>上报状态字段
+   * （status 只有 DRAFT/PENDING/DISTRIBUTED，是下发态；self_rating 在
+   * plan_report_indicator 表，不在 indicator 行上）。之前用
+   * {@code item.selfRating} 判断「已上报」，值恒为 undefined →
+   * 所有部门都被判成 normal，下拉里永远看不到绿色/橙色。这正是用户反馈
+   * 「状态标记颜色不生效」的根因。
+   *
+   * <p>现在改用与表格「上报状态」列完全同源的 {@code useIndicatorFills}
+   * （内部按 indicatorId 缓存、并发请求共享同一 Promise，不会放大请求量），
+   * 取每个指标最新一次非草稿上报的 status 再按部门汇总。
+   */
+  const collegeDeptFillStates = ref<Record<string, { approved: number; submitted: number }>>({})
+
+  const refreshCollegeDeptFillStates = async () => {
+    const target = normalizeDepartmentName(selectedCollege.value || '')
+    if (!target) {
+      collegeDeptFillStates.value = {}
+      return
+    }
+    const rows = normalizedIndicators.value.filter(item => {
+      const candidate = item as {
+        targetDepartment?: string
+        targetOrgName?: string
+        responsibleDept?: string
+      }
+      const deptName = normalizeDepartmentName(
+        String(
+          candidate.targetDepartment ?? candidate.targetOrgName ?? candidate.responsibleDept ?? ''
+        )
+      )
+      return deptName === target || deptName.includes(target)
+    })
+    const next: Record<string, { approved: number; submitted: number }> = {}
+    for (const row of rows) {
+      const dept = resolveRowOwnerDept(row) || strategicDeptName.value || '未归属部门'
+      const bucket = (next[dept] ??= { approved: 0, submitted: 0 })
+      // 走与 ReportStatusCell 同一个缓存化请求，单指标只会真正发出一次
+      const fills = await useIndicatorFills(row.id)
+      const latest = fills[0]
+      if (!latest) {
+        continue
+      }
+      if (latest.status === 'approved') {
+        bucket.approved += 1
+      } else if (latest.status === 'submitted') {
+        bucket.submitted += 1
+      }
+    }
+    collegeDeptFillStates.value = next
+  }
+
+  // 切学院 / 指标列表刷新后重算各部门上报状态（审批流转后也会经指标刷新触发）
+  watch(
+    () =>
+      [
+        normalizeDepartmentName(selectedCollege.value || ''),
+        normalizedIndicators.value.map(item => item.id).join(',')
+      ].join('|'),
+    () => {
+      void refreshCollegeDeptFillStates()
+    },
+    { immediate: true }
+  )
+
+  /**
+   * 下拉选项：把该学院收到的指标按「归属部门」分组，给出每个部门的下发情况。
+   *
+   * <p>状态口径（用户 2026-11-09 定）：
+   * <ul>
+   *   <li>该部门对当前学院<b>无指标</b> → 灰锁，不可点；</li>
+   *   <li>有指标且有<b>审批中</b>（存在 submitted 的上报）→ 橙色（优先，因为更需要关注）；</li>
+   *   <li>有指标且<b>已上报</b>（存在 approved 的上报）→ 绿色；</li>
+   *   <li>其余（已下发、未上报）→ 正常显示，不做标记。</li>
+   * </ul>
+   */
+  const collegeDeptDispatchOptions = computed(() => {
+    const target = normalizeDepartmentName(selectedCollege.value || '')
+    if (!target) {
+      return [] as Array<{ dept: string; count: number; status: 'normal' | 'reported' | 'pending' }>
+    }
+    const byDept = new Map<string, { count: number; pending: boolean; reported: boolean }>()
+    for (const item of normalizedIndicators.value) {
+      const candidate = item as {
+        targetDepartment?: string
+        targetOrgName?: string
+        responsibleDept?: string
+      }
+      const deptName = normalizeDepartmentName(
+        String(
+          candidate.targetDepartment ?? candidate.targetOrgName ?? candidate.responsibleDept ?? ''
+        )
+      )
+      if (!(deptName === target || deptName.includes(target))) {
+        continue
+      }
+      const dept = resolveRowOwnerDept(item) || strategicDeptName.value || '未归属部门'
+      const entry = byDept.get(dept) ?? { count: 0, pending: false, reported: false }
+      entry.count += 1
+      // 状态取自真实的上报记录聚合（见 refreshCollegeDeptFillStates），
+      // 不再用 indicator 上的 status/selfRating —— 那两个字段判断不出「已上报/审批中」。
+      const fillState = collegeDeptFillStates.value[dept]
+      if (fillState && fillState.submitted > 0) {
+        entry.pending = true
+      }
+      if (fillState && fillState.approved > 0) {
+        entry.reported = true
+      }
+      byDept.set(dept, entry)
+    }
+    // 2026-11-09（用户要求）：选项顺序必须是**部门排序**（组织机构顺序），
+    // 不能是指标遍历顺序 —— 默认选中项取 options[0]，用户要的是「按部门排序
+    // 第一个下发了指标的部门」，而不是「第一条指标所属的部门」。
+    const deptOrder = new Map(
+      functionalDepartments.value.map((name, index) => [normalizeDepartmentName(name), index])
+    )
+    return Array.from(byDept.entries())
+      .map(([dept, entry]) => ({
+        dept,
+        count: entry.count,
+        status: entry.pending
+          ? ('pending' as const)
+          : entry.reported
+            ? ('reported' as const)
+            : ('normal' as const)
+      }))
+      .sort((left, right) => {
+        const leftIndex = deptOrder.get(left.dept) ?? Number.MAX_SAFE_INTEGER
+        const rightIndex = deptOrder.get(right.dept) ?? Number.MAX_SAFE_INTEGER
+        if (leftIndex !== rightIndex) {
+          return leftIndex - rightIndex
+        }
+        return left.dept.localeCompare(right.dept)
+      })
+  })
+
+  /**
+   * 下拉菜单的完整选项：**全部职能部门**（用户要求「显示所有职能部门」），
+   * 再叠加该部门对当前学院的下发情况。
+   *
+   * <p>没给当前学院下发过指标的部门也要出现（count=0 → 灰锁不可点），
+   * 这样战略部一眼能看出「这个学院还有哪些部门没下发」。
+   */
+  const collegeDeptDropdownItems = computed(() => {
+    const dispatchByDept = new Map(collegeDeptDispatchOptions.value.map(item => [item.dept, item]))
+    const items: Array<{
+      dept: string
+      count: number
+      status: 'normal' | 'reported' | 'pending' | 'none'
+    }> = []
+    const seen = new Set<string>()
+    for (const dept of functionalDepartments.value) {
+      const name = normalizeDepartmentName(dept)
+      if (!name || seen.has(name)) {
+        continue
+      }
+      seen.add(name)
+      const hit = dispatchByDept.get(name)
+      items.push({
+        dept: name,
+        count: hit?.count ?? 0,
+        status: hit ? hit.status : 'none'
+      })
+    }
+    // 归属部门可能不在「职能部门」清单里（例如战略部直发的存量行），补在后面，
+    // 否则这些行在「全部」里能看到、却无法被单独筛出来。
+    for (const [dept, hit] of dispatchByDept.entries()) {
+      if (!seen.has(dept)) {
+        items.push({ dept, count: hit.count, status: hit.status })
+      }
+    }
+    return items
+  })
+
+  /**
+   * 实际生效的部门筛选值。
+   *
+   * <p>2026-11-09（修复「没选部门时没有自动显示」）：原来用一个
+   * {@code watch(..., {immediate:true})} 在选项就绪时回填 collegeDispatchDeptFilter，
+   * 但选项依赖异步加载的指标数据 —— watch 首次执行时指标还没到、选项为空，
+   * 之后数据到达时 source 字符串虽然变了，实测仍然回填不上（用户看到小字为空、
+   * 表格显示全部）。改用**纯 computed 兜底**，没有任何时序依赖：
+   * 用户没显式选过 → 取「部门排序第一个有下发指标的部门」；选过 → 用用户选的。
+   */
+  const collegeDispatchDeptEffective = computed(() => {
+    const manual = normalizeDepartmentName(collegeDispatchDeptFilter.value || '')
+    if (manual) {
+      return manual
+    }
+    return collegeDeptDispatchOptions.value[0]?.dept ?? ''
+  })
+
+  /**
+   * 当前选中的下拉项（用于在箭头右侧显示「当前是哪个部门」的小字）。
+   * 只会命中「有指标」的部门 —— 灰锁项点不动，不会成为当前项。
+   */
+  const collegeDeptCurrent = computed(
+    () =>
+      collegeDeptDispatchOptions.value.find(
+        item => item.dept === collegeDispatchDeptEffective.value
+      ) ?? null
+  )
+
+  /**
+   * 2026-11-09（用户要求）：**强制显示单个部门**，不再有「全部部门」这一态。
+   *
+   * <p>默认由上面的 effective 兜底为「部门排序第一个有指标的部门」；
+   * 这里只在「切换学院」时把用户的手动选择清掉，避免带着上一个学院的部门去看新学院。
+   * 一个部门都没给该学院下发时 effective 为空 → 表格空态。
+   */
+  watch(
+    () => normalizeDepartmentName(selectedCollege.value || ''),
+    () => {
+      collegeDispatchDeptFilter.value = ''
+    }
+  )
+
   const collegeTableIndicators = computed(() => {
     if (!selectedCollege.value) {
       return []
     }
     const target = normalizeDepartmentName(selectedCollege.value)
-    const ownerDept = normalizeDepartmentName(selectedDepartment.value || '')
+    // 2026-11-09（用户要求）：过滤依据由「左侧所选部门」改为「右侧下拉所选部门」——
+    // 未显式选择时由 collegeDispatchDeptEffective 兜底为「部门排序第一个有指标的部门」，
+    // 实现「进页面就单独显示第一个部门的下发指标」，不再是全部部门混在一起。
+    const ownerDept = collegeDispatchDeptEffective.value
     return normalizedIndicators.value
       .map(item => applyReportDetailOverlayToRow(item))
       .filter(item => {
         // 2026-11-05（codex P2-5）：可见性放宽、作用域按归属部门收紧（见 resolveRowOwnerDept）
         const rowOwnerDept = resolveRowOwnerDept(item)
         const ownerMatches = !ownerDept || rowOwnerDept === ownerDept
+        // 2026-11-09（用户要求，修复筛选失效）：这里必须**显式**按所选部门收口。
+        // 原因：下方的 isDispatchOwnerVisible 对战略部登录**恒返回 true**（可见性改造时放宽的），
+        // 它不会因为 ownerMatches=false 而拦行 —— 结果就是下拉选了「教务处」，
+        // 表格却仍然把所有部门下发的指标全列出来（用户实测反馈的就是这个现象）。
+        if (!ownerMatches) {
+          return false
+        }
         if (
           !isDispatchOwnerVisible({
             loginRole: authStore.userRole,
@@ -5567,10 +5805,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     if (!selectedCollege.value) {
       return 0
     }
-    const scope = resolveSelectedCollegeReportScope()
-    const scopePlanId = scope ? Number(scope.planId) : Number.NaN
+    // 2026-11-09（用户要求）：合计口径改为「**当前表格里显示的那些行**」的基础性权重之和。
+    // 原实现额外叠加 isIndicatorInCollegePlanScope（只看当前计划），会出现
+    // 「表格显示 1 条 100、合计却算另一个计划的 0」的割裂；学院页签现在由部门下拉决定行集，
+    // 合计必须跟着同一个行集走，用户看到的数字才对得上。
     return collegeTableIndicators.value
-      .filter(row => isIndicatorInCollegePlanScope(row as StrategicIndicator, scopePlanId))
       .filter(row => isBasicIndicatorForCurrentRules(row as StrategicIndicator))
       .reduce((sum, row) => sum + Number(row.weight || 0), 0)
   })
@@ -7743,6 +7982,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     selectedCollege,
     selectCollege,
     collegeTableIndicators,
+    // 2026-11-09（用户要求）：学院页签右侧的「职能部门」下拉筛选器
+    collegeDispatchDeptFilter,
+    collegeDispatchDeptEffective,
+    collegeDeptDispatchOptions,
+    collegeDeptDropdownItems,
+    collegeDeptCurrent,
     // 2026-11-09（页签分流）：二级学院页签的「基础性权重合计」（学院口径，分母 100）
     collegeBasicWeightTotal,
     collegeDepartmentsScoped,

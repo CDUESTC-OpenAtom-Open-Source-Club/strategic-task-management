@@ -217,6 +217,10 @@ const {
   selectedCollege,
   selectCollege,
   collegeTableIndicators,
+  // 2026-11-09（用户要求）：学院页签右侧「职能部门」下拉筛选器
+  collegeDispatchDeptFilter,
+  collegeDeptDropdownItems,
+  collegeDeptCurrent,
   // 2026-11-09（页签分流）：二级学院页签的「基础性权重合计」（学院口径，分母固定 100）
   collegeBasicWeightTotal,
   collegeFillStatusScope,
@@ -638,6 +642,17 @@ const downloadFillAttachment = async (attachment: Record<string, any>) => {
 }
 
 /**
+ * 2026-11-09（用户要求）：学院页签右侧「职能部门」下拉筛选器。
+ *
+ * <p>空字符串 = 全部部门（默认态，按归属部门顺序显示该学院全部指标）；
+ * 选了某个部门 = 只看该部门下发给这个学院的指标。
+ * 灰锁项（该部门从未给当前学院下发）由 el-dropdown-item 的 disabled 拦住，走不到这里。
+ */
+const handleCollegeDeptFilterChange = (command: string | number | object) => {
+  collegeDispatchDeptFilter.value = String(command ?? '')
+}
+
+/**
  * 2026-10-23 用户定案：新增行按 tab 分流——
  * 职能部门 tab 建核心指标（战略部下发），学院 tab 建该学院的子指标（挂到所选核心指标）。
  * 由 collegeAddMode 告知 model 走哪条创建契约。
@@ -654,6 +669,11 @@ watch(activeTaskTabName, tab => {
   // PR#83：告知 model 头部「审批状态」的填报审批态聚合范围——
   // 「上报状态」列只存在于学院页签，聚合也只在该页签进行
   collegeFillStatusScope.value = tab === 'college'
+  // 2026-11-09（用户要求）：切页签时把学院页签的部门筛选复位成「全部部门」，
+  // 否则从别的页签切回来会带着上次筛的部门，用户看到的是残缺列表却不知道原因。
+  if (tab !== 'college') {
+    collegeDispatchDeptFilter.value = ''
+  }
   if (tab === 'college') {
     if (selectedCollege.value) {
       void syncCurrentPlanReportSummaries({ force: true, collegeScope: true })
@@ -661,6 +681,12 @@ watch(activeTaskTabName, tab => {
     return
   }
   void syncCurrentPlanReportSummaries({ force: true })
+})
+
+// 2026-11-09（用户要求）：切换学院时同样复位部门筛选 —— 不同学院可选的部门集合不同，
+// 沿用上一个学院的筛选会让新学院的表格直接空掉。
+watch(selectedCollege, () => {
+  collegeDispatchDeptFilter.value = ''
 })
 
 // 2026-10-13 用户定案：二级学院 tab 未选学院时的左侧入口引导（呼吸高亮 + 指向气泡），选中后消失
@@ -1522,10 +1548,15 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             新增行
           </el-button>
           <!-- 下发/撤回合并按钮 -->
-          <!-- 2026-11-08（单层下发）：同一按钮按页签分流——职能部门页签沿用计划的
-               下发/撤回；二级学院页签由战略部「发起下发审批」，职能部门置灰只审批上报。 -->
+          <!-- 2026-11-09（用户要求）：两个页签这一块必须**完全一致**——文案/按钮类型/图标
+               统一用同一套取值（职能部门页签为原有样式：绿色「发起审批」/「撤回」），
+               不再给学院页签单独换色换图标换文案。
+               仅「可用性」与「点下去做什么」按页签分流：
+               - 可用性：学院页签用 collegeTabDistributeDisabledReason（含只读/权限/未选学院），
+                 避免用部门计划相位误判学院页签；
+               - 点击：handleDistributeOrWithdrawClick 内部按页签分流。 -->
           <el-button
-            :type="activeTaskTabName === 'college' ? 'primary' : distributeButtonType"
+            :type="distributeButtonType"
             size="small"
             :loading="activeTaskTabName === 'college' ? collegeDispatchSubmitting : undefined"
             :disabled="
@@ -1540,14 +1571,8 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             "
             @click.stop="handleDistributeOrWithdrawClick"
           >
-            <!-- 2026-11-08（审查 blocking 修复）：学院页签的文案/类型/图标必须独立。
-                 原实现沿用 distributeButtonText 等「职能部门计划相位」的取值，
-                 战略部先在职能部门页签选中一个已下发/审批中的部门再切到学院页签时，
-                 按钮会显示「撤回」「撤回异动」，点下去却是提交下发审批 → 误操作且可能重复提交。 -->
-            <el-icon
-              ><component :is="activeTaskTabName === 'college' ? Promotion : distributeButtonIcon"
-            /></el-icon>
-            {{ activeTaskTabName === 'college' ? '发起下发审批' : distributeButtonText }}
+            <el-icon><component :is="distributeButtonIcon" /></el-icon>
+            {{ distributeButtonText }}
           </el-button>
           <div class="approval-entry-wrapper">
             <!-- 审批进度按钮（带徽章） -->
@@ -2551,7 +2576,73 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           </div>
         </el-tab-pane>
 
-        <el-tab-pane label="二级学院战略任务管理" name="college">
+        <el-tab-pane name="college">
+          <!-- 2026-11-09（用户要求）：在「二级学院战略任务管理」标签右侧加一个部门下拉。
+               列出**全部职能部门**：
+               · 该部门给当前学院下发过指标 → 按状态着色（已上报=绿 / 审批中=橙）；
+               · 已下发但未上报 → 正常显示；
+               · 从未给当前学院下发 → 灰锁不可点。
+               **强制显示单个部门**：没有「全部部门」这一态，进页面默认选第一个下发了指标的部门；
+               箭头右侧的小字显示当前部门。 -->
+          <template #label>
+            <span class="college-tab-label">
+              二级学院战略任务管理
+              <el-dropdown
+                v-if="activeTaskTabName === 'college'"
+                trigger="click"
+                placement="bottom-start"
+                @command="handleCollegeDeptFilterChange"
+              >
+                <span class="college-tab-trigger" @click.stop>
+                  <el-icon class="college-tab-filter-arrow"><ArrowDown /></el-icon>
+                  <!-- 当前部门小字：只显示「现在表格里是哪个部门的数据」。
+                       状态（已上报/审批中）按用户要求**只在点开的下拉列表里**展示，
+                       不在这里重复。整块（箭头 + 小字）都是点击热区。 -->
+                  <span v-if="collegeDeptCurrent" class="college-tab-current">
+                    {{ collegeDeptCurrent.dept }}
+                  </span>
+                </span>
+                <template #dropdown>
+                  <el-dropdown-menu class="college-dept-filter-menu">
+                    <!-- 注意：菜单被 teleport 到 body，scoped 样式选不到它，
+                         所以颜色/置灰一律用内联 style，避免样式不生效。 -->
+                    <el-dropdown-item
+                      v-for="item in collegeDeptDropdownItems"
+                      :key="item.dept"
+                      :command="item.dept"
+                      :disabled="item.count === 0"
+                      :style="{
+                        color:
+                          item.status === 'reported'
+                            ? '#67c23a'
+                            : item.status === 'pending'
+                              ? '#e6a23c'
+                              : item.status === 'none'
+                                ? '#c0c4cc'
+                                : undefined
+                      }"
+                    >
+                      <span class="college-dept-filter-name">{{ item.dept }}</span>
+                      <el-tag
+                        v-if="item.status === 'reported'"
+                        type="success"
+                        size="small"
+                        class="college-dept-filter-tag"
+                        >已上报</el-tag
+                      >
+                      <el-tag
+                        v-else-if="item.status === 'pending'"
+                        type="warning"
+                        size="small"
+                        class="college-dept-filter-tag"
+                        >审批中</el-tag
+                      >
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </span>
+          </template>
           <!-- 2026-10-11 用户定案：与职能部门同构的表格视图——左侧选学院，表格展示该学院收到的全部指标，双击异动 -->
           <div class="excel-table-wrapper">
             <div v-if="!selectedCollege" class="college-empty-tip">
@@ -2570,7 +2661,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                      否则用户看不出自己就是那个该去做下发的人。 -->
                 <div class="college-empty-main">该职能部门尚未向任何二级学院下发指标</div>
                 <div class="college-empty-sub">
-                  在左侧选择要下发的学院，然后用页签下方的「导入学院指标」发起本次下发
+                  在左侧选择学院后，用页签上方工具栏的「导入」完成本次下发
                 </div>
               </template>
               <template v-else>
@@ -3367,4 +3458,85 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
   font-size: 13px;
   word-break: break-all;
 }
+
+/* 2026-11-09（用户要求）：学院页签「职能部门」下拉筛选器 —— 标签右侧的小箭头 */
+.college-tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.college-tab-filter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  color: #6b7280;
+  cursor: pointer;
+  transition:
+    background-color 0.15s,
+    color 0.15s;
+}
+
+.college-tab-filter:hover {
+  background-color: #eff6ff;
+  color: #2563eb;
+}
+
+.college-dept-filter-menu {
+  max-height: 420px;
+  overflow-y: auto;
+  min-width: 240px;
+}
+
+.college-dept-filter-name {
+  flex: 1;
+}
+
+/* 2026-11-09（用户要求）：学院页签「职能部门」下拉 —— 整块（箭头+小字）都是点击热区 */
+.college-tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.college-tab-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.college-tab-trigger:hover {
+  background-color: #eff6ff;
+}
+
+.college-tab-filter-arrow {
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.college-tab-trigger:hover .college-tab-filter-arrow {
+  color: #2563eb;
+}
+
+/* 当前部门小字：只显示部门名（状态按用户要求只在下拉列表里展示） */
+.college-tab-current {
+  font-size: 12px;
+  color: #909399;
+  font-weight: 400;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 说明：下拉菜单被 Element Plus teleport 到 body，scoped 样式选不到它，
+   所以「已上报 / 审批中 / 未下发」三种颜色一律用模板上的内联 style 实现，
+   这里不再留对应 class（留着会误导后来者以为改样式能生效）。 */
 </style>

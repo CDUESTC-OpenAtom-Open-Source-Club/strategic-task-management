@@ -8,8 +8,7 @@ import {
 
 const importTypes: BusinessImportType[] = ['strategic-task', 'distribution']
 
-// 2026-11-08（学院指标单层口径）：学院模板改为 8 列 —— 取消「核心指标」「核心指标类型」
-// （学院指标不再有父级），新增「归口职能部门」（上报审批席位靠它解析）。
+// 2026-10-31 用户终版表头（职能部门 8 列 / 学院 9 列——学院模板加「任务类型」列）
 const expectedHeaders: Record<BusinessImportType, string[]> = {
   'strategic-task': [
     '序号',
@@ -25,17 +24,18 @@ const expectedHeaders: Record<BusinessImportType, string[]> = {
     '序号',
     '学院',
     '任务类型',
-    '指标名称',
+    '核心指标',
+    '核心指标类型',
+    '子指标名称',
     '指标类型',
     '权重（可填 10 / 10% / 0.1）',
-    '下发备注',
-    '归口职能部门'
+    '下发备注'
   ]
 }
 
 const expectedSheetNames: Record<BusinessImportType, string> = {
   'strategic-task': '职能部门指标模板',
-  distribution: '学院指标模板'
+  distribution: '学院子指标模板'
 }
 
 describe('import/lib/importTemplate', () => {
@@ -47,14 +47,13 @@ describe('import/lib/importTemplate', () => {
     expect(headers).not.toContain('预警等级')
     // 2026-10-31 层级化定案：学院模板不再有「父级战略任务」列
     expect(headers).not.toContain('父级战略任务')
-    // 终版表头：职能部门模板含「任务类型」
+    // 终版表头：职能部门模板新增「任务类型」；学院模板核心指标列改名并新增「核心指标类型」
     if (type === 'strategic-task') {
       expect(headers).toContain('任务类型')
     } else {
-      // 2026-11-08 单层口径：学院模板含「归口职能部门」，且不再有任何父级列
-      expect(headers).toContain('归口职能部门')
-      expect(headers).not.toContain('核心指标')
-      expect(headers).not.toContain('核心指标类型')
+      expect(headers).toContain('核心指标类型')
+      // 旧列名不再出现（改为「核心指标」）
+      expect(headers).not.toContain('父级核心指标')
     }
   })
 
@@ -131,27 +130,27 @@ describe('import/lib/importTemplate', () => {
     expect(guide.rows[6].taskType).toBe('发展性')
   })
 
-  it('学院模板示例：三条独立指标（无父级）、基础性与发展性分开示例、归口职能部门填在首行', () => {
+  it('学院模板示例演示「一个父级核心指标拆多个子指标」：延续行组列留空、任务类型预填', () => {
     const guide = getImportTemplateGuide('distribution')
 
-    // 2026-11-08（单层口径）：学院指标不再有父级，示例改为三条独立指标
     expect(guide.rows[0].serial).toBe('1')
-    expect(guide.rows[0].parentIndicator).toBeUndefined()
-    expect(guide.rows[0].parentIndicatorType).toBeUndefined()
+    expect(guide.rows[0].parentIndicator).toBe('建设智慧教学质量监测体系')
+    // 核心指标类型=父指标自身类型（系统预填、只读校验）
+    expect(guide.rows[0].parentIndicatorType).toBe('定量')
+    // 2026-10-31 终版表头加列：任务类型=父级所属任务类型（系统预填、锚点只读）
     expect(guide.rows[0].taskType).toBe('基础性')
-    // 归口职能部门只填首行（同学院共用），这是上报审批席位的唯一来源
-    expect(guide.rows[0].functionalOrg).toBe('教务处')
-    // 2026-11-09：后端逐行校验「归口职能部门」必填（漏填即阻断），
-    // 所以示例每行都要填，且整份文件填同一个部门（计划级字段，只能有一个值）
-    expect(guide.rows[1].functionalOrg).toBe('教务处')
-    expect(guide.rows[2].functionalOrg).toBe('教务处')
+    const stickyRow = guide.rows[1]
+    // 序号/任务类型/核心指标/核心指标类型四列随组竖向合并：从属格全部留空；
     // 学院列整列合并：从属行留空
-    expect(guide.rows[1].college).toBe('')
-    // 每行都有自己的指标名与类型（不再是延续行）
-    expect(guide.rows[1].indicatorName).toBeTruthy()
-    expect(guide.rows[1].indicatorType).toBeTruthy()
-    // 第三条为发展性
-    expect(guide.rows[2].taskType).toBe('发展性')
+    expect(stickyRow.serial).toBe('')
+    expect(stickyRow.college).toBe('')
+    expect(stickyRow.taskType).toBe('')
+    expect(stickyRow.parentIndicator).toBe('')
+    expect(stickyRow.parentIndicatorType).toBe('')
+    // 同一父级下的第二个子指标
+    expect(stickyRow.indicatorName).toBeTruthy()
+    // 组 2 为发展性（示例演示发展性权重不占基础性池子）
+    expect(guide.rows[3].taskType).toBe('发展性')
   })
 
   it('职能部门模板按组竖向合并「序号」「战略任务」「任务类型」，部门列整列合并：锚点格携带 rowSpan、从属格为 null', () => {
@@ -178,15 +177,18 @@ describe('import/lib/importTemplate', () => {
   it('学院模板按组竖向合并「序号」「任务类型」「核心指标」「核心指标类型」，学院列整列合并', () => {
     const sheet = buildImportTemplateSheet('distribution')
 
-    // 2026-11-08（单层口径）：学院模板已无「组」概念，序号/任务类型不再按组竖向合并；
-    // 只有「学院」列整列合并（一份导入锁定一个学院）。
-    expect(sheet.columns[0].getValue(sheet.rows[0], 0)).toBe('1')
-    expect(sheet.columns[0].getValue(sheet.rows[1], 1)).toBe('2')
-    // 学院列(1)整列合并——首行 rowSpan=全部数据行，从属格 null
-    expect(sheet.columns[1].getValue(sheet.rows[0], 0)).toMatchObject({ rowSpan: 3 })
+    // 组列：序号(0)、任务类型(2)、核心指标(3)、核心指标类型(4)
+    for (const columnIndex of [0, 2, 3, 4]) {
+      const column = sheet.columns[columnIndex]
+      expect(column.getValue(sheet.rows[0], 0)).toMatchObject({ rowSpan: 3 })
+      expect(column.getValue(sheet.rows[1], 1)).toBeNull()
+      expect(column.getValue(sheet.rows[2], 2)).toBeNull()
+    }
+    // 2026-10-31 用户拍板：学院列(1)整列合并——首行 rowSpan=全部数据行，从属格 null
+    expect(sheet.columns[1].getValue(sheet.rows[0], 0)).toMatchObject({ rowSpan: 5 })
     expect(sheet.columns[1].getValue(sheet.rows[2], 2)).toBeNull()
-    // 非合并列（指标名称）不受影响
-    expect(sheet.columns[3].getValue(sheet.rows[2], 2)).toBe('建成教学质量看板')
+    // 非组列（子指标名称）不受合并影响
+    expect(sheet.columns[5].getValue(sheet.rows[2], 2)).toBe('建成教学质量看板')
   })
 
   it('学院模板预填行：序号=组号、任务类型/核心指标/核心指标类型预填，不再带父级战略任务', () => {
@@ -233,9 +235,9 @@ describe('import/lib/importTemplate', () => {
     expect(sheet.columns[0].getValue(sheet.rows[1], 1)).toBe('2')
   })
 
-  it('职能部门模板规则文案写明「留空=同上」与合并单元格双写法', () => {
-    // 2026-11-08（单层口径）：学院模板已无「组」概念，这条只对职能部门模板成立
-    const rules = getImportTemplateGuide('strategic-task').rules.join('\n')
+  it.each(importTypes)('%s 规则文案写明「留空=同上」与合并单元格双写法', type => {
+    const guide = getImportTemplateGuide(type)
+    const rules = guide.rules.join('\n')
 
     expect(rules).toContain('留空')
     expect(rules).toContain('合并')
@@ -244,19 +246,6 @@ describe('import/lib/importTemplate', () => {
     expect(rules).toContain('不合并单元格')
     // 序号语义：组号
     expect(rules).toContain('组号')
-  })
-
-  it('学院模板规则文案写明「没有父级」：不再是组号/留空=同上', () => {
-    const rules = getImportTemplateGuide('distribution').rules.join('\n')
-
-    // 2026-11-08（单层口径）：学院指标没有父级，规则必须显式讲清，
-    // 否则用户会按旧的「核心指标 + 组号」结构填表
-    expect(rules).toContain('没有「核心指标」父级')
-    expect(rules).not.toContain('留空=同上')
-    // 规则里出现「组号」只能是在声明它已取消（否定语境），不能是教用户怎么填组号
-    if (rules.includes('组号')) {
-      expect(rules).toContain('不再是父级组号')
-    }
   })
 
   it.each(importTypes)('%s 规则文案写明按名称更新/新增且改名不支持', type => {
@@ -280,42 +269,36 @@ describe('import/lib/importTemplate', () => {
     expect(rules).toContain('基础性')
   })
 
-  it('学院模板规则写明「归口职能部门」是上报审批席位的唯一来源', () => {
+  it('学院模板规则写明核心指标类型为只读校验列', () => {
     const rules = getImportTemplateGuide('distribution').rules.join('\n')
 
-    // 2026-11-08（单层口径）：学院没有父级后，审批席位推不出归口部门，
-    // 必须由这一列显式指定 —— 规则里讲不清，用户就会留空，上报链派单失败。
-    expect(rules).toContain('归口职能部门')
-    expect(rules).toContain('审批')
-    expect(rules).not.toContain('核心指标类型')
+    expect(rules).toContain('核心指标类型')
+    expect(rules).toContain('只读校验')
+    expect(rules).toContain('不阻断')
   })
 
-  it('学院模板规则写明「任务类型」为任务级属性且漏填会被阻断', () => {
+  it('学院模板规则写明「任务类型」列为系统预填锚点只读（不一致阻断点名）', () => {
     const rules = getImportTemplateGuide('distribution').rules.join('\n')
 
-    // 2026-11-08（单层口径）：任务类型不再是父级预填锚点，而是用户必填的任务级属性
-    expect(rules).toContain('任务级属性')
-    expect(rules).toContain('基础性')
-    expect(rules).toContain('发展性')
-    expect(rules).toContain('阻断')
+    // 2026-10-31 终版表头加列：任务类型=父级所属任务类型，系统预填、只读、不一致→阻断
+    expect(rules).toContain('「任务类型」为父级核心指标所属战略任务的类型')
+    expect(rules).toContain('阻断导入并点名对应行')
+    // 该列为预填信息，不作为用户输入落库
+    expect(rules).toContain('无需填写')
   })
 
-  // ============ 2026-11-08：权重口径改为「该学院该计划下全部基础性指标合计 100」 ============
+  // ============ 2026-10-31 用户拍板：权重说明改为计划级口径 ============
 
-  it.each(importTypes)('%s 权重说明写明基础性合计 100 的口径', type => {
+  it.each(importTypes)('%s 权重说明改为计划级口径：基础性任务及指标全计划合计须为 100', type => {
     const rules = getImportTemplateGuide(type).rules.join('\n')
 
-    expect(rules).toContain('基础性')
-    expect(rules).toContain('100')
+    // 计划级口径：两套模板同一句——基础性任务及其指标的权重全计划合计须为 100
+    expect(rules).toContain('基础性任务及其指标的权重，全计划合计须为 100')
+    expect(rules).toContain('基础性任务下的指标同为基础性')
+    expect(rules).toContain('多个基础性任务组的权重一并计入合计')
     // 旧的「组内合计」口径不再出现
     expect(rules).not.toContain('同一任务组内基础性权重合计需为 100')
     expect(rules).not.toContain('同一父级指标组内子指标权重合计需为 100')
-  })
-
-  it('学院模板权重说明改为「该学院该计划下全部基础性指标合计」，不再按父级分组', () => {
-    const rules = getImportTemplateGuide('distribution').rules.join('\n')
-
-    expect(rules).toContain('该学院该计划下的全部基础性指标合计')
-    expect(rules).not.toContain('同一父级')
+    expect(rules).not.toContain('合计不是 100 会给出警告')
   })
 })
