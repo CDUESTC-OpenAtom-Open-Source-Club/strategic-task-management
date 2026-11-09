@@ -22,6 +22,8 @@ import {
   Delete,
   ArrowDown,
   ArrowLeftBold,
+  // 2026-11-09（用户拍板：两步显式选择）：第二级空态引导图标（指向上方部门下拉）
+  ArrowUpBold,
   Check,
   Loading,
   Upload,
@@ -524,7 +526,39 @@ const collegeTabDistributeDisabledReason = computed(() => {
   if (!canWriteStrategicTask.value) {
     return '当前角色仅可查看，不能发起下发审批'
   }
-  return collegeDispatchDisabledReason.value
+  // 2026-11-09（用户拍板：两步显式选择）：先沿用既有前置守卫（含「请先在左侧选择学院」），
+  // 学院已选但未显式选择职能部门时给出第二步引导 —— 不再自动兜底第一个部门。
+  const preconditionReason = collegeDispatchDisabledReason.value
+  if (preconditionReason) {
+    return preconditionReason
+  }
+  if (!collegeDispatchDeptFilter?.value) {
+    return '请先选择职能部门'
+  }
+  return ''
+})
+
+/**
+ * 2026-11-09（用户拍板：两步显式选择）：学院页签「选学院 + 选职能部门」两选是否已齐。
+ *
+ * <p>职能部门页签恒为 true —— 本口径只作用于学院页签，职能部门页签行为零变化。
+ * 两选未齐时：中央内容区显示引导空态、工具栏「新增行 / 发起审批 / 导入 / 导出 /
+ * 全部导出」置灰、顶部「审批状况 / 基础性权重合计 / 计划状态」状态签隐藏。</p>
+ */
+const collegeTabTwoStepReady = computed(() => {
+  if (activeTaskTabName.value !== 'college') {
+    return true
+  }
+  const dept = String(collegeDispatchDeptFilter?.value ?? '').trim()
+  return Boolean(selectedCollege?.value) && dept !== ''
+})
+
+/** 两选未齐时工具栏按钮 tooltip 的引导文案：缺哪一步提示哪一步。 */
+const collegeTabTwoStepGuideTip = computed(() => {
+  if (!selectedCollege?.value) {
+    return '请先在左侧选择学院'
+  }
+  return '请先选择职能部门'
 })
 
 /**
@@ -644,8 +678,8 @@ const downloadFillAttachment = async (attachment: Record<string, any>) => {
 /**
  * 2026-11-09（用户要求）：学院页签右侧「职能部门」下拉筛选器。
  *
- * <p>空字符串 = 全部部门（默认态，按归属部门顺序显示该学院全部指标）；
- * 选了某个部门 = 只看该部门下发给这个学院的指标。
+ * <p>2026-11-09（用户拍板：两步显式选择）：空字符串 = 未选择（两步未齐的引导态，
+ * 表格置空并提示先选部门）；选了某个部门 = 只看该部门下发给这个学院的指标。
  * 灰锁项（该部门从未给当前学院下发）由 el-dropdown-item 的 disabled 拦住，走不到这里。
  */
 const handleCollegeDeptFilterChange = (command: string | number | object) => {
@@ -1147,6 +1181,12 @@ const handleExportCollegeIndicators = async () => {
     ElMessage.warning('请先在左侧选择学院')
     return
   }
+  // 2026-11-09（用户拍板：两步显式选择）：学院页签「导出 / 全部导出」以双条件为前置
+  // （学院 + 职能部门），第二步未选时阻断并提示，与工具栏按钮置灰口径一致。
+  if (!collegeDispatchDeptFilter?.value) {
+    ElMessage.warning('请先选择职能部门')
+    return
+  }
   const rows = collegeTableIndicators.value
   if (rows.length === 0) {
     ElMessage.warning('当前部门与该学院范围内暂无可导出的指标')
@@ -1356,6 +1396,13 @@ const openStrategicImportDialog = () => {
       ElMessage.warning('请先在左侧选择要下发的学院')
       return
     }
+    // 2026-11-09（用户拍板：两步显式选择）：学院已选但未显式选择职能部门时同样阻断。
+    // 弹窗内提交链路（BusinessImportDialog）不再二次校验部门选择，且弹窗是模态框、
+    // 打开期间部门下拉不可点 —— 所以「打开导入」这一道双条件守卫就是提交的唯一入口闸门。
+    if (!collegeDispatchDeptFilter?.value) {
+      ElMessage.warning('请先选择职能部门')
+      return
+    }
     strategicImportDialogVisible.value = true
     return
   }
@@ -1500,12 +1547,16 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             plain
             size="small"
             :loading="strategicExporting"
+            :disabled="!collegeTabTwoStepReady"
+            :title="collegeTabTwoStepReady ? '' : collegeTabTwoStepGuideTip"
             @click="openStrategicBatchExportDialog"
           >
             <el-icon><Download /></el-icon>
             全部导出
           </el-button>
-          <el-tag :type="overallStatus.type" size="small">
+          <!-- 2026-11-09（用户拍板：两步显式选择）：学院页签两选未齐时隐藏状态签
+               —— 此时没有职能部门上下文，显示职能部门页签的计划状态会误导 -->
+          <el-tag v-if="collegeTabTwoStepReady" :type="overallStatus.type" size="small">
             计划状态: {{ isInitialDataLoading ? '加载中...' : overallStatus.label }}
           </el-tag>
         </div>
@@ -1529,7 +1580,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
               !canEdit ||
               isCurrentPlanUnderApproval ||
               isMutationApprovalInFlight ||
-              (activeTaskTabName === 'college' && !selectedCollege)
+              (activeTaskTabName === 'college' && (!selectedCollege || !collegeDispatchDeptFilter))
             "
             :title="
               !canEdit
@@ -1540,7 +1591,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     ? '异动审批进行中，暂不能新增：等审批结束或先撤回/取消本次异动'
                     : activeTaskTabName === 'college' && !selectedCollege
                       ? '请先在左侧选择学院'
-                      : ''
+                      : activeTaskTabName === 'college' && !collegeDispatchDeptFilter
+                        ? '请先选择职能部门'
+                        : ''
             "
             @click.stop="handleAddNewRow"
           >
@@ -1603,9 +1656,13 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <!-- 2026-11-08（单层下发）：还原为两个页签都显示「导出 / 导入」。
                具体动作由点击处理按页签分流（职能部门 = 部门维度；二级学院 = 战略部 → 所选学院），
                不再隐藏按钮、也不再另外挂一套学院专用按钮组。 -->
+          <!-- 2026-11-09（用户拍板：两步显式选择）：学院页签两选未齐时「导出 / 导入」置灰
+               + tooltip 引导（职能部门页签不受影响，两选条件只挂在学院页签分支上） -->
           <el-button
             size="small"
             :loading="strategicExporting"
+            :disabled="!collegeTabTwoStepReady"
+            :title="collegeTabTwoStepReady ? '' : collegeTabTwoStepGuideTip"
             @click="handleExportCurrentStrategicDepartment"
           >
             <el-icon><Download /></el-icon>
@@ -1614,8 +1671,19 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <el-button
             size="small"
             :icon="Upload"
-            :disabled="!canWriteStrategicTask"
-            :title="canWriteStrategicTask ? '' : '当前角色仅可查看，不能导入指标'"
+            :disabled="
+              !canWriteStrategicTask ||
+              (activeTaskTabName === 'college' && (!selectedCollege || !collegeDispatchDeptFilter))
+            "
+            :title="
+              !canWriteStrategicTask
+                ? '当前角色仅可查看，不能导入指标'
+                : activeTaskTabName === 'college' && !selectedCollege
+                  ? '请先在左侧选择学院'
+                  : activeTaskTabName === 'college' && !collegeDispatchDeptFilter
+                    ? '请先选择职能部门'
+                    : ''
+            "
             @click="openStrategicImportDialog"
           >
             导入
@@ -1684,7 +1752,10 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           </el-button-group>
         </div>
         <div class="toolbar-right">
+          <!-- 2026-11-09（用户拍板：两步显式选择）：学院页签两选未齐时隐藏「审批状况」签
+               —— 此时没有职能部门上下文，读到的是职能部门页签的审批流状态，会误导 -->
           <el-popover
+            v-if="collegeTabTwoStepReady"
             placement="top-end"
             trigger="click"
             :width="320"
@@ -1742,7 +1813,10 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
               <div class="approval-status-card__footer">点击可进入审批中心</div>
             </div>
           </el-popover>
+          <!-- 2026-11-09（用户拍板：两步显式选择）：学院页签两选未齐时同步隐藏，
+               权重合计读的是 collegeTableIndicators（两选未齐时为空表），显示 0/100 会误导 -->
           <el-tag
+            v-if="collegeTabTwoStepReady"
             :type="
               headerBasicWeightTotal > 100
                 ? 'danger'
@@ -2582,8 +2656,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                · 该部门给当前学院下发过指标 → 按状态着色（已上报=绿 / 审批中=橙）；
                · 已下发但未上报 → 正常显示；
                · 从未给当前学院下发 → 灰锁不可点。
-               **强制显示单个部门**：没有「全部部门」这一态，进页面默认选第一个下发了指标的部门；
-               箭头右侧的小字显示当前部门。 -->
+               **强制显示单个部门**：没有「全部部门」这一态。
+               2026-11-09（用户拍板：两步显式选择）：不再自动默认选第一个部门 ——
+               未选时箭头右侧显示灰色占位「请选择职能部门」，引导完成第二步选择。 -->
           <template #label>
             <span class="college-tab-label">
               二级学院战略任务管理
@@ -2597,9 +2672,13 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   <el-icon class="college-tab-filter-arrow"><ArrowDown /></el-icon>
                   <!-- 当前部门小字：只显示「现在表格里是哪个部门的数据」。
                        状态（已上报/审批中）按用户要求**只在点开的下拉列表里**展示，
-                       不在这里重复。整块（箭头 + 小字）都是点击热区。 -->
+                       不在这里重复。整块（箭头 + 小字）都是点击热区。
+                       2026-11-09（用户拍板：两步显式选择）：未选部门时显示灰色占位文案。 -->
                   <span v-if="collegeDeptCurrent" class="college-tab-current">
                     {{ collegeDeptCurrent.dept }}
+                  </span>
+                  <span v-else class="college-tab-current college-tab-current--placeholder">
+                    请选择职能部门
                   </span>
                 </span>
                 <template #dropdown>
@@ -2680,6 +2759,16 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   请在上方「职能部门战略任务管理」中切换其他职能部门，或先完成指标下发
                 </div>
               </template>
+            </div>
+            <!-- 2026-11-09（用户拍板：两步显式选择）：第二级引导 —— 学院已选但未选职能部门。
+                 样式结构（图标+深色大字+辅助小字）完全沿用第一级空态，不再自动兜底
+                 第一个部门直接展示内容。 -->
+            <div v-else-if="!collegeDispatchDeptFilter" class="college-empty-tip">
+              <el-icon class="college-empty-icon"><ArrowUpBold /></el-icon>
+              <div class="college-empty-main">请选择上方职能部门</div>
+              <div class="college-empty-sub">
+                选择职能部门后，这里将展示该学院收到的对应战略任务指标
+              </div>
             </div>
             <template v-else>
               <div class="table-container">
@@ -3544,6 +3633,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 2026-11-09（用户拍板：两步显式选择）：未选部门时的灰色占位文案「请选择职能部门」 */
+.college-tab-current--placeholder {
+  color: #c0c4cc;
 }
 
 /* 说明：下拉菜单被 Element Plus teleport 到 body，scoped 样式选不到它，

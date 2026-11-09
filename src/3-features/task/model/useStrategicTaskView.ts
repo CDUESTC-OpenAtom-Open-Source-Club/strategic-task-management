@@ -5624,8 +5624,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       byDept.set(dept, entry)
     }
     // 2026-11-09（用户要求）：选项顺序必须是**部门排序**（组织机构顺序），
-    // 不能是指标遍历顺序 —— 默认选中项取 options[0]，用户要的是「按部门排序
-    // 第一个下发了指标的部门」，而不是「第一条指标所属的部门」。
+    // 不能是指标遍历顺序 —— 用户按组织架构顺序找部门，而不是「第一条指标所属的部门」。
+    // 2026-11-09（用户拍板：两步显式选择）：不再有「默认选中 options[0]」的兜底，
+    // 排序只决定下拉列表的呈现顺序。
     const deptOrder = new Map(
       functionalDepartments.value.map((name, index) => [normalizeDepartmentName(name), index])
     )
@@ -5704,20 +5705,15 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   /**
    * 实际生效的部门筛选值。
    *
-   * <p>2026-11-09（修复「没选部门时没有自动显示」）：原来用一个
-   * {@code watch(..., {immediate:true})} 在选项就绪时回填 collegeDispatchDeptFilter，
-   * 但选项依赖异步加载的指标数据 —— watch 首次执行时指标还没到、选项为空，
-   * 之后数据到达时 source 字符串虽然变了，实测仍然回填不上（用户看到小字为空、
-   * 表格显示全部）。改用**纯 computed 兜底**，没有任何时序依赖：
-   * 用户没显式选过 → 取「部门排序第一个有下发指标的部门」；选过 → 用用户选的。
+   * <p>2026-11-09（用户拍板：两步显式选择，**无自动兜底**）：只返回用户的显式选择
+   * —— 没选就是空串，不存在「自动选中第一个有指标部门」的兜底。上层据此联动：
+   * collegeTableIndicators 返回空表，中央空态与工具栏按钮引导用户先选职能部门
+   * （两选齐之前内容区与操作全部置灰）。此前的「computed 兜底部门排序第一个
+   * 有下发指标的部门」口径作废。</p>
    */
-  const collegeDispatchDeptEffective = computed(() => {
-    const manual = normalizeDepartmentName(collegeDispatchDeptFilter.value || '')
-    if (manual) {
-      return manual
-    }
-    return collegeDeptDispatchOptions.value[0]?.dept ?? ''
-  })
+  const collegeDispatchDeptEffective = computed(() =>
+    normalizeDepartmentName(collegeDispatchDeptFilter.value || '')
+  )
 
   /**
    * 当前选中的下拉项（用于在箭头右侧显示「当前是哪个部门」的小字）。
@@ -5733,9 +5729,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   /**
    * 2026-11-09（用户要求）：**强制显示单个部门**，不再有「全部部门」这一态。
    *
-   * <p>默认由上面的 effective 兜底为「部门排序第一个有指标的部门」；
+   * <p>2026-11-09（用户拍板：两步显式选择）：effective 不再自动兜底，
    * 这里只在「切换学院」时把用户的手动选择清掉，避免带着上一个学院的部门去看新学院。
-   * 一个部门都没给该学院下发时 effective 为空 → 表格空态。
+   * 未显式选部门时 effective 为空 → 表格空态并引导先选职能部门。
    */
   watch(
     () => normalizeDepartmentName(selectedCollege.value || ''),
@@ -5750,9 +5746,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
     const target = normalizeDepartmentName(selectedCollege.value)
     // 2026-11-09（用户要求）：过滤依据由「左侧所选部门」改为「右侧下拉所选部门」——
-    // 未显式选择时由 collegeDispatchDeptEffective 兜底为「部门排序第一个有指标的部门」，
-    // 实现「进页面就单独显示第一个部门的下发指标」，不再是全部部门混在一起。
+    // 2026-11-09（用户拍板：两步显式选择）：未显式选择部门时不再兜底第一个部门，
+    // 直接返回空表，由中央空态引导用户先选职能部门。
     const ownerDept = collegeDispatchDeptEffective.value
+    if (!ownerDept) {
+      return []
+    }
     return normalizedIndicators.value
       .map(item => applyReportDetailOverlayToRow(item))
       .filter(item => {
