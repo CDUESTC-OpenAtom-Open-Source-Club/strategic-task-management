@@ -165,6 +165,36 @@ export function canWithdrawDispatchPlan(params: {
 }
 
 /**
+ * 学院子指标「业务归属部门」核心解析（**与登录角色无关**，2026-11-10 归口可见性修复抽出）。
+ *
+ * 归属是数据的属性，不是视角的属性：一行子指标业务上归口给谁，不因登录人是谁而变。
+ * 因此本核心不做登录角色门控，供两类调用方复用：
+ * - {@link resolveRowOwnerDept}（战略任务页下钻，登录角色=战略部时套用本核心）；
+ * - 指标下发页（/distribution）的学院计数与表格——归口职能部门登录也要能看到
+ *   「本部门归口的战略部下发子指标」，所以那边的归属解析必须登录无关
+ *   （见 3-features/indicator/lib/distributeRowOwnership.ts）。
+ *
+ * 口径（与 2026-11-05 codex P2-5 定案一致）：
+ * - 存量行（owner = 职能部门）→ 归属部门 = ownerDept（原语义不变）
+ * - 战略部自有行（owner = 战略发展部）→ 归属部门 = 父级核心指标的目标部门
+ *   （父级核心指标 owner=战略部、target=归口职能部门）
+ * - 父级缺失/目标部门解析不出（孤儿行）→ 退回 ownerDept 兜底
+ */
+export function resolveRowOwningDeptCore(params: {
+  strategicDeptName: string
+  rowOwnerDept: string
+  parentTargetDept: string
+}): string {
+  const owner = String(params.rowOwnerDept || '').trim()
+  const strategic = String(params.strategicDeptName || '').trim()
+  if (!strategic || owner !== strategic) {
+    return owner
+  }
+  const parentTarget = String(params.parentTargetDept || '').trim()
+  return parentTarget || owner
+}
+
+/**
  * 学院 tab 一行指标的「归属部门」（按所选部门下钻用）。
  *
  * 2026-11-05（codex P2-5）：改造后学院子指标 ownerDept = 战略发展部，但它业务上归属于
@@ -181,14 +211,12 @@ export function resolveRowOwnerDept(params: {
   rowOwnerDept: string
   parentTargetDept: string
 }): string {
-  const owner = String(params.rowOwnerDept || '').trim()
-  const strategic = String(params.strategicDeptName || '').trim()
   if (params.loginRole !== STRATEGIC_DEPT_ROLE) {
-    return owner
+    return String(params.rowOwnerDept || '').trim()
   }
-  if (!strategic || owner !== strategic) {
-    return owner
-  }
-  const parentTarget = String(params.parentTargetDept || '').trim()
-  return parentTarget || owner
+  return resolveRowOwningDeptCore({
+    strategicDeptName: params.strategicDeptName,
+    rowOwnerDept: params.rowOwnerDept,
+    parentTargetDept: params.parentTargetDept
+  })
 }
