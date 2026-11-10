@@ -302,3 +302,97 @@ describe('学院页签两步显式选择（2026-11-09 用户拍板）', () => {
     expect(viewSource).toMatch(/<el-icon class="college-empty-icon"><ArrowUpBold \/><\/el-icon>/)
   })
 })
+
+/**
+ * 2026-11-10（用户拍板：下发资格口径）源码契约：
+ * 下拉不再 disabled 灰锁 —— 全部部门可点击；无「已下发」核心指标的部门灰色 + 「未下发」
+ * 标记，点击在 handleCollegeDeptFilterChange 里弹「当前职能部门未有已下发的任务」且不落选。
+ * 分流/资格判定的纯逻辑单测见 college-dept-dispatch-eligibility.unit.test.ts
+ * （实现与测试共用 task/lib/collegeDispatchEligibility 同一份逻辑）。
+ */
+describe('学院页签部门下拉下发资格（2026-11-10 用户拍板）', () => {
+  const readSource = (relativePath: string) =>
+    readFileSync(resolve(process.cwd(), relativePath), 'utf8')
+
+  it('下拉项不再按 count=0 disabled：全部部门可点击（模板契约）', () => {
+    const viewSource = readSource('src/3-features/task/ui/StrategicTaskView.vue')
+    expect(viewSource).not.toContain(':disabled="item.count === 0"')
+    expect(viewSource).toMatch(/@command="handleCollegeDeptFilterChange"/)
+  })
+
+  it('无资格部门灰色 #c0c4cc + 「未下发」标记，有资格部门按上报状态着色（模板契约）', () => {
+    const viewSource = readSource('src/3-features/task/ui/StrategicTaskView.vue')
+    // 灰色口径换成 eligible（存在「已下发」核心指标），不再是 count
+    expect(viewSource).toMatch(/!item\.eligible\s*\?\s*'(#c0c4cc)'/)
+    // 「未下发」小标签挂在 !item.eligible 上（warning 风格，与现有 el-tag 一致）
+    // 注意：模板闭合标签写作 `</el-tag` + 换行 + `>`，所以用 <\/el-tag\s*>
+    expect(viewSource).toMatch(
+      /v-if="!item\.eligible"[\s\S]{0,120}type="warning"[\s\S]{0,120}>未下发<\/el-tag\s*>/
+    )
+    // 有资格部门仍保留 绿（已上报）/橙（审批中）着色
+    expect(viewSource).toMatch(/item\.reportStatus === 'reported'\s*\?\s*'(#67c23a)'/)
+    expect(viewSource).toMatch(/'(#e6a23c)'/)
+  })
+
+  it('无资格部门点击被拦截并提示用户拍板文案；有资格部门正常落选（接线契约）', () => {
+    const viewSource = readSource('src/3-features/task/ui/StrategicTaskView.vue')
+    // 分流走与单测同一份纯函数（实现与测试共用同一逻辑）
+    expect(viewSource).toMatch(
+      /import\s*\{[^}]*COLLEGE_DEPT_INELIGIBLE_WARNING[^}]*resolveCollegeDeptFilterSelection[^}]*\}\s*from\s*'@\/features\/task\/lib\/collegeDispatchEligibility'/
+    )
+    // 拦截分支：warning 提示 + return（不设置 collegeDispatchDeptFilter）
+    expect(viewSource).toMatch(
+      /resolveCollegeDeptFilterSelection\(collegeDeptDropdownItems\.value, command\)/
+    )
+    expect(viewSource).toMatch(/ElMessage\.warning\(COLLEGE_DEPT_INELIGIBLE_WARNING\)/)
+    // 提示文案 = 用户拍板原文（常量在纯函数模块锁定）
+    const libSource = readSource('src/3-features/task/lib/collegeDispatchEligibility.ts')
+    expect(libSource).toContain("COLLEGE_DEPT_INELIGIBLE_WARNING = '当前职能部门未有已下发的任务'")
+    // 放行分支：只有 accepted 才写入选中值
+    expect(viewSource).toMatch(/collegeDispatchDeptFilter\.value = selection\.dept/)
+  })
+
+  it('资格口径在 model 里按「已下发核心指标」聚合（实现契约）', () => {
+    const modelSource = readSource('src/3-features/task/model/useStrategicTaskView.ts')
+    expect(modelSource).toMatch(
+      /import\s*\{[^}]*buildCollegeDeptEligibleByDept[^}]*isDistributedCoreIndicator[^}]*\}\s*from\s*'@\/features\/task\/lib\/collegeDispatchEligibility'/
+    )
+    // 聚合处调用纯函数判定（不是内联复制口径）
+    expect(modelSource).toMatch(/isDistributedCoreIndicator\(item as/)
+    // 两个下拉数据源都带 eligible 字段
+    expect(modelSource).toMatch(/eligible: entry\.eligible/)
+    expect(modelSource).toMatch(/eligible: hit\?\.eligible/)
+  })
+
+  /**
+   * 2026-11-10 缺陷修复回归契约：collegeDeptDispatchOptions 遍历**先按学院过滤**
+   * （target 匹配所选学院），而「已下发核心指标」行（owner=战略部、target=职能部门）
+   * 永远不匹配学院名、在进 eligible 判定前就被 continue 跳过 —— 纪委办名下 3 条
+   * DISTRIBUTED 核心指标、学院名下无学院行时被误判无资格。修复 = 全量资格聚合
+   * （collegeDeptEligibleByDept，不按学院过滤）与学院行聚合做 OR。
+   */
+  it('全量资格聚合不被学院过滤截断：eligible = 学院行聚合 OR 全量聚合（缺陷修复契约）', () => {
+    const modelSource = readSource('src/3-features/task/model/useStrategicTaskView.ts')
+    // 全量资格 computed：消费 buildCollegeDeptEligibleByDept（纯函数，与单测共用）
+    expect(modelSource).toMatch(
+      /const collegeDeptEligibleByDept = computed\(\(\)\s*=>\s*buildCollegeDeptEligibleByDept\(normalizedIndicators\.value/
+    )
+    // 纯函数内不按学院过滤：lib 聚合处不得出现「学院名匹配才计入」的守卫
+    const libSource = readSource('src/3-features/task/lib/collegeDispatchEligibility.ts')
+    expect(libSource).toMatch(/buildCollegeDeptEligibleByDept/)
+    expect(libSource).not.toMatch(/selectedCollege|collegeTarget|deptName\.includes\(target\)/)
+    // options 最终 eligible = 学院行聚合 OR 全量资格聚合（两者任一为 true）
+    expect(modelSource).toMatch(
+      /eligible: entry\.eligible \|\| collegeDeptEligibleByDept\.value\.get\(dept\) === true/
+    )
+  })
+
+  it('零学院行的部门不因 hit 缺失被兜底判无资格：dropdownItems 兜底查全量聚合（缺陷修复契约）', () => {
+    const modelSource = readSource('src/3-features/task/model/useStrategicTaskView.ts')
+    // 旧的 `hit?.eligible ?? false` 会把「零学院行但有已下发核心指标」的部门拦在门外
+    expect(modelSource).not.toMatch(/eligible: hit\?\.eligible \?\? false/)
+    expect(modelSource).toMatch(
+      /eligible: hit\?\.eligible \?\? collegeDeptEligibleByDept\.value\.get\(name\) === true/
+    )
+  })
+})

@@ -2,6 +2,10 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { TASK_TABLE_COLUMN_WIDTH } from '@/features/task/lib/tableColumns'
+import {
+  COLLEGE_DEPT_INELIGIBLE_WARNING,
+  resolveCollegeDeptFilterSelection
+} from '@/features/task/lib/collegeDispatchEligibility'
 import { useLatestIndicatorFill } from '@/features/indicator/model/useLatestIndicatorFill'
 import { useIndicatorAppraisal } from '@/features/indicator/model/useIndicatorAppraisal'
 import { getAppraisalLevelDisplay } from '@/features/indicator/lib/appraisalGate'
@@ -679,11 +683,20 @@ const downloadFillAttachment = async (attachment: Record<string, any>) => {
  * 2026-11-09（用户要求）：学院页签右侧「职能部门」下拉筛选器。
  *
  * <p>2026-11-09（用户拍板：两步显式选择）：空字符串 = 未选择（两步未齐的引导态，
- * 表格置空并提示先选部门）；选了某个部门 = 只看该部门下发给这个学院的指标。
- * 灰锁项（该部门从未给当前学院下发）由 el-dropdown-item 的 disabled 拦住，走不到这里。
+ * 表格置空并提示先选部门）；选了某个部门 = 只看该部门下发给这个学院的指标。</p>
+ *
+ * <p>2026-11-10（用户拍板）：资格分流 —— 只有存在「已下发」核心指标的部门可选中。
+ * 无资格部门**可点击**（不再 disabled 灰锁），点击弹提示
+ * 「当前职能部门未有已下发的任务」并 return（不落选）；分流判定与单测共用
+ * {@link resolveCollegeDeptFilterSelection} 纯函数。</p>
  */
 const handleCollegeDeptFilterChange = (command: string | number | object) => {
-  collegeDispatchDeptFilter.value = String(command ?? '')
+  const selection = resolveCollegeDeptFilterSelection(collegeDeptDropdownItems.value, command)
+  if (!selection.accepted) {
+    ElMessage.warning(COLLEGE_DEPT_INELIGIBLE_WARNING)
+    return
+  }
+  collegeDispatchDeptFilter.value = selection.dept
 }
 
 /**
@@ -2652,10 +2665,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
 
         <el-tab-pane name="college">
           <!-- 2026-11-09（用户要求）：在「二级学院战略任务管理」标签右侧加一个部门下拉。
-               列出**全部职能部门**：
-               · 该部门给当前学院下发过指标 → 按状态着色（已上报=绿 / 审批中=橙）；
+               列出**全部职能部门**（2026-11-10 用户拍板：资格口径=存在「已下发」核心指标）：
+               · 有「已下发」核心指标 → 可选中，按状态着色（已上报=绿 / 审批中=橙）；
                · 已下发但未上报 → 正常显示；
-               · 从未给当前学院下发 → 灰锁不可点。
+               · 无「已下发」核心指标 → 灰色 + 「未下发」标记，**可点击**，
+                 点击弹提示「当前职能部门未有已下发的任务」且不选中。
                **强制显示单个部门**：没有「全部部门」这一态。
                2026-11-09（用户拍板：两步显式选择）：不再自动默认选第一个部门 ——
                未选时箭头右侧显示灰色占位「请选择职能部门」，引导完成第二步选择。 -->
@@ -2689,10 +2703,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       v-for="item in collegeDeptDropdownItems"
                       :key="item.dept"
                       :command="item.dept"
-                      :disabled="item.count === 0"
                       :style="{
                         color:
-                          item.count === 0
+                          !item.eligible
                             ? '#c0c4cc'
                             : item.reportStatus === 'reported'
                               ? '#67c23a'
@@ -2703,9 +2716,18 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       }"
                     >
                       <span class="college-dept-filter-name">{{ item.dept }}</span>
+                      <!-- 2026-11-10（用户拍板）：无「已下发」核心指标的部门 → 「未下发」标记，
+                           全部项可点击（点击拦截在 handleCollegeDeptFilterChange 里弹提示）。 -->
+                      <el-tag
+                        v-if="!item.eligible"
+                        type="warning"
+                        size="small"
+                        class="college-dept-filter-tag"
+                        >未下发</el-tag
+                      >
                       <!-- 下发维度（战略部 → 该学院）：进行中才标记；已下发按用户要求正常显示、不标记 -->
                       <el-tag
-                        v-if="item.dispatchStatus === 'dispatching'"
+                        v-if="item.eligible && item.dispatchStatus === 'dispatching'"
                         type="warning"
                         size="small"
                         class="college-dept-filter-tag"
@@ -2713,14 +2735,14 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       >
                       <!-- 上报维度（该学院 → 审批）：进行中=橙、已完成=绿 -->
                       <el-tag
-                        v-if="item.reportStatus === 'reporting'"
+                        v-if="item.eligible && item.reportStatus === 'reporting'"
                         type="warning"
                         size="small"
                         class="college-dept-filter-tag"
                         >上报中</el-tag
                       >
                       <el-tag
-                        v-else-if="item.reportStatus === 'reported'"
+                        v-else-if="item.eligible && item.reportStatus === 'reported'"
                         type="success"
                         size="small"
                         class="college-dept-filter-tag"
