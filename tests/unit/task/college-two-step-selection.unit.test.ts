@@ -355,12 +355,44 @@ describe('学院页签部门下拉下发资格（2026-11-10 用户拍板）', ()
   it('资格口径在 model 里按「已下发核心指标」聚合（实现契约）', () => {
     const modelSource = readSource('src/3-features/task/model/useStrategicTaskView.ts')
     expect(modelSource).toMatch(
-      /import\s*\{\s*isDistributedCoreIndicator\s*\}\s*from\s*'@\/features\/task\/lib\/collegeDispatchEligibility'/
+      /import\s*\{[^}]*buildCollegeDeptEligibleByDept[^}]*isDistributedCoreIndicator[^}]*\}\s*from\s*'@\/features\/task\/lib\/collegeDispatchEligibility'/
     )
     // 聚合处调用纯函数判定（不是内联复制口径）
     expect(modelSource).toMatch(/isDistributedCoreIndicator\(item as/)
     // 两个下拉数据源都带 eligible 字段
     expect(modelSource).toMatch(/eligible: entry\.eligible/)
-    expect(modelSource).toMatch(/eligible: hit\?\.eligible \?\? false/)
+    expect(modelSource).toMatch(/eligible: hit\?\.eligible/)
+  })
+
+  /**
+   * 2026-11-10 缺陷修复回归契约：collegeDeptDispatchOptions 遍历**先按学院过滤**
+   * （target 匹配所选学院），而「已下发核心指标」行（owner=战略部、target=职能部门）
+   * 永远不匹配学院名、在进 eligible 判定前就被 continue 跳过 —— 纪委办名下 3 条
+   * DISTRIBUTED 核心指标、学院名下无学院行时被误判无资格。修复 = 全量资格聚合
+   * （collegeDeptEligibleByDept，不按学院过滤）与学院行聚合做 OR。
+   */
+  it('全量资格聚合不被学院过滤截断：eligible = 学院行聚合 OR 全量聚合（缺陷修复契约）', () => {
+    const modelSource = readSource('src/3-features/task/model/useStrategicTaskView.ts')
+    // 全量资格 computed：消费 buildCollegeDeptEligibleByDept（纯函数，与单测共用）
+    expect(modelSource).toMatch(
+      /const collegeDeptEligibleByDept = computed\(\(\)\s*=>\s*buildCollegeDeptEligibleByDept\(normalizedIndicators\.value/
+    )
+    // 纯函数内不按学院过滤：lib 聚合处不得出现「学院名匹配才计入」的守卫
+    const libSource = readSource('src/3-features/task/lib/collegeDispatchEligibility.ts')
+    expect(libSource).toMatch(/buildCollegeDeptEligibleByDept/)
+    expect(libSource).not.toMatch(/selectedCollege|collegeTarget|deptName\.includes\(target\)/)
+    // options 最终 eligible = 学院行聚合 OR 全量资格聚合（两者任一为 true）
+    expect(modelSource).toMatch(
+      /eligible: entry\.eligible \|\| collegeDeptEligibleByDept\.value\.get\(dept\) === true/
+    )
+  })
+
+  it('零学院行的部门不因 hit 缺失被兜底判无资格：dropdownItems 兜底查全量聚合（缺陷修复契约）', () => {
+    const modelSource = readSource('src/3-features/task/model/useStrategicTaskView.ts')
+    // 旧的 `hit?.eligible ?? false` 会把「零学院行但有已下发核心指标」的部门拦在门外
+    expect(modelSource).not.toMatch(/eligible: hit\?\.eligible \?\? false/)
+    expect(modelSource).toMatch(
+      /eligible: hit\?\.eligible \?\? collegeDeptEligibleByDept\.value\.get\(name\) === true/
+    )
   })
 })

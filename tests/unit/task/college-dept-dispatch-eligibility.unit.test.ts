@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   COLLEGE_DEPT_INELIGIBLE_WARNING,
+  buildCollegeDeptEligibleByDept,
   isCollegeDispatchDeptEligible,
   isDistributedCoreIndicator,
   resolveCollegeDeptFilterSelection
@@ -73,6 +74,66 @@ describe('task/lib/collegeDispatchEligibility（学院页签部门下发资格�
       ).toBe(false)
       expect(isCollegeDispatchDeptEligible([{ status: 'DRAFT' }])).toBe(false)
       expect(isCollegeDispatchDeptEligible([])).toBe(false)
+    })
+  })
+
+  describe('buildCollegeDeptEligibleByDept（全量资格聚合，2026-11-10 缺陷修复）', () => {
+    // 模拟 normalizeDepartmentName：原样返回（纯函数层不依赖 model 的别名表）；
+    // 字段链用 || —— 空串也兜底（与 model 侧注入的解析器同口径）
+    const resolveDeptName = (indicator: { targetDepartment?: unknown; targetOrgName?: unknown; responsibleDept?: unknown }) =>
+      String(indicator.targetDepartment || indicator.targetOrgName || indicator.responsibleDept || '')
+
+    it('回归（纪委办场景）：核心指标 target=职能部门且 DISTRIBUTED、该学院零学院行 → 部门仍 eligible', () => {
+      // 全量指标 = 3 条纪委办核心指标（owner=战略部、target=纪委办、parent 为空），
+      // 没有任何「target=学院」的学院行 —— 旧实现按学院过滤后 byDept 为空、误判无资格
+      const indicators = Array.from({ length: 3 }, (_, i) => ({
+        id: i + 1,
+        status: 'DISTRIBUTED',
+        parentIndicatorId: null,
+        targetDepartment: '纪委办公室 | 监察处'
+      }))
+      const result = buildCollegeDeptEligibleByDept(indicators, resolveDeptName)
+      expect(result.get('纪委办公室 | 监察处')).toBe(true)
+    })
+
+    it('部门名按字段链 targetDepartment || targetOrgName || responsibleDept 取（空串也兜底；resolveDeptName 由调用方注入）', () => {
+      const indicators = [
+        { status: 'DISTRIBUTED', targetDepartment: '', targetOrgName: '纪委办公室 | 监察处' },
+        { status: 'ACTIVE', responsibleDept: '审计处' }
+      ]
+      const result = buildCollegeDeptEligibleByDept(indicators, resolveDeptName)
+      expect(result.get('纪委办公室 | 监察处')).toBe(true)
+      expect(result.get('审计处')).toBe(true)
+    })
+
+    it('草稿 / 审批中 / 归档核心指标、已下发子指标 → 不标记资格', () => {
+      const indicators = [
+        { status: 'DRAFT', targetDepartment: '纪委办公室' },
+        { status: 'PENDING_REVIEW', targetDepartment: '纪委办公室' },
+        { status: 'ARCHIVED', targetDepartment: '纪委办公室' },
+        { status: 'DISTRIBUTED', parentIndicatorId: 9, targetDepartment: '纪委办公室' }
+      ]
+      const result = buildCollegeDeptEligibleByDept(indicators, resolveDeptName)
+      expect(result.size).toBe(0)
+    })
+
+    it('目标部门名为空（无任何部门字段）→ 跳过该行，不产生空键', () => {
+      const indicators = [{ status: 'DISTRIBUTED', parentIndicatorId: null }]
+      const result = buildCollegeDeptEligibleByDept(indicators, resolveDeptName)
+      expect(result.size).toBe(0)
+    })
+
+    it('学院行（target=学院）的已下发核心指标 → 标记的是学院名（键不进职能部门下拉，无害兜底）', () => {
+      const indicators = [
+        { status: 'DISTRIBUTED', parentIndicatorId: null, targetDepartment: '计算机学院' }
+      ]
+      const result = buildCollegeDeptEligibleByDept(indicators, resolveDeptName)
+      expect(result.get('计算机学院')).toBe(true)
+      expect(result.has('纪委办公室')).toBe(false)
+    })
+
+    it('空列表 → 空 Map', () => {
+      expect(buildCollegeDeptEligibleByDept([], resolveDeptName).size).toBe(0)
     })
   })
 
