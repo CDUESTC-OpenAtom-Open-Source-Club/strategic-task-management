@@ -57,6 +57,7 @@ import {
   canCurrentUserHandleMutationEntry,
   normalizeWorkflowStepMatchKey
 } from '@/features/task/lib/mutationApprovalHandleable'
+import { isDistributedCoreIndicator } from '@/features/task/lib/collegeDispatchEligibility'
 import { ApprovalProgressDrawer } from '@/features/approval'
 import { notifyApprovalStateRefresh } from '@/features/approval/lib'
 import { useApprovalRouteAutopen } from '@/features/approval/lib'
@@ -5554,11 +5555,16 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
    *
    * <p>状态口径（用户 2026-11-09 定）：
    * <ul>
-   *   <li>该部门对当前学院<b>无指标</b> → 灰锁，不可点；</li>
    *   <li>有指标且有<b>审批中</b>（存在 submitted 的上报）→ 橙色（优先，因为更需要关注）；</li>
    *   <li>有指标且<b>已上报</b>（存在 approved 的上报）→ 绿色；</li>
    *   <li>其余（已下发、未上报）→ 正常显示，不做标记。</li>
    * </ul>
+   *
+   * <p>2026-11-10（用户拍板）新增<b>下发资格</b>口径：eligible = 该部门在该考核周期
+   * 存在「已下发」（DISTRIBUTED，旧数据 ACTIVE 等价）状态的<b>核心指标</b>。
+   * 只有 eligible 部门可被下拉选中；无资格部门显示灰色（不再 disabled），
+   * 点击由 handleCollegeDeptFilterChange 拦截并提示。判定逻辑见
+   * {@link isDistributedCoreIndicator}（纯函数，与单测共用）。</p>
    */
   const collegeDeptDispatchOptions = computed(() => {
     const target = normalizeDepartmentName(selectedCollege.value || '')
@@ -5566,6 +5572,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       return [] as Array<{
         dept: string
         count: number
+        eligible: boolean
         dispatchStatus: 'none' | 'dispatching' | 'dispatched'
         reportStatus: 'none' | 'reporting' | 'reported'
       }>
@@ -5578,6 +5585,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         dispatched: boolean
         reporting: boolean
         reported: boolean
+        eligible: boolean
       }
     >()
     for (const item of normalizedIndicators.value) {
@@ -5600,7 +5608,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         dispatching: false,
         dispatched: false,
         reporting: false,
-        reported: false
+        reported: false,
+        eligible: false
       }
       entry.count += 1
       // 下发状态：取指标自身的下发状态（PENDING=下发审批中 / DISTRIBUTED=已下发）。
@@ -5611,6 +5620,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       }
       if (indicatorStatus === 'DISTRIBUTED') {
         entry.dispatched = true
+      }
+      // 2026-11-10（用户拍板）：下发资格 = 存在「已下发」核心指标
+      // （DISTRIBUTED，旧数据 ACTIVE 等价；子指标不算）。纯函数与单测共用同一口径。
+      if (isDistributedCoreIndicator(item as { status?: unknown; parentIndicatorId?: unknown })) {
+        entry.eligible = true
       }
       // 上报状态：取自真实的上报记录聚合（见 refreshCollegeDeptFillStates），
       // 不能用 indicator 上的 status/selfRating —— 那两个字段判断不出「已上报/上报中」。
@@ -5634,6 +5648,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       .map(([dept, entry]) => ({
         dept,
         count: entry.count,
+        // 2026-11-10（用户拍板）：存在「已下发」核心指标 = 有资格被下拉选中
+        eligible: entry.eligible,
         // 下发维度（战略部 → 该学院）：进行中 / 已完成
         dispatchStatus: entry.dispatching
           ? ('dispatching' as const)
@@ -5661,7 +5677,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
    * 下拉菜单的完整选项：**全部职能部门**（用户要求「显示所有职能部门」），
    * 再叠加该部门对当前学院的下发情况。
    *
-   * <p>没给当前学院下发过指标的部门也要出现（count=0 → 灰锁不可点），
+   * <p>2026-11-10（用户拍板）：没下发资格的部门也要出现（灰色样式，**可点击**，
+   * 点击由 handleCollegeDeptFilterChange 拦截并提示「当前职能部门未有已下发的任务」），
    * 这样战略部一眼能看出「这个学院还有哪些部门没下发」。
    */
   const collegeDeptDropdownItems = computed(() => {
@@ -5669,6 +5686,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     const items: Array<{
       dept: string
       count: number
+      eligible: boolean
       dispatchStatus: 'none' | 'dispatching' | 'dispatched'
       reportStatus: 'none' | 'reporting' | 'reported'
     }> = []
@@ -5683,6 +5701,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       items.push({
         dept: name,
         count: hit?.count ?? 0,
+        eligible: hit?.eligible ?? false,
         dispatchStatus: hit?.dispatchStatus ?? 'none',
         reportStatus: hit?.reportStatus ?? 'none'
       })
@@ -5694,6 +5713,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         items.push({
           dept,
           count: hit.count,
+          eligible: hit.eligible,
           dispatchStatus: hit.dispatchStatus,
           reportStatus: hit.reportStatus
         })
@@ -5717,7 +5737,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   /**
    * 当前选中的下拉项（用于在箭头右侧显示「当前是哪个部门」的小字）。
-   * 只会命中「有指标」的部门 —— 灰锁项点不动，不会成为当前项。
+   * 2026-11-10（用户拍板）：无资格部门会被 handleCollegeDeptFilterChange 拦截、
+   * 选不进来 —— filter 只可能命中 eligible 部门，而 eligible 部门必然在
+   * collegeDeptDispatchOptions 里（有已下发核心指标 → 至少一条指标），逻辑自洽。
    */
   const collegeDeptCurrent = computed(
     () =>
