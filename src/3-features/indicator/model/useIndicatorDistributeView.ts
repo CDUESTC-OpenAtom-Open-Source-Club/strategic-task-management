@@ -31,6 +31,10 @@ import { alertApi, type ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import type { Plan } from '@/shared/types'
 import { canUseAsFunctionalParentIndicator } from '@/features/indicator/lib/scope'
 import { resolveDistributionSubmitLockReason } from '@/features/indicator/lib/distributionSubmitGate'
+import {
+  filterDispatchOwnedCollegeIndicators,
+  groupDispatchCollegeChildIndicators
+} from '@/features/indicator/lib/distributeRowOwnership'
 import { getPlanStatusDisplay, normalizePlanStatus } from '@/features/task/lib/planStatus'
 import {
   MANUAL_ALERT_LOCKED_HINT,
@@ -385,6 +389,9 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     }
     return currentDept.value
   })
+
+  /** 战略发展部名称（归属解析用：识别「战略部自有行」，与战略任务页同源 orgStore 口径） */
+  const strategicDeptName = computed(() => orgStore.getStrategicDeptName())
 
   const dispatchOwnerOrgId = computed(() => {
     if (isStrategicDeptLogin.value) {
@@ -2554,48 +2561,19 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   // 计数遍历「本部门下发 + 责任部门=该学院」的全部子指标，表格却要求子指标必须
   // 挂在「本部门可见的根父指标」下；父指标被软删 / 非根 / 不属于本部门时，
   // 计数仍为 1 而表格 No Data。现在两侧共用这一份数据：计数取 Map 长度，表格取 Map 明细。
+  // 2026-11-10 归口可见性修复：部门归属口径改用共享归属解析（战略部自有行 → 父级核心
+  // 指标的目标部门 = 归口职能部门；存量行 → ownerDept 原样；孤儿行退回 ownerDept），
+  // 归口职能部门登录也能看到「本部门归口的战略部下发子指标」；可见性政策仍由
+  // isDispatchOwnerVisible 统一裁决（战略部登录恒全量可见，不回归）。判定逻辑在
+  // lib/distributeRowOwnership.ts（纯函数，与单测共用同一份实现）。
   const collegeChildIndicators = computed<Map<string, StrategicIndicator[]>>(() => {
-    const grouped = new Map<string, StrategicIndicator[]>()
-
-    strategicStore.indicators.forEach(indicator => {
-      if (indicator.isStrategic) {
-        return
-      }
-      // 只统计当前部门下发的指标
-      // 2026-11-05：战略部登录时口径放宽为「本下发方（战略发展部）+ 存量兼容（职能部门存量）」
-      // ——否则战略部进入本页会一条历史子指标都看不到；职能部门登录时口径与改造前完全一致。
-      if (
-        !isDispatchOwnerVisible({
-          loginRole: loginRole.value,
-          ownerMatchesCurrentDept: isSameDepartment(indicator.ownerDept, currentDept.value)
-        })
-      ) {
-        return
-      }
-
-      // responsibleDept 运行时可能是字符串或字符串数组，逐项归一化后按学院分组
-      const rawDept = indicator.responsibleDept as string | string[] | undefined
-      const deptValues: string[] = Array.isArray(rawDept) ? rawDept : rawDept ? [rawDept] : []
-
-      const collegeKeys = new Set<string>()
-      deptValues.forEach(dept => {
-        const normalized = normalizeDepartmentName(dept)
-        if (normalized) {
-          collegeKeys.add(normalized)
-        }
-      })
-
-      collegeKeys.forEach(collegeKey => {
-        const bucket = grouped.get(collegeKey)
-        if (bucket) {
-          bucket.push(indicator)
-          return
-        }
-        grouped.set(collegeKey, [indicator])
-      })
+    return groupDispatchCollegeChildIndicators({
+      indicators: strategicStore.indicators,
+      loginRole: loginRole.value,
+      currentDept: currentDept.value,
+      strategicDeptName: strategicDeptName.value,
+      normalizeDepartmentName: normalizeDepartmentName
     })
-
-    return grouped
   })
 
   // 获取学院的子指标数量（与右侧表格同源，保证「计数 = 表格行数」）
@@ -3957,12 +3935,20 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
    * （owner=职能部门）挂在旧计划上，不参与本次下发的权重合计与草稿判定——
    * 否则战略部会把存量权重一并计入，永远凑不满 100、无法发起下发。
    * 职能部门登录时本过滤等价于原口径（ownerDept === 当前部门），行为零变化。
+   *
+   * 2026-11-10：判定逻辑收口到 lib/distributeRowOwnership.ts 的
+   * filterDispatchOwnedCollegeIndicators（纯函数，与单测共用同一份实现，行为逐字等价）。
+   * 注意：2026-11-10 归口可见性修复只放宽「看得见」（计数/表格），本写路径口径不变——
+   * 战略部直发行不计入职能部门的权重合计与下发门禁。
    */
   const getDispatchOwnerCollegeIndicators = (college: string) => {
-    const dispatchOwner = dispatchOwnerDept.value
-    return getMyCollegeIndicators(college).filter(
-      indicator => readIndicatorOwnerDept(indicator) === dispatchOwner
-    )
+    return filterDispatchOwnedCollegeIndicators({
+      indicators: strategicStore.indicators,
+      college,
+      loginRole: loginRole.value,
+      currentDept: currentDept.value,
+      dispatchOwnerDept: dispatchOwnerDept.value
+    })
   }
 
   const resolveIndicatorTaskType = (indicator: StrategicIndicator): string => {
