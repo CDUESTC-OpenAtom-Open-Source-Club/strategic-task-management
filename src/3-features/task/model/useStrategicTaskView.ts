@@ -57,7 +57,10 @@ import {
   canCurrentUserHandleMutationEntry,
   normalizeWorkflowStepMatchKey
 } from '@/features/task/lib/mutationApprovalHandleable'
-import { isDistributedCoreIndicator } from '@/features/task/lib/collegeDispatchEligibility'
+import {
+  buildCollegeDeptEligibleByDept,
+  isDistributedCoreIndicator
+} from '@/features/task/lib/collegeDispatchEligibility'
 import { ApprovalProgressDrawer } from '@/features/approval'
 import { notifyApprovalStateRefresh } from '@/features/approval/lib'
 import { useApprovalRouteAutopen } from '@/features/approval/lib'
@@ -5565,7 +5568,43 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
    * 只有 eligible 部门可被下拉选中；无资格部门显示灰色（不再 disabled），
    * 点击由 handleCollegeDeptFilterChange 拦截并提示。判定逻辑见
    * {@link isDistributedCoreIndicator}（纯函数，与单测共用）。</p>
+   *
+   * <p>2026-11-10 缺陷修复：本 computed 的遍历<b>先按学院过滤</b>
+   * （target 必须匹配所选学院），而「已下发核心指标」行（owner=战略部、
+   * target=职能部门）永远不匹配学院名、进不了 eligible 判定 —— 纪委办名下
+   * 有 DISTRIBUTED 核心指标、但该学院名下无学院行时被误判无资格。故最终
+   * eligible = 学院行聚合（{@link isDistributedCoreIndicator}）OR 全量资格聚合
+   * （{@link collegeDeptEligibleByDept}，不按学院过滤）。学院行聚合保留作
+   * normalize 部门名差异的兜底，两者任一为 true 即放行。</p>
    */
+
+  /**
+   * 全量资格聚合（2026-11-10 缺陷修复）：遍历 normalizedIndicators **全量、
+   * 不按学院过滤**，对每条「已下发核心指标」（{@link isDistributedCoreIndicator}）
+   * 以其目标部门为键标记 eligible —— 核心指标的 target 即其归属职能部门
+   * （与 resolveRowOwnerDept 取父级核心指标部门名的字段链一致）。数据源实证：
+   * store 走 getAllIndicators 按考核周期<b>全量</b>拉取（不分学院），核心指标行
+   * 必在 normalizedIndicators 中；normalizeDepartmentName 内含别名/ID 映射兜底。
+   * 聚合逻辑在 {@link buildCollegeDeptEligibleByDept}（纯函数，与单测共用）。
+   */
+  const collegeDeptEligibleByDept = computed(() =>
+    buildCollegeDeptEligibleByDept(normalizedIndicators.value, item => {
+      const candidate = item as {
+        targetDepartment?: string
+        targetOrgName?: string
+        responsibleDept?: string
+      }
+      return normalizeDepartmentName(
+        String(
+          candidate.targetDepartment ||
+            candidate.targetOrgName ||
+            candidate.responsibleDept ||
+            ''
+        )
+      )
+    })
+  )
+
   const collegeDeptDispatchOptions = computed(() => {
     const target = normalizeDepartmentName(selectedCollege.value || '')
     if (!target) {
@@ -5648,8 +5687,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       .map(([dept, entry]) => ({
         dept,
         count: entry.count,
-        // 2026-11-10（用户拍板）：存在「已下发」核心指标 = 有资格被下拉选中
-        eligible: entry.eligible,
+        // 2026-11-10（用户拍板）：存在「已下发」核心指标 = 有资格被下拉选中。
+        // 2026-11-10 缺陷修复：学院行聚合 OR 全量资格聚合（collegeDeptEligibleByDept，
+        // 覆盖「核心指标已下发但该学院名下无学院行」的部门，如纪委办）。
+        eligible: entry.eligible || collegeDeptEligibleByDept.value.get(dept) === true,
         // 下发维度（战略部 → 该学院）：进行中 / 已完成
         dispatchStatus: entry.dispatching
           ? ('dispatching' as const)
@@ -5701,7 +5742,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       items.push({
         dept: name,
         count: hit?.count ?? 0,
-        eligible: hit?.eligible ?? false,
+        // 2026-11-10 缺陷修复：部门零学院行（不在 dispatchByDept）但有已下发
+        // 核心指标时，hit 为 undefined —— 不能兜底 false，需查全量资格聚合。
+        eligible: hit?.eligible ?? collegeDeptEligibleByDept.value.get(name) === true,
         dispatchStatus: hit?.dispatchStatus ?? 'none',
         reportStatus: hit?.reportStatus ?? 'none'
       })

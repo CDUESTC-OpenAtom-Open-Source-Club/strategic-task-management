@@ -67,6 +67,43 @@ export const isCollegeDispatchDeptEligible = (
 ): boolean => indicators.some(isDistributedCoreIndicator)
 
 /**
+ * 全量资格聚合：遍历**全量**指标行（**不按学院过滤**），对每条「已下发核心指标」，
+ * 以其目标部门为键标记 eligible。
+ *
+ * <p>2026-11-10 缺陷修复背景：collegeDeptDispatchOptions 原先只聚合「学院行」
+ * （target=所选学院），而核心指标行（owner=战略部、target=职能部门）在「按学院
+ * 过滤」阶段就被 continue 跳过，永远进不了 eligible 判定 —— 「纪委办名下 3 条
+ * DISTRIBUTED 核心指标（target=纪委办、parent 为空），学院名下却零学院行」时
+ * 该部门被误判无资格、点击被拦截。本函数补全这一数据源：核心指标的 target
+ * 即其归属职能部门，取部门名的字段链与学院行聚合一致
+ * （targetDepartment || targetOrgName || responsibleDept，用 `||` 使空串也兜底）。</p>
+ *
+ * <p>「该考核周期」无需额外过滤：normalizedIndicators 本身按当前考核周期全量
+ * 拉取（store 走 getAllIndicators，不分学院）。</p>
+ *
+ * @param indicators 全量指标行（normalizedIndicators）
+ * @param resolveDeptName 行 → 目标部门标准名（调用方注入 normalizeDepartmentName，
+ *        内含别名/ID 映射兜底，lib 层保持零依赖）
+ */
+export const buildCollegeDeptEligibleByDept = (
+  indicators: readonly DispatchEligibilityIndicatorLike[],
+  resolveDeptName: (indicator: DispatchEligibilityIndicatorLike) => string
+): Map<string, boolean> => {
+  const eligibleByDept = new Map<string, boolean>()
+  for (const item of indicators) {
+    if (!isDistributedCoreIndicator(item)) {
+      continue
+    }
+    const dept = resolveDeptName(item)
+    if (!dept) {
+      continue
+    }
+    eligibleByDept.set(dept, true)
+  }
+  return eligibleByDept
+}
+
+/**
  * 下拉选中分流：eligible 部门放行；无资格（或未知）部门拦截。
  *
  * <p>拦截后由调用方弹 {@link COLLEGE_DEPT_INELIGIBLE_WARNING} 提示并**不落选**——
