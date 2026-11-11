@@ -32,7 +32,9 @@ import {
   Loading,
   Upload,
   // 2026-11-08（单层下发）：学院页签「发起下发审批」按钮图标
-  Promotion
+  Promotion,
+  // 2026-11-11（学院页签按钮体系修正）：撤回类动作图标（撤回/撤回异动共用撤回语义）
+  RefreshLeft
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { logger } from '@/shared/lib/utils/logger'
@@ -88,6 +90,8 @@ import {
 import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
 import type { ImportCommitResponse } from '@/features/import/api/businessImport'
 import { planApi } from '@/features/plan/api/planApi'
+// 2026-11-11（学院页签按钮体系修正）：按钮分流三要素（文案/类型/动作）与实现共用同一纯函数
+import { resolveCollegeTabDistributeAction } from '@/features/task/lib/collegeTabDistribute'
 
 const props = defineProps<StrategicTaskViewProps>()
 const strategicStore = useStrategicStore()
@@ -232,6 +236,11 @@ const {
   collegeFillStatusScope,
   isReportApprovalInFlight,
   isMutationApprovalInFlight,
+  // 2026-11-11（学院页签按钮体系修正）：生效计划上下文（学院页签 → FUNC_TO_COLLEGE
+  // 子计划）+ 异动在审可撤判定/执行体（「撤回异动」真撤回入口）
+  effectivePlanContext,
+  canWithdrawMutationInFlight,
+  handleWithdrawMutationBatch,
   collegeDepartmentsScoped,
   collegeAddMode,
   collegeParentIndicatorOptions,
@@ -566,6 +575,51 @@ const collegeTabTwoStepGuideTip = computed(() => {
 })
 
 /**
+ * 2026-11-11（学院页签按钮体系修正）：学院子计划的原始状态（按钮相位数据源）。
+ *
+ * <p>只认「学院计划上下文」（effectivePlanContext.source === 'college'）解析出的
+ * FUNC_TO_COLLEGE 子计划 —— 此前按钮文案/图标复用职能页签的 distributeButton*，
+ * 那套读的是职能部门自身计划（planUiPhase → currentPlan），学院下发审批中时
+ * 恒显示发起类文案（高②）。取不到上下文（页签 mock / 未激活）返回 null，
+ * 分流函数按「发起审批」处理（与两选引导态行为一致）。</p>
+ */
+const collegeTabSubPlanStatus = computed(() => {
+  const context = effectivePlanContext?.value as
+    | { source?: string; plan?: Record<string, unknown> | null }
+    | undefined
+  if (!context || context.source !== 'college') {
+    return null
+  }
+  return context.plan?.status
+})
+
+/**
+ * 2026-11-11（学院页签按钮体系修正）：学院页签「下发/撤回」按钮的三要素 + 动作。
+ *
+ * <p>分流纯函数 resolveCollegeTabDistributeAction 与单测共用（实现即口径）：</p>
+ * <ul>
+ *   <li>异动在审且当前用户可撤 → 「撤回异动」（warning，真撤回入口）——
+ *       高①：此前文案显示「撤回异动」、点击却弹「发起下发审批」确认框；</li>
+ *   <li>学院下发审批中（PENDING/IN_REVIEW）→ 「撤回」（warning，真撤回）——
+ *       高②：此前恒显示发起类文案，学院下发的真撤回在 UI 不可达；</li>
+ *   <li>已下发 → 「撤回」（info，无可撤动作，点击引导查看审批）；</li>
+ *   <li>草稿/未解析 → 「发起审批」（success，既有发起流程）。</li>
+ * </ul>
+ * <p>文案/类型/动作同源判定，杜绝「文案一套、点击另一套」。图标在组件侧按动作映射
+ * （发起 = Promotion 飞行、其余 = RefreshLeft 撤回），与职能页签图标口径一致。</p>
+ */
+const collegeTabDistributeButton = computed(() => {
+  const decision = resolveCollegeTabDistributeAction({
+    canWithdrawMutationInFlight: canWithdrawMutationInFlight?.value === true,
+    collegePlanStatus: collegeTabSubPlanStatus.value
+  })
+  return {
+    ...decision,
+    icon: decision.action === 'submit-dispatch' ? Promotion : RefreshLeft
+  }
+})
+
+/**
  * 2026-11-08（单层下发）：工具栏「下发/撤回」按钮的点击分流。
  *
  * <p>职能部门页签 → 原样交给 model 的 handleDistributeOrWithdraw（行为零变化）；
@@ -580,6 +634,45 @@ const collegeTabTwoStepGuideTip = computed(() => {
 // 会二次提交同一计划（上一版 CollegeDispatchActions 有 submitting 标记，迁移时漏了）。
 const collegeDispatchSubmitting = ref(false)
 
+/**
+ * 2026-11-11（高②修复）：学院下发审批的真「撤回」。
+ *
+ * <p>此前学院下发计划审批中（IN_REVIEW）时按钮恒显示发起类文案，真撤回在 UI 不可达
+ * （职能部门 /distribution 页的撤回也不覆盖学院下发）。现按钮分流已按子计划相位
+ * 暴露「撤回」，此处执行体：确认 → POST /plans/{id}/withdraw（后端校验发起人与
+ * 撤回窗口，撤回后计划回草稿、审批实例撤回）→ 强刷回真实状态。</p>
+ */
+const handleWithdrawCollegeDispatch = async () => {
+  const planId = selectedCollegeDispatchPlanId.value
+  if (!planId) {
+    ElMessage.warning('当前学院还没有可撤回的下发计划')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认撤回对「${selectedCollege.value || '当前学院'}」的下发审批？撤回后计划将恢复为草稿，可调整后重新发起。`,
+      '撤回下发审批',
+      { type: 'warning', confirmButtonText: '确认撤回', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  collegeDispatchSubmitting.value = true
+  try {
+    const response = await planApi.withdrawPlan(planId)
+    if (response.code === 200) {
+      ElMessage.success('已撤回下发审批，计划恢复为草稿')
+      await refreshCurrentDepartmentView({ force: true })
+    } else {
+      ElMessage.error(response.message || '撤回下发审批失败')
+    }
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '撤回下发审批失败')
+  } finally {
+    collegeDispatchSubmitting.value = false
+  }
+}
+
 const handleDistributeOrWithdrawClick = async () => {
   if (activeTaskTabName.value !== 'college') {
     handleDistributeOrWithdraw()
@@ -590,6 +683,25 @@ const handleDistributeOrWithdrawClick = async () => {
   }
   if (collegeTabDistributeDisabledReason.value) {
     ElMessage.warning(collegeTabDistributeDisabledReason.value)
+    return
+  }
+  // 2026-11-11（学院页签按钮体系修正）：点击分流与按钮文案同源
+  // （collegeTabDistributeButton.action）——文案显示什么，点下去就做什么。
+  // 高①：异动在审可撤 → 「撤回异动」真撤回（整批退回填报人节点），
+  // 此前误走下方「发起下发审批」确认框（同框实锤 C1-20）。
+  if (collegeTabDistributeButton.value.action === 'withdraw-mutation') {
+    await handleWithdrawMutationBatch()
+    return
+  }
+  // 高②：学院下发审批中 → 真「撤回」（计划回草稿、审批实例撤回）
+  if (collegeTabDistributeButton.value.action === 'withdraw-dispatch') {
+    await handleWithdrawCollegeDispatch()
+    return
+  }
+  // 已下发相位：无可撤动作（与职能页签「当前状态不可操作」置灰口径一致），
+  // 引导去审批中心查看记录，不再弹发起确认。
+  if (collegeTabDistributeButton.value.action === 'distributed-locked') {
+    ElMessage.info('当前学院计划已下发，可在审批中心查看审批记录')
     return
   }
   const planId = selectedCollegeDispatchPlanId.value
@@ -1419,6 +1531,12 @@ const openStrategicImportDialog = () => {
       ElMessage.warning('请先选择职能部门')
       return
     }
+    // 2026-11-11（E-1 互斥守卫）：异动审批在审时导入与「新增行」同口径拦截
+    // （按钮已置灰，这里兜底键盘/编程式调用），避免在审计划被导入绕过置灰加行。
+    if (isMutationApprovalInFlight?.value === true) {
+      ElMessage.warning('异动审批进行中，暂不能导入：等审批结束或先撤回/取消本次异动')
+      return
+    }
     strategicImportDialogVisible.value = true
     return
   }
@@ -1623,9 +1741,18 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                仅「可用性」与「点下去做什么」按页签分流：
                - 可用性：学院页签用 collegeTabDistributeDisabledReason（含只读/权限/未选学院），
                  避免用部门计划相位误判学院页签；
-               - 点击：handleDistributeOrWithdrawClick 内部按页签分流。 -->
+               - 点击：handleDistributeOrWithdrawClick 内部按页签分流。
+               2026-11-11（学院页签按钮体系修正）修订：学院页签的文案/类型/图标改按
+               **学院子计划相位**分流（collegeTabDistributeButton，与点击动作同源）——
+               高①撤回异动点击弹错确认、高②学院下发审批中撤回不可达，根因都是
+               文案读异动在审/点击恒走发起分支的错位，以及相位误读职能部门自身计划。
+               职能部门页签三要素仍直读 distributeButton*（行为逐字不变，零回归）。 -->
           <el-button
-            :type="distributeButtonType"
+            :type="
+              activeTaskTabName === 'college'
+                ? collegeTabDistributeButton.buttonType
+                : distributeButtonType
+            "
             size="small"
             :loading="activeTaskTabName === 'college' ? collegeDispatchSubmitting : undefined"
             :disabled="
@@ -1640,8 +1767,20 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             "
             @click.stop="handleDistributeOrWithdrawClick"
           >
-            <el-icon><component :is="distributeButtonIcon" /></el-icon>
-            {{ distributeButtonText }}
+            <el-icon>
+              <component
+                :is="
+                  activeTaskTabName === 'college'
+                    ? collegeTabDistributeButton.icon
+                    : distributeButtonIcon
+                "
+              />
+            </el-icon>
+            {{
+              activeTaskTabName === 'college'
+                ? collegeTabDistributeButton.text
+                : distributeButtonText
+            }}
           </el-button>
           <div class="approval-entry-wrapper">
             <!-- 审批进度按钮（带徽章） -->
@@ -1684,21 +1823,28 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             <el-icon><Download /></el-icon>
             导出
           </el-button>
+          <!-- 2026-11-11（E-1 互斥守卫）：异动审批在审时学院页签「导入」与「新增行」同口径
+               置灰（口径与后端 isOrgLockedByMutation 一致，只认异动在审；上报在审不锁导入，
+               与新增行一致）。仅作用于学院页签 —— 职能部门页签行为逐字不变（零回归红线）。
+               在审期间导入会绕过「新增行置灰」直接往在审计划里加行，必须一并拦下 -->
           <el-button
             size="small"
             :icon="Upload"
             :disabled="
               !canWriteStrategicTask ||
+              (activeTaskTabName === 'college' && isMutationApprovalInFlight === true) ||
               (activeTaskTabName === 'college' && (!selectedCollege || !collegeDispatchDeptFilter))
             "
             :title="
               !canWriteStrategicTask
                 ? '当前角色仅可查看，不能导入指标'
-                : activeTaskTabName === 'college' && !selectedCollege
-                  ? '请先在左侧选择学院'
-                  : activeTaskTabName === 'college' && !collegeDispatchDeptFilter
-                    ? '请先选择职能部门'
-                    : ''
+                : activeTaskTabName === 'college' && isMutationApprovalInFlight
+                  ? '异动审批进行中，暂不能导入：等审批结束或先撤回/取消本次异动'
+                  : activeTaskTabName === 'college' && !selectedCollege
+                    ? '请先在左侧选择学院'
+                    : activeTaskTabName === 'college' && !collegeDispatchDeptFilter
+                      ? '请先选择职能部门'
+                      : ''
             "
             @click="openStrategicImportDialog"
           >
