@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
   workflow_dispatch:
 
 permissions:
@@ -37,8 +37,10 @@ jobs:
 
       - name: Install test prerequisites
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ripgrep
+          for i in 1 2 3; do
+            sudo apt-get update && sudo apt-get install -y ripgrep && break
+            echo "apt retry ${i}/3"; sleep 20
+          done
 
       - name: Checkout backend OpenAPI baseline
         run: |
