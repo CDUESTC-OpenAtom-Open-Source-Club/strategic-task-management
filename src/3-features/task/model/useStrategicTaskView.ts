@@ -61,6 +61,10 @@ import {
   buildCollegeDeptEligibleByDept,
   isDistributedCoreIndicator
 } from '@/features/task/lib/collegeDispatchEligibility'
+import {
+  isReportApprovalStatusInFlight,
+  resolveMutationGateWeightTotal
+} from '@/features/task/lib/collegeTabDistribute'
 import { ApprovalProgressDrawer } from '@/features/approval'
 import { notifyApprovalStateRefresh } from '@/features/approval/lib'
 import { useApprovalRouteAutopen } from '@/features/approval/lib'
@@ -976,6 +980,22 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     canWithdraw?: boolean
     status?: string | null
   } | null>(null)
+  // 2026-11-11（阻断 D-02 上报互斥跨口径串台）：学院子计划的上报审批摘要**专用存储**。
+  // 共享的 currentPlanReportSummary 会被职能部门口径的刷新链（refreshCurrentDepartmentView /
+  // 心跳轻刷新 / 审批刷新，均不带 collegeScope）覆盖成 FUNC_DEPT 计划的摘要——
+  // 纪委办 FUNC_DEPT 上报在审时，计算机学院（自身上报已 APPROVED、无任何在审）的
+  // 异动入口曾被误锁。学院摘要只由 collegeScope 查询写入（selectCollege / 切学院页签触发，
+  // 计划 705489 等各自独立），互斥判定按页签上下文取用，两个口径互不串台。
+  const collegeScopePlanReportSummary = ref<{
+    id: number
+    workflowInstanceId?: number | null
+    currentTaskId?: number | null
+    workflowStatus?: string | null
+    currentStepName?: string | null
+    currentApproverName?: string | null
+    canWithdraw?: boolean
+    status?: string | null
+  } | null>(null)
   const latestPlanReportSummary = ref<{ id: number } | null>(null)
 
   // 2026-10-28 迭代计划 M2：审批看板显示当前填报周期——上级看下级数据时能判断数据归属周期。
@@ -1561,6 +1581,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     ) {
       currentPlanReportSummary.value = null
       latestPlanReportSummary.value = null
+      // 2026-11-11（D-02）：collegeScope 查询目标解析失败（未选学院 / 子计划未匹配）
+      // 同样要清空学院专用摘要，避免带着上一个学院的上报状态误判互斥锁。
+      if (options.collegeScope === true) {
+        collegeScopePlanReportSummary.value = null
+      }
       return
     }
 
@@ -1593,6 +1618,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       const summaries = await currentPlanReportSummaryPromise
       currentPlanReportSummary.value = summaries.currentReport
       latestPlanReportSummary.value = summaries.latestReport
+      // 2026-11-11（D-02）：collegeScope 查询结果另存学院专用摘要。职能部门口径的
+      // 后续刷新只覆盖共享摘要（自评进度列等 UI 回显仍走共享摘要 + 切页签重拉），
+      // 学院互斥判定不再被 FUNC_DEPT 口径的在审状态串台。
+      if (options.collegeScope === true) {
+        collegeScopePlanReportSummary.value = summaries.currentReport
+      }
     } finally {
       currentPlanReportSummaryPromise = null
     }
@@ -4570,11 +4601,21 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     // 2026-10-30 用户定案：发起异动与下发/审批同规则——基础性权重合计必须为 100。
     // 口径与后端闭合校验一致（BasicTaskWeightValidationService 按「本批异动生效后」
     // 的快照判定）：表格内存态已是「删减行剔除 + 权重攒改应用 + 待提交新增计入」
-    // 之后的生效前快照，departmentTotalWeight 即本批生效后的合计；≠100 在点击时
-    // 拦截并提示，不再等后端整批驳回。
-    if (Math.abs(departmentTotalWeight.value - 100) > 1e-6) {
+    // 之后的生效前快照，合计即本批生效后的合计；≠100 在点击时拦截并提示，
+    // 不再等后端整批驳回。
+    // 2026-11-11（阻断 D-01 权重口径错位）：门禁合计必须与**当前页签的指标集合**
+    // 同源——学院页签（学院上下文激活）读 collegeBasicWeightTotal（学院子指标集合、
+    // 与头部「基础性权重合计」同一数据源 collegeTableIndicators），不再误用职能部门
+    // 口径的 departmentTotalWeight（学院页签显示 100、点发起却按职能部门集合算出
+    // 90 被拦，后端按学院计划校验本是放行的）。职能页签口径原样保留（零回归）。
+    const gateWeightTotal = resolveMutationGateWeightTotal({
+      collegeScopeActive: isCollegePlanContextActive.value,
+      collegeBasicWeightTotal: collegeBasicWeightTotal.value,
+      departmentTotalWeight: departmentTotalWeight.value
+    })
+    if (Math.abs(gateWeightTotal - 100) > 1e-6) {
       ElMessage.warning(
-        `基础性权重合计必须为100%（当前为${Number(departmentTotalWeight.value.toFixed(2))}），请调整到100后再发起异动`
+        `基础性权重合计必须为100%（当前为${Number(gateWeightTotal.toFixed(2))}），请调整到100后再发起异动`
       )
       return
     }
@@ -6348,13 +6389,16 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 2026-10-24 用户定案（异动/上报互斥）：同一学院链上「上报审批在途」与「异动审批在途」
   // 二选一——上报在审时异动发起入口锁定；异动在审时上报提交被锁（另一方向同理）。
   // 信号源：当前部门上下文的上报审批摘要（workflowStatus 处于在途态即视为上报在审）。
+  // 2026-11-11（阻断 D-02 跨口径串台）：学院页签必须读**学院子计划自身**的上报审批摘要
+  // （collegeScope 专用存储，随 selectCollege 按学院各自拉取）——共享摘要会被职能部门
+  // 口径的刷新链覆盖，纪委办 FUNC_DEPT 上报在审曾把计算机学院（自身上报已通过）的
+  // 异动入口误锁。职能部门页签仍读共享摘要，反向（学院在审误锁职能部门指标）同源消除：
+  // 职能页签激活时 isCollegePlanContextActive 为 false，永不读学院摘要。
   const isReportApprovalInFlight = computed(() => {
-    const status = String(
-      currentPlanReportSummary.value?.workflowStatus || currentPlanReportSummary.value?.status || ''
-    )
-      .trim()
-      .toUpperCase()
-    return ['PENDING', 'IN_REVIEW', 'SUBMITTED', 'RETURNED'].includes(status)
+    const summary = isCollegePlanContextActive.value
+      ? collegeScopePlanReportSummary.value
+      : currentPlanReportSummary.value
+    return isReportApprovalStatusInFlight(summary?.workflowStatus || summary?.status)
   })
 
   const isMutationApprovalInFlight = computed(
@@ -6628,6 +6672,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   function resetApprovalWorkflowStateCache(): void {
     preloadedPlanWorkflowDetail.value = null
     currentPlanReportSummary.value = null
+    // 2026-11-11（D-02）：部门/年度切换会让 collegeScope 解析目标失效，
+    // 学院专用摘要一并清空（selectCollege / 切学院页签会带 force 重拉）。
+    collegeScopePlanReportSummary.value = null
     latestPlanReportSummary.value = null
     currentPlanReportSummaryPromise = null
     currentPlanReportSummaryKey = ''
@@ -8108,6 +8155,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     refreshCurrentPlanFillApprovalSummary,
     isReportApprovalInFlight,
     isMutationApprovalInFlight,
+    // 2026-11-11（学院页签按钮体系修正）：学院页签按钮按子计划相位分流所需——
+    // 生效计划上下文（学院页签 → FUNC_TO_COLLEGE 子计划）与异动在审可撤判定/执行体
+    effectivePlanContext,
+    canWithdrawMutationInFlight,
+    handleWithdrawMutationBatch,
     mutationSubmitBlocked,
     mutationSubmitBlockedReason,
     mutationDraftCount,
