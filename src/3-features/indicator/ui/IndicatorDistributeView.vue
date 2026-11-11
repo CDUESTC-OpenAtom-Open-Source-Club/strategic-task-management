@@ -818,7 +818,9 @@ const handleDistributionImportCommitted = async () => {
          - 战略部：可操作，不显示只读提示；
          - 职能部门：本页只读，但保留撤回。
          2026-11-09（用户要求）：文案去掉「下发」，只保留审批口径 —— 学院指标的下发权
-         已统一归战略发展部，本页对职能部门只剩审批相关用途。 -->
+         已统一归战略发展部，本页对职能部门只剩审批相关用途。
+         2026-11-11（用户要求）：11-10 归口可见性修复后本页重新承载审核进度鉴定与上报
+         审批职责，「仅可查看历史数据」以偏概全，文案同步为现行职责描述。 -->
     <el-alert
       v-if="isFunctionalDeptLogin"
       type="info"
@@ -826,7 +828,7 @@ const handleDistributionImportCommitted = async () => {
       show-icon
       style="margin-bottom: 16px"
     >
-      学院指标审批由战略发展部统一组织，本部门仅可查看历史数据
+      学院指标由战略发展部统一下发；本部门负责归口指标的审核进度鉴定与上报审批，并可查看历史数据。
     </el-alert>
     <el-alert
       v-else-if="timeContext.isReadOnly"
