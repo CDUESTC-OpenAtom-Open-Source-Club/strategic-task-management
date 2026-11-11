@@ -37,11 +37,16 @@ describe('approval-utils', () => {
     expect(isSubmissionFlow('PLAN_DISPATCH_FUNCTIONAL')).toBe(false)
     expect(isDistributionFlow('PLAN_DISPATCH_FUNCTIONAL')).toBe(true)
     expect(isDistributionFlow('OTHER_FLOW')).toBe(false)
+    // 2026-11-10 学院下发专用流程按 PLAN_DISPATCH_ 前缀归入下发族（非上报族）
+    expect(isDistributionFlow('PLAN_DISPATCH_COLLEGE')).toBe(true)
+    expect(isSubmissionFlow('PLAN_DISPATCH_COLLEGE')).toBe(false)
   })
 
   it('labels approval type by real flow code (2026-09-27 口径)', () => {
     expect(resolvePlanApprovalTypeLabel('PLAN_DISPATCH_STRATEGY')).toBe('下发审批')
     expect(resolvePlanApprovalTypeLabel('PLAN_DISPATCH_FUNCDEPT')).toBe('下发审批')
+    // 学院下发新流程码沿用下发语义（与 PLAN_DISPATCH_STRATEGY 同族展示）
+    expect(resolvePlanApprovalTypeLabel('PLAN_DISPATCH_COLLEGE')).toBe('下发审批')
     expect(resolvePlanApprovalTypeLabel('PLAN_APPROVAL_FUNCDEPT')).toBe('上报审批')
     expect(resolvePlanApprovalTypeLabel('PLAN_APPROVAL_COLLEGE')).toBe('上报审批')
     expect(resolvePlanApprovalTypeLabel('PLAN_MUTATION_STRATEGY')).toBe('异动审批')
@@ -53,6 +58,7 @@ describe('approval-utils', () => {
     expect(showAppraisalLevelForFlow('PLAN_APPROVAL_FUNCDEPT')).toBe(true)
     expect(showAppraisalLevelForFlow('plan_approval_college')).toBe(true)
     expect(showAppraisalLevelForFlow('PLAN_DISPATCH_STRATEGY')).toBe(false)
+    expect(showAppraisalLevelForFlow('PLAN_DISPATCH_COLLEGE')).toBe(false)
     expect(showAppraisalLevelForFlow('PLAN_MUTATION_STRATEGY')).toBe(false)
     // flowCode 未知时保守显示，维持老数据行为
     expect(showAppraisalLevelForFlow('')).toBe(true)
@@ -75,6 +81,15 @@ describe('approval-utils', () => {
         targetOrgName: '教务处'
       })
     ).toBe('下发审批 · 战略发展部 -> 教务处')
+
+    // 学院下发新流程码：下发方向展示（发起方=战略发展部 → 目标学院）
+    expect(
+      resolveApprovalRouteTitle({
+        flowCode: 'PLAN_DISPATCH_COLLEGE',
+        sourceOrgName: '战略发展部',
+        targetOrgName: '计算机学院'
+      })
+    ).toBe('下发审批 · 战略发展部 -> 计算机学院')
 
     expect(
       resolveApprovalRouteTitle({
@@ -116,6 +131,7 @@ describe('approval-utils', () => {
   it('maps confirm-dialog workflow names to full Chinese labels (2026-10-31 口径)', () => {
     expect(resolvePlanConfirmWorkflowName('PLAN_DISPATCH_STRATEGY')).toBe('计划下发审批')
     expect(resolvePlanConfirmWorkflowName('PLAN_DISPATCH_FUNCDEPT')).toBe('计划下发审批')
+    expect(resolvePlanConfirmWorkflowName('PLAN_DISPATCH_COLLEGE')).toBe('计划下发审批')
     expect(resolvePlanConfirmWorkflowName('PLAN_MUTATION_STRATEGY')).toBe('计划异动审批')
     expect(resolvePlanConfirmWorkflowName('PLAN_APPROVAL_FUNCDEPT')).toBe('计划上报审批')
     expect(resolvePlanConfirmWorkflowName('PLAN_APPROVAL_COLLEGE')).toBe('计划上报审批')
