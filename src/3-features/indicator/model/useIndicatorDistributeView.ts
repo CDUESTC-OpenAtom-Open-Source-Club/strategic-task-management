@@ -30,6 +30,10 @@ import { logger } from '@/shared/lib/utils/logger'
 import { alertApi, type ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import type { Plan } from '@/shared/types'
 import { canUseAsFunctionalParentIndicator } from '@/features/indicator/lib/scope'
+import {
+  collegeDispatchExpectedWorkflowCodes,
+  resolveDispatchSubmitWorkflowCode
+} from '@/features/indicator/lib/dispatchWorkflowCodes'
 import { resolveDistributionSubmitLockReason } from '@/features/indicator/lib/distributionSubmitGate'
 import {
   filterDispatchOwnedCollegeIndicators,
@@ -403,17 +407,15 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
   // 下发审批流程码：按「登录角色」判定，不按视角角色。
   //
-  // 2026-11-05：后端已停用 PLAN_DISPATCH_FUNCDEPT（职能部门→学院下发流程，见 V101 迁移），
-  // 学院指标下发统一走 PLAN_DISPATCH_STRATEGY。
-  // 若这里仍按视角角色判定，战略部用部门切换器切到职能部门视角后会拿到
-  // PLAN_DISPATCH_FUNCDEPT → 流程已停用 → 发起下发必然失败。
+  // 2026-11-10：学院指标下发（FUNC_TO_COLLEGE，created_by=战略发展部）改用专用流程
+  // PLAN_DISPATCH_COLLEGE「Plan下发审批（二级学院）」（三步：填报人提交 → 战略发展部
+  // 负责人 → 分管校领导终审，席位全部在战略部 org35）。后端提交校验只认新码，
+  // 旧码提交会被 400 拒绝。职能部门下发（STRAT_TO_FUNC）继续走 PLAN_DISPATCH_STRATEGY。
+  // 若这里按视角角色判定，战略部用部门切换器切到职能部门视角后会拿到已停用的
+  // PLAN_DISPATCH_FUNCDEPT → 发起下发必然失败（2026-11-05 起按登录角色的定案沿用）。
   // 职能部门登录时仍取 FUNCDEPT：用于识别其历史在审实例的流程（只读/撤回场景）。
   const currentDispatchWorkflowCode = computed(() => {
-    if (isStrategicDeptLogin.value) {
-      return 'PLAN_DISPATCH_STRATEGY'
-    }
-
-    return 'PLAN_DISPATCH_FUNCDEPT'
+    return resolveDispatchSubmitWorkflowCode(loginRole.value)
   })
 
   // 只读模式：只认历史快照模式。
@@ -1076,11 +1078,16 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   })
 
   const currentApprovalWorkflowCode = computed<string | string[]>(() => {
+    // 下发链期望码：按登录角色取（战略部 = 学院下发新码 + 存量借道码；职能部门 = FUNCDEPT
+    // 历史识别码，零变化）。战略部集合里的存量借道码 PLAN_DISPATCH_STRATEGY 保证
+    // 切换上线时仍以旧码在审的学院下发实例不被误滤（抽屉空白 / 撤回不可达）。
+    const dispatchChainCodes = collegeDispatchExpectedWorkflowCodes(loginRole.value)
+
     if (
       approvalWorkflowReportSummary.value?.id ||
       hasPlanReportWorkflowContext(latestCollegePlanReportSummary.value)
     ) {
-      return ['PLAN_APPROVAL_COLLEGE', currentDispatchWorkflowCode.value]
+      return ['PLAN_APPROVAL_COLLEGE', ...dispatchChainCodes]
     }
 
     // 2026-10-24（铃铛跳转修复）：上报深链打开时报告摘要尚未加载，
@@ -1092,10 +1099,10 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         .trim()
         .toUpperCase() === 'PLAN_REPORT'
     ) {
-      return ['PLAN_APPROVAL_COLLEGE', currentDispatchWorkflowCode.value]
+      return ['PLAN_APPROVAL_COLLEGE', ...dispatchChainCodes]
     }
 
-    return currentDispatchWorkflowCode.value
+    return dispatchChainCodes
   })
 
   const normalizeWorkflowStepName = (value?: string | null) => {

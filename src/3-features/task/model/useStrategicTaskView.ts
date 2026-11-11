@@ -1685,9 +1685,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
   }
 
+  // 职能部门下发链（STRAT_TO_FUNC）提交码，保持不变
   const PLAN_APPROVAL_SUBMIT_WORKFLOW_CODE = 'PLAN_DISPATCH_STRATEGY'
+  // 审批抽屉期望码白名单。2026-11-10 追加 PLAN_DISPATCH_COLLEGE：学院下发
+  // （FUNC_TO_COLLEGE，created_by=战略发展部）改用专用审批流程，其在审实例
+  // 以新码出现，不进白名单会被抽屉误滤（计划审批页签空白/审批不可达）。
   const PLAN_APPROVAL_HISTORY_WORKFLOW_CODES = [
     'PLAN_DISPATCH_STRATEGY',
+    'PLAN_DISPATCH_COLLEGE',
     'PLAN_DISPATCH_FUNCDEPT',
     'PLAN_APPROVAL_FUNCDEPT',
     'PLAN_APPROVAL_COLLEGE',
