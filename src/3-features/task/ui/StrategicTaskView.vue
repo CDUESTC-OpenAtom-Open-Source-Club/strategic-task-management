@@ -570,7 +570,9 @@ const collegeTabTwoStepGuideTip = computed(() => {
  *
  * <p>职能部门页签 → 原样交给 model 的 handleDistributeOrWithdraw（行为零变化）；
  * 二级学院页签 → 战略部在此**发起下发审批**，计划取 selectedCollegeDispatchPlanId
- * （与学院上报作用域同源），流程码固定 PLAN_DISPATCH_STRATEGY。</p>
+ * （与学院上报作用域同源），流程码固定 PLAN_DISPATCH_COLLEGE——2026-11-10 起学院下发
+ * （FUNC_TO_COLLEGE，created_by=战略发展部）改用专用审批流程「Plan下发审批（二级学院）」，
+ * 后端提交校验只认新码。</p>
  * <p>注意：本函数体只在点击时求值，因此引用下方声明的 model 函数不会有 TDZ 风险。</p>
  */
 // 2026-11-08（审查 blocking 修复）：提交防重。
@@ -608,7 +610,8 @@ const handleDistributeOrWithdrawClick = async () => {
   collegeDispatchSubmitting.value = true
   try {
     const response = await planApi.submitPlanForApproval(planId, {
-      workflowCode: 'PLAN_DISPATCH_STRATEGY'
+      // 学院下发专用审批流程（2026-11-10 起后端只认新码；职能部门页签仍走 PLAN_DISPATCH_STRATEGY）
+      workflowCode: 'PLAN_DISPATCH_COLLEGE'
     })
     if (response.code === 200) {
       ElMessage.success('已发起下发审批')

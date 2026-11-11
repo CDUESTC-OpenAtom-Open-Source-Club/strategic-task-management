@@ -655,6 +655,11 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   // （如战略部对全包计划走下发审批），不纳入白名单会导致工作流详情被拒收、
   // hasPlanWorkflowData=false、审批按钮消失（缺陷 3 断点 C）。
   const PLAN_DISPATCH_WORKFLOW_CODE_STRATEGY = 'PLAN_DISPATCH_STRATEGY'
+  // 2026-11-10：学院下发改用专用流程 PLAN_DISPATCH_COLLEGE「Plan下发审批（二级学院）」，
+  // 学院计划被下发审批推进到 IN_REVIEW 时实例以新码存在——学院侧白名单不含新码会导致
+  // 工作流详情被拒收、审批进度展示缺失（与上方 STRATEGY 同一缺陷形态）。仅加白名单，
+  // 不改学院侧任何填报/上报提交行为。
+  const PLAN_DISPATCH_WORKFLOW_CODE_COLLEGE = 'PLAN_DISPATCH_COLLEGE'
   // 指标异动审批流（填报人修改→战略部负责人→分管校领导），实体类型 INDICATOR
   const PLAN_MUTATION_WORKFLOW_CODE = 'PLAN_MUTATION_STRATEGY'
   // 2026-09-27 用户拍板：15s 高频轮询给服务器造成压力（生产曾出现整波请求超时），
@@ -677,6 +682,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         PLAN_APPROVAL_WORKFLOW_CODE_COLLEGE,
         PLAN_DISPATCH_WORKFLOW_CODE_FUNCDEPT,
         PLAN_DISPATCH_WORKFLOW_CODE_STRATEGY,
+        PLAN_DISPATCH_WORKFLOW_CODE_COLLEGE,
         PLAN_MUTATION_WORKFLOW_CODE
       ]
     }
