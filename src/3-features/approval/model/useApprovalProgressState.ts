@@ -32,6 +32,7 @@ import {
   parsePositiveUserId,
   resolveApprovalRoute,
   resolveApprovalRouteTitle,
+  resolvePlanInstanceReferenceLabel,
   resolveHistoryStatusTag,
   shouldDisplayWorkflowHistoryItem,
   toPositiveNumber
@@ -344,19 +345,26 @@ export function useApprovalProgressState(
   // props.plan?.name——后端会对未命名计划生成「Plan 404457」式占位名，
   // 直接拼接会把裸数字 ID 亮给用户（线上复测观察项 3）。
   // 年份/部门从计划与工作流详情取，取不到就略写，全缺回退「当前计划」。
+  // 2026-11-12（弹窗用实例业务名）：业务名优先——实例 planName
+  // （plan_report.planName，如「2026年度 11月上报（计算机学院 -> 战略发展部）」）
+  // → props.planName；占位名（「Plan 404457」/裸数字）或缺失时才回退拼参考标签。
   function resolvePlanReferenceLabel(): string {
     const planRecord = props.plan as
       (Plan & { year?: number | string; cycleId?: number | string }) | null | undefined
-    return buildPlanReferenceLabel({
-      year: planRecord?.year ?? timeContext.resolveCycleYear(planRecord?.cycleId),
-      sourceOrgName:
-        normalizeDisplayName(planWorkflowDetail.value?.sourceOrgName) ||
-        planRecord?.createdByOrgName,
-      targetOrgName:
-        normalizeDisplayName(planWorkflowDetail.value?.targetOrgName) ||
-        planRecord?.targetOrgName ||
-        planRecord?.orgName,
-      fallback: '当前计划'
+    return resolvePlanInstanceReferenceLabel({
+      instancePlanName: planWorkflowDetail.value?.planName,
+      fallbackPlanName: props.planName,
+      referenceLabel: buildPlanReferenceLabel({
+        year: planRecord?.year ?? timeContext.resolveCycleYear(planRecord?.cycleId),
+        sourceOrgName:
+          normalizeDisplayName(planWorkflowDetail.value?.sourceOrgName) ||
+          planRecord?.createdByOrgName,
+        targetOrgName:
+          normalizeDisplayName(planWorkflowDetail.value?.targetOrgName) ||
+          planRecord?.targetOrgName ||
+          planRecord?.orgName,
+        fallback: '当前计划'
+      })
     })
   }
 

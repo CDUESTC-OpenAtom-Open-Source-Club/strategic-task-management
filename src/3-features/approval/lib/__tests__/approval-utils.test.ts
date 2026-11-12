@@ -12,6 +12,7 @@ import {
   resolveHistoryStatusTag,
   resolvePlanApprovalTypeLabel,
   resolvePlanConfirmWorkflowName,
+  resolvePlanInstanceReferenceLabel,
   shouldDisplayWorkflowHistoryItem,
   showAppraisalLevelForFlow,
   toPositiveNumber
@@ -227,5 +228,43 @@ describe('approval-utils', () => {
         sourceOrgName: '计算机学院'
       })
     ).toBe('计划（计算机学院）')
+  })
+
+  // 2026-11-12（审批弹窗用实例业务名）：确认弹窗优先展示实例业务名
+  // （PLAN_REPORT 实例的 planName = plan_report.planName），
+  // 「Plan 404457」式占位名/裸数字 ID 不外透，回退 buildPlanReferenceLabel 参考标签
+  it('prefers the instance business name and falls back on placeholder names (2026-11-12 口径)', () => {
+    const referenceLabel = '2026年度 计划（计算机学院 -> 战略发展部）'
+    // 业务名优先：实例 planName 直接透出
+    expect(
+      resolvePlanInstanceReferenceLabel({
+        instancePlanName: '2026年度 11月上报（计算机学院 -> 战略发展部）',
+        fallbackPlanName: '',
+        referenceLabel
+      })
+    ).toBe('2026年度 11月上报（计算机学院 -> 战略发展部）')
+    // 实例名是「Plan 404457」占位时，次选 props.planName 业务名
+    expect(
+      resolvePlanInstanceReferenceLabel({
+        instancePlanName: 'Plan 404457',
+        fallbackPlanName: '教务处年度计划',
+        referenceLabel
+      })
+    ).toBe('教务处年度计划')
+    // 候选全缺或全是占位名（含裸数字 ID）：回退参考标签
+    expect(
+      resolvePlanInstanceReferenceLabel({
+        instancePlanName: '',
+        fallbackPlanName: '404457',
+        referenceLabel
+      })
+    ).toBe(referenceLabel)
+    expect(
+      resolvePlanInstanceReferenceLabel({
+        instancePlanName: 'Plan 404457',
+        fallbackPlanName: '  ',
+        referenceLabel
+      })
+    ).toBe(referenceLabel)
   })
 })

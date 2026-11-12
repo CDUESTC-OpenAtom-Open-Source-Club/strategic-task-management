@@ -148,6 +148,33 @@ export function buildPlanReferenceLabel(params: {
   return label
 }
 
+// 2026-11-12（审批弹窗用实例业务名）：后端对未命名实体自动生成的占位名
+// （「Plan 404457」式英文占位 / 裸数字 ID），绝不能亮给用户。
+const PLAN_INSTANCE_PLACEHOLDER_NAME_PATTERN = /^(Plan\s*\d+|\d+)$/i
+
+/**
+ * 2026-11-12（审批通过/驳回确认弹窗用实例业务名）：
+ * 优先取实例业务名（PLAN_REPORT 实例的 planName，后端=plan_report.planName，
+ * 如「2026年度 11月上报（计算机学院 -> 战略发展部）」），次选 props.planName；
+ * 候选缺失或命中占位名（「Plan 404457」/裸数字 ID）时，回退
+ * buildPlanReferenceLabel 拼出的「{年份}年度 计划（流向）」参考标签。
+ * useApprovalProgressDrawer / useApprovalProgressState / useApprovalProgressWorkflow
+ * 三份 resolvePlanReferenceLabel 同口径复用。
+ */
+export function resolvePlanInstanceReferenceLabel(params: {
+  instancePlanName?: unknown
+  fallbackPlanName?: unknown
+  referenceLabel: string
+}): string {
+  for (const candidate of [params.instancePlanName, params.fallbackPlanName]) {
+    const name = normalizeDisplayName(candidate)
+    if (name && !PLAN_INSTANCE_PLACEHOLDER_NAME_PATTERN.test(name)) {
+      return name
+    }
+  }
+  return params.referenceLabel
+}
+
 export function resolveHistoryStatusTag(status?: string): ApprovalStatusTag {
   const normalized = String(status || '').toUpperCase()
   if (normalized === 'APPROVED') {
