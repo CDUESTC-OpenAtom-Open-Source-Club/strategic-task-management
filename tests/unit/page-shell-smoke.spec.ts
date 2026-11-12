@@ -242,7 +242,7 @@ describe('page shell smoke', () => {
       ...mountOptions
     })
 
-    expect(wrapper.text()).not.toContain('学院指标审批由战略发展部统一组织')
+    expect(wrapper.text()).not.toContain('学院指标由战略发展部统一下发')
     viewModelOverrides.distribute = {}
   })
 
@@ -261,7 +261,7 @@ describe('page shell smoke', () => {
       ...mountOptions
     })
 
-    expect(wrapper.text()).toContain('学院指标审批由战略发展部统一组织，本部门仅可查看历史数据')
+    expect(wrapper.text()).toContain('学院指标由战略发展部统一下发；本部门负责归口指标的审核进度鉴定与上报审批，并可查看历史数据。')
     expect(wrapper.text()).not.toContain('新增指标')
     expect(wrapper.text()).not.toContain('发起下发审批')
     expect(wrapper.text()).not.toContain('复制其他学院指标')

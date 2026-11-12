@@ -2904,7 +2904,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   const openAddIndicatorForm = () => {
     // 2026-11-05：改造后新增子指标是战略部的操作，职能部门在本页只读
     if (!canWriteDistribution.value) {
-      ElMessage.warning('学院指标下发现由战略发展部统一发起，本部门仅可查看历史数据')
+      ElMessage.warning('学院指标下发由战略发展部统一发起；如需调整请通过异动审批流程')
       return
     }
 
@@ -3031,7 +3031,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   const saveNewIndicator = async () => {
     // 2026-11-05：新增子指标是战略部的操作，职能部门在本页只读（兜底，防止绕过 UI 闸门）
     if (!canWriteDistribution.value) {
-      ElMessage.warning('学院指标下发现由战略发展部统一发起，本部门仅可查看历史数据')
+      ElMessage.warning('学院指标下发由战略发展部统一发起；如需调整请通过异动审批流程')
       return
     }
     // 验证数据
@@ -4054,7 +4054,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     // 2026-11-05：改造后下发由战略发展部统一发起，职能部门在本页只读（按钮已隐藏，
     // 这里再兜一道，避免深链/脚本直调绕过 UI 闸门）。
     if (!canWriteDistribution.value) {
-      ElMessage.warning('学院指标下发现由战略发展部统一发起，本部门仅可查看历史数据')
+      ElMessage.warning('学院指标下发由战略发展部统一发起；如需调整请通过异动审批流程')
       return
     }
 
