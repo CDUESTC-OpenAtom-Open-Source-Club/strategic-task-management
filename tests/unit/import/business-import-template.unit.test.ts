@@ -8,7 +8,8 @@ import {
 
 const importTypes: BusinessImportType[] = ['strategic-task', 'distribution']
 
-// 2026-10-31 用户终版表头（职能部门 8 列 / 学院 9 列——学院模板加「任务类型」列）
+// 2026-10-31 用户终版表头（职能部门 7 列 / 学院 8 列）；
+// 2026-11-11 用户拍板：下发备注全端隐藏，两模板均不再带「下发备注」列
 const expectedHeaders: Record<BusinessImportType, string[]> = {
   'strategic-task': [
     '序号',
@@ -17,8 +18,7 @@ const expectedHeaders: Record<BusinessImportType, string[]> = {
     '任务类型',
     '核心指标',
     '指标类型',
-    '权重（可填 10 / 10% / 0.1）',
-    '下发备注'
+    '权重（可填 10 / 10% / 0.1）'
   ],
   distribution: [
     '序号',
@@ -28,8 +28,7 @@ const expectedHeaders: Record<BusinessImportType, string[]> = {
     '核心指标类型',
     '子指标名称',
     '指标类型',
-    '权重（可填 10 / 10% / 0.1）',
-    '下发备注'
+    '权重（可填 10 / 10% / 0.1）'
   ]
 }
 
@@ -47,6 +46,8 @@ describe('import/lib/importTemplate', () => {
     expect(headers).not.toContain('预警等级')
     // 2026-10-31 层级化定案：学院模板不再有「父级战略任务」列
     expect(headers).not.toContain('父级战略任务')
+    // 2026-11-11 用户拍板：下发备注全端隐藏，导入模板同步去列
+    expect(headers).not.toContain('下发备注')
     // 终版表头：职能部门模板新增「任务类型」；学院模板核心指标列改名并新增「核心指标类型」
     if (type === 'strategic-task') {
       expect(headers).toContain('任务类型')
@@ -211,8 +212,7 @@ describe('import/lib/importTemplate', () => {
         parentIndicatorType: '定量',
         indicatorName: '',
         indicatorType: '',
-        weight: '',
-        remark: ''
+        weight: ''
       },
       {
         serial: '2',
@@ -222,13 +222,13 @@ describe('import/lib/importTemplate', () => {
         parentIndicatorType: '',
         indicatorName: '',
         indicatorType: '',
-        weight: '',
-        remark: ''
+        weight: ''
       }
     ])
-    // 预填行键集与终版列集一致（无 parentStrategicTask 字段）
+    // 预填行键集与终版列集一致（无 parentStrategicTask / remark 字段）
     sheet.rows.forEach(row => {
       expect(Object.keys(row)).not.toContain('parentStrategicTask')
+      expect(Object.keys(row)).not.toContain('remark')
     })
     // 预填行每个父级单独成组（各占一行），组列无合并、返回纯文本
     expect(sheet.columns[0].getValue(sheet.rows[0], 0)).toBe('1')

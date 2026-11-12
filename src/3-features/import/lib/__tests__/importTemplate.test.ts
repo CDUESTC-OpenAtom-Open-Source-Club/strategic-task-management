@@ -6,7 +6,7 @@ import {
 } from '../importTemplate'
 
 describe('getImportTemplateGuide 学院模板加「任务类型」列（2026-10-31 终版表头加列定案）', () => {
-  it('学院模板 9 列：任务类型位于学院之后、核心指标之前', () => {
+  it('学院模板 8 列：任务类型位于学院之后、核心指标之前（2026-11-11 起隐藏「下发备注」列）', () => {
     const guide = getImportTemplateGuide('distribution')
 
     expect(guide.columns.map(column => column.label)).toEqual([
@@ -17,8 +17,7 @@ describe('getImportTemplateGuide 学院模板加「任务类型」列（2026-10-
       '核心指标类型',
       '子指标名称',
       '指标类型',
-      '权重（可填 10 / 10% / 0.1）',
-      '下发备注'
+      '权重（可填 10 / 10% / 0.1）'
     ])
   })
 
@@ -112,7 +111,7 @@ describe('buildImportTemplateSheet 职能部门模板（部门列整列合并）
     }
   })
 
-  it('表头列序保持 8 列不变（本轮不动职能部门模板列序）', () => {
+  it('表头列序收敛为 7 列（2026-11-11 用户拍板：隐藏「下发备注」列）', () => {
     const sheet = buildImportTemplateSheet('strategic-task')
 
     expect(sheet.columns.map(column => column.header)).toEqual([
@@ -122,8 +121,7 @@ describe('buildImportTemplateSheet 职能部门模板（部门列整列合并）
       '任务类型',
       '核心指标',
       '指标类型',
-      '权重（可填 10 / 10% / 0.1）',
-      '下发备注'
+      '权重（可填 10 / 10% / 0.1）'
     ])
   })
 })

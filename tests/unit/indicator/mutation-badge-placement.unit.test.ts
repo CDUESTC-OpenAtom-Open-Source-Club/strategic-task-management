@@ -14,7 +14,6 @@ vi.mock('@/features/indicator/api/mutationApi', () => ({
 
 import {
   MUTATION_FIELDS_INDICATOR_NAME,
-  MUTATION_FIELDS_REMARK,
   MUTATION_FIELDS_WEIGHT,
   countMutationHistoryByFields,
   filterMutationHistoryByFields,
@@ -63,10 +62,8 @@ describe('mutationHistory 字段分流', () => {
     expect(count).toBe(2)
   })
 
-  it('备注徽标只数改了备注的记录', () => {
-    expect(countMutationHistoryByFields(HISTORY, MUTATION_FIELDS_REMARK)).toBe(1)
-  })
-
+  // 2026-11-11 用户拍板：下发备注全端隐藏，备注徽标（MUTATION_FIELDS_REMARK）随备注列一并移除；
+  // 仅保留「remark 不混入其他字段徽标统计」的口径锁定（用字面量字段数组验证分流边界）
   it('同一条记录改了多个字段时，各列徽标都各自计一次', () => {
     const item = makeItem(9, {
       indicator_desc: { before: 'A', after: 'B' },
@@ -74,7 +71,7 @@ describe('mutationHistory 字段分流', () => {
     })
     expect(countMutationHistoryByFields([item], MUTATION_FIELDS_WEIGHT)).toBe(1)
     expect(countMutationHistoryByFields([item], MUTATION_FIELDS_INDICATOR_NAME)).toBe(1)
-    expect(countMutationHistoryByFields([item], MUTATION_FIELDS_REMARK)).toBe(0)
+    expect(countMutationHistoryByFields([item], ['remark'])).toBe(0)
   })
 
   it('不传字段时统计全部异动', () => {

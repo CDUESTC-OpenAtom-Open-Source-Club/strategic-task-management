@@ -24,9 +24,9 @@ describe('异动角标落位契约', () => {
     expect(weightColumnBlocks).toHaveLength(2)
   })
 
-  it('核心指标列与下发备注列同样带 class-name', () => {
+  it('核心指标列带 class-name（2026-11-11 起「下发备注」列已随全端隐藏一并删除）', () => {
     expect(viewSource).toContain('class-name="indicator-name-col-cell"')
-    expect(viewSource).toMatch(/label="下发备注"[\s\S]*?class-name="remark-col-cell"/)
+    expect(viewSource).not.toContain('remark-col-cell')
   })
 
   it('权重列角标挂在权重单元格内（不是核心指标格里）', () => {
@@ -42,12 +42,14 @@ describe('异动角标落位契约', () => {
   it('核心指标列角标只统计指标内容异动，权重列只统计权重异动', () => {
     expect(viewSource).toContain(':fields="MUTATION_FIELDS_INDICATOR_NAME"')
     expect(viewSource).toContain(':fields="MUTATION_FIELDS_WEIGHT"')
-    expect(viewSource).toContain(':fields="MUTATION_FIELDS_REMARK"')
     expect(viewSource).toContain(':fields="MUTATION_FIELDS_TASK_NAME"')
+    // 2026-11-11 用户拍板：下发备注全端隐藏，备注徽标字段不再出现在视图层
+    expect(viewSource).not.toContain('MUTATION_FIELDS_REMARK')
   })
 
   it('CSS 把这几类格子设为定位基准，角标绝对定位到格子右上角', () => {
-    expect(cssSource).toMatch(/\.weight-col-cell,\s*\.indicator-name-col-cell,\s*\.remark-col-cell/)
+    expect(cssSource).toMatch(/\.weight-col-cell,\s*\.indicator-name-col-cell/)
+    expect(cssSource).not.toContain('.remark-col-cell')
     expect(cssSource).toMatch(/\.weight-col-cell,[\s\S]*?position:\s*relative/)
 
     // 角标绝对定位 + 贴右上角
