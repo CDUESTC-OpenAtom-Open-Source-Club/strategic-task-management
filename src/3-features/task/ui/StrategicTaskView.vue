@@ -14,7 +14,6 @@ import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
 import {
   MUTATION_FIELDS_INDICATOR_NAME,
-  MUTATION_FIELDS_REMARK,
   MUTATION_FIELDS_TASK_NAME,
   MUTATION_FIELDS_WEIGHT
 } from '@/features/indicator/model/mutationHistory'
@@ -1093,7 +1092,6 @@ const buildStrategicExportColumns = (
     },
     { header: '核心指标', width: 32, getValue: row => row.name || '-' },
     { header: '指标类型', width: 12, align: 'center', getValue: row => row.type1 || '-' },
-    { header: '下发备注', width: 24, getValue: row => row.remark || '-' },
     // 2026-10-20 用户定案：表头直接标出权重可接受的写法，避免用户猜格式
     {
       header: '权重（可填 10 / 10% / 0.1）',
@@ -1554,7 +1552,7 @@ const openStrategicImportDialog = () => {
     ElMessageBox.alert(
       '该部门计划已下发，不能再通过导入修改。\n\n如需新增或调整指标：\n' +
         '· 新增：点表格上方「新增行」，或指标行右下角的「+」\n' +
-        '· 修改：双击指标名称/权重/下发备注就地编辑\n' +
+        '· 修改：双击指标名称/权重就地编辑\n' +
         '· 改完后点击顶部「发起异动」提交审批（审批通过后生效）',
       '该计划已下发，导入已关闭',
       { confirmButtonText: '我知道了', type: 'warning' }
@@ -2350,55 +2348,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     </template>
                   </el-table-column>
                   <el-table-column
-                    prop="remark"
-                    label="下发备注"
-                    :width="TASK_TABLE_COLUMN_WIDTH.remark"
-                    class-name="remark-col-cell"
-                  >
-                    <template #default="{ row }">
-                      <div
-                        class="indicator-name-cell"
-                        @dblclick="handleIndicatorDblClick(row, 'remark')"
-                      >
-                        <el-input
-                          v-if="editingIndicatorId === row.id && editingIndicatorField === 'remark'"
-                          v-model="editingIndicatorValue"
-                          v-focus
-                          type="textarea"
-                          :autosize="{ minRows: 2, maxRows: 6 }"
-                          @blur="saveIndicatorEdit(row, 'remark')"
-                          @keyup.esc="cancelIndicatorEdit"
-                        />
-                        <span
-                          v-else-if="isSavingIndicatorCell(row, 'remark')"
-                          class="cell-saving-text"
-                        >
-                          保存中...
-                        </span>
-                        <el-tooltip
-                          v-else
-                          :content="row.remark || ''"
-                          :disabled="(row.remark || '').length <= 50"
-                          placement="top"
-                        >
-                          <span class="indicator-name-text remark-text-wrap">{{
-                            row.remark || '样例：双击编辑说明'
-                          }}</span>
-                        </el-tooltip>
-                        <!-- 2026-10-30 用户定案：备注异动角标落在下发备注格子右上角 -->
-                        <div class="indicator-cell-footer indicator-cell-footer--corner">
-                          <MutationBadgePopover
-                            v-if="row.id"
-                            :indicator-id="row.id"
-                            :fields="MUTATION_FIELDS_REMARK"
-                            :mutation-in-flight="isEntityMutationInFlight('INDICATOR', row.id)"
-                            :mutation-returned="isEntityMutationReturned('INDICATOR', row.id)"
-                          />
-                        </div>
-                      </div>
-                    </template>
-                  </el-table-column>
-                  <el-table-column
                     label="操作"
                     :width="TASK_TABLE_COLUMN_WIDTH.actions"
                     align="center"
@@ -2543,10 +2492,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         <div class="info-item">
                           <span class="info-label">责任人：</span>
                           <span class="info-value">{{ currentIndicator.responsiblePerson }}</span>
-                        </div>
-                        <div class="info-item full-width">
-                          <span class="info-label">备注：</span>
-                          <span class="info-value">{{ currentIndicator.remark || '无备注' }}</span>
                         </div>
                       </div>
                     </div>
@@ -2786,18 +2731,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                           type="textarea"
                           :autosize="{ minRows: 2, maxRows: 10 }"
                           placeholder="设置核心指标内容"
-                        />
-                      </el-form-item>
-                    </el-col>
-                  </el-row>
-                  <el-row :gutter="16">
-                    <el-col :span="24">
-                      <el-form-item label="下发备注">
-                        <el-input
-                          v-model="newRow.remark"
-                          type="textarea"
-                          :autosize="{ minRows: 3, maxRows: 15 }"
-                          placeholder="输入指标备注"
                         />
                       </el-form-item>
                     </el-col>
@@ -3137,55 +3070,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     </template>
                   </el-table-column>
                   <el-table-column
-                    prop="remark"
-                    label="下发备注"
-                    :width="TASK_TABLE_COLUMN_WIDTH.remark"
-                    class-name="remark-col-cell"
-                  >
-                    <template #default="{ row }">
-                      <div
-                        class="indicator-name-cell"
-                        @dblclick="handleIndicatorDblClick(row, 'remark')"
-                      >
-                        <el-input
-                          v-if="editingIndicatorId === row.id && editingIndicatorField === 'remark'"
-                          v-model="editingIndicatorValue"
-                          v-focus
-                          type="textarea"
-                          :autosize="{ minRows: 2, maxRows: 6 }"
-                          @blur="saveIndicatorEdit(row, 'remark')"
-                          @keyup.esc="cancelIndicatorEdit"
-                        />
-                        <span
-                          v-else-if="isSavingIndicatorCell(row, 'remark')"
-                          class="cell-saving-text"
-                        >
-                          保存中...
-                        </span>
-                        <el-tooltip
-                          v-else
-                          :content="row.remark || ''"
-                          :disabled="(row.remark || '').length <= 50"
-                          placement="top"
-                        >
-                          <span class="indicator-name-text remark-text-wrap">{{
-                            row.remark || '—'
-                          }}</span>
-                        </el-tooltip>
-                        <!-- 2026-10-30 用户定案：备注异动角标落在下发备注格子右上角 -->
-                        <div class="indicator-cell-footer indicator-cell-footer--corner">
-                          <MutationBadgePopover
-                            v-if="row.id"
-                            :indicator-id="row.id"
-                            :fields="MUTATION_FIELDS_REMARK"
-                            :mutation-in-flight="isEntityMutationInFlight('INDICATOR', row.id)"
-                            :mutation-returned="isEntityMutationReturned('INDICATOR', row.id)"
-                          />
-                        </div>
-                      </div>
-                    </template>
-                  </el-table-column>
-                  <el-table-column
                     label="操作"
                     :width="TASK_TABLE_COLUMN_WIDTH.actions"
                     align="center"
@@ -3259,18 +3143,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                             type="textarea"
                             :autosize="{ minRows: 2, maxRows: 10 }"
                             placeholder="设置子指标内容"
-                          />
-                        </el-form-item>
-                      </el-col>
-                    </el-row>
-                    <el-row :gutter="16">
-                      <el-col :span="24">
-                        <el-form-item label="下发备注">
-                          <el-input
-                            v-model="newRow.remark"
-                            type="textarea"
-                            :autosize="{ minRows: 3, maxRows: 15 }"
-                            placeholder="输入指标备注"
                           />
                         </el-form-item>
                       </el-col>
@@ -3431,9 +3303,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           }}</el-descriptions-item>
           <el-descriptions-item label="进度说明" :span="2">{{
             latestFillNote || '—'
-          }}</el-descriptions-item>
-          <el-descriptions-item label="下发备注" :span="2">{{
-            currentDetail.remark
           }}</el-descriptions-item>
         </el-descriptions>
 

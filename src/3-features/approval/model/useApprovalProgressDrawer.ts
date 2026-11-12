@@ -2578,7 +2578,8 @@ export function useApprovalProgressDrawer(
   })
 
   const displayedBusinessCommentLabel = computed(() => {
-    return displayedBusinessSectionMode.value === 'report' ? '进度说明' : '下发备注'
+    // 2026-11-11 用户拍板：下发备注字段全端隐藏——非上报快照流程（下发/通用审批）不再渲染说明卡标题
+    return displayedBusinessSectionMode.value === 'report' ? '进度说明' : ''
   })
 
   const displayedBusinessAttachmentLabel = computed(() => {
@@ -2642,10 +2643,9 @@ export function useApprovalProgressDrawer(
           : '--',
         submittedProgress: '--',
         submittedComment: '',
-        // 2026-10-26 用户反馈：详情卡补「权重」与「下发备注」（下发审批需要看到）
+        // 2026-10-26 用户反馈：详情卡补「权重」（下发审批需要看到）；
+        // 2026-11-11 用户拍板：下发备注全端隐藏，dispatchRemark 字段一并移除
         weight: formatWeightValue(pickWeightValue(resolvedIndicator as Record<string, unknown>)),
-        dispatchRemark:
-          normalizeDisplayName((resolvedIndicator as { remark?: unknown }).remark) || '',
         submittedSelfRating: '',
         targetValue: hasExplicitMetric
           ? formatIndicatorMetricValue(targetValueRaw)
@@ -2807,7 +2807,6 @@ export function useApprovalProgressDrawer(
               )
             )
         ),
-        dispatchRemark: '',
         submittedSelfRating:
           normalizeDisplayName((detail as { selfRating?: string } | null)?.selfRating) || '',
         // 2026-10-24 指标级鉴定：已评定等级随快照带出，详情弹窗展示

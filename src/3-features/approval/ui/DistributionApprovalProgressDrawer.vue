@@ -205,11 +205,11 @@ const isPlaceholderPlanApprovalName = (value: unknown): boolean => {
   return /^Plan\s*#?\s*\d+$/i.test(normalized) || /^计划\s*#?\s*\d+$/i.test(normalized)
 }
 
-// 2026-10-21：异动字段名 → 中文标签，与右下角「异动历史」角标口径一致
+// 2026-10-21：异动字段名 → 中文标签，与右下角「异动历史」角标口径一致；
+// 2026-11-11 用户拍板：下发备注全端隐藏——remark 异动项在「本次异动内容」里过滤不渲染
 const MUTATION_FIELD_LABELS: Record<string, string> = {
   indicator_desc: '指标内容',
   weight_percent: '权重',
-  remark: '下发备注',
   name: '战略任务'
 }
 
@@ -977,20 +977,18 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 本次异动内容
                 <span class="detail-mutation-hint">（审批通过后生效）</span>
               </div>
-              <div
-                v-for="(change, fieldKey) in item.changedFields"
-                :key="fieldKey"
-                class="detail-mutation-row"
-              >
-                <span class="detail-mutation-field">{{
-                  formatMutationFieldLabel(String(fieldKey), item.mutationEntityType)
-                }}</span>
-                <span class="detail-mutation-before">{{
-                  formatMutationValue(change?.before)
-                }}</span>
-                <span class="detail-mutation-arrow">→</span>
-                <span class="detail-mutation-after">{{ formatMutationValue(change?.after) }}</span>
-              </div>
+              <template v-for="(change, fieldKey) in item.changedFields" :key="fieldKey">
+                <div v-if="fieldKey !== 'remark'" class="detail-mutation-row">
+                  <span class="detail-mutation-field">{{
+                    formatMutationFieldLabel(String(fieldKey), item.mutationEntityType)
+                  }}</span>
+                  <span class="detail-mutation-before">{{
+                    formatMutationValue(change?.before)
+                  }}</span>
+                  <span class="detail-mutation-arrow">→</span>
+                  <span class="detail-mutation-after">{{ formatMutationValue(change?.after) }}</span>
+                </div>
+              </template>
             </div>
           </div>
         </div>
@@ -1039,8 +1037,9 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 </div>
               </div>
 
-              <!-- D3：自评进度等级徽标（对齐主审批抽屉） -->
-              <div class="snapshot-section">
+              <!-- D3：自评进度等级徽标（对齐主审批抽屉）；
+                   2026-11-11 用户拍板：下发备注全端隐藏——label 为空（非上报流程）时整卡不渲染 -->
+              <div v-if="displayedBusinessCommentLabel" class="snapshot-section">
                 <div class="snapshot-section-title">{{ displayedBusinessCommentLabel }}</div>
                 <div class="snapshot-section-content">
                   {{ indicator.submittedComment || displayedBusinessEmptyCommentText }}

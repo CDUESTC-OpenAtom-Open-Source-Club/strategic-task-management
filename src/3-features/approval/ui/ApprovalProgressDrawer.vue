@@ -790,7 +790,8 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 </div>
               </div>
 
-              <div class="snapshot-section">
+              <!-- 2026-11-11 用户拍板：下发备注全端隐藏——label 为空（非上报流程）时整卡不渲染 -->
+              <div v-if="displayedBusinessCommentLabel" class="snapshot-section">
                 <div class="snapshot-section-title">{{ displayedBusinessCommentLabel }}</div>
                 <div class="snapshot-section-content">
                   {{ indicator.submittedComment || displayedBusinessEmptyCommentText }}

@@ -37,17 +37,17 @@ export const TASK_TABLE_COLUMN_WIDTH = {
   appraisalLevel: 122,
   reportMaterials: 112,
   progressNoteMin: 130,
-  remark: 130,
   actions: 116
 } as const
 
 /**
  * 三个页面共用的列顺序（华年 2026-10-28 定案）：
  *   战略任务 → 核心指标 → 子指标名称 → 权重 → 自评进度 → 审核进度
- *   → 上报资料 → 进度说明 → 下发备注 → 操作
+ *   → 上报资料 → 进度说明 → 操作
  *
  * 注意：「上报状态」列已删除——顶部切换栏已含该信息，重复展示属冗余；
- * 异动上报的「审批中」状态同样已上移到顶部切换栏，原表内状态字段一并不再保留。
+ * 异动上报的「审批中」状态同样已上移到顶部切换栏，原表内状态字段一并不再保留；
+ * 「下发备注」列已删除（2026-11-11 用户拍板：该字段全端隐藏，列宽常量 remark 一并移除）。
  */
 export const TASK_TABLE_COLUMN_ORDER = [
   '战略任务',
@@ -58,6 +58,5 @@ export const TASK_TABLE_COLUMN_ORDER = [
   '审核进度',
   '上报资料',
   '进度说明',
-  '下发备注',
   '操作'
 ] as const

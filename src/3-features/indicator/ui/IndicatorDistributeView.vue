@@ -455,7 +455,6 @@ const buildDistributionExportColumns = (
       align: 'center',
       getValue: row => getDistributionChildTypeText(row.child)
     },
-    { header: '下发备注', width: 24, getValue: row => row.child.remark || '-' },
     // 2026-10-20 用户定案：表头标出权重可接受写法
     {
       header: '权重（可填 10 / 10% / 0.1）',
@@ -1314,70 +1313,6 @@ const handleDistributionImportCommitted = async () => {
                   </template>
                 </el-table-column>
 
-                <!-- 备注列（2026-10-13 用户定案：备注移到操作列前） -->
-                <el-table-column label="下发备注" width="98">
-                  <template #default="{ row }">
-                    <template v-if="row.type === 'indicator-only'">
-                      <span class="remark-text">-</span>
-                    </template>
-                    <template v-else-if="row.type === 'child'">
-                      <div
-                        class="child-remark-cell"
-                        @dblclick="handleChildDblClick(row.child, 'remark')"
-                      >
-                        <el-input
-                          v-if="
-                            editingChildId === row.child?.id?.toString() &&
-                            editingChildField === 'remark'
-                          "
-                          v-model="editingChildValue"
-                          type="textarea"
-                          :rows="1"
-                          autosize
-                          class="editing-field textarea-cell"
-                          @blur="saveChildEdit(row.child, 'remark')"
-                        />
-                        <span
-                          v-else-if="isSavingChildCell(row.child, 'remark')"
-                          class="cell-saving-text"
-                        >
-                          保存中...
-                        </span>
-                        <el-tooltip
-                          v-else
-                          :content="row.child?.remark || ''"
-                          :disabled="(row.child?.remark || '').length <= 50"
-                          placement="top"
-                        >
-                          <span class="remark-text">{{ row.child?.remark || '-' }}</span>
-                        </el-tooltip>
-                      </div>
-                    </template>
-                    <template v-else-if="row.type === 'new-child'">
-                      <div
-                        class="new-child-cell"
-                        @click="handleNewChildRowClick(row.child.id, row.parentIndicatorId)"
-                      >
-                        <el-input
-                          v-if="editingNewChildId === row.child.id"
-                          v-model="row.child.remark"
-                          type="textarea"
-                          :rows="1"
-                          autosize
-                          placeholder="输入备注（选填）"
-                          class="new-child-editing textarea-cell"
-                        />
-                        <span
-                          v-else
-                          class="remark-text new-child-text"
-                          :class="{ 'placeholder-text': !row.child.remark }"
-                          >{{ row.child.remark || '-' }}</span
-                        >
-                      </div>
-                    </template>
-                  </template>
-                </el-table-column>
-
                 <!-- 操作列 - 学院模式：仅查看和删除（删除需先撤销） -->
                 <el-table-column label="操作" width="120" align="center">
                   <template #default="{ row }">
@@ -1528,18 +1463,6 @@ const handleDistributionImportCommitted = async () => {
                       </el-form-item>
                     </el-col>
                   </el-row>
-                  <el-row :gutter="16">
-                    <el-col :span="24">
-                      <el-form-item label="下发备注">
-                        <el-input
-                          v-model="newIndicatorForm.remark"
-                          type="textarea"
-                          :autosize="{ minRows: 2, maxRows: 10 }"
-                          placeholder="输入备注内容（选填）"
-                        />
-                      </el-form-item>
-                    </el-col>
-                  </el-row>
                 </el-form>
               </div>
               <div class="add-form-actions">
@@ -1654,9 +1577,6 @@ const handleDistributionImportCommitted = async () => {
           <el-descriptions-item label="进度说明" :span="2">{{
             latestFillNote || '—'
           }}</el-descriptions-item>
-          <el-descriptions-item label="下发备注" :span="2">
-            {{ currentDetailIndicator.remark || '暂无备注' }}
-          </el-descriptions-item>
         </el-descriptions>
       </div>
 
@@ -1893,12 +1813,6 @@ const handleDistributionImportCommitted = async () => {
                   />
                 </div>
               </div>
-            </template>
-          </el-table-column>
-          <!-- 备注列 -->
-          <el-table-column label="下发备注" width="150">
-            <template #default="{ row }">
-              <span class="indicator-remark">{{ row.indicator.remark || '-' }}</span>
             </template>
           </el-table-column>
           <!-- 操作列 -->

@@ -373,7 +373,6 @@ const buildIndicatorListExportColumns = (
     { header: '核心指标', width: 32, getValue: row => row.name || '-' },
     { header: '指标类型', width: 12, align: 'center', getValue: row => row.type1 || '-' },
     { header: '任务类别', width: 12, align: 'center', getValue: row => row.type2 || '-' },
-    { header: '下发备注', width: 24, getValue: row => row.remark || '-' },
     { header: '权重', width: 10, align: 'center', getValue: row => Number(row.weight || 0) },
     {
       header: '审核进度',
@@ -1156,24 +1155,6 @@ const handleExportIndicatorList = async () => {
                   </el-tooltip>
                 </template>
               </el-table-column>
-              <el-table-column
-                prop="remark"
-                label="下发备注"
-                :width="TASK_TABLE_COLUMN_WIDTH.remark"
-              >
-                <template #default="{ row }">
-                  <!-- 2026-10-24 用户定案：下发备注同样只读（不能双击编辑） -->
-                  <div class="indicator-name-cell">
-                    <el-tooltip
-                      :content="row.remark || ''"
-                      :disabled="(row.remark || '').length <= 50"
-                      placement="top"
-                    >
-                      <span class="remark-text">{{ row.remark || '' }}</span>
-                    </el-tooltip>
-                  </div>
-                </template>
-              </el-table-column>
               <el-table-column label="操作" :width="TASK_TABLE_COLUMN_WIDTH.actions" align="center">
                 <template #default="{ row }">
                   <div class="action-cell">
@@ -1299,9 +1280,6 @@ const handleExportIndicatorList = async () => {
         <el-form-item label="权重">
           <el-input v-model="newRow.weight" placeholder="请输入权重" type="number" />
         </el-form-item>
-        <el-form-item label="下发备注">
-          <el-input v-model="newRow.remark" type="textarea" :rows="3" placeholder="请输入备注" />
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="cancelAdd">取消</el-button>
@@ -1378,9 +1356,6 @@ const handleExportIndicatorList = async () => {
           }}</el-descriptions-item>
           <el-descriptions-item label="进度说明" :span="2">{{
             latestFillNote || '—'
-          }}</el-descriptions-item>
-          <el-descriptions-item label="下发备注" :span="2">{{
-            currentDetail.remark || '暂无备注'
           }}</el-descriptions-item>
         </el-descriptions>
 

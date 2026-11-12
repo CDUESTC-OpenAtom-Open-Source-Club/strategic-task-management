@@ -1269,7 +1269,8 @@ export function useApprovalProgressState(
   })
 
   const displayedBusinessCommentLabel = computed(() => {
-    return displayedBusinessSectionMode.value === 'report' ? '进度说明' : '下发备注'
+    // 2026-11-11 用户拍板：下发备注字段全端隐藏——非上报快照流程（下发/通用审批）不再渲染说明卡标题
+    return displayedBusinessSectionMode.value === 'report' ? '进度说明' : ''
   })
 
   const displayedBusinessAttachmentLabel = computed(() => {

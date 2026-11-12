@@ -33,11 +33,12 @@ export interface ImportTemplateGuide {
 }
 
 // 2026-10-31 用户拍板（导入模板层级化改造，终版表头）：
-// - 职能部门模板 8 列：序号|部门|战略任务|任务类型|核心指标|指标类型|权重|下发备注。
+// - 职能部门模板 7 列：序号|部门|战略任务|任务类型|核心指标|指标类型|权重
+//   （2026-11-11 用户拍板：「下发备注」列全端隐藏，模板不再带该列）。
 //   「任务类型」= 战略任务的类型（基础性/发展性，即数据模型 taskCategory），升为任务级：
 //   随组竖向合并、组内所有指标继承该值落库到各自 taskCategory；表头「任务类型」「任务类别」都识别。
-// - 学院模板 9 列（2026-10-31 终版表头加「任务类型」列）：序号|学院|任务类型|核心指标|核心指标类型|
-//   子指标名称|指标类型|权重|下发备注。「核心指标」即父级核心指标（系统按名称反查所属任务，
+// - 学院模板 8 列（2026-10-31 终版表头加「任务类型」列）：序号|学院|任务类型|核心指标|核心指标类型|
+//   子指标名称|指标类型|权重。「核心指标」即父级核心指标（系统按名称反查所属任务，
 //   「父级战略任务」列已删除）；「任务类型」= 父级核心指标所属任务的类型（基础性/发展性），系统预填、
 //   随组合并、锚点级只读校验（与系统父级所属任务类型不一致→阻断点名，后端
 //   BusinessImportApplicationService.applyDistributionAnchor 同步扩展）；不新增落库字段。
@@ -66,8 +67,7 @@ const strategicImportGuide: ImportTemplateGuide = {
     { key: 'indicatorName', label: '核心指标', required: true },
     { key: 'indicatorType', label: '指标类型', required: true },
     // 2026-10-20：表头直接标出可接受写法
-    { key: 'weight', label: '权重（可填 10 / 10% / 0.1）' },
-    { key: 'remark', label: '下发备注' }
+    { key: 'weight', label: '权重（可填 10 / 10% / 0.1）' }
   ],
   rows: [
     // 示例演示层级化版式（组列=序号/战略任务/任务类型按组竖向合并，部门列整列合并）：
@@ -80,8 +80,7 @@ const strategicImportGuide: ImportTemplateGuide = {
       taskType: '基础性',
       indicatorName: '建设智慧教学质量监测体系',
       indicatorType: '定量',
-      weight: '20%',
-      remark: ''
+      weight: '20%'
     },
     {
       serial: '',
@@ -90,8 +89,7 @@ const strategicImportGuide: ImportTemplateGuide = {
       taskType: '',
       indicatorName: '建成教学质量数据平台',
       indicatorType: '定量',
-      weight: '30%',
-      remark: ''
+      weight: '30%'
     },
     {
       serial: '',
@@ -100,8 +98,7 @@ const strategicImportGuide: ImportTemplateGuide = {
       taskType: '',
       indicatorName: '开展课堂教学改革试点',
       indicatorType: '定性',
-      weight: '50',
-      remark: ''
+      weight: '50'
     },
     {
       serial: '2',
@@ -110,8 +107,7 @@ const strategicImportGuide: ImportTemplateGuide = {
       taskType: '基础性',
       indicatorName: '完成重点专业年度质量报告',
       indicatorType: '定性',
-      weight: '40',
-      remark: ''
+      weight: '40'
     },
     {
       serial: '',
@@ -120,8 +116,7 @@ const strategicImportGuide: ImportTemplateGuide = {
       taskType: '',
       indicatorName: '建立专业动态调整机制',
       indicatorType: '定性',
-      weight: '35',
-      remark: ''
+      weight: '35'
     },
     {
       serial: '',
@@ -130,8 +125,7 @@ const strategicImportGuide: ImportTemplateGuide = {
       taskType: '',
       indicatorName: '组织专业评估与认证',
       indicatorType: '定性',
-      weight: '25',
-      remark: ''
+      weight: '25'
     },
     {
       serial: '3',
@@ -140,8 +134,7 @@ const strategicImportGuide: ImportTemplateGuide = {
       taskType: '发展性',
       indicatorName: '建设虚拟仿真实验中心',
       indicatorType: '定量',
-      weight: '100',
-      remark: ''
+      weight: '100'
     }
   ],
   rules: [
@@ -178,8 +171,7 @@ const distributionImportGuide: ImportTemplateGuide = {
     { key: 'indicatorName', label: '子指标名称', required: true },
     { key: 'indicatorType', label: '指标类型', required: true },
     // 2026-10-20：表头直接标出可接受写法
-    { key: 'weight', label: '权重（可填 10 / 10% / 0.1）' },
-    { key: 'remark', label: '下发备注' }
+    { key: 'weight', label: '权重（可填 10 / 10% / 0.1）' }
   ],
   rows: [
     // 示例演示「一个父级核心指标拆多个子指标」：父级 1 占三行（序号/任务类型/核心指标/核心指标类型合并，
@@ -192,8 +184,7 @@ const distributionImportGuide: ImportTemplateGuide = {
       parentIndicatorType: '定量',
       indicatorName: '完成课程质量数据接入',
       indicatorType: '定量',
-      weight: '40%',
-      remark: ''
+      weight: '40%'
     },
     {
       serial: '',
@@ -203,8 +194,7 @@ const distributionImportGuide: ImportTemplateGuide = {
       parentIndicatorType: '',
       indicatorName: '完成评教数据接入',
       indicatorType: '定量',
-      weight: '30%',
-      remark: ''
+      weight: '30%'
     },
     {
       serial: '',
@@ -214,8 +204,7 @@ const distributionImportGuide: ImportTemplateGuide = {
       parentIndicatorType: '',
       indicatorName: '建成教学质量看板',
       indicatorType: '定量',
-      weight: '30%',
-      remark: ''
+      weight: '30%'
     },
     {
       serial: '2',
@@ -225,8 +214,7 @@ const distributionImportGuide: ImportTemplateGuide = {
       parentIndicatorType: '定性',
       indicatorName: '提交学院专业质量分析报告',
       indicatorType: '定性',
-      weight: '60%',
-      remark: ''
+      weight: '60%'
     },
     {
       serial: '',
@@ -236,8 +224,7 @@ const distributionImportGuide: ImportTemplateGuide = {
       parentIndicatorType: '',
       indicatorName: '完成专业评估支撑材料整理',
       indicatorType: '定性',
-      weight: '40',
-      remark: ''
+      weight: '40'
     }
   ],
   rules: [
@@ -296,8 +283,7 @@ export function buildImportTemplateSheet(
           parentIndicatorType: seed.parentIndicatorType ?? '',
           indicatorName: '',
           indicatorType: '',
-          weight: '',
-          remark: ''
+          weight: ''
         }))
       : []
 
