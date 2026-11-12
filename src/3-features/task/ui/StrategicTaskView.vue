@@ -1092,9 +1092,9 @@ const buildStrategicExportColumns = (
     },
     { header: '核心指标', width: 32, getValue: row => row.name || '-' },
     { header: '指标类型', width: 12, align: 'center', getValue: row => row.type1 || '-' },
-    // 2026-10-20 用户定案：表头直接标出权重可接受的写法，避免用户猜格式
+    // 2026-11-11 用户拍板：权重全局统一纯数字口径，导出与导入模板同口径
     {
-      header: '权重（可填 10 / 10% / 0.1）',
+      header: '权重（纯数字）',
       width: 16,
       align: 'center',
       getValue: row => Number(row.weight || 0)

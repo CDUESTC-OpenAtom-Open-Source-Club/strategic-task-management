@@ -66,8 +66,8 @@ const strategicImportGuide: ImportTemplateGuide = {
     { key: 'taskType', label: '任务类型', required: true, mergeGroup: true },
     { key: 'indicatorName', label: '核心指标', required: true },
     { key: 'indicatorType', label: '指标类型', required: true },
-    // 2026-10-20：表头直接标出可接受写法
-    { key: 'weight', label: '权重（可填 10 / 10% / 0.1）' }
+    // 2026-11-11 用户拍板：权重只收纯数字（去掉 10 / 10% / 0.1 三格式混用），表头直接标口径
+    { key: 'weight', label: '权重（纯数字）' }
   ],
   rows: [
     // 示例演示层级化版式（组列=序号/战略任务/任务类型按组竖向合并，部门列整列合并）：
@@ -80,7 +80,7 @@ const strategicImportGuide: ImportTemplateGuide = {
       taskType: '基础性',
       indicatorName: '建设智慧教学质量监测体系',
       indicatorType: '定量',
-      weight: '20%'
+      weight: '20'
     },
     {
       serial: '',
@@ -89,7 +89,7 @@ const strategicImportGuide: ImportTemplateGuide = {
       taskType: '',
       indicatorName: '建成教学质量数据平台',
       indicatorType: '定量',
-      weight: '30%'
+      weight: '30'
     },
     {
       serial: '',
@@ -146,8 +146,9 @@ const strategicImportGuide: ImportTemplateGuide = {
     '必填列：组首行的序号、战略任务、任务类型，以及每行的核心指标与指标类型。',
     // 2026-10-31：更新语义按名称——同组同名=更新、新名称=新增；改名不支持
     '同一任务组内核心指标同名 = 更新该指标（内容列以本次填写为准），新名称 = 新增指标；不支持通过导入修改指标名称，改名请在界面修改。',
-    // 2026-10-31 用户拍板：权重口径改为计划级——基础性任务及其指标的权重全计划合计须为 100
-    '权重支持 10、10%、0.1 三种写法，系统会统一换算为百分制；基础性任务及其指标的权重，全计划合计须为 100（基础性任务下的指标同为基础性，多个基础性任务组的权重一并计入合计），否则自动下发会被拦截。',
+    // 2026-10-31 用户拍板：权重口径改为计划级——基础性任务及其指标的权重全计划合计须为 100；
+    // 2026-11-11 用户拍板：权重只填纯数字（去掉 10% / 0.1 百分比与小数写法）
+    '权重填写纯数字（如 40，不要带 % 或小数）；基础性任务及其指标的权重，全计划合计须为 100（基础性任务下的指标同为基础性，多个基础性任务组的权重一并计入合计），否则自动下发会被拦截。',
     '「审核进度」「上报资料」由系统评定/填报产生，导入时无需填写（从导出表回导时相关列自动忽略）。'
   ]
 }
@@ -170,12 +171,12 @@ const distributionImportGuide: ImportTemplateGuide = {
     { key: 'parentIndicatorType', label: '核心指标类型', required: true, mergeGroup: true },
     { key: 'indicatorName', label: '子指标名称', required: true },
     { key: 'indicatorType', label: '指标类型', required: true },
-    // 2026-10-20：表头直接标出可接受写法
-    { key: 'weight', label: '权重（可填 10 / 10% / 0.1）' }
+    // 2026-11-11 用户拍板：权重只收纯数字（去掉 10 / 10% / 0.1 三格式混用），表头直接标口径
+    { key: 'weight', label: '权重（纯数字）' }
   ],
   rows: [
     // 示例演示「一个父级核心指标拆多个子指标」：父级 1 占三行（序号/任务类型/核心指标/核心指标类型合并，
-    // 学院列整列合并）；组内子指标 40%+30%+30%=100（基础性）；父级 2 发展性组内 60%+40%=100
+    // 学院列整列合并）；组内子指标 40+30+30=100（基础性）；父级 2 发展性组内 60+40=100
     {
       serial: '1',
       college: '计算机学院',
@@ -184,7 +185,7 @@ const distributionImportGuide: ImportTemplateGuide = {
       parentIndicatorType: '定量',
       indicatorName: '完成课程质量数据接入',
       indicatorType: '定量',
-      weight: '40%'
+      weight: '40'
     },
     {
       serial: '',
@@ -194,7 +195,7 @@ const distributionImportGuide: ImportTemplateGuide = {
       parentIndicatorType: '',
       indicatorName: '完成评教数据接入',
       indicatorType: '定量',
-      weight: '30%'
+      weight: '30'
     },
     {
       serial: '',
@@ -204,7 +205,7 @@ const distributionImportGuide: ImportTemplateGuide = {
       parentIndicatorType: '',
       indicatorName: '建成教学质量看板',
       indicatorType: '定量',
-      weight: '30%'
+      weight: '30'
     },
     {
       serial: '2',
@@ -214,7 +215,7 @@ const distributionImportGuide: ImportTemplateGuide = {
       parentIndicatorType: '定性',
       indicatorName: '提交学院专业质量分析报告',
       indicatorType: '定性',
-      weight: '60%'
+      weight: '60'
     },
     {
       serial: '',
@@ -236,8 +237,9 @@ const distributionImportGuide: ImportTemplateGuide = {
     '「核心指标」列填写已下发的父级核心指标名称（系统按名称精确关联，请勿改名）；「核心指标类型」为该父级指标自身的类型（定量/定性），模板已按系统数据预填，仅做只读校验（与系统不一致会给出警告、不阻断导入），无需修改。',
     '必填列：组首行的序号、核心指标、核心指标类型，以及每行的子指标名称与指标类型；「学院」由模板按当前选中学院预填（整列合并，不参与分组判断），如填写必须与当前选择的学院一致（留空则默认导入当前学院）。',
     '同一父级组内子指标同名 = 更新该子指标（内容列以本次填写为准），新名称 = 新增；不支持通过导入修改子指标名称，改名请在界面修改。',
-    // 2026-10-31 用户拍板：权重口径改为计划级（与职能部门模板同口径），不再按父级组内合计表述
-    '权重支持 10、10%、0.1 三种写法；基础性任务及其指标的权重，全计划合计须为 100（基础性任务下的指标同为基础性，多个基础性任务组的权重一并计入合计；自动下发时仍会按最终权重校验拦截）。'
+    // 2026-10-31 用户拍板：权重口径改为计划级（与职能部门模板同口径），不再按父级组内合计表述；
+    // 2026-11-11 用户拍板：权重只填纯数字（去掉 10% / 0.1 百分比与小数写法）
+    '权重填写纯数字（如 40，不要带 % 或小数）；基础性任务及其指标的权重，全计划合计须为 100（基础性任务下的指标同为基础性，多个基础性任务组的权重一并计入合计；自动下发时仍会按最终权重校验拦截）。'
   ]
 }
 

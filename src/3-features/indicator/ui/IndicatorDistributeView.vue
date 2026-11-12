@@ -455,9 +455,9 @@ const buildDistributionExportColumns = (
       align: 'center',
       getValue: row => getDistributionChildTypeText(row.child)
     },
-    // 2026-10-20 用户定案：表头标出权重可接受写法
+    // 2026-11-11 用户拍板：权重全局统一纯数字口径，导出与导入模板同口径
     {
-      header: '权重（可填 10 / 10% / 0.1）',
+      header: '权重（纯数字）',
       width: 16,
       align: 'center',
       getValue: row => Number(row.child.weight || 0)
