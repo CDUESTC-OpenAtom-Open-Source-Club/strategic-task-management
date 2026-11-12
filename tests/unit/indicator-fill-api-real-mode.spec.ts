@@ -210,11 +210,15 @@ describe('indicatorFillApi real report flow', () => {
       content: '驳回后修改并重新保存'
     })
 
+    // 2026-11-12（D-4）：title 写标准上报名「{year}年度 {month}月上报（提交方）」，
+    // 不再把单条指标名（年度预算执行率）写进 title
+    const titleYear = currentReportMonth.slice(0, 4)
+    const titleMonth = String(Number(currentReportMonth.slice(4, 6)))
     expect(apiPost).not.toHaveBeenCalled()
     expect(apiPut).toHaveBeenCalledWith(
       '/reports/9',
       expect.objectContaining({
-        title: '年度预算执行率',
+        title: `${titleYear}年度 ${titleMonth}月上报（战略发展部）`,
         indicatorId: 30022,
         content: '驳回后修改并重新保存',
         summary: '驳回后修改并重新保存',
@@ -224,8 +228,83 @@ describe('indicatorFillApi real report flow', () => {
         operatorUserId: 124
       })
     )
+    const [, putPayload] = apiPut.mock.calls[0]
+    expect(String(putPayload.title)).not.toContain('年度预算执行率')
     expect(response.data.id).toBe(9)
     expect(response.data.content).toBe('驳回后修改并重新保存')
+  })
+
+  // 2026-11-12（D-4）：提交方与审批方组织名都取得到时，title 为完整标准上报名
+  it('writes the full standard report title (submitter -> approver) when both org names resolve', async () => {
+    getIndicatorById.mockResolvedValue({
+      success: true,
+      data: {
+        id: 30023,
+        taskId: 93012,
+        indicatorName: '年度预算执行率',
+        // 提交方（填报组织）= 指标接收方；审批方 = 指标归属方（ownerOrg）
+        targetOrgId: 5,
+        targetOrgName: '计算机学院',
+        ownerOrgId: 39
+      }
+    })
+
+    apiGet.mockImplementation((url: string) => {
+      if (url === '/tasks/93012') {
+        return Promise.resolve({
+          success: true,
+          data: { planId: 111 }
+        })
+      }
+
+      if (url === '/reports/plan/111') {
+        return Promise.resolve({
+          success: true,
+          data: [
+            {
+              id: 31,
+              planId: 111,
+              reportMonth: currentReportMonth,
+              reportOrgId: 5,
+              status: 'REJECTED',
+              updatedAt: '2026-03-18T10:00:00.000Z'
+            }
+          ]
+        })
+      }
+
+      return Promise.resolve({ success: true, data: [] })
+    })
+
+    apiPut.mockResolvedValue({
+      success: true,
+      data: {
+        id: 31,
+        planId: 111,
+        reportMonth: currentReportMonth,
+        reportOrgId: 5,
+        status: 'DRAFT'
+      },
+      message: '保存成功'
+    })
+
+    await indicatorFillApi.saveFill({
+      indicator_id: 30023,
+      progress: 50,
+      content: '学院月度推进情况'
+    })
+
+    expect(apiPut).toHaveBeenCalledTimes(1)
+    const [putUrl, putPayload] = apiPut.mock.calls[0]
+    expect(putUrl).toBe('/reports/31')
+    // 审批方组织名通过 orgStore 按 ownerOrgId=39 反查得到「战略发展部」
+    const titleYear = currentReportMonth.slice(0, 4)
+    const titleMonth = String(Number(currentReportMonth.slice(4, 6)))
+    expect(putPayload.title).toBe(
+      `${titleYear}年度 ${titleMonth}月上报（计算机学院 -> 战略发展部）`
+    )
+    // 标准上报名绝不含单条指标名
+    expect(putPayload.title).not.toContain('年度预算执行率')
   })
 
   it('submits the current month plan report for secondary college flow', async () => {
