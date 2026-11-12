@@ -2427,16 +2427,18 @@ export function useApprovalProgressState(
       return null
     }
 
-    // 与本文件 resolvePlanApprovalDisplayName（323-328 行）同款取值口径：
-    // sourceOrg=上级（计划创建方），targetOrg=上报部门；resolveApprovalRouteTitle 内部处理流向
+    // 2026-11-12（D-3 统一口径）：后端已按上报方向返回 source/target——
+    // source=提交方（上报部门，回退 props.departmentName），target=审批方
+    // （上级/计划创建方，回退 createdByOrgName / 战略发展部）；
+    // resolveApprovalRouteTitle 不再处理流向，直接 source -> target。
     const sourceOrgName =
       normalizeDisplayName(detail.sourceOrgName) ||
-      normalizeDisplayName(props.plan?.createdByOrgName) ||
-      '战略发展部'
-    const targetOrgName =
-      normalizeDisplayName(detail.targetOrgName) ||
       normalizeDisplayName(props.departmentName) ||
       '当前部门'
+    const targetOrgName =
+      normalizeDisplayName(detail.targetOrgName) ||
+      normalizeDisplayName(props.plan?.createdByOrgName) ||
+      '战略发展部'
     const flowCode =
       normalizeWorkflowCode(detail.flowCode) ||
       (Array.isArray(props.workflowCode) ? props.workflowCode[0] : props.workflowCode) ||

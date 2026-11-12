@@ -87,6 +87,9 @@ export function showAppraisalLevelForFlow(flowCode?: string): boolean {
   return !code || isSubmissionFlow(code)
 }
 
+// 2026-11-12（D-3 统一口径）：后端 API 已按上报方向返回 source/target
+// （source=提交方，target=审批方），上报卡不再翻转为 target -> source；
+// 上报/下发/异动统一直接 source -> target。
 export function resolveApprovalRouteTitle(
   card: Pick<WorkflowHistoryCardResponse, 'flowCode' | 'sourceOrgName' | 'targetOrgName'>
 ): string {
@@ -94,7 +97,7 @@ export function resolveApprovalRouteTitle(
   const targetOrgName = normalizeDisplayName(card.targetOrgName) || '目标部门'
 
   if (isSubmissionFlow(card.flowCode)) {
-    return `上报审批 · ${targetOrgName} -> ${sourceOrgName}`
+    return `上报审批 · ${sourceOrgName} -> ${targetOrgName}`
   }
 
   if (isDistributionFlow(card.flowCode)) {
@@ -115,23 +118,18 @@ export function resolveApprovalRouteTitle(
  * 无年份只写「计划」，无流向只写计划本体，全缺时回退 fallback（如「当前计划」）。
  * 绝不把「Plan 404457」这类后端自动生成的占位计划名/裸数字 ID 拼进弹窗。
  *
- * 2026-10-31（P-09 方向铁律）：source/target 是「下发方向」的字段，上报链
- * 展示必须按「提交方 -> 接收方」即 target -> source（与 resolveApprovalRouteTitle
- * 的上报卡口径一致）——传入 flowCode 且 isSubmissionFlow 时内部交换方向；
- * 下发/异动/缺 code 维持原方向。
+ * 2026-11-12（D-3 统一口径）：后端 API 已按上报方向返回 source/target
+ * （source=提交方，target=审批方），上报链不再内部交换方向——
+ * 上报/下发/异动/缺 code 统一直接 source -> target 展示。
  */
 export function buildPlanReferenceLabel(params: {
   year?: unknown
   sourceOrgName?: unknown
   targetOrgName?: unknown
-  flowCode?: unknown
   fallback?: string
 }): string {
-  const sourceOrgName = normalizeDisplayName(params.sourceOrgName)
-  const targetOrgName = normalizeDisplayName(params.targetOrgName)
-  const isSubmission = isSubmissionFlow(normalizeWorkflowCode(params.flowCode))
-  const routeSourceOrgName = isSubmission ? targetOrgName : sourceOrgName
-  const routeTargetOrgName = isSubmission ? sourceOrgName : targetOrgName
+  const routeSourceOrgName = normalizeDisplayName(params.sourceOrgName)
+  const routeTargetOrgName = normalizeDisplayName(params.targetOrgName)
 
   const year = Number(params.year)
   const hasYear = Number.isFinite(year) && year > 0

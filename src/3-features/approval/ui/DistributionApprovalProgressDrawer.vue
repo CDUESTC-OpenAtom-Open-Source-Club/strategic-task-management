@@ -264,16 +264,16 @@ const planDetailIsMutationItem = computed(() => {
 /**
  * 2026-10-23：月报待办卡（PLAN_REPORT）的标题与操作。
  *
- * 注意流向：后端 my-tasks 给的 sourceOrg/targetOrg 是「下发方向」
- * （教务处 -> 计算机学院），而上报是反方向，标题须翻转，
- * 与审批历史卡片的「上报审批 · 计算机学院 -> 教务处」口径一致。
+ * 2026-11-12（D-3 统一口径）：后端 my-tasks 已按上报方向返回 source/target
+ * （source=提交方，target=审批方），标题直接 source -> target，
+ * 不再按旧口径翻转（多翻一次导致显示反向）。
  */
 const resolveReportApprovalTitle = (item: Record<string, any>): string => {
   const sourceName = normalizeDisplayName(item.sourceOrgName)
   const targetName = normalizeDisplayName(item.targetOrgName)
   if (sourceName && targetName) {
-    // 上报方向 = 接收方 -> 下发方
-    return `上报审批 · ${targetName} -> ${sourceName}`
+    // 上报方向 = 提交方 -> 审批方
+    return `上报审批 · ${sourceName} -> ${targetName}`
   }
   return (
     normalizeDisplayName(item.planName) ||

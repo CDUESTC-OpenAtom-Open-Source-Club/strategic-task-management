@@ -82,9 +82,9 @@ export function useApprovalProgressWorkflow({
   // 「{年份}年度 计划（{source} -> {target}）」指代计划，不透传 props.plan?.name
   // ——「Plan 404457」式占位计划名不再亮给用户（线上复测观察项 3）。
   // 与 useApprovalProgressState / useApprovalProgressDrawer 同口径。
-  // 2026-10-31（P-09 方向铁律 + 年份兜底）：传 flowCode 让上报链在 lib 内部
-  // 按「提交方 -> 接收方」（target -> source）展示；planRecord 无年份时
-  // 依次兜底 cycleId → 实例详情上的周期字段（后端可能附带未入 type 的字段）。
+  // 2026-11-12（D-3 统一口径 + 年份兜底）：后端已按上报方向返回 source/target，
+  // 直接 source -> target 展示；planRecord 无年份时依次兜底 cycleId →
+  // 实例详情上的周期字段（后端可能附带未入 type 的字段）。
   function resolvePlanReferenceLabel(): string {
     const planRecord = props.plan as
       (Plan & { year?: number | string; cycleId?: number | string }) | null | undefined
@@ -96,7 +96,6 @@ export function useApprovalProgressWorkflow({
         timeContext.resolveCycleYear((detail as { cycleId?: unknown } | null)?.cycleId),
       sourceOrgName: detail?.sourceOrgName || planRecord?.createdByOrgName,
       targetOrgName: detail?.targetOrgName || planRecord?.targetOrgName || planRecord?.orgName,
-      flowCode: detail?.flowCode,
       fallback: '当前计划'
     })
   }

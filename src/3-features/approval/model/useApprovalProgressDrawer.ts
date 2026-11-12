@@ -411,9 +411,9 @@ export function useApprovalProgressDrawer(
   // ——「Plan 404457」式占位计划名不再亮给用户（线上复测观察项 3）。
   // 与 useApprovalProgressState / useApprovalProgressWorkflow 同口径；
   // 年份/部门取不到就略写，全缺回退「当前计划」。
-  // 2026-10-31（P-09 方向铁律 + 年份兜底）：传 flowCode 让上报链在 lib 内部
-  // 按「提交方 -> 接收方」（target -> source）展示；planRecord 无年份时
-  // 依次兜底 cycleId → 实例详情上的周期字段（后端可能附带未入 type 的字段）。
+  // 2026-11-12（D-3 统一口径 + 年份兜底）：后端已按上报方向返回 source/target，
+  // 直接 source -> target 展示；planRecord 无年份时依次兜底 cycleId →
+  // 实例详情上的周期字段（后端可能附带未入 type 的字段）。
   function resolvePlanReferenceLabel(): string {
     const planRecord = props.plan as
       (Plan & { year?: number | string; cycleId?: number | string }) | null | undefined
@@ -425,7 +425,6 @@ export function useApprovalProgressDrawer(
         timeContext.resolveCycleYear((detail as { cycleId?: unknown } | null)?.cycleId),
       sourceOrgName: detail?.sourceOrgName || planRecord?.createdByOrgName,
       targetOrgName: detail?.targetOrgName || planRecord?.targetOrgName || planRecord?.orgName,
-      flowCode: detail?.flowCode,
       fallback: '当前计划'
     })
   }
@@ -3078,6 +3077,9 @@ export function useApprovalProgressDrawer(
     )
   }
 
+  // 2026-11-12（D-3 统一口径）：与 lib resolveApprovalRouteTitle 同步——
+  // 后端已按上报方向返回 source/target（source=提交方，target=审批方），
+  // 上报卡不再翻转，统一直接 source -> target。
   function resolveApprovalRouteTitle(
     card: Pick<WorkflowHistoryCardResponse, 'flowCode' | 'sourceOrgName' | 'targetOrgName'>
   ): string {
@@ -3085,7 +3087,7 @@ export function useApprovalProgressDrawer(
     const targetOrgName = normalizeDisplayName(card.targetOrgName) || '目标部门'
 
     if (isSubmissionFlow(card.flowCode)) {
-      return `上报审批 · ${targetOrgName} -> ${sourceOrgName}`
+      return `上报审批 · ${sourceOrgName} -> ${targetOrgName}`
     }
 
     if (isDistributionFlow(card.flowCode)) {
@@ -3138,13 +3140,12 @@ export function useApprovalProgressDrawer(
           // 2026-10-31 用户定案（审批历史去计划编号）：planName 缺失时不再拼
           // 「Plan 404457」式裸 ID，改用「计划（{source} -> {target}）」同口径；
           // 历史卡片无年份字段，流向也缺时兜底「年度计划」。
-          // 2026-10-31（P-09 方向铁律）：传 flowCode，上报链按 target -> source 展示
+          // 2026-11-12（D-3 统一口径）：后端已按上报方向返回 source/target，直接展示
           title:
             normalizeDisplayName(item.planName) ||
             buildPlanReferenceLabel({
               sourceOrgName: item.sourceOrgName,
               targetOrgName: item.targetOrgName,
-              flowCode: item.flowCode,
               fallback: '年度计划'
             }),
           routeTitle: resolveApprovalRouteTitle(item),
