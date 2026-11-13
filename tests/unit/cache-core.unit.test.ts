@@ -78,6 +78,73 @@ describe('query cache core', () => {
     expect(cacheManager.get(buildQueryKey('task', 'list', { year: 2026 }))?.data).toEqual(['task-a'])
   })
 
+  it('serves stale data for SWR entries but truly refetches when force is passed', async () => {
+    let revision = 0
+    const fetcher = vi.fn(async () => {
+      revision += 1
+      return { revision }
+    })
+
+    const key = buildQueryKey('workflow', 'historyByBusiness', { entityId: '1' })
+    const policy = {
+      ttlMs: 20,
+      scope: 'memory' as const,
+      staleWhileRevalidate: true,
+      dedupeWindowMs: 100,
+      tags: ['workflow.detail']
+    }
+
+    // 首次回源写入 revision 1
+    const first = await fetchWithCache({ key, policy, fetcher })
+    expect(first).toEqual({ revision: 1 })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
+    // 等 TTL 过期，条目进入 stale
+    await new Promise(resolve => setTimeout(resolve, 30))
+
+    // SWR：过期条目先返回旧数据，刷新走后台（不阻塞调用方）
+    const stale = await fetchWithCache({ key, policy, fetcher })
+    expect(stale).toEqual({ revision: 1 })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(fetcher).toHaveBeenCalledTimes(2)
+
+    // force：不吃 SWR 旧数据、绕过 pending 去重，真正回源拿最新值
+    // （一键下发后抽屉打开必须回源审批历史的依赖路径）
+    const forced = await fetchWithCache({ key, policy, fetcher, force: true })
+    expect(forced).toEqual({ revision: 3 })
+    expect(fetcher).toHaveBeenCalledTimes(3)
+  })
+
+  it('invalidates every workflow domain entry when a tag list is passed', async () => {
+    const historyKey = buildQueryKey('workflow', 'historyByBusiness', { entityId: '9' })
+    const todoKey = buildQueryKey('workflow', 'todo', { pageNum: 1 })
+    const planKey = buildQueryKey('plan', 'list')
+    const basePolicy = { ttlMs: 60_000, scope: 'memory' as const, dedupeWindowMs: 100 }
+
+    await fetchWithCache({
+      key: historyKey,
+      policy: { ...basePolicy, tags: ['workflow.detail'] },
+      fetcher: async () => ['history-card']
+    })
+    await fetchWithCache({
+      key: todoKey,
+      policy: { ...basePolicy, tags: ['workflow.todo'] },
+      fetcher: async () => ({ records: [] })
+    })
+    await fetchWithCache({
+      key: planKey,
+      policy: { ...basePolicy, tags: ['plan.list'] },
+      fetcher: async () => ['plan-a']
+    })
+
+    invalidateQueries(['workflow.detail', 'workflow.todo'])
+
+    expect(cacheManager.get(historyKey)).toBeUndefined()
+    expect(cacheManager.get(todoKey)).toBeUndefined()
+    // 与 workflow 域无关的条目不受影响
+    expect(cacheManager.get(planKey)?.data).toEqual(['plan-a'])
+  })
+
   it('persists session-scoped entries and restores them from storage', async () => {
     const key = buildQueryKey('auth', 'user')
     const policy = {

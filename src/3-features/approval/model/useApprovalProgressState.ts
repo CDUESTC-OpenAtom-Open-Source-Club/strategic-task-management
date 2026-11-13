@@ -3288,7 +3288,7 @@ export function useApprovalProgressState(
     await Promise.all([...userIds].map(userId => ensureWorkflowUserAvatarLoaded(userId)))
   }
 
-  async function loadPlanWorkflowHistoryCards() {
+  async function loadPlanWorkflowHistoryCards(options: { force?: boolean } = {}) {
     if (!props.showPlanApprovals || !props.plan) {
       planWorkflowHistoryCards.value = []
       return
@@ -3302,7 +3302,9 @@ export function useApprovalProgressState(
     try {
       const results = await Promise.all(
         historyTargets.value.map(target =>
-          getWorkflowInstanceHistoryByBusiness(target.entityType, target.entityId)
+          getWorkflowInstanceHistoryByBusiness(target.entityType, target.entityId, {
+            force: options.force === true
+          })
         )
       )
 

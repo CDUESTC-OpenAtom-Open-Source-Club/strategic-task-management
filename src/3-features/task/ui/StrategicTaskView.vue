@@ -1596,6 +1596,12 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
   // 这里与表格刷新同帧先失效 plan.list，让紧随的 loadPlans 强制回源，
   // overallStatus / effectivePlanContext（学院页签）等计划状态消费方同步拿到最新状态。
   invalidateQueries(['plan.list'])
+  // 2026-11-12（一键下发后审批历史空白）：导入下发会在服务端新建/流转工作流实例，
+  // workflow 域缓存（historyByBusiness/detailByBusiness 挂 'workflow.detail'，待办挂
+  // 'workflow.todo'）若不失效，SWR 条目会先返回旧数据且后台刷新不回写已赋值的 ref，
+  // 导入后立刻「查看审批」拿到的是下发前的空历史。与 plan.list 同帧失效让紧随的
+  // 打开/刷新路径强制回源。
+  invalidateQueries(['workflow.detail', 'workflow.todo'])
   await refreshCurrentDepartmentView({ showLoading: true, force: true, reloadIndicators: true })
 
   if (result?.workflow?.autoSubmitAndApprove || result?.workflow?.instanceId) {

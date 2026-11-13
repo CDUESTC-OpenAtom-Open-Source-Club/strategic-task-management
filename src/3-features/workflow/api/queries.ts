@@ -301,7 +301,8 @@ export async function getWorkflowInstanceDetailByBusiness(
  */
 export async function getWorkflowInstanceHistoryByBusiness(
   entityType: string,
-  entityId: number | string
+  entityId: number | string,
+  options: { force?: boolean } = {}
 ): Promise<ApiResponse<WorkflowHistoryCardResponse[]>> {
   return fetchWithCache({
     key: buildQueryKey(
@@ -309,6 +310,12 @@ export async function getWorkflowInstanceHistoryByBusiness(
       'historyByBusiness',
       withWorkflowContext({ entityType, entityId: String(entityId) })
     ),
+    // 2026-11-12（一键下发后审批历史空白）：该查询走 WORKFLOW_STABLE_POLICY（SWR），
+    // 过期条目会「先返回旧数据 + 后台静默刷新」，而后台新数据只写缓存不回写已赋值的
+    // ref——历史页签永不自愈，只有 F5 清 memory scope 才能翻新。force=true 时跳过
+    // peek/pending 去重真正回源（与 getWorkflowInstanceDetailByBusiness 同口径），
+    // 抽屉打开等显式刷新场景传入，用户每次打开都看到最新。
+    force: options.force === true,
     policy: {
       ...WORKFLOW_STABLE_POLICY,
       ttlMs: 30 * 1000,
