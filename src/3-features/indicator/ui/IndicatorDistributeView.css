@@ -500,13 +500,11 @@
 }
 
 /* 子指标名称 */
-.child-name-cell,
-.child-remark-cell {
+.child-name-cell {
   cursor: pointer;
 }
 
-.child-name-cell:hover,
-.child-remark-cell:hover {
+.child-name-cell:hover {
   background: rgba(44, 82, 130, 0.05);
   border-radius: 4px;
 }
@@ -1054,13 +1052,6 @@
   font-size: 14px;
   color: var(--text-primary, #303133);
   line-height: 1.4;
-}
-
-/* 2026-10-30 用户定案：备注完整换行展示，不再两行截断 */
-.indicator-remark {
-  font-size: 13px;
-  color: var(--text-secondary, #909399);
-  word-break: break-word;
 }
 
 .parent-indicator-option {

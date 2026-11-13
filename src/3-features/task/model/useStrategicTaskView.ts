@@ -62,7 +62,10 @@ import {
   isDistributedCoreIndicator
 } from '@/features/task/lib/collegeDispatchEligibility'
 import {
+  hasCollegeMutationApprovalInFlight,
   isReportApprovalStatusInFlight,
+  mergeReturnedMutationChains,
+  resolveCollegeReturnedChainOwnerOrgId,
   resolveMutationGateWeightTotal
 } from '@/features/task/lib/collegeTabDistribute'
 import { ApprovalProgressDrawer } from '@/features/approval'
@@ -5504,6 +5507,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     selectedCollege.value = college
     // 2026-10-19 修复：切换学院后重新拉取该学院的上报摘要（自评进度/进度说明回显依据）
     void syncCurrentPlanReportSummaries({ force: true, collegeScope: true })
+    // 2026-11-12（C3-D1 根因修复）：学院选择变化同样补拉学院口径退回待重报异动链——
+    // 此前 returnedMutationChains 只由 selectedDepartment（职能部门侧边栏）驱动加载，
+    // 学院页签全链零触发，驳回后的红横幅/重报双按钮在学院页签不可达
+    void loadCollegeReturnedMutationChains()
   }
 
   // 切换职能部门时，原选中学院可能不在新部门的下发范围——自动清空选中
@@ -6083,6 +6090,48 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // departmentMutationPendingApprovals 本体口径不变——isMutationApprovalInFlight
   // （发起异动互斥锁）/ isEntityMutationInFlight（异动角标）/ 状态标签分支均不受影响。
   const departmentChainMutationPendingApprovals = ref<Array<Record<string, any>>>([])
+
+  /**
+   * 2026-11-12（C3-D1 HIGH 修复）：学院页签口径的「退回待重报」异动链补拉。
+   *
+   * <p>缺陷（2026-11-12 C3-工学院异动全链 C3-D1）：returnedMutationChains 仅由
+   * loadDepartmentMutationWorkflowEntities 按职能部门 orgId 加载，而战略部直发的
+   * 学院子指标 owner=战略发展部（org 35）、target=学院 —— 职能口径查询
+   * （owner/target=org 36 起）恒不命中，学院页签异动被驳回后红横幅
+   * 「已退回待重报」与「发起异动/取消异动」双按钮全链不可达（后端 SQL 按
+   * owner_org_id=orgId 可命中，数据在、前端不拉）。</p>
+   *
+   * <p>owner 口径按登录角色分流（与 resolveSelectedCollegeReportScope 创建方口径一致，
+   * 纯函数实现与单测共用 —— collegeTabDistribute.resolveCollegeReturnedChainOrgId）：
+   * 战略部登录取 strategicDeptOrgId（org 35，owner 侧命中）；职能部门登录取当前
+   * 选中职能部门（存量学院行 owner=职能部门，与职能页签既有查询同口径，重复合并
+   * 按 instance_id 去重、零增量）。学院页签的选择变化（selectCollege / 页签激活 /
+   * 页签内部门过滤）与既有刷新链（selectedDepartment watch / 审批抽屉打开 /
+   * 异动提交·重发·取消）都会触发本补拉，保证退回链清单随上下文实时到位。</p>
+   */
+  const loadCollegeReturnedMutationChains = async () => {
+    const ownerOrgId = resolveCollegeReturnedChainOwnerOrgId({
+      isStrategicDeptLogin: isStrategicDeptLogin.value,
+      strategicDeptOrgId: strategicDeptOrgId.value,
+      funcOrgId: resolveDepartmentIdByName(selectedDepartment.value)
+    })
+    if (!ownerOrgId) {
+      return
+    }
+    try {
+      const { mutationApi } = await import('@/features/indicator/api/mutationApi')
+      const response = await mutationApi.returnedChains(ownerOrgId)
+      const items = Array.isArray(response.data) ? response.data : []
+      returnedMutationChains.value = mergeReturnedMutationChains(
+        returnedMutationChains.value,
+        items
+      )
+    } catch (error) {
+      // 失败不清空既有清单（职能口径已加载的链仍在），只记日志
+      logger.warn('[StrategicTaskView] 学院口径加载退回待重报异动链失败:', error)
+    }
+  }
+
   const loadDepartmentMutationWorkflowEntities = async () => {
     try {
       const orgId = resolveDepartmentIdByName(selectedDepartment.value)
@@ -6144,6 +6193,15 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         logger.warn('[StrategicTaskView] 加载退回待重报异动链失败:', returnedError)
         returnedMutationChains.value = []
       }
+
+      // 2026-11-12（C3-D1 根因修复）：学院页签口径的退回链补拉。职能口径查询按
+      // owner/target=职能部门 orgId 命中，战略部直发的学院子指标（owner=35）的
+      // 退回活链查不到 → 学院页签驳回后红横幅/重报双按钮不可达（数据在、前端不拉）。
+      // 这里在每次主清单刷新后按学院 owner 口径补拉并按 instance_id 并入，
+      // 让 selectedDepartment 切换/审批抽屉打开/异动提交/重发/取消等既有刷新链
+      // 全部自动带上学院口径（函数内部 owner 口径见
+      // resolveCollegeReturnedChainOwnerOrgId 注释）。
+      await loadCollegeReturnedMutationChains()
 
       // 2026-10-21：异动本身也是一条审批流程，「审批流程」页签要能显示它走到哪一步。
       // 按实例取流程详情挂到对应条目上（与计划审批同一套 getWorkflowInstanceDetail 接口）。
@@ -6403,6 +6461,24 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   const isMutationApprovalInFlight = computed(
     () => departmentMutationPendingApprovals.value.length > 0
+  )
+
+  // 2026-11-12（C3 观察项 O-3 → 低⑩修复）：学院页签「新增行」在审互斥。
+  // 职能页签口径 = isMutationApprovalInFlight（本部门在审异动清单非空）；学院子指标
+  // 异动实例 source=战略发展部/职能部门、target=学院，按职能部门 orgId 的主清单查不到
+  // （C3：异动提交后学院页签「新增行」仍可点）。对齐职能页签同款判定：主清单 +
+  // 链下学院追回清单合并后，按 targetOrgId = 所选学院组织 id 收口 —— 只锁当前学院的
+  // 在审异动，不把其他学院的串进来。仅消费于学院页签的「新增行」禁用条件，
+  // 职能页签与发起异动互斥锁（isMutationApprovalInFlight 既有口径）不受影响。
+  // 纯函数实现与单测共用（collegeTabDistribute.hasCollegeMutationApprovalInFlight）。
+  const isCollegeMutationApprovalInFlight = computed(() =>
+    hasCollegeMutationApprovalInFlight(
+      [
+        ...departmentMutationPendingApprovals.value,
+        ...departmentChainMutationPendingApprovals.value
+      ],
+      resolveDepartmentIdByName(selectedCollege.value)
+    )
   )
 
   // 2026-10-30（多态撤回·异动分支）：工具栏「撤回」在异动在审时是否按「撤回异动」处理。
@@ -8155,6 +8231,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     refreshCurrentPlanFillApprovalSummary,
     isReportApprovalInFlight,
     isMutationApprovalInFlight,
+    // 2026-11-12（C3-D1）：学院页签退回链补拉 + 学院口径在审异动判定（新增行互斥）
+    loadCollegeReturnedMutationChains,
+    isCollegeMutationApprovalInFlight,
     // 2026-11-11（学院页签按钮体系修正）：学院页签按钮按子计划相位分流所需——
     // 生效计划上下文（学院页签 → FUNC_TO_COLLEGE 子计划）与异动在审可撤判定/执行体
     effectivePlanContext,

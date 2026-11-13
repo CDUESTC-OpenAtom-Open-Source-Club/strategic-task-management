@@ -10,8 +10,10 @@ import {
   parsePositiveUserId,
   resolveApprovalRouteTitle,
   resolveHistoryStatusTag,
+  resolveInstanceRejectionComment,
   resolvePlanApprovalTypeLabel,
   resolvePlanConfirmWorkflowName,
+  resolvePlanInstanceReferenceLabel,
   shouldDisplayWorkflowHistoryItem,
   showAppraisalLevelForFlow,
   toPositiveNumber
@@ -66,11 +68,13 @@ describe('approval-utils', () => {
   })
 
   it('builds route titles from workflow context', () => {
+    // 2026-11-12（D-3 统一口径）：后端已按上报方向返回 source/target
+    // （source=提交方，target=审批方），上报卡直接 source -> target，不再翻转
     expect(
       resolveApprovalRouteTitle({
         flowCode: 'PLAN_APPROVAL_COLLEGE',
-        sourceOrgName: '战略发展部',
-        targetOrgName: '计算机学院'
+        sourceOrgName: '计算机学院',
+        targetOrgName: '战略发展部'
       })
     ).toBe('上报审批 · 计算机学院 -> 战略发展部')
 
@@ -171,56 +175,224 @@ describe('approval-utils', () => {
     ).toBe('当前计划')
   })
 
-  // 2026-10-31（P-09 方向铁律）：source/target 是下发方向字段，上报链确认弹窗
-  // 必须按「提交方 -> 接收方」展示（target -> source）；下发/异动/缺 code 维持原方向
-  it('flips source/target to target -> source for submission flows (P-09 口径)', () => {
-    // 上报链：内部交换 → 提交方（target）在前
+  // 2026-11-12（D-3 统一口径）：后端已按上报方向返回 source/target
+  // （source=提交方，target=审批方），上报链不再翻转、直接 source -> target；
+  // 下发/异动维持原样
+  it('keeps source -> target for submission flows (D-3 统一口径：上报不翻转、下发原样)', () => {
+    // 上报链确认弹窗参考标签：提交方（source）在前，审批方（target）在后
     expect(
       buildPlanReferenceLabel({
         year: 2026,
-        sourceOrgName: '战略发展部',
-        targetOrgName: '计算机学院',
-        flowCode: 'PLAN_APPROVAL_COLLEGE'
+        sourceOrgName: '计算机学院',
+        targetOrgName: '战略发展部'
       })
     ).toBe('2026年度 计划（计算机学院 -> 战略发展部）')
     expect(
       buildPlanReferenceLabel({
-        sourceOrgName: '教务处',
-        targetOrgName: '计算机学院',
-        flowCode: 'plan_approval_funcdept'
+        sourceOrgName: '计算机学院',
+        targetOrgName: '教务处'
       })
     ).toBe('计划（计算机学院 -> 教务处）')
-    // 下发链维持原方向
+    // 上报链路由标题同样不翻转
+    expect(
+      resolveApprovalRouteTitle({
+        flowCode: 'PLAN_APPROVAL_FUNCDEPT',
+        sourceOrgName: '计算机学院',
+        targetOrgName: '教务处'
+      })
+    ).toBe('上报审批 · 计算机学院 -> 教务处')
+    // 下发链维持原方向（source=下发方 -> target=接收方）
     expect(
       buildPlanReferenceLabel({
         year: 2026,
         sourceOrgName: '战略发展部',
-        targetOrgName: '科技处',
-        flowCode: 'PLAN_DISPATCH_STRATEGY'
+        targetOrgName: '科技处'
       })
     ).toBe('2026年度 计划（战略发展部 -> 科技处）')
+    expect(
+      resolveApprovalRouteTitle({
+        flowCode: 'PLAN_DISPATCH_STRATEGY',
+        sourceOrgName: '战略发展部',
+        targetOrgName: '科技处'
+      })
+    ).toBe('下发审批 · 战略发展部 -> 科技处')
     // 异动链维持原方向
     expect(
       buildPlanReferenceLabel({
         sourceOrgName: '战略发展部',
-        targetOrgName: '计算机学院',
-        flowCode: 'PLAN_MUTATION_STRATEGY'
+        targetOrgName: '计算机学院'
       })
     ).toBe('计划（战略发展部 -> 计算机学院）')
-    // 缺 flowCode 维持原方向（保守回退，不改既有行为）
+    // 上报链单侧流向：只显示那一侧
     expect(
       buildPlanReferenceLabel({
-        sourceOrgName: '战略发展部',
-        targetOrgName: '科技处',
-        flowCode: ''
-      })
-    ).toBe('计划（战略发展部 -> 科技处）')
-    // 上报链单侧流向：交换后仍只显示那一侧
-    expect(
-      buildPlanReferenceLabel({
-        targetOrgName: '计算机学院',
-        flowCode: 'PLAN_APPROVAL_COLLEGE'
+        sourceOrgName: '计算机学院'
       })
     ).toBe('计划（计算机学院）')
+  })
+
+  // 2026-11-12（审批弹窗用实例业务名）：确认弹窗优先展示实例业务名
+  // （PLAN_REPORT 实例的 planName = plan_report.planName），
+  // 「Plan 404457」式占位名/裸数字 ID 不外透，回退 buildPlanReferenceLabel 参考标签
+  it('prefers the instance business name and falls back on placeholder names (2026-11-12 口径)', () => {
+    const referenceLabel = '2026年度 计划（计算机学院 -> 战略发展部）'
+    // 业务名优先：实例 planName 直接透出
+    expect(
+      resolvePlanInstanceReferenceLabel({
+        instancePlanName: '2026年度 11月上报（计算机学院 -> 战略发展部）',
+        fallbackPlanName: '',
+        referenceLabel
+      })
+    ).toBe('2026年度 11月上报（计算机学院 -> 战略发展部）')
+    // 实例名是「Plan 404457」占位时，次选 props.planName 业务名
+    expect(
+      resolvePlanInstanceReferenceLabel({
+        instancePlanName: 'Plan 404457',
+        fallbackPlanName: '教务处年度计划',
+        referenceLabel
+      })
+    ).toBe('教务处年度计划')
+    // 候选全缺或全是占位名（含裸数字 ID）：回退参考标签
+    expect(
+      resolvePlanInstanceReferenceLabel({
+        instancePlanName: '',
+        fallbackPlanName: '404457',
+        referenceLabel
+      })
+    ).toBe(referenceLabel)
+    expect(
+      resolvePlanInstanceReferenceLabel({
+        instancePlanName: 'Plan 404457',
+        fallbackPlanName: '  ',
+        referenceLabel
+      })
+    ).toBe(referenceLabel)
+  })
+
+  // 2026-11-12（HIGH② 审批抽屉「驳回原因」串实例修复）：实例自身 REJECTED
+  // 步骤意见优先，PLAN 级 lastRejectReason 只作兜底——上报实例 #6 的抽屉
+  // 不再串显下发实例 #3 的驳回意见（B2-部门上报驳回后收尾，截图 02d/04b）。
+  // taskSources 顺序模拟两份 composable 接线（焦点/上报/异动/计划链按渲染优先级）。
+  it('prefers the instance REJECTED step comment over the PLAN-level lastRejectReason (HIGH② 串实例修复)', () => {
+    const planLevelReason = '组6部门上报驳回：台账佐证不足，退回审批人补充后再报'
+    // 上报实例 #6：step3 被驳回，意见挂在实例自身步骤上
+    const reportInstanceSteps = [
+      { taskId: '601', stepNo: 1, status: 'APPROVED', comment: '同意' },
+      { taskId: '602', stepNo: 2, status: 'APPROVED', comment: '通过' },
+      {
+        taskId: '603',
+        stepNo: 3,
+        status: 'REJECTED',
+        comment: '台账佐证不足，请补充 11 月支出凭证后重新提交'
+      }
+    ]
+    // ① 实例带 REJECTED 步骤 → 取该步骤 comment，绝不是 PLAN 级意见
+    expect(
+      resolveInstanceRejectionComment({
+        taskSources: [reportInstanceSteps],
+        fallbackReason: planLevelReason
+      })
+    ).toBe('台账佐证不足，请补充 11 月支出凭证后重新提交')
+    // 多轮被拒（step1 与 step3 均 REJECTED）→ 取 step_no 最大的那条
+    expect(
+      resolveInstanceRejectionComment({
+        taskSources: [
+          [
+            { taskId: '601', stepNo: 1, status: 'REJECTED', comment: '第一轮：附件缺失' },
+            { taskId: '602', stepNo: 2, status: 'APPROVED', comment: '' },
+            { taskId: '603', stepNo: 3, status: 'REJECTED', comment: '第三轮：台账佐证不足' }
+          ]
+        ],
+        fallbackReason: planLevelReason
+      })
+    ).toBe('第三轮：台账佐证不足')
+    // stepNo 平手看 taskId（与异动任务排序口径一致）
+    expect(
+      resolveInstanceRejectionComment({
+        taskSources: [
+          [
+            { taskId: '711', stepNo: 2, status: 'REJECTED', comment: 'taskId 较小' },
+            { taskId: '712', stepNo: 2, status: 'REJECTED', comment: 'taskId 较大' }
+          ]
+        ],
+        fallbackReason: ''
+      })
+    ).toBe('taskId 较大')
+    // REJECTED 步骤 comment 为空时不采纳，继续找同链其他 REJECTED 步骤
+    expect(
+      resolveInstanceRejectionComment({
+        taskSources: [
+          [
+            { taskId: '601', stepNo: 3, status: 'REJECTED', comment: '   ' },
+            { taskId: '600', stepNo: 1, status: 'REJECTED', comment: '附件缺失' }
+          ]
+        ],
+        fallbackReason: planLevelReason
+      })
+    ).toBe('附件缺失')
+    // 来源优先级：焦点实例链命中即停，不串看后续计划链
+    expect(
+      resolveInstanceRejectionComment({
+        taskSources: [
+          [{ taskId: '603', stepNo: 3, status: 'REJECTED', comment: '焦点实例自己的意见' }],
+          [{ taskId: '303', stepNo: 3, status: 'REJECTED', comment: '下发链的意见' }]
+        ],
+        fallbackReason: planLevelReason
+      })
+    ).toBe('焦点实例自己的意见')
+  })
+
+  it('falls back to the PLAN-level lastRejectReason when the instance has no REJECTED step (HIGH② 回退口径)', () => {
+    const planLevelReason = '组6部门上报驳回：台账佐证不足，退回审批人补充后再报'
+    // ② 实例步骤全非 REJECTED（如审批中/已通过）→ 回退 PLAN 级
+    expect(
+      resolveInstanceRejectionComment({
+        taskSources: [
+          [
+            { taskId: '601', stepNo: 1, status: 'APPROVED', comment: '同意' },
+            { taskId: '602', stepNo: 2, status: 'PENDING', comment: '' }
+          ]
+        ],
+        fallbackReason: planLevelReason
+      })
+    ).toBe(planLevelReason)
+    // 实例步骤不可用（详情未加载/空链）→ 同样回退 PLAN 级（原行为）
+    expect(
+      resolveInstanceRejectionComment({
+        taskSources: [[], null, undefined],
+        fallbackReason: planLevelReason
+      })
+    ).toBe(planLevelReason)
+    expect(resolveInstanceRejectionComment({ fallbackReason: planLevelReason })).toBe(
+      planLevelReason
+    )
+    // 全链不可用且 PLAN 级为空 → 返回空串（调用方继续走指标级 statusAudit 兜底）
+    expect(resolveInstanceRejectionComment({ taskSources: [[]], fallbackReason: '' })).toBe('')
+    expect(resolveInstanceRejectionComment({})).toBe('')
+  })
+
+  it('keeps the distribution-instance behavior intact (HIGH② 下发实例不回归)', () => {
+    // ③ 下发实例（PLAN 分发链）自身被驳回：链上 REJECTED 步骤意见与
+    // PLAN 级 lastRejectReason 同源，实例步骤优先取到同一文案
+    const dispatchReason = '预算科目不符合口径，请调整后重新报送'
+    const dispatchInstanceSteps = [
+      { taskId: '301', stepNo: 1, status: 'APPROVED', comment: '初审通过' },
+      { taskId: '302', stepNo: 2, status: 'PENDING', comment: '' },
+      { taskId: '303', stepNo: 3, status: 'REJECTED', comment: dispatchReason }
+    ]
+    expect(
+      resolveInstanceRejectionComment({
+        taskSources: [dispatchInstanceSteps],
+        fallbackReason: dispatchReason
+      })
+    ).toBe(dispatchReason)
+    // 下发实例步骤不可用时仍回退 PLAN 级（修复前唯一路径，行为保持）
+    expect(
+      resolveInstanceRejectionComment({ taskSources: [null], fallbackReason: dispatchReason })
+    ).toBe(dispatchReason)
+    // PLAN 级意见为原始字符串原样返回（不做 trim/改写，兼容旧显示）
+    expect(
+      resolveInstanceRejectionComment({ taskSources: [[]], fallbackReason: '  保留原样  ' })
+    ).toBe('  保留原样  ')
   })
 })

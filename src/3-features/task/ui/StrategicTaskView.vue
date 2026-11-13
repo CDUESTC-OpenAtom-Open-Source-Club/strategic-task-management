@@ -9,12 +9,13 @@ import {
 import { useLatestIndicatorFill } from '@/features/indicator/model/useLatestIndicatorFill'
 import { useIndicatorAppraisal } from '@/features/indicator/model/useIndicatorAppraisal'
 import { getAppraisalLevelDisplay } from '@/features/indicator/lib/appraisalGate'
+// 2026-11-12 防漂移：导出列头与导入模板共用同一权重文案（后端按表头全等匹配，改文案需同步后端别名表）
+import { WEIGHT_COLUMN_HEADER } from '@/features/import/lib/importTemplate'
 import TaskIndicatorTree from './TaskIndicatorTree.vue'
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
 import {
   MUTATION_FIELDS_INDICATOR_NAME,
-  MUTATION_FIELDS_REMARK,
   MUTATION_FIELDS_TASK_NAME,
   MUTATION_FIELDS_WEIGHT
 } from '@/features/indicator/model/mutationHistory'
@@ -46,6 +47,10 @@ import {
   resolvePlanConfirmWorkflowName
 } from '@/features/approval/lib/approval-utils'
 import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
+// 2026-11-12（中⑤·A1 缺陷 C）：导入 commit 成功回调需先失效 plan.list 查询缓存，
+// 否则计划状态徽标的数据源（planStore.plans ← planApi.getAllPlans → fetchWithCache
+// 15s 内存快照）吃到陈旧计划状态（草稿），徽标不随下发结果实时更新
+import { invalidateQueries } from '@/shared/lib/utils/cache'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
 import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
 import type { StrategicIndicator } from '@/shared/types'
@@ -236,6 +241,9 @@ const {
   collegeFillStatusScope,
   isReportApprovalInFlight,
   isMutationApprovalInFlight,
+  // 2026-11-12（C3-D1）：学院页签退回链补拉 + 学院口径在审异动判定（新增行互斥）
+  loadCollegeReturnedMutationChains,
+  isCollegeMutationApprovalInFlight,
   // 2026-11-11（学院页签按钮体系修正）：生效计划上下文（学院页签 → FUNC_TO_COLLEGE
   // 子计划）+ 异动在审可撤判定/执行体（「撤回异动」真撤回入口）
   effectivePlanContext,
@@ -812,6 +820,9 @@ const handleCollegeDeptFilterChange = (command: string | number | object) => {
     return
   }
   collegeDispatchDeptFilter.value = selection.dept
+  // 2026-11-12（C3-D1 根因修复）：学院页签的职能部门选择变化同样补拉学院口径
+  // 退回待重报异动链（owner 口径按登录角色分流，见 model loadCollegeReturnedMutationChains）
+  void loadCollegeReturnedMutationChains()
 }
 
 /**
@@ -840,6 +851,10 @@ watch(activeTaskTabName, tab => {
     if (selectedCollege.value) {
       void syncCurrentPlanReportSummaries({ force: true, collegeScope: true })
     }
+    // 2026-11-12（C3-D1 根因修复）：学院页签激活也补拉学院口径退回待重报异动链——
+    // 此前该 loader 只由 selectedDepartment（职能页签侧边栏）与审批抽屉打开触发，
+    // 学院页签异动被驳回后红横幅/「发起异动/取消异动」双按钮不可达
+    void loadCollegeReturnedMutationChains()
     return
   }
   void syncCurrentPlanReportSummaries({ force: true })
@@ -1093,10 +1108,9 @@ const buildStrategicExportColumns = (
     },
     { header: '核心指标', width: 32, getValue: row => row.name || '-' },
     { header: '指标类型', width: 12, align: 'center', getValue: row => row.type1 || '-' },
-    { header: '下发备注', width: 24, getValue: row => row.remark || '-' },
-    // 2026-10-20 用户定案：表头直接标出权重可接受的写法，避免用户猜格式
+    // 2026-11-11 用户拍板：权重全局统一纯数字口径，导出与导入模板同口径
     {
-      header: '权重（可填 10 / 10% / 0.1）',
+      header: WEIGHT_COLUMN_HEADER,
       width: 16,
       align: 'center',
       getValue: row => Number(row.weight || 0)
@@ -1421,6 +1435,12 @@ const openStrategicBatchExportDialog = () => {
     void handleExportCollegeIndicators()
     return
   }
+  // 2026-11-12（低⑧·A1 缺陷 E）：部门清单未加载（orgs 未就绪）时弹窗会变成
+  // 「无勾选项的死对话框」——与其让用户面对空选静默，不如同款提示挡在打开前
+  if (functionalDepartments.value.length === 0) {
+    ElMessage.warning('请先选择要导出的部门')
+    return
+  }
   selectedStrategicExportDepartments.value = [...functionalDepartments.value]
   strategicBatchExportDialogVisible.value = true
 }
@@ -1429,8 +1449,9 @@ const openStrategicBatchExportDialog = () => {
 // 附件原始文件一并打进 zip，避免多部门挤在一个工作簿里导致序号跨部门错位、附件只有链接。
 const handleExportSelectedStrategicDepartments = async () => {
   const departments = selectedStrategicExportDepartments.value
+  // 2026-11-12（低⑧·A1 缺陷 E）：0 部门选中点「导出」必须有反馈，不再静默
   if (departments.length === 0) {
-    ElMessage.warning('请选择要导出的部门')
+    ElMessage.warning('请先选择要导出的部门')
     return
   }
 
@@ -1554,7 +1575,7 @@ const openStrategicImportDialog = () => {
     ElMessageBox.alert(
       '该部门计划已下发，不能再通过导入修改。\n\n如需新增或调整指标：\n' +
         '· 新增：点表格上方「新增行」，或指标行右下角的「+」\n' +
-        '· 修改：双击指标名称/权重/下发备注就地编辑\n' +
+        '· 修改：双击指标名称/权重就地编辑\n' +
         '· 改完后点击顶部「发起异动」提交审批（审批通过后生效）',
       '该计划已下发，导入已关闭',
       { confirmButtonText: '我知道了', type: 'warning' }
@@ -1565,6 +1586,16 @@ const openStrategicImportDialog = () => {
 }
 
 const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => {
+  // 2026-11-12（中⑤·A1 缺陷 C）：导入 commit 成功后「计划状态」徽标不实时刷新（70s+
+  // 轮询期间仍显「草稿」，手动刷新页面才变「已下发」）。两条刷新路径的差异：
+  // ① 审批状态徽标走 resetApprovalWorkflowStateCache（显式失效）→ 实时更新；
+  // ② 计划状态徽标走 planStore.plans ← planApi.getAllPlans → fetchWithCache 15s
+  //    内存快照——refreshCurrentDepartmentView 的 loadPlans(force) 只跳过 store 层
+  //    早退，fetchWithCache 层未失效直接回陈旧快照；后续心跳轻刷新 loadPlans()
+  //    不带 force 在 store 层早退，永不回源 → 徽标长时间停在「草稿」。
+  // 这里与表格刷新同帧先失效 plan.list，让紧随的 loadPlans 强制回源，
+  // overallStatus / effectivePlanContext（学院页签）等计划状态消费方同步拿到最新状态。
+  invalidateQueries(['plan.list'])
   await refreshCurrentDepartmentView({ showLoading: true, force: true, reloadIndicators: true })
 
   if (result?.workflow?.autoSubmitAndApprove || result?.workflow?.instanceId) {
@@ -1706,7 +1737,13 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                必须挂到所选核心指标下（复用指标下发与管理页的新增子指标契约） -->
           <!-- 2026-10-30 用户定案（仿 M5 互斥可见化）：异动审批在途时新增入口置灰 + tooltip。
                口径与后端 isOrgLockedByMutation 一致，只认 IN_REVIEW；
-               退回待重报（WITHDRAWN 活链）不锁——新增行会成为草稿随下次发起提交 -->
+               退回待重报（WITHDRAWN 活链）不锁——新增行会成为草稿随下次发起提交。
+               2026-11-12（低⑩·C3 观察项 O-3 对齐）：学院页签补上学院口径在审异动
+               （isCollegeMutationApprovalInFlight，主清单+链下学院追回清单按所选学院
+               targetOrgId 收口）——此前学院子指标异动在审时新增行仍可点。
+               tooltip 文案同步写准（C2 观察项 O-1）：isCurrentPlanUnderApproval 的实际
+               触发源可能是上报审批在审（shouldPreferCurrentReportWorkflow 优先上报链），
+               「计划正在审批中」会让用户误以为是下发审批在途，改为上报/异动并提。 -->
           <el-button
             type="primary"
             size="small"
@@ -1714,20 +1751,23 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
               !canEdit ||
               isCurrentPlanUnderApproval ||
               isMutationApprovalInFlight ||
+              (activeTaskTabName === 'college' && isCollegeMutationApprovalInFlight) ||
               (activeTaskTabName === 'college' && (!selectedCollege || !collegeDispatchDeptFilter))
             "
             :title="
               !canEdit
                 ? '当前角色仅可查看，填报人才能新增'
                 : isCurrentPlanUnderApproval
-                  ? '计划正在审批中，暂不能新增：请等审批结束或先撤回本次审批'
+                  ? '当前计划的上报/异动审批进行中，暂不能新增：请等审批结束或先撤回本次审批'
                   : isMutationApprovalInFlight
                     ? '异动审批进行中，暂不能新增：等审批结束或先撤回/取消本次异动'
-                    : activeTaskTabName === 'college' && !selectedCollege
-                      ? '请先在左侧选择学院'
-                      : activeTaskTabName === 'college' && !collegeDispatchDeptFilter
-                        ? '请先选择职能部门'
-                        : ''
+                    : activeTaskTabName === 'college' && isCollegeMutationApprovalInFlight
+                      ? '异动审批进行中，暂不能新增：等审批结束或先撤回/取消本次异动'
+                      : activeTaskTabName === 'college' && !selectedCollege
+                        ? '请先在左侧选择学院'
+                        : activeTaskTabName === 'college' && !collegeDispatchDeptFilter
+                          ? '请先选择职能部门'
+                          : ''
             "
             @click.stop="handleAddNewRow"
           >
@@ -2350,55 +2390,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     </template>
                   </el-table-column>
                   <el-table-column
-                    prop="remark"
-                    label="下发备注"
-                    :width="TASK_TABLE_COLUMN_WIDTH.remark"
-                    class-name="remark-col-cell"
-                  >
-                    <template #default="{ row }">
-                      <div
-                        class="indicator-name-cell"
-                        @dblclick="handleIndicatorDblClick(row, 'remark')"
-                      >
-                        <el-input
-                          v-if="editingIndicatorId === row.id && editingIndicatorField === 'remark'"
-                          v-model="editingIndicatorValue"
-                          v-focus
-                          type="textarea"
-                          :autosize="{ minRows: 2, maxRows: 6 }"
-                          @blur="saveIndicatorEdit(row, 'remark')"
-                          @keyup.esc="cancelIndicatorEdit"
-                        />
-                        <span
-                          v-else-if="isSavingIndicatorCell(row, 'remark')"
-                          class="cell-saving-text"
-                        >
-                          保存中...
-                        </span>
-                        <el-tooltip
-                          v-else
-                          :content="row.remark || ''"
-                          :disabled="(row.remark || '').length <= 50"
-                          placement="top"
-                        >
-                          <span class="indicator-name-text remark-text-wrap">{{
-                            row.remark || '样例：双击编辑说明'
-                          }}</span>
-                        </el-tooltip>
-                        <!-- 2026-10-30 用户定案：备注异动角标落在下发备注格子右上角 -->
-                        <div class="indicator-cell-footer indicator-cell-footer--corner">
-                          <MutationBadgePopover
-                            v-if="row.id"
-                            :indicator-id="row.id"
-                            :fields="MUTATION_FIELDS_REMARK"
-                            :mutation-in-flight="isEntityMutationInFlight('INDICATOR', row.id)"
-                            :mutation-returned="isEntityMutationReturned('INDICATOR', row.id)"
-                          />
-                        </div>
-                      </div>
-                    </template>
-                  </el-table-column>
-                  <el-table-column
                     label="操作"
                     :width="TASK_TABLE_COLUMN_WIDTH.actions"
                     align="center"
@@ -2543,10 +2534,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         <div class="info-item">
                           <span class="info-label">责任人：</span>
                           <span class="info-value">{{ currentIndicator.responsiblePerson }}</span>
-                        </div>
-                        <div class="info-item full-width">
-                          <span class="info-label">备注：</span>
-                          <span class="info-value">{{ currentIndicator.remark || '无备注' }}</span>
                         </div>
                       </div>
                     </div>
@@ -2786,18 +2773,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                           type="textarea"
                           :autosize="{ minRows: 2, maxRows: 10 }"
                           placeholder="设置核心指标内容"
-                        />
-                      </el-form-item>
-                    </el-col>
-                  </el-row>
-                  <el-row :gutter="16">
-                    <el-col :span="24">
-                      <el-form-item label="下发备注">
-                        <el-input
-                          v-model="newRow.remark"
-                          type="textarea"
-                          :autosize="{ minRows: 3, maxRows: 15 }"
-                          placeholder="输入指标备注"
                         />
                       </el-form-item>
                     </el-col>
@@ -3137,55 +3112,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     </template>
                   </el-table-column>
                   <el-table-column
-                    prop="remark"
-                    label="下发备注"
-                    :width="TASK_TABLE_COLUMN_WIDTH.remark"
-                    class-name="remark-col-cell"
-                  >
-                    <template #default="{ row }">
-                      <div
-                        class="indicator-name-cell"
-                        @dblclick="handleIndicatorDblClick(row, 'remark')"
-                      >
-                        <el-input
-                          v-if="editingIndicatorId === row.id && editingIndicatorField === 'remark'"
-                          v-model="editingIndicatorValue"
-                          v-focus
-                          type="textarea"
-                          :autosize="{ minRows: 2, maxRows: 6 }"
-                          @blur="saveIndicatorEdit(row, 'remark')"
-                          @keyup.esc="cancelIndicatorEdit"
-                        />
-                        <span
-                          v-else-if="isSavingIndicatorCell(row, 'remark')"
-                          class="cell-saving-text"
-                        >
-                          保存中...
-                        </span>
-                        <el-tooltip
-                          v-else
-                          :content="row.remark || ''"
-                          :disabled="(row.remark || '').length <= 50"
-                          placement="top"
-                        >
-                          <span class="indicator-name-text remark-text-wrap">{{
-                            row.remark || '—'
-                          }}</span>
-                        </el-tooltip>
-                        <!-- 2026-10-30 用户定案：备注异动角标落在下发备注格子右上角 -->
-                        <div class="indicator-cell-footer indicator-cell-footer--corner">
-                          <MutationBadgePopover
-                            v-if="row.id"
-                            :indicator-id="row.id"
-                            :fields="MUTATION_FIELDS_REMARK"
-                            :mutation-in-flight="isEntityMutationInFlight('INDICATOR', row.id)"
-                            :mutation-returned="isEntityMutationReturned('INDICATOR', row.id)"
-                          />
-                        </div>
-                      </div>
-                    </template>
-                  </el-table-column>
-                  <el-table-column
                     label="操作"
                     :width="TASK_TABLE_COLUMN_WIDTH.actions"
                     align="center"
@@ -3259,18 +3185,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                             type="textarea"
                             :autosize="{ minRows: 2, maxRows: 10 }"
                             placeholder="设置子指标内容"
-                          />
-                        </el-form-item>
-                      </el-col>
-                    </el-row>
-                    <el-row :gutter="16">
-                      <el-col :span="24">
-                        <el-form-item label="下发备注">
-                          <el-input
-                            v-model="newRow.remark"
-                            type="textarea"
-                            :autosize="{ minRows: 3, maxRows: 15 }"
-                            placeholder="输入指标备注"
                           />
                         </el-form-item>
                       </el-col>
@@ -3431,9 +3345,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           }}</el-descriptions-item>
           <el-descriptions-item label="进度说明" :span="2">{{
             latestFillNote || '—'
-          }}</el-descriptions-item>
-          <el-descriptions-item label="下发备注" :span="2">{{
-            currentDetail.remark
           }}</el-descriptions-item>
         </el-descriptions>
 

@@ -88,7 +88,12 @@ import { APPROVAL_STATE_REFRESH_EVENT, notifyApprovalStateRefresh } from '@/feat
 import { resolveApprovalRoute } from '@/features/approval/lib/approvalNotifications'
 // 2026-10-31（P-04）：审批中心宿主失败出口接入「未完成审核」专项通知（与分发页抽屉共用共享 lib）
 import { showUnfinishedAppraisalBlockNotice } from '@/features/approval/lib/unfinishedAppraisalBlockNotice'
-import { buildPlanReferenceLabel, toPositiveNumber } from '@/features/approval/lib/approval-utils'
+import {
+  buildPlanReferenceLabel,
+  resolveInstanceRejectionComment,
+  resolvePlanInstanceReferenceLabel,
+  toPositiveNumber
+} from '@/features/approval/lib/approval-utils'
 import {
   isMutationEntityType,
   normalizeApprovalEntityType,
@@ -411,22 +416,28 @@ export function useApprovalProgressDrawer(
   // ——「Plan 404457」式占位计划名不再亮给用户（线上复测观察项 3）。
   // 与 useApprovalProgressState / useApprovalProgressWorkflow 同口径；
   // 年份/部门取不到就略写，全缺回退「当前计划」。
-  // 2026-10-31（P-09 方向铁律 + 年份兜底）：传 flowCode 让上报链在 lib 内部
-  // 按「提交方 -> 接收方」（target -> source）展示；planRecord 无年份时
-  // 依次兜底 cycleId → 实例详情上的周期字段（后端可能附带未入 type 的字段）。
+  // 2026-11-12（D-3 统一口径 + 年份兜底）：后端已按上报方向返回 source/target，
+  // 直接 source -> target 展示；planRecord 无年份时依次兜底 cycleId →
+  // 实例详情上的周期字段（后端可能附带未入 type 的字段）。
+  // 2026-11-12（弹窗用实例业务名）：业务名优先——实例 planName
+  // （plan_report.planName，如「2026年度 11月上报（计算机学院 -> 战略发展部）」）
+  // → props.planName；占位名（「Plan 404457」/裸数字）或缺失时才回退拼参考标签。
   function resolvePlanReferenceLabel(): string {
     const planRecord = props.plan as
       (Plan & { year?: number | string; cycleId?: number | string }) | null | undefined
     const detail = planWorkflowDetail.value
-    return buildPlanReferenceLabel({
-      year:
-        planRecord?.year ??
-        timeContext.resolveCycleYear(planRecord?.cycleId) ??
-        timeContext.resolveCycleYear((detail as { cycleId?: unknown } | null)?.cycleId),
-      sourceOrgName: detail?.sourceOrgName || planRecord?.createdByOrgName,
-      targetOrgName: detail?.targetOrgName || planRecord?.targetOrgName || planRecord?.orgName,
-      flowCode: detail?.flowCode,
-      fallback: '当前计划'
+    return resolvePlanInstanceReferenceLabel({
+      instancePlanName: detail?.planName,
+      fallbackPlanName: props.planName,
+      referenceLabel: buildPlanReferenceLabel({
+        year:
+          planRecord?.year ??
+          timeContext.resolveCycleYear(planRecord?.cycleId) ??
+          timeContext.resolveCycleYear((detail as { cycleId?: unknown } | null)?.cycleId),
+        sourceOrgName: detail?.sourceOrgName || planRecord?.createdByOrgName,
+        targetOrgName: detail?.targetOrgName || planRecord?.targetOrgName || planRecord?.orgName,
+        fallback: '当前计划'
+      })
     })
   }
 
@@ -2578,7 +2589,8 @@ export function useApprovalProgressDrawer(
   })
 
   const displayedBusinessCommentLabel = computed(() => {
-    return displayedBusinessSectionMode.value === 'report' ? '进度说明' : '下发备注'
+    // 2026-11-11 用户拍板：下发备注字段全端隐藏——非上报快照流程（下发/通用审批）不再渲染说明卡标题
+    return displayedBusinessSectionMode.value === 'report' ? '进度说明' : ''
   })
 
   const displayedBusinessAttachmentLabel = computed(() => {
@@ -2642,10 +2654,9 @@ export function useApprovalProgressDrawer(
           : '--',
         submittedProgress: '--',
         submittedComment: '',
-        // 2026-10-26 用户反馈：详情卡补「权重」与「下发备注」（下发审批需要看到）
+        // 2026-10-26 用户反馈：详情卡补「权重」（下发审批需要看到）；
+        // 2026-11-11 用户拍板：下发备注全端隐藏，dispatchRemark 字段一并移除
         weight: formatWeightValue(pickWeightValue(resolvedIndicator as Record<string, unknown>)),
-        dispatchRemark:
-          normalizeDisplayName((resolvedIndicator as { remark?: unknown }).remark) || '',
         submittedSelfRating: '',
         targetValue: hasExplicitMetric
           ? formatIndicatorMetricValue(targetValueRaw)
@@ -2807,7 +2818,6 @@ export function useApprovalProgressDrawer(
               )
             )
         ),
-        dispatchRemark: '',
         submittedSelfRating:
           normalizeDisplayName((detail as { selfRating?: string } | null)?.selfRating) || '',
         // 2026-10-24 指标级鉴定：已评定等级随快照带出，详情弹窗展示
@@ -3079,6 +3089,9 @@ export function useApprovalProgressDrawer(
     )
   }
 
+  // 2026-11-12（D-3 统一口径）：与 lib resolveApprovalRouteTitle 同步——
+  // 后端已按上报方向返回 source/target（source=提交方，target=审批方），
+  // 上报卡不再翻转，统一直接 source -> target。
   function resolveApprovalRouteTitle(
     card: Pick<WorkflowHistoryCardResponse, 'flowCode' | 'sourceOrgName' | 'targetOrgName'>
   ): string {
@@ -3086,7 +3099,7 @@ export function useApprovalProgressDrawer(
     const targetOrgName = normalizeDisplayName(card.targetOrgName) || '目标部门'
 
     if (isSubmissionFlow(card.flowCode)) {
-      return `上报审批 · ${targetOrgName} -> ${sourceOrgName}`
+      return `上报审批 · ${sourceOrgName} -> ${targetOrgName}`
     }
 
     if (isDistributionFlow(card.flowCode)) {
@@ -3139,13 +3152,12 @@ export function useApprovalProgressDrawer(
           // 2026-10-31 用户定案（审批历史去计划编号）：planName 缺失时不再拼
           // 「Plan 404457」式裸 ID，改用「计划（{source} -> {target}）」同口径；
           // 历史卡片无年份字段，流向也缺时兜底「年度计划」。
-          // 2026-10-31（P-09 方向铁律）：传 flowCode，上报链按 target -> source 展示
+          // 2026-11-12（D-3 统一口径）：后端已按上报方向返回 source/target，直接展示
           title:
             normalizeDisplayName(item.planName) ||
             buildPlanReferenceLabel({
               sourceOrgName: item.sourceOrgName,
               targetOrgName: item.targetOrgName,
-              flowCode: item.flowCode,
               fallback: '年度计划'
             }),
           routeTitle: resolveApprovalRouteTitle(item),
@@ -3476,8 +3488,20 @@ export function useApprovalProgressDrawer(
 
   // 驳回原因
   const rejectionReason = computed(() => {
-    if (activePlanWorkflow.value?.lastRejectReason) {
-      return activePlanWorkflow.value.lastRejectReason
+    // 2026-11-12（HIGH② 串实例修复）：实例步骤优先——「审批流程」页签当前渲染
+    // 哪条实例的步骤链（焦点实例 → 计划下发链），驳回原因就取那条实例自身
+    // REJECTED 步骤的意见（step_no 最大的一条）。PLAN 级 lastRejectReason 是
+    // 下发实例的最后驳回意见，只作实例步骤不可用时的兜底，不再串到上报实例上
+    // （B2-部门上报驳回后收尾：实例 #6 显示了实例 #3 的意见）。
+    const instanceReason = resolveInstanceRejectionComment({
+      taskSources: [
+        workflowFocusInstance.value ? focusWorkflowDetail.value?.tasks : null,
+        planWorkflowTasks.value
+      ],
+      fallbackReason: activePlanWorkflow.value?.lastRejectReason
+    })
+    if (instanceReason) {
+      return instanceReason
     }
 
     const indicator = currentIndicator.value

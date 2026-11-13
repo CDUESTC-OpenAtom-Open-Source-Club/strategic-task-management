@@ -87,6 +87,9 @@ export function showAppraisalLevelForFlow(flowCode?: string): boolean {
   return !code || isSubmissionFlow(code)
 }
 
+// 2026-11-12（D-3 统一口径）：后端 API 已按上报方向返回 source/target
+// （source=提交方，target=审批方），上报卡不再翻转为 target -> source；
+// 上报/下发/异动统一直接 source -> target。
 export function resolveApprovalRouteTitle(
   card: Pick<WorkflowHistoryCardResponse, 'flowCode' | 'sourceOrgName' | 'targetOrgName'>
 ): string {
@@ -94,7 +97,7 @@ export function resolveApprovalRouteTitle(
   const targetOrgName = normalizeDisplayName(card.targetOrgName) || '目标部门'
 
   if (isSubmissionFlow(card.flowCode)) {
-    return `上报审批 · ${targetOrgName} -> ${sourceOrgName}`
+    return `上报审批 · ${sourceOrgName} -> ${targetOrgName}`
   }
 
   if (isDistributionFlow(card.flowCode)) {
@@ -115,23 +118,18 @@ export function resolveApprovalRouteTitle(
  * 无年份只写「计划」，无流向只写计划本体，全缺时回退 fallback（如「当前计划」）。
  * 绝不把「Plan 404457」这类后端自动生成的占位计划名/裸数字 ID 拼进弹窗。
  *
- * 2026-10-31（P-09 方向铁律）：source/target 是「下发方向」的字段，上报链
- * 展示必须按「提交方 -> 接收方」即 target -> source（与 resolveApprovalRouteTitle
- * 的上报卡口径一致）——传入 flowCode 且 isSubmissionFlow 时内部交换方向；
- * 下发/异动/缺 code 维持原方向。
+ * 2026-11-12（D-3 统一口径）：后端 API 已按上报方向返回 source/target
+ * （source=提交方，target=审批方），上报链不再内部交换方向——
+ * 上报/下发/异动/缺 code 统一直接 source -> target 展示。
  */
 export function buildPlanReferenceLabel(params: {
   year?: unknown
   sourceOrgName?: unknown
   targetOrgName?: unknown
-  flowCode?: unknown
   fallback?: string
 }): string {
-  const sourceOrgName = normalizeDisplayName(params.sourceOrgName)
-  const targetOrgName = normalizeDisplayName(params.targetOrgName)
-  const isSubmission = isSubmissionFlow(normalizeWorkflowCode(params.flowCode))
-  const routeSourceOrgName = isSubmission ? targetOrgName : sourceOrgName
-  const routeTargetOrgName = isSubmission ? sourceOrgName : targetOrgName
+  const routeSourceOrgName = normalizeDisplayName(params.sourceOrgName)
+  const routeTargetOrgName = normalizeDisplayName(params.targetOrgName)
 
   const year = Number(params.year)
   const hasYear = Number.isFinite(year) && year > 0
@@ -148,6 +146,89 @@ export function buildPlanReferenceLabel(params: {
     return normalizeDisplayName(params.fallback)
   }
   return label
+}
+
+// 2026-11-12（审批弹窗用实例业务名）：后端对未命名实体自动生成的占位名
+// （「Plan 404457」式英文占位 / 裸数字 ID），绝不能亮给用户。
+const PLAN_INSTANCE_PLACEHOLDER_NAME_PATTERN = /^(Plan\s*\d+|\d+)$/i
+
+/**
+ * 2026-11-12（审批通过/驳回确认弹窗用实例业务名）：
+ * 优先取实例业务名（PLAN_REPORT 实例的 planName，后端=plan_report.planName，
+ * 如「2026年度 11月上报（计算机学院 -> 战略发展部）」），次选 props.planName；
+ * 候选缺失或命中占位名（「Plan 404457」/裸数字 ID）时，回退
+ * buildPlanReferenceLabel 拼出的「{年份}年度 计划（流向）」参考标签。
+ * useApprovalProgressDrawer / useApprovalProgressState / useApprovalProgressWorkflow
+ * 三份 resolvePlanReferenceLabel 同口径复用。
+ */
+export function resolvePlanInstanceReferenceLabel(params: {
+  instancePlanName?: unknown
+  fallbackPlanName?: unknown
+  referenceLabel: string
+}): string {
+  for (const candidate of [params.instancePlanName, params.fallbackPlanName]) {
+    const name = normalizeDisplayName(candidate)
+    if (name && !PLAN_INSTANCE_PLACEHOLDER_NAME_PATTERN.test(name)) {
+      return name
+    }
+  }
+  return params.referenceLabel
+}
+
+/**
+ * 2026-11-12（审批抽屉「驳回原因」串实例修复 HIGH②）：
+ * 实例自身审批步骤里 status=REJECTED 的 step.comment 才是「这条实例」的驳回意见
+ * （多轮被拒取 step_no 最大的一条；stepNo 平手看 taskId，与异动任务排序口径一致）。
+ * 此前 rejectionReason 只读 PLAN 级 lastRejectReason（下发实例的最后驳回意见），
+ * 上报实例 #6 的抽屉显示的是下发实例 #3 的意见——串实例。
+ * taskSources 按「审批流程」页签当前渲染的步骤链优先级依次传入
+ * （焦点实例 → 上报 → 异动 → 计划下发链），第一个解析出 REJECTED 意见的来源生效；
+ * 全部不可用才回退 fallbackReason（PLAN 级 lastRejectReason），维持旧显示兜底。
+ * useApprovalProgressState / useApprovalProgressDrawer 两份 rejectionReason 同口径复用。
+ */
+export function resolveInstanceRejectionComment(params: {
+  taskSources?: ReadonlyArray<readonly unknown[] | null | undefined>
+  fallbackReason?: unknown
+}): string {
+  for (const source of params.taskSources ?? []) {
+    const tasks = Array.isArray(source) ? source : []
+    let best: { stepNo: number; taskId: number; comment: string } | null = null
+    for (const raw of tasks) {
+      if (!raw || typeof raw !== 'object') {
+        continue
+      }
+      const task = raw as Record<string, unknown>
+      if (String(task.status ?? '').trim().toUpperCase() !== 'REJECTED') {
+        continue
+      }
+      const comment = typeof task.comment === 'string' ? task.comment.trim() : ''
+      if (!comment) {
+        continue
+      }
+      const stepNo = Number(task.stepNo)
+      const taskId = Number(task.taskId)
+      const candidate = {
+        stepNo: Number.isFinite(stepNo) ? stepNo : Number.NEGATIVE_INFINITY,
+        taskId: Number.isFinite(taskId) ? taskId : Number.NEGATIVE_INFINITY,
+        comment
+      }
+      if (
+        !best ||
+        candidate.stepNo > best.stepNo ||
+        (candidate.stepNo === best.stepNo && candidate.taskId > best.taskId)
+      ) {
+        best = candidate
+      }
+    }
+    if (best) {
+      return best.comment
+    }
+  }
+  const fallback = params.fallbackReason
+  if (typeof fallback === 'string') {
+    return fallback
+  }
+  return fallback ? String(fallback) : ''
 }
 
 export function resolveHistoryStatusTag(status?: string): ApprovalStatusTag {

@@ -773,6 +773,10 @@ interface IndicatorReportContext {
   reportOrgId: number
   reportOrgType: 'FUNC_DEPT' | 'COLLEGE'
   reportMonth: string
+  /** 2026-11-12（D-4）：标准上报名用——提交方（上报组织）名称 */
+  sourceOrgName?: string
+  /** 2026-11-12（D-4）：标准上报名用——审批方（上级组织）名称 */
+  targetOrgName?: string
   indicatorName: string
 }
 
@@ -914,6 +918,30 @@ function getCurrentReportMonth(): string {
   // 2026-10-30：本地时区月份（原先用 UTC，每月 1 日 00:00~08:00 会算成上个月，
   // 导致月报归属期错位）。见 shared/lib/utils/localDateTag.ts。
   return formatLocalMonthTag()
+}
+
+/**
+ * 2026-11-12（D-4）：填报保存的 report.title 改用标准上报名——
+ * 「{year}年度 {month}月上报（{提交方} -> {审批方}）」，与后端
+ * plan_report.planName（如「2026年度 11月上报（计算机学院 -> 战略发展部）」）同口径，
+ * 不再把单条指标名写进 title（后端首条上报通知会把指标描述当业务名群发）。
+ * 组织名缺一侧只写已有的一侧，全缺时不带组织后缀，绝不同退到指标名。
+ */
+function buildIndicatorReportTitle(reportMonth: string, context: IndicatorReportContext): string {
+  const match = /^(\d{4})-?(\d{2})$/.exec(String(reportMonth || '').trim())
+  const year = match?.[1] ?? ''
+  const month = match ? String(Number(match[2])) : ''
+  const base = year && month ? `${year}年度 ${month}月上报` : '指标月度上报'
+
+  const sourceOrgName = String(context.sourceOrgName ?? '').trim()
+  const targetOrgName = String(context.targetOrgName ?? '').trim()
+  const route =
+    sourceOrgName && targetOrgName
+      ? `（${sourceOrgName} -> ${targetOrgName}）`
+      : sourceOrgName || targetOrgName
+        ? `（${sourceOrgName || targetOrgName}）`
+        : ''
+  return `${base}${route}`
 }
 
 function getNormalizedReportStatus(status?: string | null): string {
@@ -1162,6 +1190,20 @@ async function resolveIndicatorReportContext(
     reportOrgId,
     reportOrgType: mapRoleToReportOrgType(inferredRole, targetDepartmentName),
     reportMonth: getCurrentReportMonth(),
+    // 2026-11-12（D-4）：标准上报名组织名——提交方（source）=填报组织
+    // （指标接收方，targetDepartmentName），审批方（target）=指标归属方
+    // （ownerOrg：优先 ownerOrgName 字段，回退 orgStore 按 id 反查，
+    // orgStore 已在上方加载，反查成本为零）
+    sourceOrgName: String(targetDepartmentName || '').trim(),
+    targetOrgName:
+      String(indicatorData.ownerOrgName ?? '')
+        .trim() ||
+      (Number.isFinite(sourceOrgId)
+        ? String(
+            orgStore.departments.find(department => Number(department.id) === sourceOrgId)?.name ??
+              ''
+          ).trim()
+        : ''),
     indicatorName: String(
       indicatorData.indicatorName ?? indicatorData.name ?? indicatorData.indicatorDesc ?? '指标填报'
     )
@@ -2524,7 +2566,10 @@ export const indicatorFillApi = {
     const updateResponse = await apiClient.put<ApiResponse<PlanReportSimpleResponse>>(
       `/reports/${reportDraft.id}`,
       {
-        title: context.indicatorName,
+        // 2026-11-12（D-4）：title 写标准上报名「{year}年度 {month}月上报（提交方 -> 审批方）」，
+        // 不再把单条指标名写进 title（后端首条上报通知会把指标描述当业务名群发）；
+        // 组织名取不到时按 buildIndicatorReportTitle 略写，绝不同退到指标名
+        title: buildIndicatorReportTitle(targetReportMonth, context),
         indicatorId: context.indicatorId,
         content: form.content,
         summary: form.content,

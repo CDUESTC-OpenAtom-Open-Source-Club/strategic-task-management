@@ -18,7 +18,6 @@ vi.mock('@/features/indicator/api/mutationApi', () => ({
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
 import {
   MUTATION_FIELDS_INDICATOR_NAME,
-  MUTATION_FIELDS_REMARK,
   MUTATION_FIELDS_WEIGHT,
   invalidateMutationHistory
 } from '@/features/indicator/model/mutationHistory'
@@ -99,17 +98,7 @@ describe('MutationBadgePopover 徽标落位与计数', () => {
     wrapper.unmount()
   })
 
-  it('备注徽标只显示备注异动次数', async () => {
-    const wrapper = mount(MutationBadgePopover, {
-      props: { indicatorId: 2042, fields: MUTATION_FIELDS_REMARK },
-      global: { stubs: historyStub }
-    })
-    await nextTick()
-    await flushPromises()
-
-    expect(wrapper.find('.mutation-badge__trigger').text()).toBe('1')
-    wrapper.unmount()
-  })
+  // 2026-11-11 用户拍板：下发备注全端隐藏，备注徽标随备注列一并移除（原「备注徽标」用例删除）
 
   it('不传字段时显示全部异动次数', async () => {
     const wrapper = mount(MutationBadgePopover, {

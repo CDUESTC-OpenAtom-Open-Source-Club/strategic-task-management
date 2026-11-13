@@ -111,3 +111,93 @@ export interface MutationGateWeightTotalInput {
  */
 export const resolveMutationGateWeightTotal = (input: MutationGateWeightTotalInput): number =>
   input.collegeScopeActive ? input.collegeBasicWeightTotal : input.departmentTotalWeight
+
+/** 「退回待重报」异动链条目的最小结构（与 mutationApi.ReturnedMutationChainItem 对齐） */
+export interface ReturnedMutationChainLike {
+  instance_id: number | string
+  [key: string]: unknown
+}
+
+export interface CollegeReturnedChainOwnerOrgIdInput {
+  /** 登录角色是否为战略发展部（isStrategicDeptLogin） */
+  isStrategicDeptLogin: boolean
+  /** 战略发展部组织 id（strategicDeptOrgId，解析失败时 model 兜底 35） */
+  strategicDeptOrgId: number | null
+  /** 当前选中职能部门的组织 id（resolveDepartmentIdByName(selectedDepartment)） */
+  funcOrgId: number | null
+}
+
+/**
+ * 学院页签「退回待重报」异动链查询的组织口径（C3-D1 根因修复）。
+ *
+ * <p>背景（2026-11-12 C3-工学院异动全链缺陷 C3-D1）：战略部直发学院子指标
+ * （owner=35、target=学院）的异动被驳回后，退回活链只被
+ * {@code returnedChains(funcOrgId)} 查询覆盖不到 —— 后端
+ * {@code listReturnedMutationChains} 按 {@code owner_org_id = orgId OR target_org_id = orgId}
+ * 命中，学院子指标 owner=35 而职能侧边栏只含职能部门（org 36 起），职能口径查询恒空，
+ * 红横幅/「发起异动/取消异动」双按钮在学院页签全链不可达（数据在、前端不拉）。</p>
+ *
+ * <p>口径（与 resolveSelectedCollegeReportScope 的创建方分流一致）：</p>
+ * <ul>
+ *   <li>战略部登录 → owner 口径取战略发展部组织 id（org 35）——学院子指标的
+ *       owner 侧命中；</li>
+ *   <li>职能部门登录 → owner 口径取当前选中职能部门 —— 存量学院行（owner=职能部门）
+ *       的退回链，与职能页签既有查询同口径（合并时按 instance_id 去重，零增量）。</li>
+ * </ul>
+ */
+export const resolveCollegeReturnedChainOwnerOrgId = (
+  input: CollegeReturnedChainOwnerOrgIdInput
+): number | null => {
+  const strategicOrgId = Number(input.strategicDeptOrgId)
+  const funcOrgId = Number(input.funcOrgId)
+  if (input.isStrategicDeptLogin) {
+    return Number.isFinite(strategicOrgId) && strategicOrgId > 0 ? strategicOrgId : null
+  }
+  return Number.isFinite(funcOrgId) && funcOrgId > 0 ? funcOrgId : null
+}
+
+/**
+ * 退回链清单合并（按 instance_id 去重）：职能口径清单已加载后，学院口径补拉结果
+ * 原地并入，同一条链（两口径都可能命中，如 owner=职能部门、target=学院的存量行）
+ * 不重复计入横幅批次计数。
+ */
+export const mergeReturnedMutationChains = <T extends ReturnedMutationChainLike>(
+  existing: T[],
+  incoming: T[]
+): T[] => {
+  const seen = new Set(existing.map(chain => String(chain.instance_id ?? '')))
+  const additions = incoming.filter(chain => {
+    const key = String(chain.instance_id ?? '')
+    return key !== '' && !seen.has(key)
+  })
+  return additions.length > 0 ? [...existing, ...additions] : existing
+}
+
+/** 学院页签在审异动判定条目的最小结构（与 mutation-approvals 响应映射对齐） */
+export interface CollegeMutationApprovalEntryLike {
+  targetOrgId?: number | string | null
+  [key: string]: unknown
+}
+
+/**
+ * 学院页签「新增行」在审互斥判定（C3 观察项 O-3）：所选学院的链上是否存在
+ * 进行中的异动审批。
+ *
+ * <p>职能页签口径 = 本部门在审异动清单非空（isMutationApprovalInFlight，只读
+ * departmentMutationPendingApprovals）；学院页签对齐同款判定，但数据源必须落到
+ * **学院链**：异动实例 source=战略发展部/职能部门、target=学院，按职能部门 orgId
+ * 的主清单大多查不到（owner=35、target=学院都不等于职能部门 orgId），只有
+ * departmentChainMutationPendingApprovals（链下学院追回清单）按学院组织补查过。
+ * 两份清单合并后按 targetOrgId = 学院组织 id 收口 —— 锁的是「这个学院」的在审异动，
+ * 不把其他学院的在审异动串进来（学院口径各自独立，与 D-02 解耦方向一致）。</p>
+ */
+export const hasCollegeMutationApprovalInFlight = (
+  entries: CollegeMutationApprovalEntryLike[],
+  collegeOrgId: number | null
+): boolean => {
+  const orgId = Number(collegeOrgId)
+  if (!Number.isFinite(orgId) || orgId <= 0) {
+    return false
+  }
+  return entries.some(entry => Number(entry.targetOrgId) === orgId)
+}

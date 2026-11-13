@@ -205,11 +205,11 @@ const isPlaceholderPlanApprovalName = (value: unknown): boolean => {
   return /^Plan\s*#?\s*\d+$/i.test(normalized) || /^计划\s*#?\s*\d+$/i.test(normalized)
 }
 
-// 2026-10-21：异动字段名 → 中文标签，与右下角「异动历史」角标口径一致
+// 2026-10-21：异动字段名 → 中文标签，与右下角「异动历史」角标口径一致；
+// 2026-11-11 用户拍板：下发备注全端隐藏——remark 异动项在「本次异动内容」里过滤不渲染
 const MUTATION_FIELD_LABELS: Record<string, string> = {
   indicator_desc: '指标内容',
   weight_percent: '权重',
-  remark: '下发备注',
   name: '战略任务'
 }
 
@@ -264,16 +264,16 @@ const planDetailIsMutationItem = computed(() => {
 /**
  * 2026-10-23：月报待办卡（PLAN_REPORT）的标题与操作。
  *
- * 注意流向：后端 my-tasks 给的 sourceOrg/targetOrg 是「下发方向」
- * （教务处 -> 计算机学院），而上报是反方向，标题须翻转，
- * 与审批历史卡片的「上报审批 · 计算机学院 -> 教务处」口径一致。
+ * 2026-11-12（D-3 统一口径）：后端 my-tasks 已按上报方向返回 source/target
+ * （source=提交方，target=审批方），标题直接 source -> target，
+ * 不再按旧口径翻转（多翻一次导致显示反向）。
  */
 const resolveReportApprovalTitle = (item: Record<string, any>): string => {
   const sourceName = normalizeDisplayName(item.sourceOrgName)
   const targetName = normalizeDisplayName(item.targetOrgName)
   if (sourceName && targetName) {
-    // 上报方向 = 接收方 -> 下发方
-    return `上报审批 · ${targetName} -> ${sourceName}`
+    // 上报方向 = 提交方 -> 审批方
+    return `上报审批 · ${sourceName} -> ${targetName}`
   }
   return (
     normalizeDisplayName(item.planName) ||
@@ -977,20 +977,18 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 本次异动内容
                 <span class="detail-mutation-hint">（审批通过后生效）</span>
               </div>
-              <div
-                v-for="(change, fieldKey) in item.changedFields"
-                :key="fieldKey"
-                class="detail-mutation-row"
-              >
-                <span class="detail-mutation-field">{{
-                  formatMutationFieldLabel(String(fieldKey), item.mutationEntityType)
-                }}</span>
-                <span class="detail-mutation-before">{{
-                  formatMutationValue(change?.before)
-                }}</span>
-                <span class="detail-mutation-arrow">→</span>
-                <span class="detail-mutation-after">{{ formatMutationValue(change?.after) }}</span>
-              </div>
+              <template v-for="(change, fieldKey) in item.changedFields" :key="fieldKey">
+                <div v-if="fieldKey !== 'remark'" class="detail-mutation-row">
+                  <span class="detail-mutation-field">{{
+                    formatMutationFieldLabel(String(fieldKey), item.mutationEntityType)
+                  }}</span>
+                  <span class="detail-mutation-before">{{
+                    formatMutationValue(change?.before)
+                  }}</span>
+                  <span class="detail-mutation-arrow">→</span>
+                  <span class="detail-mutation-after">{{ formatMutationValue(change?.after) }}</span>
+                </div>
+              </template>
             </div>
           </div>
         </div>
@@ -1039,8 +1037,9 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 </div>
               </div>
 
-              <!-- D3：自评进度等级徽标（对齐主审批抽屉） -->
-              <div class="snapshot-section">
+              <!-- D3：自评进度等级徽标（对齐主审批抽屉）；
+                   2026-11-11 用户拍板：下发备注全端隐藏——label 为空（非上报流程）时整卡不渲染 -->
+              <div v-if="displayedBusinessCommentLabel" class="snapshot-section">
                 <div class="snapshot-section-title">{{ displayedBusinessCommentLabel }}</div>
                 <div class="snapshot-section-content">
                   {{ indicator.submittedComment || displayedBusinessEmptyCommentText }}

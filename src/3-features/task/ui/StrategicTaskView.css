@@ -744,15 +744,6 @@
   overflow-wrap: anywhere;
 }
 
-/* 说明列文字换行 */
-.remark-text-wrap {
-  display: block;
-  overflow: visible;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
 /* 操作按钮容器 */
 .action-buttons {
   display: flex;
@@ -1255,8 +1246,7 @@
    定位基准是整格（td），不是单元格里的内容容器——
    按内容容器定位会让角标悬在文字/数字旁边，不是真正的格子右上角。 */
 .weight-col-cell,
-.indicator-name-col-cell,
-.remark-col-cell {
+.indicator-name-col-cell {
   position: relative;
 }
 
@@ -1267,7 +1257,7 @@
   line-height: 1;
 }
 
-/* 同口径：核心指标列 / 下发备注列的角标也贴格子右上角 */
+/* 同口径：权重列等其余列的角标也贴格子右上角 */
 .indicator-cell-footer--corner {
   position: absolute;
   right: 4px;

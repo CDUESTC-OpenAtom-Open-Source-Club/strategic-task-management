@@ -6,7 +6,10 @@ import { shallowMount, type VueWrapper } from '@vue/test-utils'
 import { flushPromises } from '../../setup'
 
 import {
+  hasCollegeMutationApprovalInFlight,
   isReportApprovalStatusInFlight,
+  mergeReturnedMutationChains,
+  resolveCollegeReturnedChainOwnerOrgId,
   resolveCollegeTabDistributeAction,
   resolveMutationGateWeightTotal
 } from '@/features/task/lib/collegeTabDistribute'
@@ -162,6 +165,20 @@ vi.mock('@/features/plan/api/planApi', () => ({
 
 const elMessageBoxConfirm = vi.hoisted(() => vi.fn())
 
+// 2026-11-12（中⑤·A1 缺陷 C）：导入 commit 成功回调的 plan.list 缓存失效 spy
+const invalidateQueriesMock = vi.hoisted(() => vi.fn())
+
+vi.mock('@/shared/lib/utils/cache', async () => {
+  const actual =
+    await vi.importActual<typeof import('@/shared/lib/utils/cache')>(
+      '@/shared/lib/utils/cache'
+    )
+  return {
+    ...actual,
+    invalidateQueries: invalidateQueriesMock
+  }
+})
+
 vi.mock('element-plus', async () => {
   const actual = await vi.importActual<typeof import('element-plus')>('element-plus')
   return {
@@ -283,6 +300,11 @@ function createViewModel(overrides: Record<string, unknown> = {}) {
     collegeTabTwoStepReady: ref(true),
     isReportApprovalInFlight: ref(false),
     isMutationApprovalInFlight: ref(false),
+    // 2026-11-12（低⑩）：学院口径在审异动判定（新增行互斥）——基线不锁，
+    // 用例按需覆写；缺省交给 Proxy 会变成真值函数，新增行恒灰干扰断言
+    isCollegeMutationApprovalInFlight: ref(false),
+    canEdit: ref(true),
+    isCurrentPlanUnderApproval: ref(false),
     canWithdrawMutationInFlight: ref(false),
     effectivePlanContext: ref({ source: 'college', plan: null }),
     handleWithdrawMutationBatch: vi.fn(),
@@ -335,6 +357,11 @@ const mountOptions = {
         props: ['modelValue'],
         emits: ['update:modelValue'],
         template: '<div class="el-tabs-stub"><slot /></div>'
+      },
+      // 2026-11-12（C3-D1 双按钮渲染断言）：发起异动/取消异动包在 el-tooltip 默认槽里，
+      // 自动桩不渲染槽内容 → 透传桩让按钮可见（其余 tooltip 均在表格桩内部，不受影响）
+      'el-tooltip': {
+        template: '<span><slot /></span>'
       },
       'el-progress': {
         props: ['percentage'],
@@ -586,5 +613,340 @@ describe('useStrategicTaskView 学院口径接线契约（③④）', () => {
     expect(vueSource).toContain('handleWithdrawCollegeDispatch')
     expect(vueSource).toMatch(/planApi\.withdrawPlan\(planId\)/)
     expect(vueSource).toMatch(/await handleWithdrawMutationBatch\(\)/)
+  })
+})
+
+/**
+ * 2026-11-12（C3-D1 HIGH）：学院页签异动驳回后红横幅与重报双按钮可达。
+ *
+ * 缺陷口径（测试证据/2026-11-12-导入导出上报异动全链/C3-工学院异动全链-测试报告.md）：
+ * returnedMutationChains 只由 selectedDepartment（职能侧边栏，org 36 起）驱动加载，
+ * 战略部直发学院子指标（owner=35）的退回活链查询恒不命中 → 学院页签驳回后
+ * 红横幅「已退回待重报」与「发起异动/取消异动」双按钮不可达（数据在、前端不拉）。
+ *
+ * 纯函数（owner 口径 / 合并去重）直接锁实现；组件渲染（红横幅 + 双按钮）走
+ * 浅挂载 mock view-model；model 接线（selectCollege / 页签激活 / 部门过滤触发补拉）
+ * 用源码契约锁。
+ */
+describe('task/lib/collegeTabDistribute · 学院口径退回链加载（C3-D1）', () => {
+  describe('resolveCollegeReturnedChainOwnerOrgId（owner 参数正确）', () => {
+    it('战略部登录 → owner 口径取战略发展部组织 id（org 35，学院子指标 owner 侧命中）', () => {
+      expect(
+        resolveCollegeReturnedChainOwnerOrgId({
+          isStrategicDeptLogin: true,
+          strategicDeptOrgId: 35,
+          funcOrgId: 44
+        })
+      ).toBe(35)
+    })
+
+    it('战略部登录但战略部 org 解析失败 → 返回 null（宁可不拉，不误用职能部门口径）', () => {
+      expect(
+        resolveCollegeReturnedChainOwnerOrgId({
+          isStrategicDeptLogin: true,
+          strategicDeptOrgId: null,
+          funcOrgId: 44
+        })
+      ).toBeNull()
+    })
+
+    it('职能部门登录 → owner 口径取当前选中职能部门（存量学院行与职能页签同口径）', () => {
+      expect(
+        resolveCollegeReturnedChainOwnerOrgId({
+          isStrategicDeptLogin: false,
+          strategicDeptOrgId: 35,
+          funcOrgId: 44
+        })
+      ).toBe(44)
+    })
+
+    it('职能部门登录且职能部门未解析 → null；非法数值（0/负数/NaN）一律 null', () => {
+      expect(
+        resolveCollegeReturnedChainOwnerOrgId({
+          isStrategicDeptLogin: false,
+          strategicDeptOrgId: 35,
+          funcOrgId: null
+        })
+      ).toBeNull()
+      expect(
+        resolveCollegeReturnedChainOwnerOrgId({
+          isStrategicDeptLogin: true,
+          strategicDeptOrgId: 0,
+          funcOrgId: 44
+        })
+      ).toBeNull()
+      expect(
+        resolveCollegeReturnedChainOwnerOrgId({
+          isStrategicDeptLogin: false,
+          strategicDeptOrgId: 35,
+          funcOrgId: Number.NaN
+        })
+      ).toBeNull()
+    })
+  })
+
+  describe('mergeReturnedMutationChains（合并按 instance_id 去重）', () => {
+    const chain = (instanceId: number, batchId = 'b-1') => ({
+      instance_id: instanceId,
+      batch_id: batchId,
+      indicator_id: 2048,
+      indicator_desc: '链路测试-工学院子指标A',
+      status: 'WITHDRAWN',
+      created_at: '2026-11-12T10:08:00'
+    })
+
+    it('学院口径补拉结果并入既有清单；同一实例（两口径都命中）不重复计入批次', () => {
+      const existing = [chain(13)]
+      const merged = mergeReturnedMutationChains(existing, [chain(13), chain(14, 'b-2')])
+      expect(merged).toHaveLength(2)
+      expect(merged.map(item => item.instance_id)).toEqual([13, 14])
+    })
+
+    it('无新增时返回原数组（不无谓触发响应式更新）；缺 instance_id 的脏数据跳过', () => {
+      const existing = [chain(13)]
+      expect(mergeReturnedMutationChains(existing, [])).toBe(existing)
+      expect(mergeReturnedMutationChains(existing, [chain(13)])).toBe(existing)
+      const dirty = { ...chain(99), instance_id: undefined as unknown as number }
+      const merged = mergeReturnedMutationChains(existing, [dirty])
+      expect(merged).toBe(existing)
+    })
+  })
+
+  describe('hasCollegeMutationApprovalInFlight（学院口径在审异动，低⑩）', () => {
+    const entry = (targetOrgId: number | null) => ({ targetOrgId, instanceId: 1 })
+
+    it('所选学院链上存在在审异动（targetOrgId=学院 org）→ true（主清单与链下追回清单合并后判定）', () => {
+      expect(hasCollegeMutationApprovalInFlight([entry(56), entry(44)], 56)).toBe(true)
+    })
+
+    it('其他学院的在审异动不串台（D-02 同方向：学院口径各自独立）', () => {
+      expect(hasCollegeMutationApprovalInFlight([entry(57)], 56)).toBe(false)
+    })
+
+    it('学院未选 / org 解析失败 → 恒 false（不锁新增行）', () => {
+      expect(hasCollegeMutationApprovalInFlight([entry(56)], null)).toBe(false)
+      expect(hasCollegeMutationApprovalInFlight([entry(56)], Number.NaN)).toBe(false)
+      expect(hasCollegeMutationApprovalInFlight([entry(56)], 0)).toBe(false)
+    })
+
+    it('targetOrgId 缺失的条目不参与判定（无法归属到学院链）', () => {
+      expect(hasCollegeMutationApprovalInFlight([{ instanceId: 1 }], 56)).toBe(false)
+    })
+  })
+
+})
+
+describe('学院页签驳回闭环与在审互斥（2026-11-12 组件接线）', () => {
+  beforeEach(() => {
+    submitPlanForApproval.mockReset()
+    withdrawPlan.mockReset()
+    elMessageBoxConfirm.mockReset()
+  })
+
+  it('C3-D1 驳回态：有退回活链时红横幅（error）+「发起异动/取消异动」双按钮渲染', async () => {
+    const wrapper = mountView({
+      hasReturnedMutationChain: ref(true),
+      returnedMutationChainCount: ref(1),
+      isReturnedChainRequester: ref(true),
+      hasMutationDraft: ref(false)
+    })
+
+    // el-alert 未在测试环境全局注册 → 渲染为原生标签回退（shallowMount 不桩未解析组件），
+    // 用 DOM 属性断言（type="error" 即「已退回待重报」红横幅）
+    const errorAlert = wrapper
+      .findAll('el-alert')
+      .find(alert => alert.attributes('type') === 'error')
+    expect(errorAlert).toBeDefined()
+    // 双按钮（发起异动 / 取消异动）在退回态下随横幅一并渲染
+    expect(findButtonByText(wrapper, '发起异动')).toBeDefined()
+    expect(findButtonByText(wrapper, '取消异动')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('C3-D1 零回归：无退回活链时红横幅与双按钮不渲染（维持 v-if 口径）', async () => {
+    const wrapper = mountView({
+      hasReturnedMutationChain: ref(false),
+      returnedMutationChainCount: ref(0),
+      isReturnedChainRequester: ref(false),
+      hasMutationDraft: ref(false)
+    })
+
+    expect(
+      wrapper.findAll('el-alert').find(alert => alert.attributes('type') === 'error')
+    ).toBeUndefined()
+    expect(findButtonByText(wrapper, '取消异动')).toBeUndefined()
+    expect(findButtonByText(wrapper, '发起异动')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('低⑧（A1 缺陷 E）部门清单未加载时点「全部导出」：同款提示挡在弹窗前，不再弹死对话框', async () => {
+    const { ElMessage } = await import('element-plus')
+    const wrapper = mountView({
+      functionalDepartments: ref([] as string[])
+    })
+
+    const exportAll = findButtonByText(wrapper, '全部导出')
+    expect(exportAll).toBeDefined()
+    await exportAll!.trigger('click')
+    await flushPromises()
+
+    expect(ElMessage.warning).toHaveBeenCalledWith('请先选择要导出的部门')
+    wrapper.unmount()
+  })
+
+  it('低⑧（A1 缺陷 E）导出对话框 0 部门选中点「导出」：warning 反馈而非静默', async () => {
+    const { ElMessage } = await import('element-plus')
+    // 正常部门清单 + 手动清空选中（复刻 A1 取消全选路径）
+    const wrapper = mountView({
+      functionalDepartments: ref(['教务处']),
+      selectedStrategicExportDepartments: ref([] as string[])
+    })
+
+    const dialog = wrapper.findComponent({ name: 'ElDialog' })
+    expect(dialog).toBeDefined()
+    // 通过暴露的 confirm 入参直拍导出处理函数（对话框默认槽在 shallowMount 下不渲染）
+    const vm = wrapper.vm as unknown as {
+      handleExportSelectedStrategicDepartments?: () => Promise<void>
+    }
+    expect(typeof vm.handleExportSelectedStrategicDepartments).toBe('function')
+    await vm.handleExportSelectedStrategicDepartments!()
+    await flushPromises()
+
+    expect(ElMessage.warning).toHaveBeenCalledWith('请先选择要导出的部门')
+    wrapper.unmount()
+  })
+
+  it('低⑩（C3 O-3）学院口径异动在审：学院页签「新增行」置灰 + 同款互斥 tooltip', async () => {
+    const wrapper = mountView(
+      collegeTabReady({
+        isCollegeMutationApprovalInFlight: ref(true)
+      })
+    )
+    await switchToCollegeTab(wrapper)
+
+    const addRow = findButtonByText(wrapper, '新增行')
+    expect(addRow).toBeDefined()
+    expect(addRow!.attributes('disabled')).toBeDefined()
+    expect(addRow!.attributes('title')).toBe(
+      '异动审批进行中，暂不能新增：等审批结束或先撤回/取消本次异动'
+    )
+    wrapper.unmount()
+  })
+
+  it('低⑩（零回归）学院口径在审只锁学院页签：职能页签「新增行」不受影响', async () => {
+    const wrapper = mountView({
+      collegeFillStatusScope: ref(false),
+      isCollegeMutationApprovalInFlight: ref(true)
+    })
+
+    const addRow = findButtonByText(wrapper, '新增行')
+    expect(addRow).toBeDefined()
+    expect(addRow!.attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('低⑩（C2 O-1）计划/上报审批在审 tooltip 文案写准：上报与异动并提，不再只说「计划正在审批中」', async () => {
+    const wrapper = mountView({
+      isCurrentPlanUnderApproval: ref(true)
+    })
+
+    const addRow = findButtonByText(wrapper, '新增行')
+    expect(addRow).toBeDefined()
+    expect(addRow!.attributes('title')).toBe(
+      '当前计划的上报/异动审批进行中，暂不能新增：请等审批结束或先撤回本次审批'
+    )
+    wrapper.unmount()
+  })
+
+})
+
+/**
+ * model 内部接线源码契约：8k 行 composable 不整体实例化，
+ * 用源码断言锁定学院口径退回链的关键接线（实现漂移即红）。
+ */
+describe('useStrategicTaskView / StrategicTaskView 学院退回链接线契约（C3-D1）', () => {
+  const readModelSource = () =>
+    readFileSync(resolve(process.cwd(), 'src/3-features/task/model/useStrategicTaskView.ts'), 'utf8')
+  const readViewSource = () =>
+    readFileSync(resolve(process.cwd(), 'src/3-features/task/ui/StrategicTaskView.vue'), 'utf8')
+
+  it('model：学院口径退回链补拉共用 collegeTabDistribute 纯函数（owner 口径与合并去重单一来源）', () => {
+    const source = readModelSource()
+    expect(source).toMatch(
+      /import\s*\{[^}]*resolveCollegeReturnedChainOwnerOrgId[^}]*\}\s*from\s*'@\/features\/task\/lib\/collegeTabDistribute'/
+    )
+    expect(source).toMatch(
+      /import\s*\{[^}]*mergeReturnedMutationChains[^}]*\}\s*from\s*'@\/features\/task\/lib\/collegeTabDistribute'/
+    )
+    expect(source).toMatch(
+      /resolveCollegeReturnedChainOwnerOrgId\(\{\s*isStrategicDeptLogin:\s*isStrategicDeptLogin\.value/
+    )
+    expect(source).toMatch(
+      /returnedMutationChains\.value = mergeReturnedMutationChains\(\s*returnedMutationChains\.value/
+    )
+  })
+
+  it('model：主清单刷新后自动并入学院口径退回链（既有刷新链全覆盖，含提交/重发/取消）', () => {
+    const source = readModelSource()
+    // loadDepartmentMutationWorkflowEntities 的退回链加载段落后必须补拉学院口径
+    expect(source).toMatch(
+      /returnedMutationChains\.value = \[\][\s\S]{0,800}?await loadCollegeReturnedMutationChains\(\)/
+    )
+  })
+
+  it('model：selectCollege 学院选择变化触发学院口径退回链补拉（C3-D1 根因：此前零触发）', () => {
+    const source = readModelSource()
+    expect(source).toMatch(
+      /const selectCollege = \(college: string\) => \{[\s\S]*?void loadCollegeReturnedMutationChains\(\)[\s\S]*?\n {2}\}/
+    )
+  })
+
+  it('view：学院页签激活与页签内部门过滤变化均触发补拉', () => {
+    const source = readViewSource()
+    expect(source).toMatch(
+      /if \(tab === 'college'\) \{[\s\S]*?void loadCollegeReturnedMutationChains\(\)/
+    )
+    expect(source).toMatch(
+      /collegeDispatchDeptFilter\.value = selection\.dept\s*(?:\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*)?void loadCollegeReturnedMutationChains\(\)/
+    )
+  })
+
+  it('view：新增行互斥补上学院口径在审判定（仅挂学院页签分支）', () => {
+    const source = readViewSource()
+    expect(source).toMatch(
+      /\(activeTaskTabName === 'college' && isCollegeMutationApprovalInFlight\)/
+    )
+  })
+})
+
+describe('导入 commit 成功后计划状态徽标刷新（2026-11-12 中⑤·A1 缺陷 C）', () => {
+  beforeEach(() => {
+    invalidateQueriesMock.mockClear()
+    submitPlanForApproval.mockReset()
+    withdrawPlan.mockReset()
+    elMessageBoxConfirm.mockReset()
+  })
+
+  it('commit 成功回调：先失效 plan.list 查询缓存，再与表格同帧刷新部门视图', async () => {
+    const refreshCurrentDepartmentView = vi.fn()
+    const wrapper = mountView({
+      refreshCurrentDepartmentView
+    })
+
+    const dialog = wrapper.findComponent({ name: 'BusinessImportDialog' })
+    expect(dialog).toBeDefined()
+    dialog.vm.$emit('committed', { status: 'COMMITTED', createdCount: 4 } as never)
+    await flushPromises()
+
+    // 差异根因：审批徽标走 resetApprovalWorkflowStateCache 显式失效（实时），
+    // 计划状态徽标走 plan.list 15s 内存快照（loadPlans force 不穿透 fetchWithCache，
+    // 心跳又不回源）→ 必须在回调里先显式失效，徽标才与表格同步拿到「已下发」
+    expect(invalidateQueriesMock).toHaveBeenCalledWith(['plan.list'])
+    expect(refreshCurrentDepartmentView).toHaveBeenCalledWith({
+      showLoading: true,
+      force: true,
+      reloadIndicators: true
+    })
+    wrapper.unmount()
   })
 })

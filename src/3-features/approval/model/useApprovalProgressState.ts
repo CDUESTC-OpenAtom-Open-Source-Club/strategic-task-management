@@ -32,6 +32,8 @@ import {
   parsePositiveUserId,
   resolveApprovalRoute,
   resolveApprovalRouteTitle,
+  resolveInstanceRejectionComment,
+  resolvePlanInstanceReferenceLabel,
   resolveHistoryStatusTag,
   shouldDisplayWorkflowHistoryItem,
   toPositiveNumber
@@ -344,19 +346,26 @@ export function useApprovalProgressState(
   // props.plan?.name——后端会对未命名计划生成「Plan 404457」式占位名，
   // 直接拼接会把裸数字 ID 亮给用户（线上复测观察项 3）。
   // 年份/部门从计划与工作流详情取，取不到就略写，全缺回退「当前计划」。
+  // 2026-11-12（弹窗用实例业务名）：业务名优先——实例 planName
+  // （plan_report.planName，如「2026年度 11月上报（计算机学院 -> 战略发展部）」）
+  // → props.planName；占位名（「Plan 404457」/裸数字）或缺失时才回退拼参考标签。
   function resolvePlanReferenceLabel(): string {
     const planRecord = props.plan as
       (Plan & { year?: number | string; cycleId?: number | string }) | null | undefined
-    return buildPlanReferenceLabel({
-      year: planRecord?.year ?? timeContext.resolveCycleYear(planRecord?.cycleId),
-      sourceOrgName:
-        normalizeDisplayName(planWorkflowDetail.value?.sourceOrgName) ||
-        planRecord?.createdByOrgName,
-      targetOrgName:
-        normalizeDisplayName(planWorkflowDetail.value?.targetOrgName) ||
-        planRecord?.targetOrgName ||
-        planRecord?.orgName,
-      fallback: '当前计划'
+    return resolvePlanInstanceReferenceLabel({
+      instancePlanName: planWorkflowDetail.value?.planName,
+      fallbackPlanName: props.planName,
+      referenceLabel: buildPlanReferenceLabel({
+        year: planRecord?.year ?? timeContext.resolveCycleYear(planRecord?.cycleId),
+        sourceOrgName:
+          normalizeDisplayName(planWorkflowDetail.value?.sourceOrgName) ||
+          planRecord?.createdByOrgName,
+        targetOrgName:
+          normalizeDisplayName(planWorkflowDetail.value?.targetOrgName) ||
+          planRecord?.targetOrgName ||
+          planRecord?.orgName,
+        fallback: '当前计划'
+      })
     })
   }
 
@@ -1269,7 +1278,8 @@ export function useApprovalProgressState(
   })
 
   const displayedBusinessCommentLabel = computed(() => {
-    return displayedBusinessSectionMode.value === 'report' ? '进度说明' : '下发备注'
+    // 2026-11-11 用户拍板：下发备注字段全端隐藏——非上报快照流程（下发/通用审批）不再渲染说明卡标题
+    return displayedBusinessSectionMode.value === 'report' ? '进度说明' : ''
   })
 
   const displayedBusinessAttachmentLabel = computed(() => {
@@ -2426,16 +2436,18 @@ export function useApprovalProgressState(
       return null
     }
 
-    // 与本文件 resolvePlanApprovalDisplayName（323-328 行）同款取值口径：
-    // sourceOrg=上级（计划创建方），targetOrg=上报部门；resolveApprovalRouteTitle 内部处理流向
+    // 2026-11-12（D-3 统一口径）：后端已按上报方向返回 source/target——
+    // source=提交方（上报部门，回退 props.departmentName），target=审批方
+    // （上级/计划创建方，回退 createdByOrgName / 战略发展部）；
+    // resolveApprovalRouteTitle 不再处理流向，直接 source -> target。
     const sourceOrgName =
       normalizeDisplayName(detail.sourceOrgName) ||
-      normalizeDisplayName(props.plan?.createdByOrgName) ||
-      '战略发展部'
-    const targetOrgName =
-      normalizeDisplayName(detail.targetOrgName) ||
       normalizeDisplayName(props.departmentName) ||
       '当前部门'
+    const targetOrgName =
+      normalizeDisplayName(detail.targetOrgName) ||
+      normalizeDisplayName(props.plan?.createdByOrgName) ||
+      '战略发展部'
     const flowCode =
       normalizeWorkflowCode(detail.flowCode) ||
       (Array.isArray(props.workflowCode) ? props.workflowCode[0] : props.workflowCode) ||
@@ -2956,8 +2968,24 @@ export function useApprovalProgressState(
 
   // 驳回原因
   const rejectionReason = computed(() => {
-    if (activePlanWorkflow.value?.lastRejectReason) {
-      return activePlanWorkflow.value.lastRejectReason
+    // 2026-11-12（HIGH② 串实例修复）：实例步骤优先——「审批流程」页签当前渲染
+    // 哪条实例的步骤链（焦点实例 → 上报 → 异动 → 计划下发链），驳回原因就取
+    // 那条实例自身 REJECTED 步骤的意见（step_no 最大的一条）。
+    // PLAN 级 lastRejectReason 是下发实例的最后驳回意见，只作实例步骤不可用时的
+    // 兜底，不再串到上报实例上（B2-部门上报驳回后收尾：实例 #6 显示了实例 #3 的意见）。
+    const instanceReason = resolveInstanceRejectionComment({
+      taskSources: [
+        workflowFocusInstance.value?.kind !== 'plan'
+          ? focusWorkflowDetail.value?.tasks
+          : null,
+        selectedReportInstance.value ? reportWorkflowDetail.value?.tasks : null,
+        isPlanHistoryOnlyMode.value ? activeMutationWorkflowTasks.value : null,
+        planWorkflowTasks.value
+      ],
+      fallbackReason: activePlanWorkflow.value?.lastRejectReason
+    })
+    if (instanceReason) {
+      return instanceReason
     }
 
     const indicator = currentIndicator.value

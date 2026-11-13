@@ -1,3 +1,41 @@
+<script lang="ts">
+// 2026-11-12（低⑪·A2 缺陷 D2）：导入对话框「当前周期」此前直接渲染内部 cycle id
+// （如「4」），用户看不出是哪个考核周期。这里抽纯函数从周期数据源取名：
+// 优先 cycleName（如「2026年度考核周期」），无名称时回退「{year}年度」，
+// 周期记录也缺失时才回退 id；id 本身无效（0/负数/非数值）显示「-」。
+// 实现与单测共用（测试从本 SFC 模块导入）。
+export interface CycleDisplaySource {
+  cycleId?: number | string
+  cycleName?: string
+  year?: number | string
+}
+
+export const resolveCycleDisplayLabel = (
+  cycleId: number | string | null | undefined,
+  cycles: CycleDisplaySource[],
+  fallbackYear?: number | string | null
+): string => {
+  const numericId = Number(cycleId)
+  if (!Number.isFinite(numericId) || numericId <= 0) {
+    return '-'
+  }
+  const matched = cycles.find(item => Number(item?.cycleId) === numericId)
+  const name = String(matched?.cycleName ?? '').trim()
+  if (name) {
+    return name
+  }
+  const year = Number(matched?.year ?? fallbackYear)
+  if (Number.isFinite(year) && year > 0) {
+    return `${year}年度`
+  }
+  return String(cycleId)
+}
+
+export default {
+  name: 'BusinessImportDialog'
+}
+</script>
+
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { Download, Upload, UploadFilled } from '@element-plus/icons-vue'
@@ -22,6 +60,7 @@ import { exportSheetsToExcel, type ExcelExportSheet } from '@/shared/lib/export/
 import { showCriticalErrorNotice } from '@/shared/lib/criticalErrorNotice'
 import { markErrorHandled } from '@/shared/lib/utils/errorToast'
 import { useAuthStore } from '@/features/auth/model/store'
+import { useTimeContextStore } from '@/shared/lib/timeContext'
 
 const props = defineProps<{
   visible: boolean
@@ -69,6 +108,15 @@ const dialogTitle = computed(() =>
   isStrategicImport.value ? '导入职能部门指标表' : '导入学院子指标表'
 )
 const authStore = useAuthStore()
+// 2026-11-12（低⑪）：周期展示名（优先 cycleName，回退「{year}年度」，最后回退 id）
+const timeContextStore = useTimeContextStore()
+const cycleDisplayLabel = computed(() =>
+  resolveCycleDisplayLabel(
+    props.cycleId,
+    timeContextStore.cycles as CycleDisplaySource[],
+    timeContextStore.currentYear
+  )
+)
 const targetLabel = computed(() => (isStrategicImport.value ? '当前职能部门' : '当前学院'))
 const canPreview = computed(
   () => Boolean(selectedFile.value?.raw) && Boolean(props.targetOrgId) && Boolean(props.cycleId)
@@ -442,7 +490,7 @@ watch(
         </div>
         <div>
           <span class="summary-label">当前周期</span>
-          <strong>{{ cycleId || '-' }}</strong>
+          <strong :title="`周期ID: ${cycleId ?? '-'}`">{{ cycleDisplayLabel }}</strong>
         </div>
       </div>
 
