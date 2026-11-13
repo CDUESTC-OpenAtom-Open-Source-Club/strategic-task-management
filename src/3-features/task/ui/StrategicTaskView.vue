@@ -96,7 +96,11 @@ import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
 import type { ImportCommitResponse } from '@/features/import/api/businessImport'
 import { planApi } from '@/features/plan/api/planApi'
 // 2026-11-11（学院页签按钮体系修正）：按钮分流三要素（文案/类型/动作）与实现共用同一纯函数
-import { resolveCollegeTabDistributeAction } from '@/features/task/lib/collegeTabDistribute'
+// 2026-11-13（撤回入口席位显隐）：显隐判定同源下沉 lib（resolveWithdrawControlVisible）
+import {
+  resolveCollegeTabDistributeAction,
+  resolveWithdrawControlVisible
+} from '@/features/task/lib/collegeTabDistribute'
 
 const props = defineProps<StrategicTaskViewProps>()
 const strategicStore = useStrategicStore()
@@ -542,6 +546,14 @@ const collegeTabDistributeDisabledReason = computed(() => {
   if (!isStrategicDeptLogin.value) {
     return '职能部门只审批学院上报，不再下发'
   }
+  // 2026-11-13（撤回入口席位显隐）防御兜底：显隐本体在 withdrawControlVisible（v-if），
+  // 此处再拦一层席位——若未来 v-if 被回归掉，非填报人席位（负责人/审核人/校领导，
+  // 登录角色同为 strategic_dept 的账号尤其拦不住）也只会**置灰**（tooltip 沿用职能页签
+  // 「当前登录身份不是填报人，不能撤回」同款文案），不会回到亮橙可点。异动发起人豁免：
+  // canWithdrawMutationInFlight 已含发起人比对，发起人的「撤回异动」入口不受此兜底误拦。
+  if (!isCurrentUserReporter?.value && !canWithdrawMutationInFlight?.value) {
+    return '当前登录身份不是填报人，不能撤回'
+  }
   // 2026-11-08（审查 blocking 修复）：必须先并入既有只读守卫。
   // 原实现只判断「未选学院 / 周期不可用」，但历史快照年份（isReadOnly=true）同样能取到
   // cycleId 与匹配到计划 → 历史只读年份仍能发起下发审批，等于绕过只读。
@@ -597,8 +609,7 @@ const collegeTabTwoStepGuideTip = computed(() => {
  */
 const collegeTabSubPlanStatus = computed(() => {
   const context = effectivePlanContext?.value as
-    | { source?: string; plan?: Record<string, unknown> | null }
-    | undefined
+    { source?: string; plan?: Record<string, unknown> | null } | undefined
   if (!context || context.source !== 'college') {
     return null
   }
@@ -636,9 +647,45 @@ const collegeTabDistributeButton = computed(() => {
  * 与职能页签 planUiPhase==='distributed' → '当前状态不可操作' 的口径一致。
  * 之前学院页签的 disabled 只判权限/只读/前置条件，不判相位 → 已下发仍可点，
  * 点击还弹「可在审批中心查看审批记录」的误导提示。
+ *
+ * <p>与下方「撤回入口席位显隐」是两层并存，互不替代：席位层决定「这个席位看不看得到
+ * 这个按钮」（v-if 隐藏），相位层决定「看得见时此刻能不能点」（disabled 置灰）。</p>
  */
 const collegeTabDistributePhaseDisabled = computed(
   () => collegeTabDistributeButton.value.action === 'distributed-locked'
+)
+
+/**
+ * 2026-11-13（撤回入口席位显隐）：工具栏「下发/撤回」多态合并按钮的席位级显隐。
+ *
+ * <p>用户铁律：按钮只允许「当前生效计划归属部门的**填报人席位**」（authStore.user.roles
+ * 含 ROLE_REPORTER）显示；负责人/审核人/校领导等其他席位与跨部门查看者一律
+ * v-if 隐藏（不是置灰）。显隐靠席位、置灰靠相位，两层并存——填报人自己看到时，
+ * 既有相位置灰逻辑（distributeButtonDisabled / collegeTabDistributeDisabledReason）
+ * 与 tooltip 原样保留，本判定不改任何置灰口径。</p>
+ *
+ * <p>判定委托纯函数 resolveWithdrawControlVisible（lib 单一事实源，与单测共用）：</p>
+ * <ul>
+ *   <li>异动在审分支：canWithdrawMutationInFlight（model 已含发起人 submitter_name
+ *       比对与撤回窗口）→ 任一页签该批发起人可见；</li>
+ *   <li>普通下发/撤回分支：isCurrentUserReporter 且当前生效计划 createdByOrgId ===
+ *       currentUserOrgId。生效计划口径：学院页签 = effectivePlanContext 学院子计划解析，
+ *       职能页签 = currentPlan（effectivePlanContext 本就按此分流，两页签一处取数）。</li>
+ * </ul>
+ * <p>背景实测：zlb_final1（战略发展部负责人1，org 35，roles 无 ROLE_REPORTER）在学院页签
+ * 看到「工学院子计划审批中」的亮橙撤回——学院子计划 createdByOrgId 也是 35（战略部直发），
+ * 纯 org 比对拦不住，席位判定必须先行（纯函数内已按此排序）。防御兜底另见
+ * collegeTabDistributeDisabledReason 首段席位分支（v-if 被回归掉时只会置灰不亮橙）。</p>
+ */
+const withdrawControlVisible = computed(() =>
+  resolveWithdrawControlVisible({
+    canWithdrawMutationInFlight: canWithdrawMutationInFlight?.value === true,
+    isCurrentUserReporter: isCurrentUserReporter?.value === true,
+    currentUserOrgId: currentUserOrgId?.value ?? null,
+    effectivePlanCreatedByOrgId: (
+      effectivePlanContext?.value as { plan?: Record<string, unknown> | null } | undefined
+    )?.plan?.createdByOrgId
+  })
 )
 
 /**
@@ -1613,8 +1660,7 @@ const currentStrategicImportCycleId = computed(() => {
   }
 
   const cycle = timeContext.cycles.find(item => Number(item.year) === timeContext.currentYear) as
-    | { cycleId?: number | string; id?: number | string }
-    | undefined
+    { cycleId?: number | string; id?: number | string } | undefined
   const numericCycleId = Number(cycle?.cycleId ?? cycle?.id)
   return Number.isFinite(numericCycleId) && numericCycleId > 0 ? numericCycleId : null
 })
@@ -1879,8 +1925,13 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                **学院子计划相位**分流（collegeTabDistributeButton，与点击动作同源）——
                高①撤回异动点击弹错确认、高②学院下发审批中撤回不可达，根因都是
                文案读异动在审/点击恒走发起分支的错位，以及相位误读职能部门自身计划。
-               职能部门页签三要素仍直读 distributeButton*（行为逐字不变，零回归）。 -->
+               职能部门页签三要素仍直读 distributeButton*（行为逐字不变，零回归）。
+               2026-11-13（撤回入口席位显隐）：整颗按钮加 v-if 席位门——只允许「当前生效
+               计划归属部门的填报人席位」（withdrawControlVisible，判定式见该 computed 注释）
+               显示；负责人/审核人/校领导与跨部门查看者隐藏（不是置灰）。填报人看到的
+               置灰/tooltip 口径一字不动。 -->
           <el-button
+            v-if="withdrawControlVisible"
             :type="
               activeTaskTabName === 'college'
                 ? collegeTabDistributeButton.buttonType
