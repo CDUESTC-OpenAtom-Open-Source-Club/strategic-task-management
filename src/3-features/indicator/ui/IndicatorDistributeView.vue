@@ -44,6 +44,8 @@ import {
 } from '@/features/indicator/model/indicatorAttachmentSummary'
 import { DistributionApprovalProgressDrawer } from '@/features/approval'
 import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
+// 2026-11-12 防漂移：导出列头与导入模板共用同一权重文案（后端按表头全等匹配，改文案需同步后端别名表）
+import { WEIGHT_COLUMN_HEADER } from '@/features/import/lib/importTemplate'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
 import { MUTATION_FIELDS_INDICATOR_NAME } from '@/features/indicator/model/mutationHistory'
 import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
@@ -457,7 +459,7 @@ const buildDistributionExportColumns = (
     },
     // 2026-11-11 用户拍板：权重全局统一纯数字口径，导出与导入模板同口径
     {
-      header: '权重（纯数字）',
+      header: WEIGHT_COLUMN_HEADER,
       width: 16,
       align: 'center',
       getValue: row => Number(row.child.weight || 0)

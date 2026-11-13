@@ -3,14 +3,16 @@ import type { BusinessImportType } from '@/features/import/api/businessImport'
 import {
   buildImportTemplateFileName,
   buildImportTemplateSheet,
-  getImportTemplateGuide
+  getImportTemplateGuide,
+  WEIGHT_COLUMN_HEADER
 } from '@/features/import/lib/importTemplate'
 
 const importTypes: BusinessImportType[] = ['strategic-task', 'distribution']
 
 // 2026-10-31 用户终版表头（职能部门 7 列 / 学院 8 列）；
 // 2026-11-11 用户拍板：下发备注全端隐藏，两模板均不再带「下发备注」列；
-// 2026-11-11 用户拍板：权重列全局统一纯数字口径（去掉 10 / 10% / 0.1 三格式混用）
+// 2026-11-11 用户拍板：权重列全局统一纯数字口径（去掉 10 / 10% / 0.1 三格式混用）；
+// 2026-11-12 防漂移：权重列头文案引用共享常量 WEIGHT_COLUMN_HEADER
 const expectedHeaders: Record<BusinessImportType, string[]> = {
   'strategic-task': [
     '序号',
@@ -19,7 +21,7 @@ const expectedHeaders: Record<BusinessImportType, string[]> = {
     '任务类型',
     '核心指标',
     '指标类型',
-    '权重（纯数字）'
+    WEIGHT_COLUMN_HEADER
   ],
   distribution: [
     '序号',
@@ -29,7 +31,7 @@ const expectedHeaders: Record<BusinessImportType, string[]> = {
     '核心指标类型',
     '子指标名称',
     '指标类型',
-    '权重（纯数字）'
+    WEIGHT_COLUMN_HEADER
   ]
 }
 

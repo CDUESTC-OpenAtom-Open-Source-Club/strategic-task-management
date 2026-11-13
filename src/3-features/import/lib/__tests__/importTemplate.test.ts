@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   buildImportTemplateSheet,
   getImportTemplateGuide,
-  type ImportTemplateParentSeed
+  type ImportTemplateParentSeed,
+  WEIGHT_COLUMN_HEADER
 } from '../importTemplate'
 
 describe('getImportTemplateGuide 学院模板加「任务类型」列（2026-10-31 终版表头加列定案）', () => {
@@ -17,7 +18,7 @@ describe('getImportTemplateGuide 学院模板加「任务类型」列（2026-10-
       '核心指标类型',
       '子指标名称',
       '指标类型',
-      '权重（纯数字）'
+      WEIGHT_COLUMN_HEADER
     ])
   })
 
@@ -121,7 +122,7 @@ describe('buildImportTemplateSheet 职能部门模板（部门列整列合并）
       '任务类型',
       '核心指标',
       '指标类型',
-      '权重（纯数字）'
+      WEIGHT_COLUMN_HEADER
     ])
   })
 })

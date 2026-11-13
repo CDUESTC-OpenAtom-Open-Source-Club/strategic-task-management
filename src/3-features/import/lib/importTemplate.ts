@@ -6,6 +6,13 @@ import {
   type ExcelExportSheet
 } from '@/shared/lib/export/excel'
 
+/**
+ * 2026-11-12 权重列头唯一文案源（模板/导出/测试统一引用）：
+ * 后端 ExcelBusinessImportParser 按表头全等匹配，文案漂移会导致权重整列不映射
+ * （weight=null 按默认 100 处理）——改文案必须同步后端别名表，单点改这里。
+ */
+export const WEIGHT_COLUMN_HEADER = '权重（纯数字）'
+
 export interface ImportTemplateGuideColumn {
   key: string
   label: string
@@ -67,7 +74,7 @@ const strategicImportGuide: ImportTemplateGuide = {
     { key: 'indicatorName', label: '核心指标', required: true },
     { key: 'indicatorType', label: '指标类型', required: true },
     // 2026-11-11 用户拍板：权重只收纯数字（去掉 10 / 10% / 0.1 三格式混用），表头直接标口径
-    { key: 'weight', label: '权重（纯数字）' }
+    { key: 'weight', label: WEIGHT_COLUMN_HEADER }
   ],
   rows: [
     // 示例演示层级化版式（组列=序号/战略任务/任务类型按组竖向合并，部门列整列合并）：
@@ -172,7 +179,7 @@ const distributionImportGuide: ImportTemplateGuide = {
     { key: 'indicatorName', label: '子指标名称', required: true },
     { key: 'indicatorType', label: '指标类型', required: true },
     // 2026-11-11 用户拍板：权重只收纯数字（去掉 10 / 10% / 0.1 三格式混用），表头直接标口径
-    { key: 'weight', label: '权重（纯数字）' }
+    { key: 'weight', label: WEIGHT_COLUMN_HEADER }
   ],
   rows: [
     // 示例演示「一个父级核心指标拆多个子指标」：父级 1 占三行（序号/任务类型/核心指标/核心指标类型合并，

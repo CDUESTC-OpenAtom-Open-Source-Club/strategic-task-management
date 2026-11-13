@@ -9,6 +9,8 @@ import {
 import { useLatestIndicatorFill } from '@/features/indicator/model/useLatestIndicatorFill'
 import { useIndicatorAppraisal } from '@/features/indicator/model/useIndicatorAppraisal'
 import { getAppraisalLevelDisplay } from '@/features/indicator/lib/appraisalGate'
+// 2026-11-12 防漂移：导出列头与导入模板共用同一权重文案（后端按表头全等匹配，改文案需同步后端别名表）
+import { WEIGHT_COLUMN_HEADER } from '@/features/import/lib/importTemplate'
 import TaskIndicatorTree from './TaskIndicatorTree.vue'
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
@@ -1094,7 +1096,7 @@ const buildStrategicExportColumns = (
     { header: '指标类型', width: 12, align: 'center', getValue: row => row.type1 || '-' },
     // 2026-11-11 用户拍板：权重全局统一纯数字口径，导出与导入模板同口径
     {
-      header: '权重（纯数字）',
+      header: WEIGHT_COLUMN_HEADER,
       width: 16,
       align: 'center',
       getValue: row => Number(row.weight || 0)
