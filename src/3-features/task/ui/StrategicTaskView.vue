@@ -3138,7 +3138,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                 ref="addRowFormRef"
                 class="add-row-form"
               >
-                <h3 class="form-title">新增子指标（挂到核心指标下）</h3>
+                <h3 class="form-title">新增子指标</h3>
                 <div class="add-form-content">
                   <el-form label-width="80px">
                     <!-- 2026-11-13（方案甲恢复）：父级「关联指标」必选——新增行与导入模板同一
@@ -3185,8 +3185,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                           <template #label
                             ><span class="required-asterisk">*</span>指标类型</template
                           >
-                          <!-- 锚点口径：子指标类型随父级带出并锁定（提交侧 model 以父级类型为准） -->
-                          <el-select v-model="newRow.type1" style="width: 100%" disabled>
+                          <!-- 2026-11-13（对齐 main 原版）：指标类型可编辑，不随父级锁定。
+                               选中父级时仅作为默认值带出，用户可改（与 main 原版一致）。 -->
+                          <el-select v-model="newRow.type1" style="width: 100%">
                             <el-option label="定性" value="定性" />
                             <el-option label="定量" value="定量" />
                           </el-select>

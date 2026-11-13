@@ -133,8 +133,11 @@ describe('学院「新增行」父级锚点接线（方案甲 2026-11-13 源码�
     expect(handler).toContain("newRow.value.type1 = parent.type1 === '定性' ? '定性' : '定量'")
     expect(handler).toContain('newRow.value.type2 = getIndicatorCategoryLabel(parent)')
     expect(handler).toContain("newRow.value.taskContent = String(parent.taskContent || '')")
-    // 学院表单的指标类型选择器锁定为父级带出值（锚点只读，同导入「核心指标类型」列）
-    expect(findCollegeForm()).toMatch(/v-model="newRow\.type1"[\s\S]{0,200}disabled/)
+    // 2026-11-13（对齐 main 原版）：指标类型回到可编辑——父级带出的类型仅作默认值，
+    // 用户可改（main 原版即如此，锁定是方案甲实现时的过度约束）。类型一致性仍由提交侧
+    // `const childIndicatorType` 兜底（见下方用例）。
+    expect(findCollegeForm()).toMatch(/v-model="newRow\.type1"[\s\S]{0,120}<el-option label="定性"/)
+    expect(findCollegeForm()).not.toMatch(/v-model="newRow\.type1"[\s\S]{0,200}disabled/)
   })
 
   it('提交必带父级：未选拦「请选择关联的核心指标」，payload 直传 parentIndicatorId 不再可选', () => {
@@ -175,8 +178,8 @@ describe('学院「新增行」父级锚点接线（方案甲 2026-11-13 源码�
       /<template #label><span class="required-asterisk">\*<\/span>关联指标/
     )
     expect(functionalForm).not.toContain('v-model="newRow.parentIndicatorId"')
-    // 学院表单标题保留（方案甲下语义恢复正确）
-    expect(viewSource).toContain('新增子指标（挂到核心指标下）')
+    // 学院表单标题（2026-11-13 对齐 main 原版：简化为「新增子指标」，与 main 一致）
+    expect(viewSource).toContain('<h3 class="form-title">新增子指标</h3>')
   })
 
   it('model 锚点基座接线：collegeParentIndicatorOptions 消费 lib 纯函数并按右侧下拉部门过滤', () => {
