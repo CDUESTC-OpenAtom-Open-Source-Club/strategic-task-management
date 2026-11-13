@@ -371,6 +371,27 @@ describe('approval-utils', () => {
     expect(resolveInstanceRejectionComment({})).toBe('')
   })
 
+  // 2026-11-12（审批抽屉驳回原因汇总行上报场景修复）：后端快照服务只对
+  // entity_type='PLAN' 填充 lastRejectReason → 上报场景 fallbackReason=null，
+  // 汇总行旧绑定 activePlanWorkflow?.lastRejectReason 必为空 → 行隐藏。
+  // rejectionReason 改绑后即使 fallback 不可用，实例自身 REJECTED 步骤意见仍能显示。
+  it('resolves the report-instance REJECTED comment when the PLAN-level fallback is null (上报场景 fallback 不可用)', () => {
+    // 上报实例（PLAN_REPORT）自身步骤带 REJECTED 意见，PLAN 级 lastRejectReason=null
+    const reportInstanceSteps = [
+      { taskId: '801', stepNo: 1, status: 'APPROVED', comment: '初审同意' },
+      { taskId: '802', stepNo: 2, status: 'REJECTED', comment: '数据口径有误，请核对后重新上报' }
+    ]
+    expect(
+      resolveInstanceRejectionComment({
+        taskSources: [reportInstanceSteps],
+        fallbackReason: null
+      })
+    ).toBe('数据口径有误，请核对后重新上报')
+    // 对照：同场景若仍绑 PLAN 级 lastRejectReason（修复前口径）则无任何文案可取
+    expect(resolveInstanceRejectionComment({ fallbackReason: null })).toBe('')
+    expect(resolveInstanceRejectionComment({ taskSources: [[]], fallbackReason: null })).toBe('')
+  })
+
   it('keeps the distribution-instance behavior intact (HIGH② 下发实例不回归)', () => {
     // ③ 下发实例（PLAN 分发链）自身被驳回：链上 REJECTED 步骤意见与
     // PLAN 级 lastRejectReason 同源，实例步骤优先取到同一文案
