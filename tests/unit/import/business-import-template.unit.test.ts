@@ -272,21 +272,32 @@ describe('import/lib/importTemplate', () => {
     expect(rules).toContain('基础性')
   })
 
-  it('学院模板规则写明核心指标类型为只读校验列', () => {
+  // 2026-11-12（低⑥·A2 缺陷 D1 文案纠偏）：学院页签模板退回通用示例行、不预填系统数据，
+  // 「填写说明」必须与实际一致——父级列不预填、须与下发内容完全一致；后端
+  // applyDistributionAnchor 对核心指标类型不一致是「阻断点名」而非「警告不阻断」，
+  // 旧文案（已预填/只读校验/不阻断）与行为矛盾，回归锁改按准确语义断言
+  it('学院模板规则写明父级列不预填、须与下发内容完全一致（锚点校验不通过）', () => {
     const rules = getImportTemplateGuide('distribution').rules.join('\n')
 
-    expect(rules).toContain('核心指标类型')
-    expect(rules).toContain('只读校验')
-    expect(rules).toContain('不阻断')
+    expect(rules).toContain('不预填系统数据')
+    expect(rules).toContain('须与系统下发内容完全一致')
+    expect(rules).toContain('锚点校验不通过')
+    // 旧文案的误导性表述不得回归（模板为通用示例行，并非系统预填）
+    expect(rules).not.toContain('模板已按系统数据预填')
+    expect(rules).not.toContain('仅做只读校验')
+    expect(rules).not.toContain('不阻断导入')
+    // 示例行是演示数据，须替换为真实内容（A2 实测：照抄示例行会导入失败）
+    expect(rules).toContain('演示数据')
   })
 
-  it('学院模板规则写明「任务类型」列为系统预填锚点只读（不一致阻断点名）', () => {
+  it('学院模板规则写明「任务类型」不预填、按父级所属任务填写（不一致阻断点名）', () => {
     const rules = getImportTemplateGuide('distribution').rules.join('\n')
 
-    // 2026-10-31 终版表头加列：任务类型=父级所属任务类型，系统预填、只读、不一致→阻断
+    // 2026-11-12（低⑥）：任务类型列不预填系统数据，用户按父级所属任务填写，不一致→阻断
     expect(rules).toContain('「任务类型」为父级核心指标所属战略任务的类型')
+    expect(rules).toContain('不预填系统数据')
     expect(rules).toContain('阻断导入并点名对应行')
-    // 该列为预填信息，不作为用户输入落库
+    // 子指标任务类别由父级继承链决定，不作为用户输入落库
     expect(rules).toContain('无需填写')
   })
 
