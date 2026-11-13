@@ -6,6 +6,7 @@ import { shallowMount, type VueWrapper } from '@vue/test-utils'
 import { flushPromises } from '../../setup'
 
 import {
+  hasCollegeMutationApprovalInFlight,
   isReportApprovalStatusInFlight,
   mergeReturnedMutationChains,
   resolveCollegeReturnedChainOwnerOrgId,
@@ -299,6 +300,11 @@ function createViewModel(overrides: Record<string, unknown> = {}) {
     collegeTabTwoStepReady: ref(true),
     isReportApprovalInFlight: ref(false),
     isMutationApprovalInFlight: ref(false),
+    // 2026-11-12（低⑩）：学院口径在审异动判定（新增行互斥）——基线不锁，
+    // 用例按需覆写；缺省交给 Proxy 会变成真值函数，新增行恒灰干扰断言
+    isCollegeMutationApprovalInFlight: ref(false),
+    canEdit: ref(true),
+    isCurrentPlanUnderApproval: ref(false),
     canWithdrawMutationInFlight: ref(false),
     effectivePlanContext: ref({ source: 'college', plan: null }),
     handleWithdrawMutationBatch: vi.fn(),
@@ -706,6 +712,28 @@ describe('task/lib/collegeTabDistribute · 学院口径退回链加载（C3-D1�
     })
   })
 
+  describe('hasCollegeMutationApprovalInFlight（学院口径在审异动，低⑩）', () => {
+    const entry = (targetOrgId: number | null) => ({ targetOrgId, instanceId: 1 })
+
+    it('所选学院链上存在在审异动（targetOrgId=学院 org）→ true（主清单与链下追回清单合并后判定）', () => {
+      expect(hasCollegeMutationApprovalInFlight([entry(56), entry(44)], 56)).toBe(true)
+    })
+
+    it('其他学院的在审异动不串台（D-02 同方向：学院口径各自独立）', () => {
+      expect(hasCollegeMutationApprovalInFlight([entry(57)], 56)).toBe(false)
+    })
+
+    it('学院未选 / org 解析失败 → 恒 false（不锁新增行）', () => {
+      expect(hasCollegeMutationApprovalInFlight([entry(56)], null)).toBe(false)
+      expect(hasCollegeMutationApprovalInFlight([entry(56)], Number.NaN)).toBe(false)
+      expect(hasCollegeMutationApprovalInFlight([entry(56)], 0)).toBe(false)
+    })
+
+    it('targetOrgId 缺失的条目不参与判定（无法归属到学院链）', () => {
+      expect(hasCollegeMutationApprovalInFlight([{ instanceId: 1 }], 56)).toBe(false)
+    })
+  })
+
 })
 
 describe('学院页签驳回闭环与在审互斥（2026-11-12 组件接线）', () => {
@@ -788,6 +816,48 @@ describe('学院页签驳回闭环与在审互斥（2026-11-12 组件接线）',
     wrapper.unmount()
   })
 
+  it('低⑩（C3 O-3）学院口径异动在审：学院页签「新增行」置灰 + 同款互斥 tooltip', async () => {
+    const wrapper = mountView(
+      collegeTabReady({
+        isCollegeMutationApprovalInFlight: ref(true)
+      })
+    )
+    await switchToCollegeTab(wrapper)
+
+    const addRow = findButtonByText(wrapper, '新增行')
+    expect(addRow).toBeDefined()
+    expect(addRow!.attributes('disabled')).toBeDefined()
+    expect(addRow!.attributes('title')).toBe(
+      '异动审批进行中，暂不能新增：等审批结束或先撤回/取消本次异动'
+    )
+    wrapper.unmount()
+  })
+
+  it('低⑩（零回归）学院口径在审只锁学院页签：职能页签「新增行」不受影响', async () => {
+    const wrapper = mountView({
+      collegeFillStatusScope: ref(false),
+      isCollegeMutationApprovalInFlight: ref(true)
+    })
+
+    const addRow = findButtonByText(wrapper, '新增行')
+    expect(addRow).toBeDefined()
+    expect(addRow!.attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('低⑩（C2 O-1）计划/上报审批在审 tooltip 文案写准：上报与异动并提，不再只说「计划正在审批中」', async () => {
+    const wrapper = mountView({
+      isCurrentPlanUnderApproval: ref(true)
+    })
+
+    const addRow = findButtonByText(wrapper, '新增行')
+    expect(addRow).toBeDefined()
+    expect(addRow!.attributes('title')).toBe(
+      '当前计划的上报/异动审批进行中，暂不能新增：请等审批结束或先撤回本次审批'
+    )
+    wrapper.unmount()
+  })
+
 })
 
 /**
@@ -838,6 +908,13 @@ describe('useStrategicTaskView / StrategicTaskView 学院退回链接线契约�
     )
     expect(source).toMatch(
       /collegeDispatchDeptFilter\.value = selection\.dept\s*(?:\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*)?void loadCollegeReturnedMutationChains\(\)/
+    )
+  })
+
+  it('view：新增行互斥补上学院口径在审判定（仅挂学院页签分支）', () => {
+    const source = readViewSource()
+    expect(source).toMatch(
+      /\(activeTaskTabName === 'college' && isCollegeMutationApprovalInFlight\)/
     )
   })
 })

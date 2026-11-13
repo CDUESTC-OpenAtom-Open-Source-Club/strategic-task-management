@@ -172,3 +172,32 @@ export const mergeReturnedMutationChains = <T extends ReturnedMutationChainLike>
   })
   return additions.length > 0 ? [...existing, ...additions] : existing
 }
+
+/** 学院页签在审异动判定条目的最小结构（与 mutation-approvals 响应映射对齐） */
+export interface CollegeMutationApprovalEntryLike {
+  targetOrgId?: number | string | null
+  [key: string]: unknown
+}
+
+/**
+ * 学院页签「新增行」在审互斥判定（C3 观察项 O-3）：所选学院的链上是否存在
+ * 进行中的异动审批。
+ *
+ * <p>职能页签口径 = 本部门在审异动清单非空（isMutationApprovalInFlight，只读
+ * departmentMutationPendingApprovals）；学院页签对齐同款判定，但数据源必须落到
+ * **学院链**：异动实例 source=战略发展部/职能部门、target=学院，按职能部门 orgId
+ * 的主清单大多查不到（owner=35、target=学院都不等于职能部门 orgId），只有
+ * departmentChainMutationPendingApprovals（链下学院追回清单）按学院组织补查过。
+ * 两份清单合并后按 targetOrgId = 学院组织 id 收口 —— 锁的是「这个学院」的在审异动，
+ * 不把其他学院的在审异动串进来（学院口径各自独立，与 D-02 解耦方向一致）。</p>
+ */
+export const hasCollegeMutationApprovalInFlight = (
+  entries: CollegeMutationApprovalEntryLike[],
+  collegeOrgId: number | null
+): boolean => {
+  const orgId = Number(collegeOrgId)
+  if (!Number.isFinite(orgId) || orgId <= 0) {
+    return false
+  }
+  return entries.some(entry => Number(entry.targetOrgId) === orgId)
+}

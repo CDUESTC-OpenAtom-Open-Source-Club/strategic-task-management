@@ -241,8 +241,9 @@ const {
   collegeFillStatusScope,
   isReportApprovalInFlight,
   isMutationApprovalInFlight,
-  // 2026-11-12（C3-D1）：学院页签退回链补拉
+  // 2026-11-12（C3-D1）：学院页签退回链补拉 + 学院口径在审异动判定（新增行互斥）
   loadCollegeReturnedMutationChains,
+  isCollegeMutationApprovalInFlight,
   // 2026-11-11（学院页签按钮体系修正）：生效计划上下文（学院页签 → FUNC_TO_COLLEGE
   // 子计划）+ 异动在审可撤判定/执行体（「撤回异动」真撤回入口）
   effectivePlanContext,
@@ -1736,7 +1737,13 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                必须挂到所选核心指标下（复用指标下发与管理页的新增子指标契约） -->
           <!-- 2026-10-30 用户定案（仿 M5 互斥可见化）：异动审批在途时新增入口置灰 + tooltip。
                口径与后端 isOrgLockedByMutation 一致，只认 IN_REVIEW；
-               退回待重报（WITHDRAWN 活链）不锁——新增行会成为草稿随下次发起提交 -->
+               退回待重报（WITHDRAWN 活链）不锁——新增行会成为草稿随下次发起提交。
+               2026-11-12（低⑩·C3 观察项 O-3 对齐）：学院页签补上学院口径在审异动
+               （isCollegeMutationApprovalInFlight，主清单+链下学院追回清单按所选学院
+               targetOrgId 收口）——此前学院子指标异动在审时新增行仍可点。
+               tooltip 文案同步写准（C2 观察项 O-1）：isCurrentPlanUnderApproval 的实际
+               触发源可能是上报审批在审（shouldPreferCurrentReportWorkflow 优先上报链），
+               「计划正在审批中」会让用户误以为是下发审批在途，改为上报/异动并提。 -->
           <el-button
             type="primary"
             size="small"
@@ -1744,20 +1751,23 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
               !canEdit ||
               isCurrentPlanUnderApproval ||
               isMutationApprovalInFlight ||
+              (activeTaskTabName === 'college' && isCollegeMutationApprovalInFlight) ||
               (activeTaskTabName === 'college' && (!selectedCollege || !collegeDispatchDeptFilter))
             "
             :title="
               !canEdit
                 ? '当前角色仅可查看，填报人才能新增'
                 : isCurrentPlanUnderApproval
-                  ? '计划正在审批中，暂不能新增：请等审批结束或先撤回本次审批'
+                  ? '当前计划的上报/异动审批进行中，暂不能新增：请等审批结束或先撤回本次审批'
                   : isMutationApprovalInFlight
                     ? '异动审批进行中，暂不能新增：等审批结束或先撤回/取消本次异动'
-                    : activeTaskTabName === 'college' && !selectedCollege
-                      ? '请先在左侧选择学院'
-                      : activeTaskTabName === 'college' && !collegeDispatchDeptFilter
-                        ? '请先选择职能部门'
-                        : ''
+                    : activeTaskTabName === 'college' && isCollegeMutationApprovalInFlight
+                      ? '异动审批进行中，暂不能新增：等审批结束或先撤回/取消本次异动'
+                      : activeTaskTabName === 'college' && !selectedCollege
+                        ? '请先在左侧选择学院'
+                        : activeTaskTabName === 'college' && !collegeDispatchDeptFilter
+                          ? '请先选择职能部门'
+                          : ''
             "
             @click.stop="handleAddNewRow"
           >

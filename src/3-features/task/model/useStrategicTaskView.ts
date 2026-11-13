@@ -62,6 +62,7 @@ import {
   isDistributedCoreIndicator
 } from '@/features/task/lib/collegeDispatchEligibility'
 import {
+  hasCollegeMutationApprovalInFlight,
   isReportApprovalStatusInFlight,
   mergeReturnedMutationChains,
   resolveCollegeReturnedChainOwnerOrgId,
@@ -6462,6 +6463,24 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     () => departmentMutationPendingApprovals.value.length > 0
   )
 
+  // 2026-11-12（C3 观察项 O-3 → 低⑩修复）：学院页签「新增行」在审互斥。
+  // 职能页签口径 = isMutationApprovalInFlight（本部门在审异动清单非空）；学院子指标
+  // 异动实例 source=战略发展部/职能部门、target=学院，按职能部门 orgId 的主清单查不到
+  // （C3：异动提交后学院页签「新增行」仍可点）。对齐职能页签同款判定：主清单 +
+  // 链下学院追回清单合并后，按 targetOrgId = 所选学院组织 id 收口 —— 只锁当前学院的
+  // 在审异动，不把其他学院的串进来。仅消费于学院页签的「新增行」禁用条件，
+  // 职能页签与发起异动互斥锁（isMutationApprovalInFlight 既有口径）不受影响。
+  // 纯函数实现与单测共用（collegeTabDistribute.hasCollegeMutationApprovalInFlight）。
+  const isCollegeMutationApprovalInFlight = computed(() =>
+    hasCollegeMutationApprovalInFlight(
+      [
+        ...departmentMutationPendingApprovals.value,
+        ...departmentChainMutationPendingApprovals.value
+      ],
+      resolveDepartmentIdByName(selectedCollege.value)
+    )
+  )
+
   // 2026-10-30（多态撤回·异动分支）：工具栏「撤回」在异动在审时是否按「撤回异动」处理。
   // 口径与审批中心异动卡撤回（原 useApprovalProgressWorkflow.canCurrentUserWithdrawMutation）同源：
   // 仅发起人（submitter_name 与当前登录人姓名比对）且未过撤回窗口（当前节点不含
@@ -8212,8 +8231,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     refreshCurrentPlanFillApprovalSummary,
     isReportApprovalInFlight,
     isMutationApprovalInFlight,
-    // 2026-11-12（C3-D1）：学院页签退回链补拉
+    // 2026-11-12（C3-D1）：学院页签退回链补拉 + 学院口径在审异动判定（新增行互斥）
     loadCollegeReturnedMutationChains,
+    isCollegeMutationApprovalInFlight,
     // 2026-11-11（学院页签按钮体系修正）：学院页签按钮按子计划相位分流所需——
     // 生效计划上下文（学院页签 → FUNC_TO_COLLEGE 子计划）与异动在审可撤判定/执行体
     effectivePlanContext,
