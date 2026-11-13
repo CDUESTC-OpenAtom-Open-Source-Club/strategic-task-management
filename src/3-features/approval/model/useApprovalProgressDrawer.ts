@@ -90,6 +90,7 @@ import { resolveApprovalRoute } from '@/features/approval/lib/approvalNotificati
 import { showUnfinishedAppraisalBlockNotice } from '@/features/approval/lib/unfinishedAppraisalBlockNotice'
 import {
   buildPlanReferenceLabel,
+  resolveInstanceRejectionComment,
   resolvePlanInstanceReferenceLabel,
   toPositiveNumber
 } from '@/features/approval/lib/approval-utils'
@@ -3487,8 +3488,20 @@ export function useApprovalProgressDrawer(
 
   // 驳回原因
   const rejectionReason = computed(() => {
-    if (activePlanWorkflow.value?.lastRejectReason) {
-      return activePlanWorkflow.value.lastRejectReason
+    // 2026-11-12（HIGH② 串实例修复）：实例步骤优先——「审批流程」页签当前渲染
+    // 哪条实例的步骤链（焦点实例 → 计划下发链），驳回原因就取那条实例自身
+    // REJECTED 步骤的意见（step_no 最大的一条）。PLAN 级 lastRejectReason 是
+    // 下发实例的最后驳回意见，只作实例步骤不可用时的兜底，不再串到上报实例上
+    // （B2-部门上报驳回后收尾：实例 #6 显示了实例 #3 的意见）。
+    const instanceReason = resolveInstanceRejectionComment({
+      taskSources: [
+        workflowFocusInstance.value ? focusWorkflowDetail.value?.tasks : null,
+        planWorkflowTasks.value
+      ],
+      fallbackReason: activePlanWorkflow.value?.lastRejectReason
+    })
+    if (instanceReason) {
+      return instanceReason
     }
 
     const indicator = currentIndicator.value

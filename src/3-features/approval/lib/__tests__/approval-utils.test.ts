@@ -10,6 +10,7 @@ import {
   parsePositiveUserId,
   resolveApprovalRouteTitle,
   resolveHistoryStatusTag,
+  resolveInstanceRejectionComment,
   resolvePlanApprovalTypeLabel,
   resolvePlanConfirmWorkflowName,
   resolvePlanInstanceReferenceLabel,
@@ -266,5 +267,132 @@ describe('approval-utils', () => {
         referenceLabel
       })
     ).toBe(referenceLabel)
+  })
+
+  // 2026-11-12（HIGH② 审批抽屉「驳回原因」串实例修复）：实例自身 REJECTED
+  // 步骤意见优先，PLAN 级 lastRejectReason 只作兜底——上报实例 #6 的抽屉
+  // 不再串显下发实例 #3 的驳回意见（B2-部门上报驳回后收尾，截图 02d/04b）。
+  // taskSources 顺序模拟两份 composable 接线（焦点/上报/异动/计划链按渲染优先级）。
+  it('prefers the instance REJECTED step comment over the PLAN-level lastRejectReason (HIGH② 串实例修复)', () => {
+    const planLevelReason = '组6部门上报驳回：台账佐证不足，退回审批人补充后再报'
+    // 上报实例 #6：step3 被驳回，意见挂在实例自身步骤上
+    const reportInstanceSteps = [
+      { taskId: '601', stepNo: 1, status: 'APPROVED', comment: '同意' },
+      { taskId: '602', stepNo: 2, status: 'APPROVED', comment: '通过' },
+      {
+        taskId: '603',
+        stepNo: 3,
+        status: 'REJECTED',
+        comment: '台账佐证不足，请补充 11 月支出凭证后重新提交'
+      }
+    ]
+    // ① 实例带 REJECTED 步骤 → 取该步骤 comment，绝不是 PLAN 级意见
+    expect(
+      resolveInstanceRejectionComment({
+        taskSources: [reportInstanceSteps],
+        fallbackReason: planLevelReason
+      })
+    ).toBe('台账佐证不足，请补充 11 月支出凭证后重新提交')
+    // 多轮被拒（step1 与 step3 均 REJECTED）→ 取 step_no 最大的那条
+    expect(
+      resolveInstanceRejectionComment({
+        taskSources: [
+          [
+            { taskId: '601', stepNo: 1, status: 'REJECTED', comment: '第一轮：附件缺失' },
+            { taskId: '602', stepNo: 2, status: 'APPROVED', comment: '' },
+            { taskId: '603', stepNo: 3, status: 'REJECTED', comment: '第三轮：台账佐证不足' }
+          ]
+        ],
+        fallbackReason: planLevelReason
+      })
+    ).toBe('第三轮：台账佐证不足')
+    // stepNo 平手看 taskId（与异动任务排序口径一致）
+    expect(
+      resolveInstanceRejectionComment({
+        taskSources: [
+          [
+            { taskId: '711', stepNo: 2, status: 'REJECTED', comment: 'taskId 较小' },
+            { taskId: '712', stepNo: 2, status: 'REJECTED', comment: 'taskId 较大' }
+          ]
+        ],
+        fallbackReason: ''
+      })
+    ).toBe('taskId 较大')
+    // REJECTED 步骤 comment 为空时不采纳，继续找同链其他 REJECTED 步骤
+    expect(
+      resolveInstanceRejectionComment({
+        taskSources: [
+          [
+            { taskId: '601', stepNo: 3, status: 'REJECTED', comment: '   ' },
+            { taskId: '600', stepNo: 1, status: 'REJECTED', comment: '附件缺失' }
+          ]
+        ],
+        fallbackReason: planLevelReason
+      })
+    ).toBe('附件缺失')
+    // 来源优先级：焦点实例链命中即停，不串看后续计划链
+    expect(
+      resolveInstanceRejectionComment({
+        taskSources: [
+          [{ taskId: '603', stepNo: 3, status: 'REJECTED', comment: '焦点实例自己的意见' }],
+          [{ taskId: '303', stepNo: 3, status: 'REJECTED', comment: '下发链的意见' }]
+        ],
+        fallbackReason: planLevelReason
+      })
+    ).toBe('焦点实例自己的意见')
+  })
+
+  it('falls back to the PLAN-level lastRejectReason when the instance has no REJECTED step (HIGH② 回退口径)', () => {
+    const planLevelReason = '组6部门上报驳回：台账佐证不足，退回审批人补充后再报'
+    // ② 实例步骤全非 REJECTED（如审批中/已通过）→ 回退 PLAN 级
+    expect(
+      resolveInstanceRejectionComment({
+        taskSources: [
+          [
+            { taskId: '601', stepNo: 1, status: 'APPROVED', comment: '同意' },
+            { taskId: '602', stepNo: 2, status: 'PENDING', comment: '' }
+          ]
+        ],
+        fallbackReason: planLevelReason
+      })
+    ).toBe(planLevelReason)
+    // 实例步骤不可用（详情未加载/空链）→ 同样回退 PLAN 级（原行为）
+    expect(
+      resolveInstanceRejectionComment({
+        taskSources: [[], null, undefined],
+        fallbackReason: planLevelReason
+      })
+    ).toBe(planLevelReason)
+    expect(resolveInstanceRejectionComment({ fallbackReason: planLevelReason })).toBe(
+      planLevelReason
+    )
+    // 全链不可用且 PLAN 级为空 → 返回空串（调用方继续走指标级 statusAudit 兜底）
+    expect(resolveInstanceRejectionComment({ taskSources: [[]], fallbackReason: '' })).toBe('')
+    expect(resolveInstanceRejectionComment({})).toBe('')
+  })
+
+  it('keeps the distribution-instance behavior intact (HIGH② 下发实例不回归)', () => {
+    // ③ 下发实例（PLAN 分发链）自身被驳回：链上 REJECTED 步骤意见与
+    // PLAN 级 lastRejectReason 同源，实例步骤优先取到同一文案
+    const dispatchReason = '预算科目不符合口径，请调整后重新报送'
+    const dispatchInstanceSteps = [
+      { taskId: '301', stepNo: 1, status: 'APPROVED', comment: '初审通过' },
+      { taskId: '302', stepNo: 2, status: 'PENDING', comment: '' },
+      { taskId: '303', stepNo: 3, status: 'REJECTED', comment: dispatchReason }
+    ]
+    expect(
+      resolveInstanceRejectionComment({
+        taskSources: [dispatchInstanceSteps],
+        fallbackReason: dispatchReason
+      })
+    ).toBe(dispatchReason)
+    // 下发实例步骤不可用时仍回退 PLAN 级（修复前唯一路径，行为保持）
+    expect(
+      resolveInstanceRejectionComment({ taskSources: [null], fallbackReason: dispatchReason })
+    ).toBe(dispatchReason)
+    // PLAN 级意见为原始字符串原样返回（不做 trim/改写，兼容旧显示）
+    expect(
+      resolveInstanceRejectionComment({ taskSources: [[]], fallbackReason: '  保留原样  ' })
+    ).toBe('  保留原样  ')
   })
 })

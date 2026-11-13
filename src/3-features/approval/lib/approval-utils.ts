@@ -175,6 +175,62 @@ export function resolvePlanInstanceReferenceLabel(params: {
   return params.referenceLabel
 }
 
+/**
+ * 2026-11-12（审批抽屉「驳回原因」串实例修复 HIGH②）：
+ * 实例自身审批步骤里 status=REJECTED 的 step.comment 才是「这条实例」的驳回意见
+ * （多轮被拒取 step_no 最大的一条；stepNo 平手看 taskId，与异动任务排序口径一致）。
+ * 此前 rejectionReason 只读 PLAN 级 lastRejectReason（下发实例的最后驳回意见），
+ * 上报实例 #6 的抽屉显示的是下发实例 #3 的意见——串实例。
+ * taskSources 按「审批流程」页签当前渲染的步骤链优先级依次传入
+ * （焦点实例 → 上报 → 异动 → 计划下发链），第一个解析出 REJECTED 意见的来源生效；
+ * 全部不可用才回退 fallbackReason（PLAN 级 lastRejectReason），维持旧显示兜底。
+ * useApprovalProgressState / useApprovalProgressDrawer 两份 rejectionReason 同口径复用。
+ */
+export function resolveInstanceRejectionComment(params: {
+  taskSources?: ReadonlyArray<readonly unknown[] | null | undefined>
+  fallbackReason?: unknown
+}): string {
+  for (const source of params.taskSources ?? []) {
+    const tasks = Array.isArray(source) ? source : []
+    let best: { stepNo: number; taskId: number; comment: string } | null = null
+    for (const raw of tasks) {
+      if (!raw || typeof raw !== 'object') {
+        continue
+      }
+      const task = raw as Record<string, unknown>
+      if (String(task.status ?? '').trim().toUpperCase() !== 'REJECTED') {
+        continue
+      }
+      const comment = typeof task.comment === 'string' ? task.comment.trim() : ''
+      if (!comment) {
+        continue
+      }
+      const stepNo = Number(task.stepNo)
+      const taskId = Number(task.taskId)
+      const candidate = {
+        stepNo: Number.isFinite(stepNo) ? stepNo : Number.NEGATIVE_INFINITY,
+        taskId: Number.isFinite(taskId) ? taskId : Number.NEGATIVE_INFINITY,
+        comment
+      }
+      if (
+        !best ||
+        candidate.stepNo > best.stepNo ||
+        (candidate.stepNo === best.stepNo && candidate.taskId > best.taskId)
+      ) {
+        best = candidate
+      }
+    }
+    if (best) {
+      return best.comment
+    }
+  }
+  const fallback = params.fallbackReason
+  if (typeof fallback === 'string') {
+    return fallback
+  }
+  return fallback ? String(fallback) : ''
+}
+
 export function resolveHistoryStatusTag(status?: string): ApprovalStatusTag {
   const normalized = String(status || '').toUpperCase()
   if (normalized === 'APPROVED') {
