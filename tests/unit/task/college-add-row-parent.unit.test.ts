@@ -188,3 +188,23 @@ describe('学院「新增行」父级锚点接线（方案甲 2026-11-13 源码�
     expect(modelSource).toMatch(/type1: String\(typed\.type1 \|\| ''\)/)
   })
 })
+
+describe('学院导入模板父级预填 seeds（方案甲 2026-11-13 接线契约）', () => {
+  it('视图不再传空数组常量：导入弹窗 parent-indicators 直连 collegeImportParentIndicators', () => {
+    expect(viewSource).not.toContain('COLLEGE_IMPORT_PARENT_INDICATORS')
+    expect(viewSource).toMatch(
+      /activeTaskTabName === 'college' \? collegeImportParentIndicators : undefined/
+    )
+  })
+
+  it('model seeds 与新增行父级同源：同一锚点基座 + 任务类型标签映射，旧 computed 移除', () => {
+    // 同一基座（右侧下拉所选部门 + DISTRIBUTED 根指标 + id 升序，过滤逻辑在 lib 纯函数）
+    expect(modelSource).toMatch(
+      /const collegeImportParentIndicators = computed\(\(\) =>\s*\n\s*collegeDispatchAnchorIndicators\.value\.map/
+    )
+    // 「任务类型」列预填 = 父级所属任务类型标签（基础性/发展性）
+    expect(modelSource).toMatch(/type2: getIndicatorCategoryLabel\(item\)/)
+    // 视图侧无人消费的 selectedCollegeDispatchParentIndicators 声明一并移除
+    expect(modelSource).not.toMatch(/const selectedCollegeDispatchParentIndicators/)
+  })
+})

@@ -3830,20 +3830,32 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   )
 
   /**
-   * 2026-11-05（issue #96 · 1.3）：所选部门已接收的核心指标（导入模板预填 + 父级锚点）。
+   * 2026-11-13（方案甲恢复）：学院页签「导入」模板的父级预填 seeds。
    *
-   * <p>collegeParentIndicatorOptions 给出的是「{id, name, taskContent}」的轻量选项，
-   * 而导入弹窗需要完整的指标对象（要带 type1 / 任务类型等列）。这里按 id 回查指标表还原。
+   * <p>口径 = {@link collegeDispatchAnchorIndicators} 同一基座（右侧下拉所选部门已接收、
+   * 战略部已下发的根核心指标，按 id 升序——后端锚点 ORDER BY i.id，乱序预填会触发
+   * 导入的父级组顺序阻断），映射成 BusinessImportDialog 的 seed 形状：</p>
+   * <ul>
+   *   <li>type1 = 父级自身类型 → 模板「核心指标类型」列（锚点只读校验）；</li>
+   *   <li>type2 = 父级所属任务类型标签（基础性/发展性，经任务类型映射）→
+   *       模板「任务类型」列（锚点只读校验，与系统不一致阻断点名）。</li>
+   * </ul>
    *
-   * <p>声明位置在 collegeParentIndicatorOptions 之后 —— computed 虽然惰性求值，
-   * 但仍是块级作用域的 const，提前引用会踩 TDZ（见 AGENTS.md §13.1）。
+   * <p>取代 2026-11-08 单层改造时的空数组 COLLEGE_IMPORT_PARENT_INDICATORS——
+   * 恢复与原「指标下发与审批」页一致的「父级行预填、子指标三列留空」体验。
+   * 原 selectedCollegeDispatchParentIndicators（视图侧已无人消费）一并移除。</p>
    */
-  const selectedCollegeDispatchParentIndicators = computed<StrategicIndicator[]>(() => {
-    const optionIds = new Set(collegeParentIndicatorOptions.value.map(option => String(option.id)))
-    return normalizedIndicators.value.filter(
-      item => !item.parentIndicatorId && optionIds.has(String(item.id))
-    ) as StrategicIndicator[]
-  })
+  const collegeImportParentIndicators = computed(() =>
+    collegeDispatchAnchorIndicators.value.map(item => {
+      const typed = item as { type1?: string }
+      return {
+        name: String(item.name || ''),
+        taskContent: String(item.taskContent || ''),
+        type1: String(typed.type1 || ''),
+        type2: getIndicatorCategoryLabel(item)
+      }
+    })
+  )
 
   /** 二级学院 tab 新增子指标：校验 → 调后端 createIndicator → 进待发起异动列表 */
   const saveCollegeChildIndicator = async (weight: number) => {
@@ -8334,10 +8346,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     planStore,
     planUiPhase,
     preloadApprovalWorkflowDetail,
-    // 2026-11-05（issue #96 · 1.3）：学院下发操作区需要「本学院的下发计划 id」
-    // 与「所选部门的核心指标对象」（导入模板预填 + 父级锚点）。
+    // 2026-11-05（issue #96 · 1.3）：学院下发操作区需要「本学院的下发计划 id」；
+    // 2026-11-13（方案甲恢复）：导入模板预填改用 collegeImportParentIndicators
+    // （右侧下拉所选部门已接收的已下发核心指标 seeds，id 升序）。
     selectedCollegeDispatchPlanId,
-    selectedCollegeDispatchParentIndicators,
+    collegeImportParentIndicators,
     preloadedPlanWorkflowDetail,
     preservePrefilledTaskBindingOnce,
     primaryApprovalWorkflowEntityId,

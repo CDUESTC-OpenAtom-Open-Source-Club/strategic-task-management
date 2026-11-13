@@ -253,6 +253,9 @@ const {
   collegeAddMode,
   collegeParentIndicatorOptions,
   // 2026-11-08（单层下发）：学院页签「导入 / 导出 / 发起下发审批」所需的 model 数据
+  // 2026-11-13（方案甲恢复）：学院页签「导入」模板父级预填 seeds（右侧下拉所选部门
+  // 已接收的已下发核心指标，id 升序）
+  collegeImportParentIndicators,
   isStrategicDeptLogin,
   strategicDeptOrgId,
   strategicDeptName,
@@ -448,19 +451,6 @@ const collegeDispatchDisabledReason = computed(() => {
   }
   return ''
 })
-
-/**
- * 2026-11-08（单层下发）：二级学院页签「导入」弹窗的父级锚点。
- *
- * 新口径下学院指标由战略部直接下发、没有父级核心指标，故固定传空数组。
- * 用模块级常量而不是模板里写字面量 []，避免每次渲染产生新引用触发子组件重算。
- */
-const COLLEGE_IMPORT_PARENT_INDICATORS: Array<{
-  name?: string
-  taskContent?: string
-  type1?: string
-  type2?: string
-}> = []
 
 // 2026-10-31 用户拍板（「确认审批流程」弹窗去计划编号）：
 // ①「当前计划」行不读 currentPlan.name / taskName —— 后端占位名是「Plan 4036」式，
@@ -3495,10 +3485,12 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
       </template>
     </el-dialog>
 
-    <!-- 2026-11-08（单层下发）：同一个导入弹窗按页签切换口径，不新增第二个实例。
-         职能部门页签 = strategic-task（战略部 → 职能部门，原行为不变）；
-         二级学院页签 = distribution（战略部 → 所选学院），单层结构没有父级核心指标，
-         故 parent-indicators 固定传空数组。 -->
+    <!-- 同一个导入弹窗按页签切换口径，不新增第二个实例。
+         职能部门页签 = strategic-task（战略部 → 职能部门，原行为不变，不预填）；
+         2026-11-13（方案甲恢复）：二级学院页签 = distribution（战略部 → 所选学院），
+         parent-indicators 恢复传真实 seeds（collegeImportParentIndicators：右侧下拉
+         所选部门已接收的已下发核心指标，id 升序）——与原「指标下发与审批」页一致，
+         父级行预填（序号/任务类型/核心指标/核心指标类型/学院），子指标三列留空。 -->
     <BusinessImportDialog
       v-model:visible="strategicImportDialogVisible"
       :type="activeTaskTabName === 'college' ? 'distribution' : 'strategic-task'"
@@ -3512,7 +3504,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
         activeTaskTabName === 'college' ? collegeDispatchCycleId : currentStrategicImportCycleId
       "
       :parent-indicators="
-        activeTaskTabName === 'college' ? COLLEGE_IMPORT_PARENT_INDICATORS : undefined
+        activeTaskTabName === 'college' ? collegeImportParentIndicators : undefined
       "
       @committed="handleStrategicImportCommitted"
     />
