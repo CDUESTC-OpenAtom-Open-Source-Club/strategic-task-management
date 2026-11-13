@@ -3768,7 +3768,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     name: '',
     type1: '定量' as '定性' | '定量',
     type2: '基础性' as '发展性' | '基础性',
-    weight: 0,
+    // 2026-11-13（用户拍板）：默认值 0 → 空——0 会被误读成「已填的合法权重」，
+    // 留空强制用户显式输入；保存链「请填写大于 0 的权重」校验保持不变（空值
+    // Number(undefined)=NaN 同样被拦）。
+    weight: undefined as number | undefined,
     remark: '',
     /** 2026-10-23：二级学院 tab 新增子指标时，必须指定挂靠的核心指标 */
     parentIndicatorId: '' as string
@@ -5167,7 +5170,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       name: '',
       type1: overrides.type1 ?? '定量',
       type2: overrides.type2 ?? '基础性',
-      weight: 0,
+      // 2026-11-13（用户拍板）：与 newRow 初始值同口径——权重默认空，不预置 0
+      weight: undefined,
       remark: '',
       parentIndicatorId: ''
     }

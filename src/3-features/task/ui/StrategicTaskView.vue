@@ -2731,7 +2731,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     </el-col>
                   </el-row>
                   <el-row :gutter="16">
-                    <el-col :span="4">
+                    <!-- 2026-11-13（用户拍板）：指标类型/权重列 span 4→8——span=4 时
+                         1280 宽窗口下 select 被挤到「定..」截断；8 列 + label-width 80px
+                         后「定量/定性」完整显示（学院页签表单同款，与下发页
+                         IndicatorDistributeView 的 span 8/8 布局对齐） -->
+                    <el-col :span="8">
                       <el-form-item class="required-form-item">
                         <template #label><span class="required-asterisk">*</span>指标类型</template>
                         <el-select v-model="newRow.type1" style="width: 100%">
@@ -2740,7 +2744,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         </el-select>
                       </el-form-item>
                     </el-col>
-                    <el-col :span="4">
+                    <el-col :span="8">
                       <el-form-item class="required-form-item">
                         <template #label><span class="required-asterisk">*</span>权重</template>
                         <el-input-number
