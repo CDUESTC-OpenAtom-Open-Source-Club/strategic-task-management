@@ -7,6 +7,8 @@ import { flushPromises } from '../../setup'
 
 import {
   isReportApprovalStatusInFlight,
+  mergeReturnedMutationChains,
+  resolveCollegeReturnedChainOwnerOrgId,
   resolveCollegeTabDistributeAction,
   resolveMutationGateWeightTotal
 } from '@/features/task/lib/collegeTabDistribute'
@@ -336,6 +338,11 @@ const mountOptions = {
         emits: ['update:modelValue'],
         template: '<div class="el-tabs-stub"><slot /></div>'
       },
+      // 2026-11-12（C3-D1 双按钮渲染断言）：发起异动/取消异动包在 el-tooltip 默认槽里，
+      // 自动桩不渲染槽内容 → 透传桩让按钮可见（其余 tooltip 均在表格桩内部，不受影响）
+      'el-tooltip': {
+        template: '<span><slot /></span>'
+      },
       'el-progress': {
         props: ['percentage'],
         template: '<div class="el-progress"><slot :percentage="percentage ?? 0" /></div>'
@@ -586,5 +593,200 @@ describe('useStrategicTaskView 学院口径接线契约（③④）', () => {
     expect(vueSource).toContain('handleWithdrawCollegeDispatch')
     expect(vueSource).toMatch(/planApi\.withdrawPlan\(planId\)/)
     expect(vueSource).toMatch(/await handleWithdrawMutationBatch\(\)/)
+  })
+})
+
+/**
+ * 2026-11-12（C3-D1 HIGH）：学院页签异动驳回后红横幅与重报双按钮可达。
+ *
+ * 缺陷口径（测试证据/2026-11-12-导入导出上报异动全链/C3-工学院异动全链-测试报告.md）：
+ * returnedMutationChains 只由 selectedDepartment（职能侧边栏，org 36 起）驱动加载，
+ * 战略部直发学院子指标（owner=35）的退回活链查询恒不命中 → 学院页签驳回后
+ * 红横幅「已退回待重报」与「发起异动/取消异动」双按钮不可达（数据在、前端不拉）。
+ *
+ * 纯函数（owner 口径 / 合并去重）直接锁实现；组件渲染（红横幅 + 双按钮）走
+ * 浅挂载 mock view-model；model 接线（selectCollege / 页签激活 / 部门过滤触发补拉）
+ * 用源码契约锁。
+ */
+describe('task/lib/collegeTabDistribute · 学院口径退回链加载（C3-D1）', () => {
+  describe('resolveCollegeReturnedChainOwnerOrgId（owner 参数正确）', () => {
+    it('战略部登录 → owner 口径取战略发展部组织 id（org 35，学院子指标 owner 侧命中）', () => {
+      expect(
+        resolveCollegeReturnedChainOwnerOrgId({
+          isStrategicDeptLogin: true,
+          strategicDeptOrgId: 35,
+          funcOrgId: 44
+        })
+      ).toBe(35)
+    })
+
+    it('战略部登录但战略部 org 解析失败 → 返回 null（宁可不拉，不误用职能部门口径）', () => {
+      expect(
+        resolveCollegeReturnedChainOwnerOrgId({
+          isStrategicDeptLogin: true,
+          strategicDeptOrgId: null,
+          funcOrgId: 44
+        })
+      ).toBeNull()
+    })
+
+    it('职能部门登录 → owner 口径取当前选中职能部门（存量学院行与职能页签同口径）', () => {
+      expect(
+        resolveCollegeReturnedChainOwnerOrgId({
+          isStrategicDeptLogin: false,
+          strategicDeptOrgId: 35,
+          funcOrgId: 44
+        })
+      ).toBe(44)
+    })
+
+    it('职能部门登录且职能部门未解析 → null；非法数值（0/负数/NaN）一律 null', () => {
+      expect(
+        resolveCollegeReturnedChainOwnerOrgId({
+          isStrategicDeptLogin: false,
+          strategicDeptOrgId: 35,
+          funcOrgId: null
+        })
+      ).toBeNull()
+      expect(
+        resolveCollegeReturnedChainOwnerOrgId({
+          isStrategicDeptLogin: true,
+          strategicDeptOrgId: 0,
+          funcOrgId: 44
+        })
+      ).toBeNull()
+      expect(
+        resolveCollegeReturnedChainOwnerOrgId({
+          isStrategicDeptLogin: false,
+          strategicDeptOrgId: 35,
+          funcOrgId: Number.NaN
+        })
+      ).toBeNull()
+    })
+  })
+
+  describe('mergeReturnedMutationChains（合并按 instance_id 去重）', () => {
+    const chain = (instanceId: number, batchId = 'b-1') => ({
+      instance_id: instanceId,
+      batch_id: batchId,
+      indicator_id: 2048,
+      indicator_desc: '链路测试-工学院子指标A',
+      status: 'WITHDRAWN',
+      created_at: '2026-11-12T10:08:00'
+    })
+
+    it('学院口径补拉结果并入既有清单；同一实例（两口径都命中）不重复计入批次', () => {
+      const existing = [chain(13)]
+      const merged = mergeReturnedMutationChains(existing, [chain(13), chain(14, 'b-2')])
+      expect(merged).toHaveLength(2)
+      expect(merged.map(item => item.instance_id)).toEqual([13, 14])
+    })
+
+    it('无新增时返回原数组（不无谓触发响应式更新）；缺 instance_id 的脏数据跳过', () => {
+      const existing = [chain(13)]
+      expect(mergeReturnedMutationChains(existing, [])).toBe(existing)
+      expect(mergeReturnedMutationChains(existing, [chain(13)])).toBe(existing)
+      const dirty = { ...chain(99), instance_id: undefined as unknown as number }
+      const merged = mergeReturnedMutationChains(existing, [dirty])
+      expect(merged).toBe(existing)
+    })
+  })
+
+})
+
+describe('学院页签驳回闭环与在审互斥（2026-11-12 组件接线）', () => {
+  beforeEach(() => {
+    submitPlanForApproval.mockReset()
+    withdrawPlan.mockReset()
+    elMessageBoxConfirm.mockReset()
+  })
+
+  it('C3-D1 驳回态：有退回活链时红横幅（error）+「发起异动/取消异动」双按钮渲染', async () => {
+    const wrapper = mountView({
+      hasReturnedMutationChain: ref(true),
+      returnedMutationChainCount: ref(1),
+      isReturnedChainRequester: ref(true),
+      hasMutationDraft: ref(false)
+    })
+
+    // el-alert 未在测试环境全局注册 → 渲染为原生标签回退（shallowMount 不桩未解析组件），
+    // 用 DOM 属性断言（type="error" 即「已退回待重报」红横幅）
+    const errorAlert = wrapper
+      .findAll('el-alert')
+      .find(alert => alert.attributes('type') === 'error')
+    expect(errorAlert).toBeDefined()
+    // 双按钮（发起异动 / 取消异动）在退回态下随横幅一并渲染
+    expect(findButtonByText(wrapper, '发起异动')).toBeDefined()
+    expect(findButtonByText(wrapper, '取消异动')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('C3-D1 零回归：无退回活链时红横幅与双按钮不渲染（维持 v-if 口径）', async () => {
+    const wrapper = mountView({
+      hasReturnedMutationChain: ref(false),
+      returnedMutationChainCount: ref(0),
+      isReturnedChainRequester: ref(false),
+      hasMutationDraft: ref(false)
+    })
+
+    expect(
+      wrapper.findAll('el-alert').find(alert => alert.attributes('type') === 'error')
+    ).toBeUndefined()
+    expect(findButtonByText(wrapper, '取消异动')).toBeUndefined()
+    expect(findButtonByText(wrapper, '发起异动')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+})
+
+/**
+ * model 内部接线源码契约：8k 行 composable 不整体实例化，
+ * 用源码断言锁定学院口径退回链的关键接线（实现漂移即红）。
+ */
+describe('useStrategicTaskView / StrategicTaskView 学院退回链接线契约（C3-D1）', () => {
+  const readModelSource = () =>
+    readFileSync(resolve(process.cwd(), 'src/3-features/task/model/useStrategicTaskView.ts'), 'utf8')
+  const readViewSource = () =>
+    readFileSync(resolve(process.cwd(), 'src/3-features/task/ui/StrategicTaskView.vue'), 'utf8')
+
+  it('model：学院口径退回链补拉共用 collegeTabDistribute 纯函数（owner 口径与合并去重单一来源）', () => {
+    const source = readModelSource()
+    expect(source).toMatch(
+      /import\s*\{[^}]*resolveCollegeReturnedChainOwnerOrgId[^}]*\}\s*from\s*'@\/features\/task\/lib\/collegeTabDistribute'/
+    )
+    expect(source).toMatch(
+      /import\s*\{[^}]*mergeReturnedMutationChains[^}]*\}\s*from\s*'@\/features\/task\/lib\/collegeTabDistribute'/
+    )
+    expect(source).toMatch(
+      /resolveCollegeReturnedChainOwnerOrgId\(\{\s*isStrategicDeptLogin:\s*isStrategicDeptLogin\.value/
+    )
+    expect(source).toMatch(
+      /returnedMutationChains\.value = mergeReturnedMutationChains\(\s*returnedMutationChains\.value/
+    )
+  })
+
+  it('model：主清单刷新后自动并入学院口径退回链（既有刷新链全覆盖，含提交/重发/取消）', () => {
+    const source = readModelSource()
+    // loadDepartmentMutationWorkflowEntities 的退回链加载段落后必须补拉学院口径
+    expect(source).toMatch(
+      /returnedMutationChains\.value = \[\][\s\S]{0,800}?await loadCollegeReturnedMutationChains\(\)/
+    )
+  })
+
+  it('model：selectCollege 学院选择变化触发学院口径退回链补拉（C3-D1 根因：此前零触发）', () => {
+    const source = readModelSource()
+    expect(source).toMatch(
+      /const selectCollege = \(college: string\) => \{[\s\S]*?void loadCollegeReturnedMutationChains\(\)[\s\S]*?\n {2}\}/
+    )
+  })
+
+  it('view：学院页签激活与页签内部门过滤变化均触发补拉', () => {
+    const source = readViewSource()
+    expect(source).toMatch(
+      /if \(tab === 'college'\) \{[\s\S]*?void loadCollegeReturnedMutationChains\(\)/
+    )
+    expect(source).toMatch(
+      /collegeDispatchDeptFilter\.value = selection\.dept\s*(?:\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*)?void loadCollegeReturnedMutationChains\(\)/
+    )
   })
 })

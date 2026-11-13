@@ -237,6 +237,8 @@ const {
   collegeFillStatusScope,
   isReportApprovalInFlight,
   isMutationApprovalInFlight,
+  // 2026-11-12（C3-D1）：学院页签退回链补拉
+  loadCollegeReturnedMutationChains,
   // 2026-11-11（学院页签按钮体系修正）：生效计划上下文（学院页签 → FUNC_TO_COLLEGE
   // 子计划）+ 异动在审可撤判定/执行体（「撤回异动」真撤回入口）
   effectivePlanContext,
@@ -813,6 +815,9 @@ const handleCollegeDeptFilterChange = (command: string | number | object) => {
     return
   }
   collegeDispatchDeptFilter.value = selection.dept
+  // 2026-11-12（C3-D1 根因修复）：学院页签的职能部门选择变化同样补拉学院口径
+  // 退回待重报异动链（owner 口径按登录角色分流，见 model loadCollegeReturnedMutationChains）
+  void loadCollegeReturnedMutationChains()
 }
 
 /**
@@ -841,6 +846,10 @@ watch(activeTaskTabName, tab => {
     if (selectedCollege.value) {
       void syncCurrentPlanReportSummaries({ force: true, collegeScope: true })
     }
+    // 2026-11-12（C3-D1 根因修复）：学院页签激活也补拉学院口径退回待重报异动链——
+    // 此前该 loader 只由 selectedDepartment（职能页签侧边栏）与审批抽屉打开触发，
+    // 学院页签异动被驳回后红横幅/「发起异动/取消异动」双按钮不可达
+    void loadCollegeReturnedMutationChains()
     return
   }
   void syncCurrentPlanReportSummaries({ force: true })

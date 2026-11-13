@@ -111,3 +111,64 @@ export interface MutationGateWeightTotalInput {
  */
 export const resolveMutationGateWeightTotal = (input: MutationGateWeightTotalInput): number =>
   input.collegeScopeActive ? input.collegeBasicWeightTotal : input.departmentTotalWeight
+
+/** 「退回待重报」异动链条目的最小结构（与 mutationApi.ReturnedMutationChainItem 对齐） */
+export interface ReturnedMutationChainLike {
+  instance_id: number | string
+  [key: string]: unknown
+}
+
+export interface CollegeReturnedChainOwnerOrgIdInput {
+  /** 登录角色是否为战略发展部（isStrategicDeptLogin） */
+  isStrategicDeptLogin: boolean
+  /** 战略发展部组织 id（strategicDeptOrgId，解析失败时 model 兜底 35） */
+  strategicDeptOrgId: number | null
+  /** 当前选中职能部门的组织 id（resolveDepartmentIdByName(selectedDepartment)） */
+  funcOrgId: number | null
+}
+
+/**
+ * 学院页签「退回待重报」异动链查询的组织口径（C3-D1 根因修复）。
+ *
+ * <p>背景（2026-11-12 C3-工学院异动全链缺陷 C3-D1）：战略部直发学院子指标
+ * （owner=35、target=学院）的异动被驳回后，退回活链只被
+ * {@code returnedChains(funcOrgId)} 查询覆盖不到 —— 后端
+ * {@code listReturnedMutationChains} 按 {@code owner_org_id = orgId OR target_org_id = orgId}
+ * 命中，学院子指标 owner=35 而职能侧边栏只含职能部门（org 36 起），职能口径查询恒空，
+ * 红横幅/「发起异动/取消异动」双按钮在学院页签全链不可达（数据在、前端不拉）。</p>
+ *
+ * <p>口径（与 resolveSelectedCollegeReportScope 的创建方分流一致）：</p>
+ * <ul>
+ *   <li>战略部登录 → owner 口径取战略发展部组织 id（org 35）——学院子指标的
+ *       owner 侧命中；</li>
+ *   <li>职能部门登录 → owner 口径取当前选中职能部门 —— 存量学院行（owner=职能部门）
+ *       的退回链，与职能页签既有查询同口径（合并时按 instance_id 去重，零增量）。</li>
+ * </ul>
+ */
+export const resolveCollegeReturnedChainOwnerOrgId = (
+  input: CollegeReturnedChainOwnerOrgIdInput
+): number | null => {
+  const strategicOrgId = Number(input.strategicDeptOrgId)
+  const funcOrgId = Number(input.funcOrgId)
+  if (input.isStrategicDeptLogin) {
+    return Number.isFinite(strategicOrgId) && strategicOrgId > 0 ? strategicOrgId : null
+  }
+  return Number.isFinite(funcOrgId) && funcOrgId > 0 ? funcOrgId : null
+}
+
+/**
+ * 退回链清单合并（按 instance_id 去重）：职能口径清单已加载后，学院口径补拉结果
+ * 原地并入，同一条链（两口径都可能命中，如 owner=职能部门、target=学院的存量行）
+ * 不重复计入横幅批次计数。
+ */
+export const mergeReturnedMutationChains = <T extends ReturnedMutationChainLike>(
+  existing: T[],
+  incoming: T[]
+): T[] => {
+  const seen = new Set(existing.map(chain => String(chain.instance_id ?? '')))
+  const additions = incoming.filter(chain => {
+    const key = String(chain.instance_id ?? '')
+    return key !== '' && !seen.has(key)
+  })
+  return additions.length > 0 ? [...existing, ...additions] : existing
+}
