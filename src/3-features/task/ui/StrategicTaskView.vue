@@ -47,6 +47,10 @@ import {
   resolvePlanConfirmWorkflowName
 } from '@/features/approval/lib/approval-utils'
 import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
+// 2026-11-12（中⑤·A1 缺陷 C）：导入 commit 成功回调需先失效 plan.list 查询缓存，
+// 否则计划状态徽标的数据源（planStore.plans ← planApi.getAllPlans → fetchWithCache
+// 15s 内存快照）吃到陈旧计划状态（草稿），徽标不随下发结果实时更新
+import { invalidateQueries } from '@/shared/lib/utils/cache'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
 import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
 import type { StrategicIndicator } from '@/shared/types'
@@ -1574,6 +1578,16 @@ const openStrategicImportDialog = () => {
 }
 
 const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => {
+  // 2026-11-12（中⑤·A1 缺陷 C）：导入 commit 成功后「计划状态」徽标不实时刷新（70s+
+  // 轮询期间仍显「草稿」，手动刷新页面才变「已下发」）。两条刷新路径的差异：
+  // ① 审批状态徽标走 resetApprovalWorkflowStateCache（显式失效）→ 实时更新；
+  // ② 计划状态徽标走 planStore.plans ← planApi.getAllPlans → fetchWithCache 15s
+  //    内存快照——refreshCurrentDepartmentView 的 loadPlans(force) 只跳过 store 层
+  //    早退，fetchWithCache 层未失效直接回陈旧快照；后续心跳轻刷新 loadPlans()
+  //    不带 force 在 store 层早退，永不回源 → 徽标长时间停在「草稿」。
+  // 这里与表格刷新同帧先失效 plan.list，让紧随的 loadPlans 强制回源，
+  // overallStatus / effectivePlanContext（学院页签）等计划状态消费方同步拿到最新状态。
+  invalidateQueries(['plan.list'])
   await refreshCurrentDepartmentView({ showLoading: true, force: true, reloadIndicators: true })
 
   if (result?.workflow?.autoSubmitAndApprove || result?.workflow?.instanceId) {

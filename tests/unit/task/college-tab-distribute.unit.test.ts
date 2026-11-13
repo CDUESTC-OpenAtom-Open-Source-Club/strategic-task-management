@@ -164,6 +164,20 @@ vi.mock('@/features/plan/api/planApi', () => ({
 
 const elMessageBoxConfirm = vi.hoisted(() => vi.fn())
 
+// 2026-11-12（中⑤·A1 缺陷 C）：导入 commit 成功回调的 plan.list 缓存失效 spy
+const invalidateQueriesMock = vi.hoisted(() => vi.fn())
+
+vi.mock('@/shared/lib/utils/cache', async () => {
+  const actual =
+    await vi.importActual<typeof import('@/shared/lib/utils/cache')>(
+      '@/shared/lib/utils/cache'
+    )
+  return {
+    ...actual,
+    invalidateQueries: invalidateQueriesMock
+  }
+})
+
 vi.mock('element-plus', async () => {
   const actual = await vi.importActual<typeof import('element-plus')>('element-plus')
   return {
@@ -788,5 +802,37 @@ describe('useStrategicTaskView / StrategicTaskView 学院退回链接线契约�
     expect(source).toMatch(
       /collegeDispatchDeptFilter\.value = selection\.dept\s*(?:\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*)?void loadCollegeReturnedMutationChains\(\)/
     )
+  })
+})
+
+describe('导入 commit 成功后计划状态徽标刷新（2026-11-12 中⑤·A1 缺陷 C）', () => {
+  beforeEach(() => {
+    invalidateQueriesMock.mockClear()
+    submitPlanForApproval.mockReset()
+    withdrawPlan.mockReset()
+    elMessageBoxConfirm.mockReset()
+  })
+
+  it('commit 成功回调：先失效 plan.list 查询缓存，再与表格同帧刷新部门视图', async () => {
+    const refreshCurrentDepartmentView = vi.fn()
+    const wrapper = mountView({
+      refreshCurrentDepartmentView
+    })
+
+    const dialog = wrapper.findComponent({ name: 'BusinessImportDialog' })
+    expect(dialog).toBeDefined()
+    dialog.vm.$emit('committed', { status: 'COMMITTED', createdCount: 4 } as never)
+    await flushPromises()
+
+    // 差异根因：审批徽标走 resetApprovalWorkflowStateCache 显式失效（实时），
+    // 计划状态徽标走 plan.list 15s 内存快照（loadPlans force 不穿透 fetchWithCache，
+    // 心跳又不回源）→ 必须在回调里先显式失效，徽标才与表格同步拿到「已下发」
+    expect(invalidateQueriesMock).toHaveBeenCalledWith(['plan.list'])
+    expect(refreshCurrentDepartmentView).toHaveBeenCalledWith({
+      showLoading: true,
+      force: true,
+      reloadIndicators: true
+    })
+    wrapper.unmount()
   })
 })
