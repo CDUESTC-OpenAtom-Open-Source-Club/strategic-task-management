@@ -1434,6 +1434,12 @@ const openStrategicBatchExportDialog = () => {
     void handleExportCollegeIndicators()
     return
   }
+  // 2026-11-12（低⑧·A1 缺陷 E）：部门清单未加载（orgs 未就绪）时弹窗会变成
+  // 「无勾选项的死对话框」——与其让用户面对空选静默，不如同款提示挡在打开前
+  if (functionalDepartments.value.length === 0) {
+    ElMessage.warning('请先选择要导出的部门')
+    return
+  }
   selectedStrategicExportDepartments.value = [...functionalDepartments.value]
   strategicBatchExportDialogVisible.value = true
 }
@@ -1442,8 +1448,9 @@ const openStrategicBatchExportDialog = () => {
 // 附件原始文件一并打进 zip，避免多部门挤在一个工作簿里导致序号跨部门错位、附件只有链接。
 const handleExportSelectedStrategicDepartments = async () => {
   const departments = selectedStrategicExportDepartments.value
+  // 2026-11-12（低⑧·A1 缺陷 E）：0 部门选中点「导出」必须有反馈，不再静默
   if (departments.length === 0) {
-    ElMessage.warning('请选择要导出的部门')
+    ElMessage.warning('请先选择要导出的部门')
     return
   }
 

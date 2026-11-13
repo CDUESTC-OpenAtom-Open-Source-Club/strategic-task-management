@@ -751,6 +751,43 @@ describe('学院页签驳回闭环与在审互斥（2026-11-12 组件接线）',
     wrapper.unmount()
   })
 
+  it('低⑧（A1 缺陷 E）部门清单未加载时点「全部导出」：同款提示挡在弹窗前，不再弹死对话框', async () => {
+    const { ElMessage } = await import('element-plus')
+    const wrapper = mountView({
+      functionalDepartments: ref([] as string[])
+    })
+
+    const exportAll = findButtonByText(wrapper, '全部导出')
+    expect(exportAll).toBeDefined()
+    await exportAll!.trigger('click')
+    await flushPromises()
+
+    expect(ElMessage.warning).toHaveBeenCalledWith('请先选择要导出的部门')
+    wrapper.unmount()
+  })
+
+  it('低⑧（A1 缺陷 E）导出对话框 0 部门选中点「导出」：warning 反馈而非静默', async () => {
+    const { ElMessage } = await import('element-plus')
+    // 正常部门清单 + 手动清空选中（复刻 A1 取消全选路径）
+    const wrapper = mountView({
+      functionalDepartments: ref(['教务处']),
+      selectedStrategicExportDepartments: ref([] as string[])
+    })
+
+    const dialog = wrapper.findComponent({ name: 'ElDialog' })
+    expect(dialog).toBeDefined()
+    // 通过暴露的 confirm 入参直拍导出处理函数（对话框默认槽在 shallowMount 下不渲染）
+    const vm = wrapper.vm as unknown as {
+      handleExportSelectedStrategicDepartments?: () => Promise<void>
+    }
+    expect(typeof vm.handleExportSelectedStrategicDepartments).toBe('function')
+    await vm.handleExportSelectedStrategicDepartments!()
+    await flushPromises()
+
+    expect(ElMessage.warning).toHaveBeenCalledWith('请先选择要导出的部门')
+    wrapper.unmount()
+  })
+
 })
 
 /**
