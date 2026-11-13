@@ -60,7 +60,8 @@ import {
 import {
   buildCollegeDeptEligibleByDept,
   buildCollegeParentAnchorIndicators,
-  isDistributedCoreIndicator
+  isDistributedCoreIndicator,
+  resolveCollegeDeptCurrent
 } from '@/features/task/lib/collegeDispatchEligibility'
 import {
   hasCollegeMutationApprovalInFlight,
@@ -5818,15 +5819,21 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   /**
    * 当前选中的下拉项（用于在箭头右侧显示「当前是哪个部门」的小字）。
-   * 2026-11-10（用户拍板）：无资格部门会被 handleCollegeDeptFilterChange 拦截、
-   * 选不进来 —— filter 只可能命中 eligible 部门，而 eligible 部门必然在
-   * collegeDeptDispatchOptions 里（有已下发核心指标 → 至少一条指标），逻辑自洽。
+   *
+   * <p>2026-11-13 回显缺陷修复：旧实现只在 collegeDeptDispatchOptions 里找——
+   * 该列表只聚合「target=所选学院」的学院行，部门有下发资格（已下发核心指标）
+   * 但该学院名下还没有学院行时不在其中 → find 不命中 → 回显恒为占位
+   * 「请选择职能部门」（用户实测：选「纪委办公室 | 监察处」后按钮不回显）。
+   * 改走 lib 纯函数 resolveCollegeDeptCurrent：dispatchOptions → dropdownItems
+   * （覆盖全部可选部门）→ filter 归一值兜底，双侧归一后比较。</p>
    */
-  const collegeDeptCurrent = computed(
-    () =>
-      collegeDeptDispatchOptions.value.find(
-        item => item.dept === collegeDispatchDeptEffective.value
-      ) ?? null
+  const collegeDeptCurrent = computed(() =>
+    resolveCollegeDeptCurrent({
+      effectiveDept: collegeDispatchDeptEffective.value,
+      dispatchOptions: collegeDeptDispatchOptions.value,
+      dropdownItems: collegeDeptDropdownItems.value,
+      normalize: normalizeDepartmentName
+    })
   )
 
   /**
