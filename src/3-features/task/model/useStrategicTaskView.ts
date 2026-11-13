@@ -59,7 +59,9 @@ import {
 } from '@/features/task/lib/mutationApprovalHandleable'
 import {
   buildCollegeDeptEligibleByDept,
-  isDistributedCoreIndicator
+  buildCollegeParentAnchorIndicators,
+  isDistributedCoreIndicator,
+  resolveCollegeDeptCurrent
 } from '@/features/task/lib/collegeDispatchEligibility'
 import {
   hasCollegeMutationApprovalInFlight,
@@ -3767,7 +3769,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     name: '',
     type1: '定量' as '定性' | '定量',
     type2: '基础性' as '发展性' | '基础性',
-    weight: 0,
+    // 2026-11-13（用户拍板）：默认值 0 → 空——0 会被误读成「已填的合法权重」，
+    // 留空强制用户显式输入；保存链「请填写大于 0 的权重」校验保持不变（空值
+    // Number(undefined)=NaN 同样被拦）。
+    weight: undefined as number | undefined,
     remark: '',
     /** 2026-10-23：二级学院 tab 新增子指标时，必须指定挂靠的核心指标 */
     parentIndicatorId: '' as string
@@ -3785,93 +3790,76 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const collegeAddMode = ref(false)
 
   /**
-   * 二级学院 tab 可挂靠的核心指标。
+   * 学院锚点核心指标基座（2026-11-13 方案甲恢复）：与后端导入锚点同口径的
+   * 「学院页签右侧下拉所选职能部门已接收的战略部已下发核心指标」，按 id 升序。
    *
-   * 数据口径（实测）：核心指标 ownerDept=战略发展部、responsibleDept=职能部门；
-   * 子指标 ownerDept=职能部门、responsibleDept=学院。
-   * 因此「当前职能部门可下发给该学院的核心指标」= 无父指标 + responsibleDept=当前职能部门。
-   * 学院只作为接收方（targetOrgId），不参与父指标筛选。
+   * <p>过滤细节全部收敛在 lib 纯函数 buildCollegeParentAnchorIndicators
+   * （与单测共用同一份逻辑）：根指标 + status=DISTRIBUTED（草稿核心指标不能做父级）
+   * + owner=战略发展部 + 目标部门=右侧下拉所选职能部门。</p>
    *
-   * 2026-11-05（战略部直发学院指标）：口径按**登录角色**分流——
-   * - 战略部登录：父级核心指标 = ownerDept=战略发展部 的那一批（「战略发展部 → 职能部门」），
-   *   与左侧选中的职能部门无关（战略部可挂到任一核心指标下）；
-   * - 职能部门登录：沿用原口径（核心指标责任部门 == 当前选中职能部门），零变化。
+   * <p>2026-11-13 修正：键从左侧 selectedDepartment（职能部门页签口径）改为
+   * collegeDispatchDeptEffective（学院页签右侧下拉，与「新增行 / 导入」的两步选择同源）；
+   * 旧口径还漏掉 status 过滤——草稿核心指标会被当成可挂父级。</p>
+   *
+   * <p>collegeDispatchDeptEffective 声明在本文件更后位置（学院页签下拉区）——
+   * computed 惰性求值，首次读取发生在 setup 返回之后，不会踩 TDZ
+   * （见 AGENTS.md §13.1；下方消费方同理）。</p>
    */
-  const collegeParentIndicatorOptions = computed(() => {
-    const ownerDept = normalizeDepartmentName(selectedDepartment.value || '')
-    if (!isStrategicDeptLogin.value && !ownerDept) {
-      return []
-    }
-    const seen = new Set<string>()
-    const options: Array<{ id: string; name: string; taskContent: string }> = []
-    normalizedIndicators.value.forEach(item => {
-      if (item.parentIndicatorId) {
-        return
-      }
-      const candidate = item as {
-        targetDepartment?: string
-        targetOrgName?: string
-        responsibleDept?: string
-        ownerDept?: string
-      }
-      if (isStrategicDeptLogin.value) {
-        if (
-          normalizeDepartmentName(candidate.ownerDept) !==
-          normalizeDepartmentName(strategicDeptName.value)
-        ) {
-          return
-        }
-        // 2026-11-05（issue #96 · 1.3）：父级锚点必须限定在「当前所选职能部门已接收的
-        // 核心指标」——下发范围是「所选职能部门 → 所选学院」，父级属于哪个职能部门就决定了
-        // 这次下发覆盖谁。若不限部门，战略部会把所有职能部门的核心指标都当成可选父级，
-        // 导入模板预填出行数失控，且子指标挂错父级。
-        const targetDeptName = normalizeDepartmentName(
-          String(
-            candidate.targetDepartment ?? candidate.targetOrgName ?? candidate.responsibleDept ?? ''
-          )
-        )
-        if (ownerDept && targetDeptName !== ownerDept && !targetDeptName.includes(ownerDept)) {
-          return
-        }
-      } else {
-        const deptName = normalizeDepartmentName(
-          String(
-            candidate.targetDepartment ?? candidate.targetOrgName ?? candidate.responsibleDept ?? ''
-          )
-        )
-        if (deptName !== ownerDept && !deptName.includes(ownerDept)) {
-          return
-        }
-      }
-      const key = String(item.id)
-      if (seen.has(key)) {
-        return
-      }
-      seen.add(key)
-      options.push({
-        id: key,
-        name: String(item.name || ''),
-        taskContent: String(item.taskContent || '')
-      })
-    })
-    return options
-  })
+  const collegeDispatchAnchorIndicators = computed<StrategicIndicator[]>(
+    () =>
+      buildCollegeParentAnchorIndicators(normalizedIndicators.value, {
+        ownerDept: collegeDispatchDeptEffective.value,
+        strategicDeptName: strategicDeptName.value,
+        normalize: normalizeDepartmentName
+      }) as StrategicIndicator[]
+  )
 
   /**
-   * 2026-11-05（issue #96 · 1.3）：所选部门已接收的核心指标（导入模板预填 + 父级锚点）。
+   * 二级学院 tab「新增行」可挂靠的核心指标选项（方案甲 2026-11-13：父级必选）。
    *
-   * <p>collegeParentIndicatorOptions 给出的是「{id, name, taskContent}」的轻量选项，
-   * 而导入弹窗需要完整的指标对象（要带 type1 / 任务类型等列）。这里按 id 回查指标表还原。
-   *
-   * <p>声明位置在 collegeParentIndicatorOptions 之后 —— computed 虽然惰性求值，
-   * 但仍是块级作用域的 const，提前引用会踩 TDZ（见 AGENTS.md §13.1）。
+   * 数据口径：核心指标 ownerDept=战略发展部、target=职能部门（已下发 DISTRIBUTED）；
+   * 子指标挂到其下后 target=学院。学院只作为接收方（targetOrgId），不参与父指标筛选。
    */
-  const selectedCollegeDispatchParentIndicators = computed<StrategicIndicator[]>(() => {
-    const optionIds = new Set(collegeParentIndicatorOptions.value.map(option => String(option.id)))
-    return normalizedIndicators.value.filter(
-      item => !item.parentIndicatorId && optionIds.has(String(item.id))
-    ) as StrategicIndicator[]
-  })
+  const collegeParentIndicatorOptions = computed(() =>
+    collegeDispatchAnchorIndicators.value.map(item => {
+      const typed = item as { type1?: string }
+      return {
+        id: String(item.id),
+        name: String(item.name || ''),
+        taskContent: String(item.taskContent || ''),
+        /** 父级自身类型（定量/定性）：选中后带出并锁定子指标「指标类型」（锚点口径） */
+        type1: String(typed.type1 || '')
+      }
+    })
+  )
+
+  /**
+   * 2026-11-13（方案甲恢复）：学院页签「导入」模板的父级预填 seeds。
+   *
+   * <p>口径 = {@link collegeDispatchAnchorIndicators} 同一基座（右侧下拉所选部门已接收、
+   * 战略部已下发的根核心指标，按 id 升序——后端锚点 ORDER BY i.id，乱序预填会触发
+   * 导入的父级组顺序阻断），映射成 BusinessImportDialog 的 seed 形状：</p>
+   * <ul>
+   *   <li>type1 = 父级自身类型 → 模板「核心指标类型」列（锚点只读校验）；</li>
+   *   <li>type2 = 父级所属任务类型标签（基础性/发展性，经任务类型映射）→
+   *       模板「任务类型」列（锚点只读校验，与系统不一致阻断点名）。</li>
+   * </ul>
+   *
+   * <p>取代 2026-11-08 单层改造时的空数组 COLLEGE_IMPORT_PARENT_INDICATORS——
+   * 恢复与原「指标下发与审批」页一致的「父级行预填、子指标三列留空」体验。
+   * 原 selectedCollegeDispatchParentIndicators（视图侧已无人消费）一并移除。</p>
+   */
+  const collegeImportParentIndicators = computed(() =>
+    collegeDispatchAnchorIndicators.value.map(item => {
+      const typed = item as { type1?: string }
+      return {
+        name: String(item.name || ''),
+        taskContent: String(item.taskContent || ''),
+        type1: String(typed.type1 || ''),
+        type2: getIndicatorCategoryLabel(item)
+      }
+    })
+  )
 
   /** 二级学院 tab 新增子指标：校验 → 调后端 createIndicator → 进待发起异动列表 */
   const saveCollegeChildIndicator = async (weight: number) => {
@@ -3879,14 +3867,15 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       ElMessage.warning('请先在左侧选择学院')
       return
     }
-    // 2026-11-08（单层下发）：学院指标不再挂在核心指标下 —— 父级从「必填」改为「可选」。
-    // 单层结构正常新增时 parentIndicatorId 为空；保留解析是为了兼容仍带父级的存量行。
+    // 2026-11-13（方案甲恢复，用户拍板）：父级从「可选」改回「必填」——新增行与导入模板
+    // 同一锚点口径（挂到已下发核心指标下），不再产生 parent=null 的单层孤儿数据。
     const parentIdRaw = String(newRow.value.parentIndicatorId || '').trim()
-    const parentIndicatorId = parentIdRaw ? Number(parentIdRaw) : null
-    if (
-      parentIndicatorId !== null &&
-      (!Number.isFinite(parentIndicatorId) || parentIndicatorId <= 0)
-    ) {
+    if (!parentIdRaw) {
+      ElMessage.warning('请选择关联的核心指标')
+      return
+    }
+    const parentIndicatorId = Number(parentIdRaw)
+    if (!Number.isFinite(parentIndicatorId) || parentIndicatorId <= 0) {
       ElMessage.warning('关联的核心指标无效')
       return
     }
@@ -3906,23 +3895,22 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       ElMessage.warning(`无法解析目标学院：${selectedCollege.value}`)
       return
     }
-    const parentOption = parentIdRaw
-      ? collegeParentIndicatorOptions.value.find(o => o.id === parentIdRaw)
-      : undefined
-    // 任务 id：单层结构下没有父级可继承「战略任务 / 任务类型」，此处不再要求 taskId，
-    // 由后端按当前周期与计划归属补全；仅存量「父级 → 子指标」路径沿用父级任务。
-    let taskId: number | undefined
-    if (parentIndicatorId !== null) {
-      const parentRow = strategicStore.indicators.find(
-        item => String(item.id) === String(parentIndicatorId)
-      )
-      const resolvedTaskId = Number(getIndicatorTaskId(parentRow as StrategicIndicator))
-      if (!Number.isFinite(resolvedTaskId) || resolvedTaskId <= 0) {
-        ElMessage.warning('关联的核心指标缺少有效任务，无法新增子指标')
-        return
-      }
-      taskId = resolvedTaskId
+    const parentOption = collegeParentIndicatorOptions.value.find(o => o.id === parentIdRaw)
+    // 任务 id / 类型锚点：子指标的战略任务与「指标类型」都从父级核心指标继承
+    // （与导入锚点口径一致：父级名与类型须完全一致），不采纳表单手填的冲突值。
+    const parentRow = strategicStore.indicators.find(
+      item => String(item.id) === String(parentIndicatorId)
+    )
+    const resolvedTaskId = Number(getIndicatorTaskId(parentRow as StrategicIndicator))
+    if (!Number.isFinite(resolvedTaskId) || resolvedTaskId <= 0) {
+      ElMessage.warning('关联的核心指标缺少有效任务，无法新增子指标')
+      return
     }
+    const taskId: number = resolvedTaskId
+    const childIndicatorType =
+      parentRow && (parentRow.type1 === '定性' || parentRow.type1 === '定量')
+        ? parentRow.type1
+        : newRow.value.type1
 
     const loading = ElLoading.service({
       lock: true,
@@ -3941,9 +3929,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         progress: 0,
         year: timeContext.currentYear,
         canWithdraw: false,
-        // 单层结构：没有父级就不传（undefined 即不落 parent_indicator_id）
-        parentIndicatorId: parentIndicatorId ?? undefined,
-        type: newRow.value.type1
+        // 方案甲：父级必填，必传（后端 createIndicator 按 parent 落 parent_indicator_id）
+        parentIndicatorId,
+        type: childIndicatorType
       })
       if (!createResp.success || !createResp.data) {
         throw new Error(createResp.message || '创建子指标失败')
@@ -5183,7 +5171,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       name: '',
       type1: overrides.type1 ?? '定量',
       type2: overrides.type2 ?? '基础性',
-      weight: 0,
+      // 2026-11-13（用户拍板）：与 newRow 初始值同口径——权重默认空，不预置 0
+      weight: undefined,
       remark: '',
       parentIndicatorId: ''
     }
@@ -5649,10 +5638,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       }
       return normalizeDepartmentName(
         String(
-          candidate.targetDepartment ||
-            candidate.targetOrgName ||
-            candidate.responsibleDept ||
-            ''
+          candidate.targetDepartment || candidate.targetOrgName || candidate.responsibleDept || ''
         )
       )
     })
@@ -5833,15 +5819,21 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   /**
    * 当前选中的下拉项（用于在箭头右侧显示「当前是哪个部门」的小字）。
-   * 2026-11-10（用户拍板）：无资格部门会被 handleCollegeDeptFilterChange 拦截、
-   * 选不进来 —— filter 只可能命中 eligible 部门，而 eligible 部门必然在
-   * collegeDeptDispatchOptions 里（有已下发核心指标 → 至少一条指标），逻辑自洽。
+   *
+   * <p>2026-11-13 回显缺陷修复：旧实现只在 collegeDeptDispatchOptions 里找——
+   * 该列表只聚合「target=所选学院」的学院行，部门有下发资格（已下发核心指标）
+   * 但该学院名下还没有学院行时不在其中 → find 不命中 → 回显恒为占位
+   * 「请选择职能部门」（用户实测：选「纪委办公室 | 监察处」后按钮不回显）。
+   * 改走 lib 纯函数 resolveCollegeDeptCurrent：dispatchOptions → dropdownItems
+   * （覆盖全部可选部门）→ filter 归一值兜底，双侧归一后比较。</p>
    */
-  const collegeDeptCurrent = computed(
-    () =>
-      collegeDeptDispatchOptions.value.find(
-        item => item.dept === collegeDispatchDeptEffective.value
-      ) ?? null
+  const collegeDeptCurrent = computed(() =>
+    resolveCollegeDeptCurrent({
+      effectiveDept: collegeDispatchDeptEffective.value,
+      dispatchOptions: collegeDeptDispatchOptions.value,
+      dropdownItems: collegeDeptDropdownItems.value,
+      normalize: normalizeDepartmentName
+    })
   )
 
   /**
@@ -8365,10 +8357,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     planStore,
     planUiPhase,
     preloadApprovalWorkflowDetail,
-    // 2026-11-05（issue #96 · 1.3）：学院下发操作区需要「本学院的下发计划 id」
-    // 与「所选部门的核心指标对象」（导入模板预填 + 父级锚点）。
+    // 2026-11-05（issue #96 · 1.3）：学院下发操作区需要「本学院的下发计划 id」；
+    // 2026-11-13（方案甲恢复）：导入模板预填改用 collegeImportParentIndicators
+    // （右侧下拉所选部门已接收的已下发核心指标 seeds，id 升序）。
     selectedCollegeDispatchPlanId,
-    selectedCollegeDispatchParentIndicators,
+    collegeImportParentIndicators,
     preloadedPlanWorkflowDetail,
     preservePrefilledTaskBindingOnce,
     primaryApprovalWorkflowEntityId,

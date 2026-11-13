@@ -272,33 +272,81 @@ describe('import/lib/importTemplate', () => {
     expect(rules).toContain('基础性')
   })
 
-  // 2026-11-12（低⑥·A2 缺陷 D1 文案纠偏）：学院页签模板退回通用示例行、不预填系统数据，
-  // 「填写说明」必须与实际一致——父级列不预填、须与下发内容完全一致；后端
-  // applyDistributionAnchor 对核心指标类型不一致是「阻断点名」而非「警告不阻断」，
-  // 旧文案（已预填/只读校验/不阻断）与行为矛盾，回归锁改按准确语义断言
-  it('学院模板规则写明父级列不预填、须与下发内容完全一致（锚点校验不通过）', () => {
+  // 2026-11-13（方案甲恢复）：学院页签下载模板恢复预填真实父级行（collegeImportParentIndicators
+  // seeds），「填写说明」随之改回「已预填、只读校验」口径；锚点校验语义保持后端真实行为——
+  // 任务类型/核心指标类型与系统不一致=阻断点名（2026-10-31 已从警告升级为阻断，
+  // 旧文案的「警告不阻断」表述不得回归）
+  it('学院模板规则写明父级列已预填、只读校验，与下发内容不一致即阻断点名', () => {
     const rules = getImportTemplateGuide('distribution').rules.join('\n')
 
-    expect(rules).toContain('不预填系统数据')
-    expect(rules).toContain('须与系统下发内容完全一致')
-    expect(rules).toContain('锚点校验不通过')
-    // 旧文案的误导性表述不得回归（模板为通用示例行，并非系统预填）
-    expect(rules).not.toContain('模板已按系统数据预填')
-    expect(rules).not.toContain('仅做只读校验')
+    expect(rules).toContain('模板已按系统已下发数据预填')
+    expect(rules).toContain('只读校验、请勿修改')
+    expect(rules).toContain('阻断导入并点名对应行')
+    // 旧文案的误导性表述不得回归（类型不一致是阻断，不是警告放行）
     expect(rules).not.toContain('不阻断导入')
-    // 示例行是演示数据，须替换为真实内容（A2 实测：照抄示例行会导入失败）
-    expect(rules).toContain('演示数据')
+    expect(rules).not.toContain('警告')
+    // 不预填的旧口径不得回归（模板恢复预填后与实际行为一致）
+    expect(rules).not.toContain('不预填系统数据')
+    expect(rules).not.toContain('演示数据')
   })
 
-  it('学院模板规则写明「任务类型」不预填、按父级所属任务填写（不一致阻断点名）', () => {
+  it('学院模板规则写明「任务类型」已按父级所属任务预填（不一致阻断点名）', () => {
     const rules = getImportTemplateGuide('distribution').rules.join('\n')
 
-    // 2026-11-12（低⑥）：任务类型列不预填系统数据，用户按父级所属任务填写，不一致→阻断
     expect(rules).toContain('「任务类型」为父级核心指标所属战略任务的类型')
-    expect(rules).toContain('不预填系统数据')
+    expect(rules).toContain('模板已按系统数据预填')
     expect(rules).toContain('阻断导入并点名对应行')
+    expect(rules).toContain('请勿修改')
     // 子指标任务类别由父级继承链决定，不作为用户输入落库
     expect(rules).toContain('无需填写')
+  })
+
+  it('学院页签传 seeds：模板含真实父级行、无静态示例行、子指标三列留空（方案甲 2026-11-13）', () => {
+    const sheet = buildImportTemplateSheet('distribution', [
+      {
+        parentIndicator: '完成重点提案办理与反馈督办',
+        college: '工学院',
+        parentIndicatorType: '定量',
+        taskType: '基础性'
+      },
+      {
+        parentIndicator: '形成党委统战领域专项推进台账',
+        college: '工学院',
+        parentIndicatorType: '定性',
+        taskType: '发展性'
+      }
+    ])
+
+    // seeds 替换静态示例行（无种子时才回退示例行）
+    expect(sheet.rows).toHaveLength(2)
+    expect(sheet.rows[0]).toEqual({
+      serial: '1',
+      college: '工学院',
+      taskType: '基础性',
+      parentIndicator: '完成重点提案办理与反馈督办',
+      parentIndicatorType: '定量',
+      indicatorName: '',
+      indicatorType: '',
+      weight: ''
+    })
+    // 每个父级行的子指标三列全部留空（用户只填子指标名称/指标类型/权重）
+    sheet.rows.forEach(row => {
+      expect(row.indicatorName).toBe('')
+      expect(row.indicatorType).toBe('')
+      expect(row.weight).toBe('')
+    })
+    // 组列按父级独立成组，学院列整列合并到全部数据行
+    expect(sheet.columns[0].getValue(sheet.rows[0], 0)).toBe('1')
+    expect(sheet.columns[0].getValue(sheet.rows[1], 1)).toBe('2')
+    expect(sheet.columns[1].getValue(sheet.rows[0], 0)).toMatchObject({ rowSpan: 2 })
+  })
+
+  it('学院页签未选部门（seeds 为空）→ 回退静态示例行，不产出空模板', () => {
+    const withSeeds = buildImportTemplateSheet('distribution', [])
+    const fallback = buildImportTemplateSheet('distribution')
+
+    expect(withSeeds.rows).toEqual(fallback.rows)
+    expect(withSeeds.rows.length).toBeGreaterThan(0)
   })
 
   // ============ 2026-10-31 用户拍板：权重说明改为计划级口径 ============

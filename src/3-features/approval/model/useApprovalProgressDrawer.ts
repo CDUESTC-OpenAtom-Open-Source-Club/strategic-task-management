@@ -3825,7 +3825,7 @@ export function useApprovalProgressDrawer(
     await Promise.all([...userIds].map(userId => ensureWorkflowUserAvatarLoaded(userId)))
   }
 
-  async function loadPlanWorkflowHistoryCards() {
+  async function loadPlanWorkflowHistoryCards(options: { force?: boolean } = {}) {
     // 2026-10-31（P-10② 审批历史按实体全实例）：不再要求 props.plan 存在——
     // 纯上报卡/学院侧上下文（props.plan 为 null）也按实体维度拉取全部实例，
     // 历史可见性不再依赖查看者上下文装配（planWorkflowDetail/activePlanWorkflow）。
@@ -3842,7 +3842,9 @@ export function useApprovalProgressDrawer(
     try {
       const results = await Promise.all(
         historyTargets.value.map(target =>
-          getWorkflowInstanceHistoryByBusiness(target.entityType, target.entityId)
+          getWorkflowInstanceHistoryByBusiness(target.entityType, target.entityId, {
+            force: options.force === true
+          })
         )
       )
 
@@ -4861,7 +4863,10 @@ export function useApprovalProgressDrawer(
         void loadPlanWorkflowDetail()
         void loadWorkflowDefinitionPreview()
         void ensureWorkflowRelatedAvatarsLoaded()
-        void loadPlanWorkflowHistoryCards()
+        // 2026-11-12（一键下发后审批历史空白）：打开抽屉穿透历史缓存——
+        // historyByBusiness 的 SWR 条目过期时先返旧数据且后台刷新不回写
+        // 已赋值的 ref，force 保证每次打开都看到最新（其余调用点默认非 force）。
+        void loadPlanWorkflowHistoryCards({ force: true })
       } else {
         selectedHistoryInstanceId.value = null
         selectedHistoryInstanceDetail.value = null

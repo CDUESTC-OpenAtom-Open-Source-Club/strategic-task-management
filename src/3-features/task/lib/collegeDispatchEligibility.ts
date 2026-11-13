@@ -46,7 +46,9 @@ export const COLLEGE_DEPT_INELIGIBLE_WARNING = '当前职能部门未有已下�
  *       有父指标的子指标不构成资格依据。</li>
  * </ul>
  */
-export const isDistributedCoreIndicator = (indicator: DispatchEligibilityIndicatorLike): boolean => {
+export const isDistributedCoreIndicator = (
+  indicator: DispatchEligibilityIndicatorLike
+): boolean => {
   const status = String(indicator.status ?? '')
     .trim()
     .toUpperCase()
@@ -119,4 +121,108 @@ export const resolveCollegeDeptFilterSelection = (
     return { accepted: false, dept, intercepted: true }
   }
   return { accepted: true, dept, intercepted: false }
+}
+
+/**
+ * 学院页签「当前所选部门」回显（2026-11-13 回显缺陷修复，纯函数，实现与单测共用）。
+ *
+ * <p>缺陷（用户实测）：学院页签选完职能部门后，页签上的下拉按钮仍显示占位
+ * 「请选择职能部门」。复现 dump（zlb_admin → 工学院 → 选「纪委办公室 | 监察处」）：
+ * filter="纪委办公室 | 监察处"、effective=同值、collegeDeptDispatchOptions=[]（当前库
+ * 该学院名下零学院行）→ 旧实现只在 dispatchOptions 里找 → find 不命中 → current=null。</p>
+ *
+ * <p>根因：旧注释假设「filter 只可能命中 eligible 部门，而 eligible 部门必然在
+ * dispatchOptions 里」不成立——资格（eligible）来自「已下发核心指标」（target=职能部门），
+ * 而 dispatchOptions 只聚合「target=所选学院」的学院行；部门有资格但尚无学院行时
+ * 不在 dispatchOptions 里。另一个潜在坑：dispatchOptions 的 dept 是
+ * resolveRowOwnerDept 的原始串（未过 normalizeDepartmentName），与 effective
+ * （归一化值）做全等比较，别名形态会失配。</p>
+ *
+ * <p>修复口径：双侧归一后比较，依次回退 dispatchOptions → dropdownItems（覆盖全部
+ * 可选部门，回显与下拉项一致的全名）→ filter 归一值兜底（选中态永不丢）。</p>
+ */
+export const resolveCollegeDeptCurrent = (params: {
+  /** 归一化后的筛选值（collegeDispatchDeptEffective） */
+  effectiveDept: string
+  /** 学院行聚合选项（可为空数组——零学院行部门的常态） */
+  dispatchOptions: readonly CollegeDeptDispatchOptionLike[]
+  /** 下拉完整选项（全部职能部门，含无资格部门） */
+  dropdownItems: readonly CollegeDeptDispatchOptionLike[]
+  normalize: (value?: string | null) => string
+}): CollegeDeptDispatchOptionLike | null => {
+  const effective = params.normalize(params.effectiveDept || '')
+  if (!effective) {
+    return null
+  }
+  const match = (items: readonly CollegeDeptDispatchOptionLike[]) =>
+    items.find(item => params.normalize(item.dept) === effective) ?? null
+  return (
+    match(params.dispatchOptions) ??
+    match(params.dropdownItems) ?? {
+      // 兜底：filter 只能经 resolveCollegeDeptFilterSelection 的 eligible 放行写入，
+      // 走到这说明两份列表都没赶上数据刷新——按选中态回显归一值本身
+      dept: effective,
+      count: 0,
+      eligible: true,
+      dispatchStatus: 'none',
+      reportStatus: 'none'
+    }
+  )
+}
+
+/**
+ * 学院锚点核心指标（2026-11-13 方案甲恢复，纯函数，实现与单测共用）。
+ *
+ * <p>口径与后端导入锚点（BusinessImportApplicationService → JpaIndicatorRepository
+ * {@code findCoreDispatchAnchors}）逐条对齐：</p>
+ * <ul>
+ *   <li>根指标（parentIndicatorId 为空，{@link isDistributedCoreIndicator} 同时收敛
+ *       「status=DISTRIBUTED/ACTIVE」——草稿核心指标不能做父级锚点）；</li>
+ *   <li>owner = 战略发展部（「战略部 → 职能部门」那批核心指标）；</li>
+ *   <li>目标部门 = 学院页签右侧下拉所选职能部门（collegeDispatchDeptEffective）；
+ *       学院本身只作为子指标接收方，不参与父级筛选；</li>
+ *   <li>按 id 升序输出——后端锚点 ORDER BY i.id，导入的父级组顺序校验按该序做
+ *       子序列判定，前端预填/下拉若乱序会误触发「顺序不符」阻断。</li>
+ * </ul>
+ *
+ * @param indicators 全量指标行（normalizedIndicators，已按当前考核周期拉取）
+ * @param params.ownerDept 学院页签右侧下拉所选职能部门（未选为空 → 无锚点）
+ * @param params.strategicDeptName 战略发展部标准名（取不到时跳过 owner 校验，fail-open）
+ * @param params.normalize 调用方注入 normalizeDepartmentName（别名/ID 映射兜底）
+ */
+export const buildCollegeParentAnchorIndicators = (
+  indicators: readonly DispatchEligibilityIndicatorLike[],
+  params: {
+    ownerDept: string
+    strategicDeptName: string
+    normalize: (value?: string | null) => string
+  }
+): DispatchEligibilityIndicatorLike[] => {
+  const ownerDept = params.normalize(params.ownerDept || '')
+  if (!ownerDept) {
+    return []
+  }
+  const strategic = params.normalize(params.strategicDeptName || '')
+  return indicators
+    .filter(item => {
+      if (!isDistributedCoreIndicator(item)) {
+        return false
+      }
+      const candidate = item as {
+        ownerDept?: string
+        targetDepartment?: string
+        targetOrgName?: string
+        responsibleDept?: string
+      }
+      if (strategic && params.normalize(candidate.ownerDept || '') !== strategic) {
+        return false
+      }
+      const targetDeptName = params.normalize(
+        String(
+          candidate.targetDepartment ?? candidate.targetOrgName ?? candidate.responsibleDept ?? ''
+        )
+      )
+      return targetDeptName === ownerDept || targetDeptName.includes(ownerDept)
+    })
+    .sort((left, right) => Number(left.id ?? 0) - Number(right.id ?? 0))
 }

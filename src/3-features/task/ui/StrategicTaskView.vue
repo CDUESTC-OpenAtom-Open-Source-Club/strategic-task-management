@@ -253,6 +253,9 @@ const {
   collegeAddMode,
   collegeParentIndicatorOptions,
   // 2026-11-08（单层下发）：学院页签「导入 / 导出 / 发起下发审批」所需的 model 数据
+  // 2026-11-13（方案甲恢复）：学院页签「导入」模板父级预填 seeds（右侧下拉所选部门
+  // 已接收的已下发核心指标，id 升序）
+  collegeImportParentIndicators,
   isStrategicDeptLogin,
   strategicDeptOrgId,
   strategicDeptName,
@@ -448,19 +451,6 @@ const collegeDispatchDisabledReason = computed(() => {
   }
   return ''
 })
-
-/**
- * 2026-11-08（单层下发）：二级学院页签「导入」弹窗的父级锚点。
- *
- * 新口径下学院指标由战略部直接下发、没有父级核心指标，故固定传空数组。
- * 用模块级常量而不是模板里写字面量 []，避免每次渲染产生新引用触发子组件重算。
- */
-const COLLEGE_IMPORT_PARENT_INDICATORS: Array<{
-  name?: string
-  taskContent?: string
-  type1?: string
-  type2?: string
-}> = []
 
 // 2026-10-31 用户拍板（「确认审批流程」弹窗去计划编号）：
 // ①「当前计划」行不读 currentPlan.name / taskName —— 后端占位名是「Plan 4036」式，
@@ -833,6 +823,27 @@ const handleCollegeDeptFilterChange = (command: string | number | object) => {
 const handleAddNewRow = () => {
   collegeAddMode.value = activeTaskTabName.value === 'college'
   addNewRow()
+}
+
+/**
+ * 2026-11-13（方案甲恢复）：学院「新增行」选中父级核心指标后自动带出锚点字段。
+ *
+ * <p>与导入锚点口径一致（父级名与类型须完全一致）：</p>
+ * <ul>
+ *   <li>「指标类型」= 父级核心指标自身类型——表单选择器锁定为父级值
+ *       （disabled），提交侧 model 再以父级类型兜底，杜绝手填冲突值；</li>
+ *   <li>「任务类型 / 战略任务」= 父级所属任务（表单不展示这两个字段，
+ *       内部同步到 newRow，保证异动/权重合计等下游口径读到父级任务）。</li>
+ * </ul>
+ */
+const handleCollegeParentIndicatorChange = (value: string) => {
+  const parent = indicatorByIdMap.value.get(String(value))
+  if (!parent) {
+    return
+  }
+  newRow.value.type1 = parent.type1 === '定性' ? '定性' : '定量'
+  newRow.value.type2 = getIndicatorCategoryLabel(parent)
+  newRow.value.taskContent = String(parent.taskContent || '')
 }
 
 // 2026-10-19 修复：切 tab 时按对应链路重新拉取上报摘要——
@@ -1596,6 +1607,12 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
   // 这里与表格刷新同帧先失效 plan.list，让紧随的 loadPlans 强制回源，
   // overallStatus / effectivePlanContext（学院页签）等计划状态消费方同步拿到最新状态。
   invalidateQueries(['plan.list'])
+  // 2026-11-12（一键下发后审批历史空白）：导入下发会在服务端新建/流转工作流实例，
+  // workflow 域缓存（historyByBusiness/detailByBusiness 挂 'workflow.detail'，待办挂
+  // 'workflow.todo'）若不失效，SWR 条目会先返回旧数据且后台刷新不回写已赋值的 ref，
+  // 导入后立刻「查看审批」拿到的是下发前的空历史。与 plan.list 同帧失效让紧随的
+  // 打开/刷新路径强制回源。
+  invalidateQueries(['workflow.detail', 'workflow.todo'])
   await refreshCurrentDepartmentView({ showLoading: true, force: true, reloadIndicators: true })
 
   if (result?.workflow?.autoSubmitAndApprove || result?.workflow?.instanceId) {
@@ -2675,43 +2692,15 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
               ref="addRowFormRef"
               class="add-row-form"
             >
-              <h3 class="form-title">
-                {{ collegeAddMode ? '新增子指标（挂到核心指标下）' : '新增任务指标' }}
-              </h3>
+              <h3 class="form-title">新增任务指标</h3>
               <div class="add-form-content">
-                <!-- 2026-10-23：学院 tab 新增的是子指标，必须先选关联的核心指标 -->
-                <el-form v-if="collegeAddMode" label-width="80px">
-                  <el-row :gutter="16">
-                    <el-col :span="24">
-                      <el-form-item class="required-form-item">
-                        <template #label><span class="required-asterisk">*</span>关联指标</template>
-                        <el-select
-                          v-model="newRow.parentIndicatorId"
-                          filterable
-                          placeholder="选择要挂靠的核心指标"
-                          style="width: 100%"
-                          :teleported="false"
-                        >
-                          <el-option
-                            v-for="opt in collegeParentIndicatorOptions"
-                            :key="opt.id"
-                            :label="opt.name"
-                            :value="opt.id"
-                          >
-                            <span>{{ opt.name }}</span>
-                            <span class="parent-indicator-option__task">{{ opt.taskContent }}</span>
-                          </el-option>
-                        </el-select>
-                        <div v-if="collegeParentIndicatorOptions.length === 0" class="form-hint">
-                          当前职能部门尚未向「{{ selectedCollege }}」下发核心指标，无法新增子指标
-                        </div>
-                      </el-form-item>
-                    </el-col>
-                  </el-row>
-                </el-form>
                 <el-form label-width="80px">
-                  <!-- 2026-10-23：学院 tab 建子指标时，任务类型与战略任务均从所选核心指标继承，不在此填写 -->
-                  <el-row v-if="!collegeAddMode" :gutter="16">
+                  <!-- 职能部门页签建的是核心指标（战略部下发），任务类型/战略任务在此填写；
+                       学院页签的子指标表单在下方独立区块（父级「关联指标」必选）。
+                       2026-11-13（方案甲清理）：原 collegeAddMode 条件标题与「关联指标」
+                       死代码块移除——该块被 v-if="activeTaskTabName === 'functional'" 包住、
+                       而 collegeAddMode 只在学院页签为真，永不渲染；学院表单已自带父级选择器。 -->
+                  <el-row :gutter="16">
                     <el-col :span="4">
                       <el-form-item class="required-form-item">
                         <template #label><span class="required-asterisk">*</span>任务类型</template>
@@ -2742,7 +2731,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     </el-col>
                   </el-row>
                   <el-row :gutter="16">
-                    <el-col :span="4">
+                    <!-- 2026-11-13（用户拍板）：指标类型/权重列 span 4→8——span=4 时
+                         1280 宽窗口下 select 被挤到「定..」截断；8 列 + label-width 80px
+                         后「定量/定性」完整显示（学院页签表单同款，与下发页
+                         IndicatorDistributeView 的 span 8/8 布局对齐） -->
+                    <el-col :span="8">
                       <el-form-item class="required-form-item">
                         <template #label><span class="required-asterisk">*</span>指标类型</template>
                         <el-select v-model="newRow.type1" style="width: 100%">
@@ -2751,7 +2744,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                         </el-select>
                       </el-form-item>
                     </el-col>
-                    <el-col :span="4">
+                    <el-col :span="8">
                       <el-form-item class="required-form-item">
                         <template #label><span class="required-asterisk">*</span>权重</template>
                         <el-input-number
@@ -2828,15 +2821,14 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       :key="item.dept"
                       :command="item.dept"
                       :style="{
-                        color:
-                          !item.eligible
-                            ? '#c0c4cc'
-                            : item.reportStatus === 'reported'
-                              ? '#67c23a'
-                              : item.dispatchStatus === 'dispatching' ||
-                                  item.reportStatus === 'reporting'
-                                ? '#e6a23c'
-                                : undefined
+                        color: !item.eligible
+                          ? '#c0c4cc'
+                          : item.reportStatus === 'reported'
+                            ? '#67c23a'
+                            : item.dispatchStatus === 'dispatching' ||
+                                item.reportStatus === 'reporting'
+                              ? '#e6a23c'
+                              : undefined
                       }"
                     >
                       <span class="college-dept-filter-name">{{ item.dept }}</span>
@@ -3146,22 +3138,62 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                 ref="addRowFormRef"
                 class="add-row-form"
               >
-                <h3 class="form-title">新增子指标（挂到核心指标下）</h3>
+                <h3 class="form-title">新增子指标</h3>
                 <div class="add-form-content">
                   <el-form label-width="80px">
+                    <!-- 2026-11-13（方案甲恢复）：父级「关联指标」必选——新增行与导入模板同一
+                         锚点口径（挂到右侧下拉所选职能部门已接收的已下发核心指标下），
+                         不再产生 parent=null 的单层孤儿数据。选中后自动带出父级的
+                         指标类型/任务类型（与导入锚点一致：父级名与类型须完全一致）。 -->
                     <el-row :gutter="16">
-                      <el-col :span="4">
+                      <el-col :span="24">
+                        <el-form-item class="required-form-item">
+                          <template #label
+                            ><span class="required-asterisk">*</span>关联指标</template
+                          >
+                          <el-select
+                            v-model="newRow.parentIndicatorId"
+                            filterable
+                            placeholder="选择要挂靠的核心指标"
+                            style="width: 100%"
+                            :teleported="false"
+                            @change="handleCollegeParentIndicatorChange"
+                          >
+                            <el-option
+                              v-for="opt in collegeParentIndicatorOptions"
+                              :key="opt.id"
+                              :label="opt.name"
+                              :value="opt.id"
+                            >
+                              <span>{{ opt.name }}</span>
+                              <span class="parent-indicator-option__task">{{
+                                opt.taskContent
+                              }}</span>
+                            </el-option>
+                          </el-select>
+                          <div v-if="collegeParentIndicatorOptions.length === 0" class="form-hint">
+                            当前所选职能部门（{{
+                              collegeDispatchDeptFilter || '未选择'
+                            }}）暂无已下发的核心指标，无法新增子指标
+                          </div>
+                        </el-form-item>
+                      </el-col>
+                    </el-row>
+                    <el-row :gutter="16">
+                      <el-col :span="8">
                         <el-form-item class="required-form-item">
                           <template #label
                             ><span class="required-asterisk">*</span>指标类型</template
                           >
+                          <!-- 2026-11-13（对齐 main 原版）：指标类型可编辑，不随父级锁定。
+                               选中父级时仅作为默认值带出，用户可改（与 main 原版一致）。 -->
                           <el-select v-model="newRow.type1" style="width: 100%">
                             <el-option label="定性" value="定性" />
                             <el-option label="定量" value="定量" />
                           </el-select>
                         </el-form-item>
                       </el-col>
-                      <el-col :span="4">
+                      <el-col :span="8">
                         <el-form-item class="required-form-item">
                           <template #label><span class="required-asterisk">*</span>权重</template>
                           <el-input-number
@@ -3458,10 +3490,12 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
       </template>
     </el-dialog>
 
-    <!-- 2026-11-08（单层下发）：同一个导入弹窗按页签切换口径，不新增第二个实例。
-         职能部门页签 = strategic-task（战略部 → 职能部门，原行为不变）；
-         二级学院页签 = distribution（战略部 → 所选学院），单层结构没有父级核心指标，
-         故 parent-indicators 固定传空数组。 -->
+    <!-- 同一个导入弹窗按页签切换口径，不新增第二个实例。
+         职能部门页签 = strategic-task（战略部 → 职能部门，原行为不变，不预填）；
+         2026-11-13（方案甲恢复）：二级学院页签 = distribution（战略部 → 所选学院），
+         parent-indicators 恢复传真实 seeds（collegeImportParentIndicators：右侧下拉
+         所选部门已接收的已下发核心指标，id 升序）——与原「指标下发与审批」页一致，
+         父级行预填（序号/任务类型/核心指标/核心指标类型/学院），子指标三列留空。 -->
     <BusinessImportDialog
       v-model:visible="strategicImportDialogVisible"
       :type="activeTaskTabName === 'college' ? 'distribution' : 'strategic-task'"
@@ -3475,7 +3509,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
         activeTaskTabName === 'college' ? collegeDispatchCycleId : currentStrategicImportCycleId
       "
       :parent-indicators="
-        activeTaskTabName === 'college' ? COLLEGE_IMPORT_PARENT_INDICATORS : undefined
+        activeTaskTabName === 'college' ? collegeImportParentIndicators : undefined
       "
       @committed="handleStrategicImportCommitted"
     />

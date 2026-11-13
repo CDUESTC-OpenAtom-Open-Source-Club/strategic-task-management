@@ -601,7 +601,7 @@ export function useApprovalProgressWorkflow({
     await Promise.all([...userIds].map(userId => ensureWorkflowUserAvatarLoaded(userId)))
   }
 
-  async function loadPlanWorkflowHistoryCards() {
+  async function loadPlanWorkflowHistoryCards(options: { force?: boolean } = {}) {
     if (!props.showPlanApprovals || !props.plan) {
       state.planWorkflowHistoryCards.value = []
       return
@@ -615,7 +615,9 @@ export function useApprovalProgressWorkflow({
     try {
       const results = await Promise.all(
         state.historyTargets.value.map(target =>
-          getWorkflowInstanceHistoryByBusiness(target.entityType, target.entityId)
+          getWorkflowInstanceHistoryByBusiness(target.entityType, target.entityId, {
+            force: options.force === true
+          })
         )
       )
 
@@ -1351,13 +1353,13 @@ export function useApprovalProgressWorkflow({
   }
 
   async function refreshPlanWorkflowContext(
-    options: { retryActive?: boolean } = {}
+    options: { retryActive?: boolean; force?: boolean } = {}
   ): Promise<void> {
     await loadRelatedPlanReportSummary()
     await loadPlanWorkflowDetail({ retryActive: options.retryActive })
     await loadWorkflowDefinitionPreview()
     await ensureWorkflowRelatedAvatarsLoaded()
-    await loadPlanWorkflowHistoryCards()
+    await loadPlanWorkflowHistoryCards({ force: options.force === true })
   }
 
   // 2026-10-26：部门计划族实体（relatedWorkflowEntities）由页面异步构造，
@@ -1440,7 +1442,11 @@ export function useApprovalProgressWorkflow({
           void ensureSubmitterNameLoaded(props.plan?.submittedBy, props.plan?.createdByName)
         }
         void loadPendingPlanApprovals()
-        await refreshPlanWorkflowContext()
+        // 2026-11-12（一键下发后审批历史空白）：打开抽屉必须穿透历史缓存。
+        // historyByBusiness 走 SWR 条目，过期时先返回旧数据且后台刷新不回写
+        // 已赋值的 ref——一键下发后立刻查看会拿到挂载时缓存的空历史。
+        // force 让每次打开抽屉都真正回源（其余调用点保持默认非 force）。
+        await refreshPlanWorkflowContext({ force: true })
       } else {
         state.selectedHistoryInstanceId.value = null
         state.selectedHistoryInstanceDetail.value = null
