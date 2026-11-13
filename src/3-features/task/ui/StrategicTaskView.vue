@@ -3140,7 +3140,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
               >
                 <h3 class="form-title">新增子指标</h3>
                 <div class="add-form-content">
-                  <el-form label-width="80px">
+                  <!-- 2026-11-13（用户反馈）：label 宽 80px 放不下「子指标内容」（5 字 ≈95px），
+                       会折成「子指标内 / 容」两行。统一放宽到 110px 并禁止折行。 -->
+                  <el-form label-width="110px" class="college-add-row-form">
                     <!-- 2026-11-13（方案甲恢复）：父级「关联指标」必选——新增行与导入模板同一
                          锚点口径（挂到右侧下拉所选职能部门已接收的已下发核心指标下），
                          不再产生 parent=null 的单层孤儿数据。选中后自动带出父级的
@@ -3759,4 +3761,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
 /* 说明：下拉菜单被 Element Plus teleport 到 body，scoped 样式选不到它，
    所以「已上报 / 审批中 / 未下发」三种颜色一律用模板上的内联 style 实现，
    这里不再留对应 class（留着会误导后来者以为改样式能生效）。 */
+
+/* 2026-11-13（用户反馈）：学院新增行表单的字段名不得折行。
+   「子指标内容」5 字在 80px label 宽下会断成两行，放宽到 110px 后仍加
+   nowrap 兜底（长字段名/窄窗口下也不折行）。 */
+.college-add-row-form :deep(.el-form-item__label) {
+  white-space: nowrap;
+}
 </style>
