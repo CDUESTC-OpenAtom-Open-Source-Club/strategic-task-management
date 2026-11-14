@@ -3826,8 +3826,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   /**
    * 二级学院 tab「新增行」可挂靠的核心指标选项（方案甲 2026-11-13：父级必选）。
    *
-   * 数据口径：核心指标 ownerDept=战略发展部、target=职能部门（已下发 DISTRIBUTED）；
-   * 子指标挂到其下后 target=学院。学院只作为接收方（targetOrgId），不参与父指标筛选。
+   * <p>数据口径：核心指标 ownerDept=战略发展部、target=职能部门（已下发 DISTRIBUTED）；
+   * 子指标挂到其下后 target=学院。</p>
+   *
+   * <p>2026-11-14（用户定案：同一父级可下发给多个学院）：父级候选**不按学院过滤**——
+   * 同一归口部门的核心指标本来就同时下发给多个学院（生产形态：党委办公室 →
+   * 工学院 + 计算机学院），同一个父级在多个学院的列表里重复出现是正确的。</p>
    */
   const collegeParentIndicatorOptions = computed(() =>
     collegeDispatchAnchorIndicators.value.map(item => {
@@ -4788,7 +4792,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
           indicatorType: draft.type1,
           parentIndicatorId: draft.parentIndicatorId,
           taskId: draft.taskId,
-          remark: draft.remark
+          remark: draft.remark,
+          // 2026-11-14（P1 修复：新增行落错学院）：显式带上目标学院（UI 所选学院）。
+          // 后端 resolveNewIndicatorTargetOrgId 优先采信显式目标：与父级现有子指标的
+          // 目标学院不一致 → 整批 400 拒绝（明确拒绝 > 静默落进别的学院）。
+          // 缺省时后端会按「父级下游 FUNC_TO_COLLEGE 计划」解析目标学院——
+          // 那条计划可能指向另一个学院（如「教务处 → 工学院(56)」），
+          // 权重恰好凑得上 100 时会把本学院的新行静默落进工学院。
+          targetOrgId: draft.targetOrgId
         })),
         ...pendingCreates.map(id => ({ id, create: true as const })),
         ...effectiveDrafts.map(draft =>

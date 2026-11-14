@@ -141,6 +141,10 @@ describe('学院「新增行」父级锚点接线（方案甲 2026-11-13 源码�
     // 空选项引导沿用 collegeParentIndicatorOptions 判空（右侧下拉所选职能部门无已下发核心指标时）
     expect(collegeForm).toContain('collegeParentIndicatorOptions.length === 0')
     expect(collegeForm).toContain('@change="handleCollegeParentIndicatorChange"')
+    // 2026-11-14（用户定案：同一父级可下发给多个学院）：父级候选**不按学院过滤**——
+    // 同一归口的核心指标本来就同时下发给多个学院，同一父级在多个学院重复出现是正确的
+    expect(modelSource).not.toContain('collegeLegalParentIndicatorIds')
+    expect(modelSource).not.toContain('collegeParentIndicatorEmptyHint')
     // 空选项引导（右侧下拉所选职能部门无已下发核心指标时）
     expect(collegeForm).toContain('暂无已下发的核心指标')
   })
@@ -232,6 +236,36 @@ describe('学院「新增行」父级锚点接线（方案甲 2026-11-13 源码�
     expect(modelSource).toMatch(/type2: getIndicatorCategoryLabel\(item\)/)
     // 组 type2 兜底「发展性」（main `indicators[0]?.type2 || '发展性'` 同款）
     expect(modelSource).toMatch(/type2: option\.type2 \|\| '发展性'/)
+  })
+})
+
+/**
+ * 2026-11-14（P1 修复：新增行落错学院）学院新增行「关联指标」父级候选**不按学院过滤**，
+ * 但 create 载荷必须显式带目标学院。
+ *
+ * <p>用户定案（2026-11-14）：同一归口部门的核心指标本来就同时下发给多个学院
+ * （生产形态：党委办公室 → 工学院 + 计算机学院），同一个父级在多个学院的列表里
+ * 重复出现是正确的——前端**不得**按所选学院过滤父级候选。</p>
+ *
+ * <p>真正的修复在防御层：create 载荷显式带 targetOrgId（UI 所选学院），
+ * 后端据此确定目标学院并做一致性校验，不再靠「唯一下游计划」猜——
+ * 猜错时会把新行静默落进别的学院（实测「计算机学院 × 教务处」→ 落进工学院 56）。</p>
+ */
+describe('P1 修复：新增行载荷带显式目标学院（父级候选不按学院过滤）', () => {
+  it('model：父级候选保持锚点基座原样（不按学院过滤——同一父级可下发给多个学院）', () => {
+    expect(modelSource).not.toContain('collegeLegalParentIndicatorIds')
+    expect(modelSource).not.toContain('buildCollegeLegalParentIndicatorIds')
+    expect(modelSource).toMatch(
+      /const collegeParentIndicatorOptions = computed\(\(\) =>\s*\n\s*collegeDispatchAnchorIndicators\.value\.map/
+    )
+  })
+
+  it('防御层：create 条目显式带目标学院 targetOrgId（后端据此校验并拒绝不一致的目标）', () => {
+    const submitBody = modelSource.slice(
+      modelSource.indexOf('const submitMutationDraft = async'),
+      modelSource.indexOf('// 指标双击编辑')
+    )
+    expect(submitBody).toContain('targetOrgId: draft.targetOrgId')
   })
 })
 
@@ -336,6 +370,9 @@ describe('学院新增行内存草稿（2026-11-14 不落库改造 源码契约�
     expect(submitBody).toContain('parentIndicatorId: draft.parentIndicatorId,')
     expect(submitBody).toContain('taskId: draft.taskId,')
     expect(submitBody).toContain('remark: draft.remark')
+    // 2026-11-14（P1 修复）：显式目标学院——后端据此校验「与父级现有子指标一致」，
+    // 不一致直接 400 拒绝，杜绝按父级下游计划静默落进别的学院
+    expect(submitBody).toContain('targetOrgId: draft.targetOrgId')
     // 旧格式（职能页签落库行）继续兼容
     expect(submitBody).toContain('pendingCreates.map(id => ({ id, create: true as const }))')
     // 提交成功 = 草稿行已在后端落库，内存集合清空
