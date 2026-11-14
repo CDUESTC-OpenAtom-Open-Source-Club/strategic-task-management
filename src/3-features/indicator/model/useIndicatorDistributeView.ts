@@ -39,6 +39,11 @@ import {
   filterDispatchOwnedCollegeIndicators,
   groupDispatchCollegeChildIndicators
 } from '@/features/indicator/lib/distributeRowOwnership'
+import {
+  matchesCollegePlanAnchor,
+  selectCollegeFunctionalPlan,
+  type AnchorPlanLike
+} from '@/features/indicator/lib/collegeFunctionalPlanAnchor'
 import { getPlanStatusDisplay, normalizePlanStatus } from '@/features/task/lib/planStatus'
 import {
   MANUAL_ALERT_LOCKED_HINT,
@@ -547,58 +552,22 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       ? dispatchOwnerOrgId.value
       : currentDepartmentOrgId.value
 
-    // 2026-10-19 缺陷修复：此处只应取「职能部门→学院」这一层级的计划。
-    // 此前未校验 planLevel，当同一对部门之间同时存在 STRAT_TO_FUNC 空草稿
-    // （如纪委→计算机学院的 705463）时会被 find 先命中，导致选中学院后
-    // 审批历史查的是错误计划（查不到真正下发链 403757 的实例）。
-    const candidates = planStore.plans.filter(plan => {
-      const planAny = plan as Plan & {
-        targetOrgId?: number | string
-        targetOrgName?: string
-        orgId?: number | string
-        orgName?: string
-        createdByOrgId?: number | string
-        year?: number | string
-        cycleId?: number | string
-        planLevel?: string
-      }
-      const planYear = resolvePlanYear(planAny)
-      const targetOrgId = Number(planAny.targetOrgId ?? planAny.org_id ?? planAny.orgId ?? NaN)
-      const targetOrgName = normalizeDepartmentName(planAny.targetOrgName || planAny.orgName || '')
-      const createdByOrgId = Number(planAny.createdByOrgId ?? NaN)
-      const matchesOrgId =
-        collegeOrgId != null && Number.isFinite(targetOrgId) && targetOrgId === collegeOrgId
-      const matchesOrgName = targetOrgName === collegeName
-      const matchesCreatedByOrg =
-        currentOrgId == null || !Number.isFinite(createdByOrgId) || createdByOrgId === currentOrgId
-      const planLevel = String(planAny.planLevel || '')
-        .trim()
-        .toUpperCase()
-      const matchesLevel = planLevel === '' || planLevel === 'FUNC_TO_COLLEGE'
-
-      return (
-        planYear === timeContext.currentYear &&
-        (matchesOrgId || matchesOrgName) &&
-        matchesCreatedByOrg &&
-        matchesLevel
-      )
-    })
-
-    // 同层级多份计划时优先取已下发（有审批链），其次按 id 倒序取最新
-    const isDistributed = (plan: Plan) =>
-      String((plan as { status?: string }).status || '')
-        .trim()
-        .toUpperCase() === 'DISTRIBUTED'
-
+    // 2026-11-13（归口锚定修正）：锚定口径收口到 lib/collegeFunctionalPlanAnchor.ts——
+    // 归口计划（functional_org_id=本部门）优先；回退 legacy（created_by_org_id=本部门）
+    // 且必须有存活指标（legacy 空壳 DRAFT 不参与状态展示）。改造后 FUNC_TO_COLLEGE
+    // 计划 created_by 恒为战略部（35）、归口部门在 functional_org_id，旧
+    // 「createdByOrgId===本部门」口径会让教务处登录锚到 legacy 空壳草稿（404456 等）
+    // → 头部「草稿 / 权重 0」，真正已下发的归口计划（705488）反而锚不到。
+    // 同层级多份计划时优先取已下发（有审批链），其次按 id 倒序取最新（lib 内同款排序）。
     return (
-      [...candidates].sort((left, right) => {
-        const leftDistributed = isDistributed(left) ? 1 : 0
-        const rightDistributed = isDistributed(right) ? 1 : 0
-        if (leftDistributed !== rightDistributed) {
-          return rightDistributed - leftDistributed
-        }
-        return Number(right.id ?? 0) - Number(left.id ?? 0)
-      })[0] || null
+      (selectCollegeFunctionalPlan(planStore.plans as AnchorPlanLike[], {
+        collegeOrgId: collegeOrgId ?? null,
+        collegeName,
+        ownerOrgId: currentOrgId,
+        currentYear: timeContext.currentYear,
+        resolvePlanYear: planAny => resolvePlanYear(planAny),
+        normalizeOrgName: normalizeDepartmentName
+      }) as Plan | null) || null
     )
   })
 
@@ -699,30 +668,18 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       return false
     }
 
-    const collegeOrgId = getOrgIdByDeptName(collegeName)
-    const currentOrgId = currentDepartmentOrgId.value
-    const planAny = plan as Plan & {
-      targetOrgId?: number | string
-      targetOrgName?: string
-      orgId?: number | string
-      orgName?: string
-      createdByOrgId?: number | string
-    }
-    const planYear = resolvePlanYear(planAny)
-    const targetOrgId = Number(planAny.targetOrgId ?? planAny.org_id ?? planAny.orgId ?? NaN)
-    const targetOrgName = normalizeDepartmentName(planAny.targetOrgName || planAny.orgName || '')
-    const createdByOrgId = Number(planAny.createdByOrgId ?? NaN)
-    const matchesOrgId =
-      collegeOrgId != null && Number.isFinite(targetOrgId) && targetOrgId === collegeOrgId
-    const matchesOrgName = targetOrgName === collegeName
-    const matchesCreatedByOrg =
-      currentOrgId == null || !Number.isFinite(createdByOrgId) || createdByOrgId === currentOrgId
-
-    return (
-      planYear === timeContext.currentYear &&
-      (matchesOrgId || matchesOrgName) &&
-      matchesCreatedByOrg
-    )
+    // 2026-11-13（归口锚定修正）：与 currentSelectedCollegePlan 同口径
+    // （lib/collegeFunctionalPlanAnchor.matchesCollegePlanAnchor）——
+    // 归口计划（functional_org_id=本部门）或「有存活指标的 legacy 计划」
+    // （created_by_org_id=本部门）命中即视为当前上下文；空壳不参与。
+    return matchesCollegePlanAnchor(plan as AnchorPlanLike, {
+      collegeOrgId: getOrgIdByDeptName(collegeName) ?? null,
+      collegeName,
+      ownerOrgId: currentDepartmentOrgId.value,
+      currentYear: timeContext.currentYear,
+      resolvePlanYear: planAny => resolvePlanYear(planAny),
+      normalizeOrgName: normalizeDepartmentName
+    })
   }
 
   const buildTaskTypeMap = (tasks: Array<Record<string, unknown>>): Record<string, string> => {
@@ -4324,9 +4281,21 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   // 计算当前选中学院基础性任务下子指标的总权重
   // 2026-11-05：按「本次下发的下发方」口径统计（战略部 → 只统计战略发展部下发的子指标，
   // 不把职能部门历史存量计入），否则战略部永远凑不满 100。
+  // 2026-11-13（归口锚定修正）：职能部门登录改按「归口可见行集」（与表格同源
+  // collegeChildIndicators）统计——归口计划（functional_org_id=本部门）的子指标
+  // owner=战略发展部，旧 ownerDept===本部门过滤会把它漏计（工学院×教务处
+  // 已下发 100 却显示 0/100）。战略部登录保持「下发方自有行」口径不变（写路径零回归）。
   const collegeTotalWeight = computed(() => {
     if (!selectedCollege.value) {
       return 0
+    }
+
+    if (!isStrategicDeptLogin.value) {
+      const collegeKey = normalizeDepartmentName(selectedCollege.value)
+      const visibleRows = collegeChildIndicators.value.get(collegeKey) ?? []
+      return visibleRows
+        .filter(isBasicTaskIndicator)
+        .reduce((sum, indicator) => sum + Number(indicator.weight || 0), 0)
     }
 
     return getDispatchOwnerCollegeIndicators(selectedCollege.value)

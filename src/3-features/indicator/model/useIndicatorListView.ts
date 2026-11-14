@@ -50,7 +50,22 @@ import {
   resolveBatchSelfRating,
   resolveSavedSelfRating
 } from '@/features/indicator/lib/reportBatch'
-import { resolveReportSubmitLockReason } from '@/features/indicator/lib/reportSubmitGate'
+import {
+  resolveReportSubmitAllButtonVisible,
+  resolveReportSubmitLockReason,
+  isReportReturnedToSubmitter
+} from '@/features/indicator/lib/reportSubmitGate'
+// 2026-11-13（学院上报按归口部门分批提交）：归属部门口径的纯函数（选项聚合/行过滤）
+import {
+  aggregateFunctionalDeptOptions,
+  filterRowsByFunctionalDept,
+  normalizeFunctionalDeptSelection,
+  resolveFunctionalOrgIdForContext,
+  resolveParentFunctionalDeptName,
+  resolveSelectedFunctionalDeptOption,
+  type FunctionalDeptOption,
+  type ParentFunctionalBrief
+} from '@/features/indicator/lib/functionalDeptScope'
 import { getUsersByOrgId } from '@/features/user/api/query'
 import { ApprovalProgressDrawer } from '@/features/approval'
 import { approveTask, rejectTask } from '@/features/workflow/api'
@@ -92,11 +107,9 @@ import {
 } from '@/features/indicator/lib/scope'
 import {
   isCollegePlanCandidate,
-  listCollegePlanSourceDepts,
   resolveCollegePlanSourceDept
 } from '@/features/indicator/lib/collegePlanModule'
 import { canViewReceivedPlanContent as canViewReceivedPlanContentByStatus } from '@/features/indicator/lib/visibility'
-import { shouldApplyOwnerDeptFilter } from '@/5-shared/lib/permissions/strategyDispatchAccess'
 import {
   PROGRESS_APPROVAL_STATUS_VALUES,
   type ProgressApprovalStatusValue
@@ -544,6 +557,14 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     name: string
     type1?: string
     sortOrder?: number
+    /**
+     * 2026-11-13（学院上报按归口部门分批提交）：父级核心指标的归口职能部门。
+     * 口径：父级核心指标的 targetOrg 即学院子指标的「归属部门」——与后端提交时
+     * 权威反查（报告明细指标 → 父级核心指标.target_org_id）完全同源。
+     * 字段名与后端 IndicatorResponse.targetOrgId/targetOrgName 保持一致。
+     */
+    targetOrgId?: number
+    targetOrgName?: string
   }
   const parentIndicatorMap = ref<Record<string, ParentIndicatorBrief>>({})
 
@@ -817,14 +838,22 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     // 填报入口锁定依赖「最早未填报月」的报告状态，随上报摘要一起刷新（不阻塞主流程）。
     void refreshPlanReportEntryLockState(resolvedPlanId, reportOrgId)
 
+    // 2026-11-13：学院选中归属部门后，摘要只看该部门的报告（functionalOrgId）；
+    // 未选/非学院=undefined → 聚合口径（旧行为）
+    const functionalOrgIdForSummary = currentFunctionalOrgId.value
+
     try {
       currentPlanReportSummary.value = await indicatorFillApi.getCurrentMonthPlanReport(
         resolvedPlanId,
-        reportOrgId
+        reportOrgId,
+        undefined,
+        functionalOrgIdForSummary
       )
       latestPlanReportSummary.value = await indicatorFillApi.getLatestCurrentMonthPlanReport(
         resolvedPlanId,
-        reportOrgId
+        reportOrgId,
+        undefined,
+        functionalOrgIdForSummary
       )
       if (!currentPlanReportSummary.value) {
         clearCurrentPlanReportDerivedState()
@@ -885,9 +914,12 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }
 
     try {
+      // 2026-11-13：学院选中归属部门后，填报入口锁/审批状态章按所选部门的报告判定
+      const functionalOrgIdForLock = currentFunctionalOrgId.value
       const existingMonths = await indicatorFillApi.getExistingReportMonths(
         resolvedPlanId,
-        reportOrgId
+        reportOrgId,
+        functionalOrgIdForLock
       )
       const earliestUnfilledMonth = findEarliestUnfilledReportMonth(
         existingMonths,
@@ -908,7 +940,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         const targetMonthReport = await indicatorFillApi.getCurrentMonthPlanReport(
           resolvedPlanId,
           reportOrgId,
-          earliestUnfilledMonth
+          earliestUnfilledMonth,
+          functionalOrgIdForLock
         )
         targetMonthReportStatus = String(targetMonthReport?.status || '')
           .trim()
@@ -921,7 +954,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       // 供审批状态章显示「已上报 / 审批中 / 已回退」。
       const approvalSummary = await indicatorFillApi.getReportApprovalSummary(
         resolvedPlanId,
-        reportOrgId
+        reportOrgId,
+        functionalOrgIdForLock
       )
       reportApprovalSummaryState.value = {
         status: approvalSummary.status,
@@ -1049,15 +1083,43 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   // 筛选条件
   const filterType2 = ref('') // 任务类型筛选
   const filterType1 = ref('') // 指标类型筛选
-  const filterOwnerDept = ref('') // 来源部门筛选（仅学院使用）
+  // 2026-11-13 口径变更：学院筛选由「来源部门」改为「归属部门」——
+  // 选项=当前行集按父级核心指标反查出的归口职能部门集合（不再是 ownerDept/战略发展部）
+  // 写入侧归一（2026-11-13 白屏修复）：el-select clearable 点叉叉清空时 Element Plus
+  // 默认 emit undefined（valueOnClear 默认值），直落 ref 会让下游
+  // filterIndicatorsByOwnerDept / selectedCollegePlan / selectedFunctionalDeptOption
+  // 的 .trim() 在渲染期抛 TypeError → 整页白屏。在写入口归一回 ''（未选态语义不变）。
+  const filterOwnerDeptModel = ref('') // 归属部门筛选实际存储（恒为字符串；空=未选择）
+  const filterOwnerDept = computed<string>({
+    get: () => filterOwnerDeptModel.value,
+    set: value => {
+      // 写入口归一（normalizeFunctionalDeptSelection）：叉叉清空的 undefined → ''
+      filterOwnerDeptModel.value = normalizeFunctionalDeptSelection(value)
+    }
+  })
 
   /**
-   * 学院「来源部门」筛选（2026-11-05 战略部直发学院指标）。
+   * 一行学院子指标的「归属部门」名（2026-11-13 口径）：
+   * 父级核心指标反查（parentIndicatorMap 缓存的 targetOrgName）；
+   * 父级缺失 / 未加载完成时返回 null（不过滤误删、不产生选项）。
+   * 注意：**不改**后端返回的 ownerDept 字段本身（战略任务页等消费方依赖它）。
+   */
+  const getRowFunctionalDeptName = (row: {
+    parentIndicatorId?: string | number | null
+  }): string | null => {
+    if (!isSecondaryCollege.value) {
+      return null
+    }
+    const parent = resolveParentIndicator(row)
+    return resolveParentFunctionalDeptName(parent as ParentFunctionalBrief | null)
+  }
+
+  /**
+   * 学院「归属部门」筛选（2026-11-13 口径变更：原「来源部门」按 ownerDept 过滤退役）。
    *
-   * 改造后来源部门可能是「战略发展部」（新量）或「职能部门」（存量），两者都要保留。
-   * 但筛选值一旦与可见数据完全对不上（例如计划口径只算出「战略发展部」，而行上的
-   * ownerDept 仍是存量职能部门），再按它硬过滤会把学院指标**全部滤空**——
-   * 此时不过滤（宁可多显示，不可显示为空）。
+   * 选中部门后按行级 functionalDeptName（父级反查归口）精确过滤；守卫语义保留——
+   * 归口未加载完成的行（父级还没拉完，解析不出部门名）不误删，宁多显示不滤空；
+   * 选中值与全部行都对不上（父级全未加载/选中项失效）时不过滤整页。
    */
   const filterIndicatorsByOwnerDept = <T extends object>(list: T[]): T[] => {
     const filter = filterOwnerDept.value.trim()
@@ -1065,13 +1127,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return list
     }
 
-    const matched = list.filter(
-      item => (item as { ownerDept?: string | null }).ownerDept === filter
-    )
-    if (!shouldApplyOwnerDeptFilter({ filterOwnerDept: filter, matchedCount: matched.length })) {
-      return list
-    }
-    return matched
+    // filterRowsByFunctionalDept 内置「筛不对不过滤」守卫（整页零命中时原样返回）
+    return filterRowsByFunctionalDept(list, filter, item => getRowFunctionalDeptName(item))
   }
   const collegePlanDetailsMap = ref<Record<string, Plan>>({})
   const collegePlanDetailsLoading = ref(false)
@@ -1091,45 +1148,16 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     )
   })
 
-  // 获取学院接收到的来源部门列表（从指标数据中提取）
-  const availableOwnerDepts = computed(() => {
-    if (!isSecondaryCollege.value || !effectiveViewingDept.value) {
-      return []
-    }
-
-    const planSourceDepts = listCollegePlanSourceDepts(
-      collegePlanCandidates.value.map(plan => {
-        const cachedPlan = collegePlanDetailsMap.value[String(plan.id)]
-        return (cachedPlan || plan) as Plan
-      })
-    )
-
-    if (planSourceDepts.length > 0) {
-      return planSourceDepts
-    }
-
-    const currentYear = timeContext.currentYear
-    const realYear = timeContext.realCurrentYear
-
-    // 获取当前学院作为责任部门的所有指标的来源部门
-    const ownerDepts = new Set<string>()
-    strategicStore.indicators.forEach(i => {
-      const indicatorYear = resolveIndicatorYear(i, realYear)
-      if (
-        indicatorYear === currentYear &&
-        i.responsibleDept === effectiveViewingDept.value &&
-        i.ownerDept
-      ) {
-        ownerDepts.add(i.ownerDept)
-      }
-    })
-
-    return Array.from(ownerDepts).sort()
-  })
+  // （2026-11-13 归属部门选项聚合的 computeds 移至 hasCurrentUserPlan/currentPlanIndicators
+  // 声明之后统一收口——watch 注册即求值 source，放本处会在 setup 期触发
+  // collegeFunctionalDeptRows → hasCurrentUserPlan 的 TDZ，见下方实现区注释。）
 
   /**
-   * 2026-10-29 定案：二级学院「全部导出」按来源职能部门分组。
-   * - 只导出当前学院可见、当前年度、ownerDept 命中的指标；
+   * 2026-10-29 定案：二级学院「全部导出」按职能部门分组。
+   * 2026-11-13 口径变更：分组与行匹配由 ownerDept（来源部门）改为 functionalDeptName
+   * （父级核心指标反查的归属部门），与填报页选项同口径；部门→计划的下发状态判定
+   * 按 plan 源部门已对不上归属部门名，统一走「找不到计划时保留 store 行」的历史兼容路径。
+   * - 只导出当前学院可见、当前年度、归属部门命中的指标；
    * - 每个部门内部沿用学院页同一套排序（父指标 sortOrder → 自身 sortOrder → id）；
    * - 空部门直接过滤掉，不生成空 Excel。
    */
@@ -1148,8 +1176,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }
 
     const selected = new Set(departments.map(dept => String(dept ?? '').trim()).filter(Boolean))
-    // 不依赖「当前选中的 plan」状态：全部导出要覆盖多个来源部门，
-    // 每个部门各自按自己的 FUNC_TO_COLLEGE 计划是否已下发判定。
+    // 不依赖「当前选中的 plan」状态：全部导出要覆盖多个归属部门。
     const visibleIndicators = strategicStore.indicators.filter(
       indicator =>
         resolveIndicatorYear(indicator, realYear) === currentYear &&
@@ -1175,7 +1202,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
             .filter(
               indicator =>
                 indicator.responsibleDept === effectiveViewingDept.value &&
-                indicator.ownerDept === department
+                getRowFunctionalDeptName(indicator) === department
             )
             .sort(compareCollegeIndicatorRows)
         }
@@ -1228,27 +1255,19 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     return fallback
   })
 
-  // 初始化来源部门筛选（默认选中第一个）
+  // 初始化归属部门筛选（2026-11-13 口径变更：不再自动选中第一个——
+  // 一键提交必须先选归属部门，进入页面默认「未选择」状态，由用户主动选择）
   const initOwnerDeptFilter = () => {
-    if (
-      isSecondaryCollege.value &&
-      availableOwnerDepts.value.length > 0 &&
-      !filterOwnerDept.value
-    ) {
-      filterOwnerDept.value = availableOwnerDepts.value[0] ?? ''
-    }
+    // 归属部门必须显式选择：选项异步加载完成后保持未选态，
+    // 一键提交/一键撤回按钮按「未选部门」置灰提示「请先选择归属部门」
   }
 
   // 重置筛选条件
   const resetFilters = () => {
     filterType2.value = ''
     filterType1.value = ''
-    // 学院重置时恢复默认来源部门
-    if (isSecondaryCollege.value && availableOwnerDepts.value.length > 0) {
-      filterOwnerDept.value = availableOwnerDepts.value[0] ?? ''
-    } else {
-      filterOwnerDept.value = ''
-    }
+    // 学院重置时清空归属部门选择（回到未选态，2026-11-13 口径）
+    filterOwnerDept.value = ''
   }
 
   // 职能部门列表（从数据库动态获取）
@@ -1499,6 +1518,21 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return 'DRAFT'
     }
 
+    // 2026-11-13（B-1 修复，用户全链回归实测）：驳回退回待重报——上报实例是活链
+    // （rawStatus=IN_REVIEW，审批中心仍可查），但当前 pending 节点已回到「填报人提交」，
+    // 业务上等同草稿：填报人要能直接修改并重新提交。此前 UiStatus 保持 IN_REVIEW →
+    // currentPlanReportActionState 判 pending_withdrawable → 「一键提交」不渲染，
+    // 填报人只能绕行「一键撤回」再重报（实测绕行可达但交互断裂）。
+    // 判定收敛在 lib/reportSubmitGate.isReportReturnedToSubmitter（单测覆盖）。
+    const returnedStepName = String(
+      currentPlanWorkflowDetail.value?.currentStepName ||
+        currentPlanReportSummary.value?.currentStepName ||
+        ''
+    )
+    if (isReportReturnedToSubmitter(rawStatus, returnedStepName)) {
+      return 'DRAFT'
+    }
+
     return rawStatus
   })
 
@@ -1657,24 +1691,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     { immediate: true }
   )
 
-  watch(
-    availableOwnerDepts,
-    ownerDepts => {
-      if (!isSecondaryCollege.value) {
-        return
-      }
-
-      if (ownerDepts.length === 0) {
-        filterOwnerDept.value = ''
-        return
-      }
-
-      if (!ownerDepts.includes(filterOwnerDept.value)) {
-        filterOwnerDept.value = ownerDepts[0] ?? ''
-      }
-    },
-    { immediate: true }
-  )
+  // （2026-11-13：归属部门选项/选中态的 watch 一并移至 hasCurrentUserPlan 声明之后的
+  // 实现区——watch 注册即求值 source，放本处会在 setup 期触发 TDZ，见实现区注释。）
 
   watch(
     currentUserPlanId,
@@ -1976,6 +1994,165 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
   const hasCurrentUserPlan = computed(() => {
     return hasCurrentUserPlanData.value && canViewReceivedPlanContent.value
+  })
+
+  // ============================================================================
+  // 2026-11-13（学院上报按归口部门分批提交）：归属部门口径实现区
+  // 本区块必须位于 hasCurrentUserPlan / currentPlanIndicators 声明之后——
+  // watch 注册即求值 source（即使非 immediate），放在声明前会在 setup 期
+  // 触发 collegeFunctionalDeptRows → hasCurrentUserPlan 的 TDZ（实际踩坑回滚记录）。
+  // ============================================================================
+
+  // 学院行集基座（归属部门选项聚合用）：与 pendingApprovalCount / indicators 同源——
+  // 计划行优先，store 行兜底；仅按年份过滤（不按归属部门过滤，否则选中部门会把
+  // 其他部门的选项滤没）。
+  const collegeFunctionalDeptRows = computed<StrategicIndicator[]>(() => {
+    if (!isSecondaryCollege.value) {
+      return []
+    }
+    const planRows = hasCurrentUserPlan.value ? currentPlanIndicators.value : []
+    const base = planRows.length > 0 ? planRows : strategicStore.indicators
+    const realYear = timeContext.realCurrentYear
+    const currentYear = timeContext.currentYear
+    return base.filter(i => resolveIndicatorYear(i, realYear) === currentYear)
+  })
+
+  /**
+   * 「归属部门」选项（2026-11-13 口径变更，原「来源部门」= plan 源部门/ownerDept 退役）：
+   * 当前行集按父级核心指标反查出的归口职能部门集合——名称去重、按名称稳定排序，
+   * 并携带归口组织 ID（父级 targetOrgId，一键提交/开草稿链路透传后端 functionalOrgId）。
+   * 父级未加载完成时为空数组（UI v-if 自动隐藏；hydrateParentIndicators 拉完后自动出现）。
+   */
+  const availableFunctionalDeptOptions = computed<FunctionalDeptOption[]>(() => {
+    if (!isSecondaryCollege.value || !effectiveViewingDept.value) {
+      return []
+    }
+    return aggregateFunctionalDeptOptions(collegeFunctionalDeptRows.value, row =>
+      resolveParentIndicator(row as { parentIndicatorId?: string | number | null })
+    )
+  })
+
+  // 学院「归属部门」名称列表（选项的名称投影；保持既有消费方形状不变：
+  // 下拉 v-model / 全部导出按部门名分组）
+  const availableOwnerDepts = computed(() => {
+    if (!isSecondaryCollege.value || !effectiveViewingDept.value) {
+      return []
+    }
+    return availableFunctionalDeptOptions.value.map(option => option.name)
+  })
+
+  /** 当前选中的「归属部门」选项（名称 → 选项；未选/失效时 null；纯逻辑见 functionalDeptScope） */
+  const selectedFunctionalDeptOption = computed<FunctionalDeptOption | null>(() => {
+    if (!isSecondaryCollege.value) {
+      return null
+    }
+    return resolveSelectedFunctionalDeptOption(
+      availableFunctionalDeptOptions.value,
+      filterOwnerDept.value
+    )
+  })
+
+  /**
+   * 当前提交上下文的归口组织 ID（2026-11-13）：学院页签选中归属部门后，
+   * 摘要/开草稿/提交/撤回链路透传后端 functionalOrgId；未选或非学院=undefined（聚合口径）。
+   * 纯逻辑见 functionalDeptScope.resolveFunctionalOrgIdForContext（2026-11-13 白屏修复：
+   * 叉叉清空 → 选项 null → undefined，绝不抛）。
+   */
+  const currentFunctionalOrgId = computed<number | undefined>(() =>
+    resolveFunctionalOrgIdForContext(selectedFunctionalDeptOption.value)
+  )
+
+  // 归属部门选项变化时的选中值同步（2026-11-13 口径变更）：
+  // 选项消失/失效时清空选择回到「未选」态（不再自动改选第一个——
+  // 一键提交必须先选归属部门，自动选中会让「未选禁用」门禁形同虚设）。
+  // 非 immediate：选项异步加载期间保持未选态即可。
+  watch(availableOwnerDepts, ownerDepts => {
+    if (!isSecondaryCollege.value) {
+      return
+    }
+
+    if (ownerDepts.length === 0) {
+      filterOwnerDept.value = ''
+      return
+    }
+
+    if (filterOwnerDept.value && !ownerDepts.includes(filterOwnerDept.value)) {
+      filterOwnerDept.value = ''
+    }
+  })
+
+  // 2026-11-13：选中归属部门变化 → 提交上下文按部门切换——
+  // 重拉上报摘要 / 填报入口锁 / 审批状态章 / 草稿明细回显（全部带 functionalOrgId）。
+  // 仅学院页签且 orgId 可解析时才有值；undefined（未选/非学院）→ 聚合口径，与旧行为一致。
+  watch(currentFunctionalOrgId, () => {
+    if (!usePlanReportFlow.value) {
+      return
+    }
+    const planId = getCurrentPlanId()
+    if (!planId) {
+      return
+    }
+    void loadCurrentPlanReportSummary(planId)
+    void refreshReportDetailOverlay()
+  })
+
+  /**
+   * 2026-11-13（未来月放填报、拦提交）：一键提交目标月的响应式预取。
+   *
+   * <p>showSubmitAllButton 是同步 computed，而提交目标月（最早未提交草稿月）要
+   * 异步调 getOpenDraftReportMonth 才知道——这里按与 handleSubmitAll 完全同参
+   * （planId + reportOrgId + functionalOrgId）预取存 ref，供
+   * isSubmitTargetMonthInFuture 判「目标月晚于当前真实月份 → 按钮不渲染」。
+   * 取不到（无草稿月/请求失败）→ 空串 = 不判未来月（保守放行，后端兜底拦截）。</p>
+   */
+  const submitTargetMonth = ref('')
+  const refreshSubmitTargetMonth = async () => {
+    if (!usePlanReportFlow.value) {
+      submitTargetMonth.value = ''
+      return
+    }
+    const planId = getCurrentPlanId()
+    const reportOrgId = Number(currentViewingOrgId.value ?? NaN)
+    if (
+      !Number.isFinite(planId) ||
+      planId <= 0 ||
+      !Number.isFinite(reportOrgId) ||
+      reportOrgId <= 0
+    ) {
+      submitTargetMonth.value = ''
+      return
+    }
+    try {
+      submitTargetMonth.value = await indicatorFillApi.getOpenDraftReportMonth(
+        planId,
+        reportOrgId,
+        currentFunctionalOrgId.value
+      )
+    } catch (error) {
+      logger.warn('[useIndicatorListView] 预取提交目标月失败:', error)
+      submitTargetMonth.value = ''
+    }
+  }
+  watch(
+    () => [getCurrentPlanId(), currentViewingOrgId.value, currentFunctionalOrgId.value],
+    () => {
+      void refreshSubmitTargetMonth()
+    },
+    { immediate: true }
+  )
+  // 提交/撤回等动作后草稿月可能变化，与摘要刷新同批重取
+  watch(currentPlanReportSummary, () => {
+    void refreshSubmitTargetMonth()
+  })
+
+  const isSubmitTargetMonthInFuture = computed(() => {
+    const target = String(submitTargetMonth.value || '').trim()
+    if (!/^\d{6}$/.test(target)) {
+      return false
+    }
+    const now = new Date()
+    const current = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
+    return Number(target) > Number(current)
   })
 
   const isIndicatorDataLoading = computed(() => {
@@ -2764,12 +2941,23 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
             return
           }
           const sortOrder = Number(vo.sortOrder ?? NaN)
+          // 2026-11-13：归口字段随父指标一并缓存（targetOrgId/targetOrgName 为后端
+          // IndicatorResponse 权威字段；responsibleDept/targetDepartment 仅作旧数据兜底）
+          const functionalOrgIdRaw = Number(vo.targetOrgId ?? NaN)
+          const targetOrgName =
+            String(vo.targetOrgName ?? vo.responsibleDept ?? vo.targetDepartment ?? '').trim() ||
+            undefined
           parentIndicatorMap.value = {
             ...parentIndicatorMap.value,
             [pid]: {
               name: String(vo.indicatorName ?? vo.name ?? ''),
               type1: String(vo.indicatorType ?? vo.type1 ?? '') || undefined,
-              sortOrder: Number.isFinite(sortOrder) ? sortOrder : undefined
+              sortOrder: Number.isFinite(sortOrder) ? sortOrder : undefined,
+              targetOrgId:
+                Number.isFinite(functionalOrgIdRaw) && functionalOrgIdRaw > 0
+                  ? functionalOrgIdRaw
+                  : undefined,
+              targetOrgName
             }
           }
         } catch (parentError) {
@@ -3225,10 +3413,21 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           }
         }
         if (['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(reportWorkflowStatus)) {
+          // 2026-11-13（B-2 修复，用户全链回归实测）：驳回退回待重报态——实例活链
+          // （IN_REVIEW）但当前节点已回到「填报人提交」，此前显示「上报审批中 · 填报人提交」
+          // 或「待填报人提交审批」误导（看似等待别人审批，实际是退回给我重报）。
+          // 对齐异动退回红横幅口径：「已回退待重报」（danger）。
+          const reportStepName = String(reportSummary.currentStepName || '').trim()
+          if (reportStepName.includes('填报人提交')) {
+            return {
+              label: '已回退待重报',
+              type: 'danger' as const,
+              description: '上报审批已退回，请完善填报后重新提交。'
+            }
+          }
           // 2026-10-31 对齐战略任务管理页口径：上报链在途 → 「上报审批中 · 节点名」
           // （战略任务页同款拼接：上报审批中 · 分管校领导审批）。节点名只取上报链
           // 汇总的 currentStepName，不混用下发链节点；缺失时回退「审批中」。
-          const reportStepName = String(reportSummary.currentStepName || '').trim()
           return {
             label: reportStepName ? `上报审批中 · ${reportStepName}` : '审批中',
             type: 'warning' as const,
@@ -3276,6 +3475,23 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         label: '已回退',
         type: 'danger' as const,
         description: stepName ? `当前流程已在“${stepName}”环节退回。` : '当前计划审批流程已回退。'
+      }
+    }
+
+    // 2026-11-13（B-2 修复，通用分支兜底）：上报链退回待重报——实例活链（IN_REVIEW）
+    // 但当前节点已回到「填报人提交」（驳回/发起人撤回退回的唯一落点）。此时
+    // formatPendingApprovalLabel 会显示「待填报人提交审批」误导（看似等待别人审批，
+    // 实际是退回给我重报）。对齐异动退回红横幅口径改「已回退待重报」。
+    // 覆盖 usePlanReportFlow 分支 summary 缺失（approvalWorkflowReportSummary 为空）的场景。
+    if (
+      usePlanReportFlow.value &&
+      ['SUBMITTED', 'IN_REVIEW', 'PENDING'].includes(workflowStatus) &&
+      String(stepName || '').includes('填报人提交')
+    ) {
+      return {
+        label: '已回退待重报',
+        type: 'danger' as const,
+        description: '上报审批已退回，请完善填报后重新提交。'
       }
     }
 
@@ -3355,11 +3571,22 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     // 2026-10-30 用户定案（门禁前移，自评口径）：不再以「全部指标填报完整」为可见前提——
     // 行内有未填自评的行时按钮保持可见但置灰（title 说明原因），让填报人看得见入口卡在哪。
     // 完整性缺口仍由 handleSubmitAll 的前置校验 + 后端提交门禁兜底。
-    return (
-      showPlanBatchActions.value &&
-      !isCurrentPlanReportLocked.value &&
-      (!usePlanReportFlow.value || currentPlanReportActionState.value === 'draft')
-    )
+    // 2026-11-13（学院上报按归口部门分批提交）用户拍板：一键提交的前提是已选归属部门——
+    // 学院未选部门时按钮**不渲染**（提交按 (月, 归口部门) 隔离，未选无提交上下文）；
+    // 非学院链路无归属部门概念（functionalDeptSelected=undefined 恒通过），渲染逻辑保持原样。
+    // 2026-11-13（未来月放填报、拦提交）用户拍板：提交目标月晚于当前真实月份 → 按钮**不渲染**
+    // （填报存草稿不受影响；后端提交端点有同口径校验兜底）。目标月=一键提交实际提交的
+    // 「最早未提交草稿月」（getOpenDraftReportMonth 链），取不到时不判未来月（保守放行旧行为）。
+    // 纯逻辑收敛在 lib/reportSubmitGate.resolveReportSubmitAllButtonVisible（单测覆盖显隐矩阵）。
+    return resolveReportSubmitAllButtonVisible({
+      showBatchActions: showPlanBatchActions.value,
+      isReportLocked: isCurrentPlanReportLocked.value,
+      usePlanReportFlow: usePlanReportFlow.value,
+      isPlanReportDraftState: currentPlanReportActionState.value === 'draft',
+      functionalDeptSelected:
+        !isSecondaryCollege.value || Boolean(selectedFunctionalDeptOption.value),
+      isFutureMonth: isSubmitTargetMonthInFuture.value
+    })
   })
 
   const showWithdrawAllButton = computed(() => {
@@ -4035,7 +4262,13 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
     // 2026-10-07 裁决修复：存在未提交 DRAFT 草稿报告时，必须锁定回草稿月份继续编辑——
     // 后端在草稿未提交前禁止新建其他月份报告（409），顺延到下月会让用户撞资源冲突。
-    const openDraftMonth = await indicatorFillApi.getOpenDraftReportMonth(planId, reportOrgId)
+    // 2026-11-13：草稿按 (月, 归口部门) 隔离——学院选中部门后按该部门找草稿/计月份。
+    const functionalOrgIdForMonthLock = currentFunctionalOrgId.value
+    const openDraftMonth = await indicatorFillApi.getOpenDraftReportMonth(
+      planId,
+      reportOrgId,
+      functionalOrgIdForMonthLock
+    )
     if (openDraftMonth) {
       return openDraftMonth
     }
@@ -4050,9 +4283,14 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         ? await indicatorFillApi.getExistingReportMonthsForIndicator(
             planId,
             reportOrgId,
-            numericIndicatorId
+            numericIndicatorId,
+            functionalOrgIdForMonthLock
           )
-        : await indicatorFillApi.getExistingReportMonths(planId, reportOrgId)
+        : await indicatorFillApi.getExistingReportMonths(
+            planId,
+            reportOrgId,
+            functionalOrgIdForMonthLock
+          )
 
     // null = 已上报月份集合不可得（加载失败），交由调用方降级为当前月
     return (
@@ -4086,7 +4324,12 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }
     let draft: Awaited<ReturnType<typeof indicatorFillApi.getOpenDraftReport>>
     try {
-      draft = await indicatorFillApi.getOpenDraftReport(planId, reportOrgId)
+      // 2026-11-13：学院选中归属部门后，等级/说明回显只看该部门的草稿
+      draft = await indicatorFillApi.getOpenDraftReport(
+        planId,
+        reportOrgId,
+        currentFunctionalOrgId.value
+      )
     } catch (error) {
       // 2026-10-29 用户定案：拉取失败保留上一次的说明/等级回显，不把已有内容清空
       logger.warn('[IndicatorListView] 刷新填报明细覆盖层失败:', { planId, reportOrgId, error })
@@ -4809,6 +5052,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         content: reportForm.value.remark,
         selfRating: reportForm.value.selfRating || undefined,
         reportMonth: reportForm.value.reportMonth || undefined,
+        // 2026-11-13（学院上报按归口部门分批提交）：选中归属部门后保存填报带归口——
+        // 草稿按 (月, 归口部门) 隔离，避免跨部门指标混进同一份草稿（提交时后端拦混归口）
+        functionalOrgId: currentFunctionalOrgId.value,
         attachments: [],
         // Attachments are uploaded first and linked by attachment_ids in batch_items.
         // 2026-10-28（Issue #91 P1-1）：只有当前指标用表单里的自评进度，
@@ -5204,6 +5450,12 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         return false
       }
 
+      // 2026-11-13（学院上报按归口部门分批提交）：一键撤回撤的是「所选归属部门的报告」，
+      // 未选部门时无撤回上下文（与一键提交同口径：必须先选归属部门）
+      if (isSecondaryCollege.value && !selectedFunctionalDeptOption.value) {
+        return false
+      }
+
       const currentStepName = String(
         currentPlanWorkflowDetail.value?.currentStepName ||
           currentPlanReportSummary.value?.currentStepName ||
@@ -5287,7 +5539,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   // 同今天落地的下发页 distributionSubmitGate 范式）：置灰原因收敛到共享纯函数
   // resolveReportSubmitLockReason（lib/reportSubmitGate.ts），置灰判定 / 悬停 title /
   // 点击 gate toast 三处共用同一份条件与优先级。
-  // 条件清单与优先级（第一条命中即用）：只读 → 空列表 → 本部门异动锁 → 自评缺口。
+  // 条件清单与优先级（第一条命中即用）：只读 → 空列表 → 未选归属部门（2026-11-13）→
+  // 本部门异动锁 → 自评缺口。
   // 注意：本 computed 体内读取 mutationInFlightForCurrentDept（声明在上方），依赖
   // computed 惰性求值，与既有 TDZ 收口口径一致——不得把本 computed 的求值提前到
   // 该 const 声明之前（如用作 watch 的 source）。
@@ -5295,6 +5548,10 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     resolveReportSubmitLockReason({
       isReadOnly: timeContext.isReadOnly,
       hasIndicators: indicators.value.length > 0,
+      // 2026-11-13（学院上报按归口部门分批提交）：一键提交必须先选归属部门；
+      // 非学院页签恒视为已选（undefined），门禁不生效
+      functionalDeptSelected:
+        !isSecondaryCollege.value || Boolean(selectedFunctionalDeptOption.value),
       mutationInFlight: mutationInFlightForCurrentDept.value,
       missingSelfRatingCount: missingSelfRatingCount.value
     })
@@ -5303,42 +5560,18 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     () => submitAllButtonDisabledReason.value || '提交前会校验每条指标的自评进度与进度说明'
   )
 
+  // 2026-11-13 用户定案（编辑/发起两级校验语义 + 「已上报月份放开行级编辑」）：
+  // 填报入口**不再锁定**——填报是本地草稿，随时可编辑/保存（含已上报归档月份，
+  // 保存可开新一轮）；右上角权重合计只做实时展示；真正的限制拦截在提交侧：
+  // 一键提交显隐（草稿态 + 未来月 + 归属部门）与后端同口径校验。
+  // 历史快照只读仍由 timeContext.isReadOnly 独立把关（与本锁无关）。
+  // 旧「报告在审/已批准锁定填报入口」口径整体废弃（原 10-26/10-27/10-31 定案），
+  // 含「全年已填 → 锁」分支（本地草稿删除后应可随时重填，不再因已填月份集合判锁）。
   const isCurrentPlanReportLocked = computed(() => {
     if (!usePlanReportFlow.value) {
       return false
     }
-
-    // 月度上报链修复：锁定语义 = 「最早未填报月」的报告正在审批中或已批准。
-    // 最早未填月是下个月（该月无报告）时不锁，否则 2026-09 批准后连 2026-10 的
-    // 填报入口都没有了（填报弹窗本身已支持锁定到最早未填月）。
-    const lockState = planReportEntryLockState.value
-    if (lockState) {
-      if (resolvePlanReportEntryLock({ usePlanReportFlow: true, lockState })) {
-        return true
-      }
-      // 2026-10-27 用户定案：当前月的报告已上报通过且无更早欠账 → 本月锁定。
-      // （10 月批准后，10 月不再提供填报/再提交入口；11 月到来后填报 11 月。）
-      // 此前只锁「最早未填月在审/已批」，本月批准后还能再编辑当月内容、
-      // 开出新一轮草稿，页面上「一键提交」也随之复活，状态互相矛盾。
-      const planYear = Number(timeContext.currentYear)
-      const now = new Date()
-      if (planYear === now.getFullYear() && reportApprovalSummaryState.value?.approved === true) {
-        const currentMonthValue = Number(
-          `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
-        )
-        const earliestNum = /^\d{6}$/.test(lockState.earliestUnfilledMonth)
-          ? Number(lockState.earliestUnfilledMonth)
-          : null
-        if (earliestNum === null || earliestNum > currentMonthValue) {
-          return true
-        }
-      }
-      return false
-    }
-
-    // 「已上报月份」数据不可得（加载失败/上下文缺失）→ 降级沿用旧口径：
-    // 当前月报告审批中或已批准即锁。
-    return isLockingPlanReportStatus(currentPlanReportUiStatus.value)
+    return false
   })
 
   /**
@@ -5353,6 +5586,10 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }
     if (!isCurrentUserReporter.value) {
       return '当前登录身份不是填报人，不能撤回'
+    }
+    // 2026-11-13：撤回的是「所选归属部门的报告」，未选部门先选（与一键提交同口径）
+    if (isSecondaryCollege.value && !selectedFunctionalDeptOption.value) {
+      return '请先选择归属部门'
     }
     if (usePlanReportFlow.value && currentPlanReportActionState.value === 'pending_locked') {
       return '当前流程已进入下一审批节点，填报人不能再撤回'
@@ -5382,6 +5619,14 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   const handleSubmitAll = () => {
     if (indicators.value.length === 0) {
       ElMessage.warning('没有可提交的指标')
+      return
+    }
+
+    // 2026-11-13（学院上报按归口部门分批提交）：一键提交必须先选归属部门——
+    // 报告按 (月, 归口部门) 隔离、后端按报告归口派审批席位，未选部门无提交上下文。
+    // （按钮置灰 + 悬停 title 已有同口径提示，此处点击守卫作双保险）
+    if (isSecondaryCollege.value && !selectedFunctionalDeptOption.value) {
+      ElMessage.warning('请先选择归属部门')
       return
     }
 
@@ -5439,8 +5684,15 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return
     }
 
+    // 2026-11-13：学院提交上下文=所选归属部门（报告按部门分批提交）
+    const selectedFunctionalDeptName = selectedFunctionalDeptOption.value?.name || ''
+    const functionalOrgIdForSubmit = currentFunctionalOrgId.value
     ElMessageBox.prompt(
-      `确认提交当前计划下的全部 ${indicators.value.length} 个指标吗？\n\n注意：该操作会发起本次上报审批，提交后将无法修改，需等待上级部门审批。\n\n*提交备注（必填）：`,
+      `确认提交${
+        selectedFunctionalDeptName
+          ? `归属部门「${selectedFunctionalDeptName}」的`
+          : '当前计划下的全部'
+      } ${indicators.value.length} 个指标吗？\n\n注意：该操作会发起本次上报审批，提交后将无法修改，需等待上级部门审批。\n\n*提交备注（必填）：`,
       '一键提交确认',
       {
         confirmButtonText: '确定提交',
@@ -5481,14 +5733,21 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
             }
             // 2026-10-07 裁决（逐月补签）：按「最早未提交草稿月」提交，
             // 不能默认当月——补签历史月份时按当月找草稿会 404。
-            const draftMonth = await indicatorFillApi.getOpenDraftReportMonth(planId, reportOrgId)
+            // 2026-11-13：草稿按 (月, 归口部门) 隔离——查找草稿/提交摘要都带所选部门
+            // functionalOrgId，保证提交上下文的报告只含该部门指标（混归口后端会拦）。
+            const draftMonth = await indicatorFillApi.getOpenDraftReportMonth(
+              planId,
+              reportOrgId,
+              functionalOrgIdForSubmit
+            )
             // 2026-10-31（P4 重报说明透传）：弹窗强制收集的提交备注不再丢弃，
             // 以 body JSON 字段 comment 随上报提交传给后端（驳回-重报闭环的审批意见来源）。
             updatedReportSummary = await indicatorFillApi.submitCurrentMonthPlanReport(
               planId,
               reportOrgId,
               draftMonth ?? undefined,
-              submitComment
+              submitComment,
+              functionalOrgIdForSubmit
             )
           } else {
             await planStore.submitPlanForApproval(planId, {
@@ -5554,6 +5813,13 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return
     }
 
+    // 2026-11-13（学院上报按归口部门分批提交）：一键撤回撤的是「所选归属部门的报告」，
+    // 未选部门时无撤回上下文（与一键提交同口径；按钮置灰已有提示，此处双保险）
+    if (isSecondaryCollege.value && !selectedFunctionalDeptOption.value) {
+      ElMessage.warning('请先选择归属部门')
+      return
+    }
+
     const planId = getCurrentPlanId()
     if (!planId) {
       ElMessage.warning('当前计划不存在，无法撤回')
@@ -5592,7 +5858,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
             }
             updatedReportSummary = await indicatorFillApi.withdrawCurrentMonthPlanReport(
               planId,
-              reportOrgId
+              reportOrgId,
+              undefined,
+              currentFunctionalOrgId.value
             )
           } else {
             await planStore.withdrawPlan(planId)
@@ -5749,6 +6017,11 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     effectiveViewingDept,
     effectiveViewingRole,
     filterIndicatorsForCurrentViewer,
+    // 2026-11-13（学院上报按归口部门分批提交）：归属部门口径的选项/选中态/归口 orgId
+    availableFunctionalDeptOptions,
+    selectedFunctionalDeptOption,
+    currentFunctionalOrgId,
+    getRowFunctionalDeptName,
     filterOwnerDept,
     filterType1,
     filterType2,

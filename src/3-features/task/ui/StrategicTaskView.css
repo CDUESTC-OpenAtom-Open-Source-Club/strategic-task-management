@@ -2479,3 +2479,29 @@
   font-size: 13px;
   color: #667085;
 }
+
+/* 2026-11-13（对齐 main 原版）：学院新增行「关联指标」分组下拉的选项行样式——
+   照抄自「指标下发与审批」页 IndicatorDistributeView.css（main 版同名段）。
+   选项行 = 核心指标名（超宽省略号）居左 + 定量/定性、基础性/发展性双 tag 居右。 */
+.parent-indicator-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+.parent-indicator-option__name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parent-indicator-option__tags {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}

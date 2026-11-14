@@ -9,6 +9,7 @@ import {
   hasCollegeMutationApprovalInFlight,
   isReportApprovalStatusInFlight,
   mergeReturnedMutationChains,
+  resolveCollegeReportApprovalStatusMeta,
   resolveCollegeReturnedChainOwnerOrgId,
   resolveCollegeTabDistributeAction,
   resolveMutationGateWeightTotal
@@ -165,14 +166,19 @@ vi.mock('@/features/plan/api/planApi', () => ({
 
 const elMessageBoxConfirm = vi.hoisted(() => vi.fn())
 
+// 2026-11-13（学院页签已下发置灰）：ElMessage 分方法独立 mock，便于断言「点击不弹任何提示」
+const elMessageInfo = vi.hoisted(() => vi.fn())
+const elMessageWarning = vi.hoisted(() => vi.fn())
+const elMessageSuccess = vi.hoisted(() => vi.fn())
+const elMessageError = vi.hoisted(() => vi.fn())
+
 // 2026-11-12（中⑤·A1 缺陷 C）：导入 commit 成功回调的 plan.list 缓存失效 spy
 const invalidateQueriesMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@/shared/lib/utils/cache', async () => {
-  const actual =
-    await vi.importActual<typeof import('@/shared/lib/utils/cache')>(
-      '@/shared/lib/utils/cache'
-    )
+  const actual = await vi.importActual<typeof import('@/shared/lib/utils/cache')>(
+    '@/shared/lib/utils/cache'
+  )
   return {
     ...actual,
     invalidateQueries: invalidateQueriesMock
@@ -184,10 +190,10 @@ vi.mock('element-plus', async () => {
   return {
     ...actual,
     ElMessage: Object.assign(vi.fn(), {
-      success: vi.fn(),
-      error: vi.fn(),
-      warning: vi.fn(),
-      info: vi.fn()
+      success: elMessageSuccess,
+      error: elMessageError,
+      warning: elMessageWarning,
+      info: elMessageInfo
     }),
     ElMessageBox: {
       confirm: elMessageBoxConfirm,
@@ -558,6 +564,58 @@ describe('学院页签按钮分流与互斥守卫（2026-11-11 组件接线）',
     expect(importBtn!.attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })
+
+  /**
+   * 2026-11-13（用户反馈对齐职能部门页签）：学院子计划已下发（DISTRIBUTED）时，
+   * 工具栏「下发/撤回」按钮必须**置灰不可点**，hover 提示「当前状态不可操作」，
+   * 且点击**不弹任何提示**（此前仍可点，且弹「可在审批中心查看审批记录」的误导 toast）。
+   *
+   * <p>既断言 disabled 属性（真实浏览器里 disabled 按钮点不动、VTU 也不给 disabled 元素
+   * 派发 click），也直调点击处理体锁组件侧的静默兜底 —— 否则「点击不弹提示」这一条
+   * 会被 disabled 挡住而永远验不到。</p>
+   */
+  it('⑥（2026-11-13 用户反馈）学院子计划已下发：按钮置灰 + title「当前状态不可操作」+ 点击静默不弹提示', async () => {
+    elMessageInfo.mockClear()
+    elMessageWarning.mockClear()
+    elMessageSuccess.mockClear()
+    elMessageError.mockClear()
+
+    const wrapper = mountView(
+      collegeTabReady({
+        effectivePlanContext: ref({
+          source: 'college',
+          plan: { status: 'DISTRIBUTED', id: 705493 }
+        })
+      })
+    )
+    await switchToCollegeTab(wrapper)
+
+    const locked = findButtonByText(wrapper, '撤回')
+    expect(locked).toBeDefined()
+    expect(locked!.attributes('disabled')).toBeDefined()
+    expect(locked!.attributes('title')).toBe('当前状态不可操作')
+
+    // 真实点击路径：disabled 按钮点不动（VTU 对 disabled 元素不派发 click）
+    await locked!.trigger('click')
+    await flushPromises()
+
+    // 直调点击处理体：disabled 拦不住 handler 调用 → 组件侧必须静默 return，不得弹任何提示
+    const vm = wrapper.vm as unknown as {
+      handleDistributeOrWithdrawClick?: () => Promise<void>
+    }
+    expect(typeof vm.handleDistributeOrWithdrawClick).toBe('function')
+    await vm.handleDistributeOrWithdrawClick!()
+    await flushPromises()
+
+    expect(elMessageInfo).not.toHaveBeenCalled()
+    expect(elMessageWarning).not.toHaveBeenCalled()
+    expect(elMessageSuccess).not.toHaveBeenCalled()
+    expect(elMessageError).not.toHaveBeenCalled()
+    expect(withdrawPlan).not.toHaveBeenCalled()
+    expect(submitPlanForApproval).not.toHaveBeenCalled()
+    expect(elMessageBoxConfirm).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
 })
 
 /**
@@ -566,7 +624,10 @@ describe('学院页签按钮分流与互斥守卫（2026-11-11 组件接线）',
  */
 describe('useStrategicTaskView 学院口径接线契约（③④）', () => {
   const readModelSource = () =>
-    readFileSync(resolve(process.cwd(), 'src/3-features/task/model/useStrategicTaskView.ts'), 'utf8')
+    readFileSync(
+      resolve(process.cwd(), 'src/3-features/task/model/useStrategicTaskView.ts'),
+      'utf8'
+    )
 
   it('③ submitMutationDraft 门禁合计走 resolveMutationGateWeightTotal（学院上下文 → collegeBasicWeightTotal）', () => {
     const source = readModelSource()
@@ -733,7 +794,6 @@ describe('task/lib/collegeTabDistribute · 学院口径退回链加载（C3-D1�
       expect(hasCollegeMutationApprovalInFlight([{ instanceId: 1 }], 56)).toBe(false)
     })
   })
-
 })
 
 describe('学院页签驳回闭环与在审互斥（2026-11-12 组件接线）', () => {
@@ -857,7 +917,6 @@ describe('学院页签驳回闭环与在审互斥（2026-11-12 组件接线）',
     )
     wrapper.unmount()
   })
-
 })
 
 /**
@@ -866,7 +925,10 @@ describe('学院页签驳回闭环与在审互斥（2026-11-12 组件接线）',
  */
 describe('useStrategicTaskView / StrategicTaskView 学院退回链接线契约（C3-D1）', () => {
   const readModelSource = () =>
-    readFileSync(resolve(process.cwd(), 'src/3-features/task/model/useStrategicTaskView.ts'), 'utf8')
+    readFileSync(
+      resolve(process.cwd(), 'src/3-features/task/model/useStrategicTaskView.ts'),
+      'utf8'
+    )
   const readViewSource = () =>
     readFileSync(resolve(process.cwd(), 'src/3-features/task/ui/StrategicTaskView.vue'), 'utf8')
 
@@ -948,5 +1010,180 @@ describe('导入 commit 成功后计划状态徽标刷新（2026-11-12 中⑤·A
       reloadIndicators: true
     })
     wrapper.unmount()
+  })
+})
+
+/**
+ * 2026-11-13（学院×部门上报进度收口 + 上报审批可见）：
+ *
+ * 业务诉求（战略部 zlb_admin）：学院页签两选齐（学院=计算机学院 × 部门=纪委办公室|监察处）
+ * 后，①「审批状况」签显示该学院×该部门的月报上报进度（未填报/草稿/审批中/已上报/已回退）；
+ * ②「查看审批」抽屉能看到该学院对该部门的上报审批实例（PLAN_REPORT / flow4），
+ * 不只看下发（flow6）。
+ *
+ * 缺陷根因：
+ * - 「审批状况」签数据源 = 行级 fills 聚合（getIndicatorFillHistory 恒不带
+ *   functionalOrgId = 全院报告聚合），选了职能部门也显示全院口径；
+ * - 抽屉 related 实体只传部门计划族（子计划 PLAN + 各自学院上报），学院口径锚定后
+ *   「学院×部门」报告实体不在其中。
+ *
+ * 纯函数（状态签映射）直接锁实现；model 接线（摘要查询带 functionalOrgId 尾参 /
+ * 部门切换重拉 / 实体合并）与组件绑定用源码契约锁（8k 行 composable 不宜整体实例化，
+ * 同 ③④ 款式）。
+ */
+describe('task/lib/collegeTabDistribute · resolveCollegeReportApprovalStatusMeta（审批状况签部门口径映射）', () => {
+  it('摘要缺失（未选部门 / 该学院×部门无报告）→ 未填报 info', () => {
+    const meta = resolveCollegeReportApprovalStatusMeta({ reportSummary: null })
+    expect(meta).toEqual({
+      label: '未填报',
+      tagType: 'info',
+      description: '当前学院还没有填报记录。'
+    })
+  })
+
+  it('上报审批在途（PENDING / IN_REVIEW / SUBMITTED，含小写空白）→ 审批中 warning', () => {
+    for (const status of ['PENDING', 'IN_REVIEW', 'SUBMITTED', ' in_review ']) {
+      expect(
+        resolveCollegeReportApprovalStatusMeta({
+          reportSummary: { id: 9001, workflowStatus: status }
+        })
+      ).toEqual({
+        label: '审批中',
+        tagType: 'warning',
+        description: '当前计划有指标的填报正在审批中。'
+      })
+    }
+  })
+
+  it('上报撤回（WITHDRAWN）→ 上报已撤回（待重新上报）warning（复用既有文案，不并入已回退）', () => {
+    expect(
+      resolveCollegeReportApprovalStatusMeta({
+        reportSummary: { id: 9001, workflowStatus: 'WITHDRAWN' }
+      })
+    ).toEqual({
+      label: '上报已撤回（待重新上报）',
+      tagType: 'warning',
+      description: '本轮上报已被撤回，等待重新上报。'
+    })
+  })
+
+  it('已回退（REJECTED / RETURNED / CANCELLED）→ 已回退 danger', () => {
+    for (const status of ['REJECTED', 'RETURNED', 'CANCELLED']) {
+      expect(
+        resolveCollegeReportApprovalStatusMeta({
+          reportSummary: { id: 9001, workflowStatus: status }
+        })
+      ).toEqual({
+        label: '已回退',
+        tagType: 'danger',
+        description: '当前计划有指标的填报被回退，等待重新上报。'
+      })
+    }
+  })
+
+  it('归档（APPROVED）→ 已上报 success', () => {
+    expect(
+      resolveCollegeReportApprovalStatusMeta({
+        reportSummary: { id: 9001, workflowStatus: 'APPROVED' }
+      })
+    ).toEqual({
+      label: '已上报',
+      tagType: 'success',
+      description: '当前计划的指标填报均已上报。'
+    })
+  })
+
+  it('草稿 / 未知状态（报告轮次存在但未提交）→ 未填报 info（上报中填写）', () => {
+    for (const status of ['DRAFT', '', 'SOMETHING_NEW', null, undefined]) {
+      expect(
+        resolveCollegeReportApprovalStatusMeta({
+          reportSummary: { id: 9001, workflowStatus: status }
+        })
+      ).toEqual({
+        label: '未填报',
+        tagType: 'info',
+        description: '当前计划有指标尚未填报。'
+      })
+    }
+  })
+
+  it('workflowStatus 缺位时回落 status 字段（后端两种响应形态兼容）', () => {
+    expect(
+      resolveCollegeReportApprovalStatusMeta({
+        reportSummary: { id: 9001, status: 'APPROVED' }
+      })
+    ).toMatchObject({ label: '已上报' })
+  })
+})
+
+/**
+ * model / 组件接线源码契约（2026-11-13 学院×部门上报进度收口）。
+ */
+describe('useStrategicTaskView 学院×部门上报进度接线契约（2026-11-13）', () => {
+  const readModelSource = () =>
+    readFileSync(
+      resolve(process.cwd(), 'src/3-features/task/model/useStrategicTaskView.ts'),
+      'utf8'
+    )
+  const readVueSource = () =>
+    readFileSync(resolve(process.cwd(), 'src/3-features/task/ui/StrategicTaskView.vue'), 'utf8')
+
+  it('① collegeScope 摘要查询带 functionalOrgId 尾参（学院页签右侧下拉所选部门，收口到学院×部门独立报告）', () => {
+    const source = readModelSource()
+    // functionalOrgId = collegeDispatchDeptEffective（右侧下拉）按名解析组织 id，仅在 collegeScope 生效
+    expect(source).toMatch(
+      /const collegeFunctionalOrgId =\s*options\.collegeScope === true\s*\?\s*resolveDepartmentIdByName\(collegeDispatchDeptEffective\.value\)\s*:\s*null/
+    )
+    // planApi 封装尾参透传（reportMonth 缺省 undefined，不改变回退取最近月语义）
+    expect(source).toMatch(
+      /getCurrentMonthPlanReportSummaries\(\s*planId,\s*reportOrgId,\s*undefined,\s*collegeFunctionalOrgId \?\? undefined\s*\)/
+    )
+    // 缓存键按 fno 区分：切部门不会复用上一个部门的在途 Promise
+    expect(source).toMatch(
+      /cacheKey = collegeFunctionalOrgId\s*\?\s*`\$\{planId\}:\$\{reportOrgId\}:\$\{timeContext\.currentYear\}:fno:\$\{collegeFunctionalOrgId\}`/
+    )
+  })
+
+  it('① 部门切换 / 学院上下文刚激活时重拉 collegeScope 摘要（此前只在 selectCollege 触发）', () => {
+    const source = readModelSource()
+    expect(source).toMatch(
+      /watch\(\s*\[collegeDispatchDeptEffective, isCollegePlanContextActive\],[\s\S]*?syncCurrentPlanReportSummaries\(\{ force: true, collegeScope: true \}\)/
+    )
+  })
+
+  it('② collegeScopeReportWorkflowEntity：学院上下文 + 摘要命中报告 id 才产出 PLAN_REPORT 实体', () => {
+    const source = readModelSource()
+    expect(source).toContain('collegeScopeReportWorkflowEntity')
+    expect(source).toMatch(
+      /if \(!isCollegePlanContextActive\.value\) \{\s*return null\s*\}\s*const reportId = Number\(collegeScopePlanReportSummary\.value\?\.id \?\? NaN\)/
+    )
+    expect(source).toMatch(/entityType: 'PLAN_REPORT', entityId: reportId/)
+  })
+
+  it('② drawerRelatedWorkflowEntities：学院页签 = 报告实体在前 + 部门计划族在后；职能页签原样（零回归）', () => {
+    const source = readModelSource()
+    expect(source).toMatch(
+      /const drawerRelatedWorkflowEntities = computed[\s\S]*?const family = departmentPlanFamilyWorkflowEntities\.value\s*const reportEntity = collegeScopeReportWorkflowEntity\.value\s*if \(!isCollegePlanContextActive\.value \|\| !reportEntity\) \{\s*return family\s*\}\s*return \[reportEntity, \.\.\.family\]/
+    )
+  })
+
+  it('② 抽屉 related-workflow-entities 绑定换为合并实体（2026-11-13 变更：原为 departmentPlanFamilyWorkflowEntities）', () => {
+    const vueSource = readVueSource()
+    expect(vueSource).toContain(':related-workflow-entities="drawerRelatedWorkflowEntities"')
+    // 旧绑定不得残留（防止双属性/漏改）
+    expect(vueSource).not.toContain(
+      ':related-workflow-entities="departmentPlanFamilyWorkflowEntities"'
+    )
+    expect(vueSource).toContain('drawerRelatedWorkflowEntities,')
+  })
+
+  it('③ 审批状况签（学院分支）数据源换锚部门摘要：resolveCollegeReportApprovalStatusMeta + collegeScopePlanReportSummary', () => {
+    const source = readModelSource()
+    expect(source).toMatch(
+      /return resolveCollegeReportApprovalStatusMeta\(\{\s*reportSummary: collegeScopePlanReportSummary\.value\s*\}\)/
+    )
+    // 异动优先分支保留（互斥锁可见信号），职能页签分支不受影响
+    expect(source).toMatch(/该学院存在进行中的异动审批；异动期间上报提交被锁定。/)
+    expect(source).toMatch(/collegeFillStatusScope\.value\)\s*\{\s*\/\/ 异动审批在审/)
   })
 })
