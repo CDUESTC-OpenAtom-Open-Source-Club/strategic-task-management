@@ -8,6 +8,7 @@
  * 覆盖：
  * - canAppraise=false + 后端 lockHint → ElMessage.info 原样透出 lockHint，不开选择器；
  * - context 缺条目（后端无该指标上报记录）→ 弹「非上报审批期间」兜底文案；
+ * - 后端 NO_REPORT_RECORD 权威 hint（尚未发起上报）→ 原样透出（2026-11-14 三视图提示语统一）；
  * - reloadOne 网络失败且无缓存 → 仍弹兜底文案（不允许静默 return）；
  * - 行 id 非法（空 / 非数字）→ 弹数据异常提示，且不发起 context 请求；
  * - canAppraise=true → 打开等级选择器（ElMessageBox），用户取消则不保存、无成功 toast。
@@ -86,6 +87,27 @@ describe('useIndicatorAppraisal.openAppraisalGate（评定门禁）', () => {
 
     expect(mocks.elMessage.info).toHaveBeenCalledTimes(1)
     expect(mocks.elMessage.info).toHaveBeenCalledWith('非上报审批期间，无法评定审核进度')
+    expect(mocks.elMessageBox).not.toHaveBeenCalled()
+  })
+
+  it('后端 NO_REPORT_RECORD 权威 hint（尚未发起上报）原样透出，三视图同文案', async () => {
+    // 2026-11-14 提示语统一：后端对无上报记录的指标返回 canAppraise=false + lockHint，
+    // 前端优先透出后端原文（不再落到「非上报审批期间」兜底句）
+    getContextsMock.mockResolvedValue({
+      success: true,
+      data: [
+        buildContext({
+          indicatorId: 105,
+          lockHint: '该指标尚未发起上报，暂不能评定审核进度'
+        })
+      ]
+    })
+
+    const { openAppraisalGate } = useIndicatorAppraisal()
+    await openAppraisalGate(105)
+
+    expect(mocks.elMessage.info).toHaveBeenCalledTimes(1)
+    expect(mocks.elMessage.info).toHaveBeenCalledWith('该指标尚未发起上报，暂不能评定审核进度')
     expect(mocks.elMessageBox).not.toHaveBeenCalled()
   })
 
