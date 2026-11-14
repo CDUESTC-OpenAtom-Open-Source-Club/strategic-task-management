@@ -8,6 +8,13 @@ export function useIndicatorFills(indicatorId: number | string | null | undefine
   if (indicatorId === null || indicatorId === undefined || indicatorId === '') {
     return Promise.resolve([])
   }
+  // 2026-11-14（新增行不落库）：前端内存草稿行的 draft-* 临时 id 没有后端实体，
+  // 直接按「无上报」处理，不发请求（否则会对临时 id 打出 404 噪音）。
+  // 真实指标 id 恒为正数（后端 SEQUENCE 主键），负数/非数字 id 一律视为无后端数据。
+  const numericId = Number(indicatorId)
+  if (!Number.isFinite(numericId) || numericId <= 0) {
+    return Promise.resolve([])
+  }
   const key = String(indicatorId)
   let pending = cache.get(key)
   if (!pending) {

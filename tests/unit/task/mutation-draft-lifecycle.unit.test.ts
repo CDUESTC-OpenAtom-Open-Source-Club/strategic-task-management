@@ -11,7 +11,9 @@ import { describe, expect, it } from 'vitest'
  *    但删除批次同样要跑校验——剔除后合计≠100 时拒绝并要求同批次调整补齐
  *    （2026-10-22 修复：只删不补曾把计划卡死在 60，后续连改名都被拦）；
  * 4. 驳回时只有 CREATE 类异动归档，MODIFY 保留改动供发起人继续修改；
- * 5. 「待提交新增」标记要能跨页面刷新回填（sessionStorage），避免刷新即变的孤儿指标。
+ * 5. 「待提交新增」标记要能跨页面刷新回填（sessionStorage），避免刷新即变的孤儿指标
+ *    （2026-11-14 收窄：只剩职能页签落库行依赖；学院页签新增行已改纯内存草稿，
+ *    按 create 条目新契约整行提交，刷新即丢是产品语义）。
  */
 
 type Draft = {
@@ -44,6 +46,42 @@ function cancelDraft(createdIds: string[], deletedInBackend: string[]) {
 /** 提交载荷：删除条目只带 delete 标记，不带字段变更 */
 function buildBatchItems(drafts: Draft[], createdIds: string[]) {
   return [
+    ...createdIds.map(id => ({ id, create: true })),
+    ...drafts.map(draft =>
+      draft.deleteRequested
+        ? { id: draft.indicatorId, delete: true }
+        : { id: draft.indicatorId, ...draft.changes }
+    )
+  ]
+}
+
+/**
+ * 2026-11-14（新增行不落库）：内存草稿行按新契约整行提交——
+ * create 条目带完整创建字段、不带 id（后端同事务落库 + 打异动标记 + 批次闭合权重校验）；
+ * 旧格式 {id, create:true}（职能页签已下发计划新增，行已落库）继续兼容。
+ */
+function buildBatchItemsWithCreateDrafts(
+  drafts: Draft[],
+  createdIds: string[],
+  createDraftRows: Array<{
+    name: string
+    weight: number
+    type1: string
+    parentIndicatorId: number
+    taskId: number
+    remark?: string
+  }>
+) {
+  return [
+    ...createDraftRows.map(draft => ({
+      create: true,
+      indicatorDesc: draft.name,
+      weightPercent: draft.weight,
+      indicatorType: draft.type1,
+      parentIndicatorId: draft.parentIndicatorId,
+      taskId: draft.taskId,
+      remark: draft.remark
+    })),
     ...createdIds.map(id => ({ id, create: true })),
     ...drafts.map(draft =>
       draft.deleteRequested
@@ -246,6 +284,41 @@ describe('submitting with a stale empty draft entry', () => {
     const effective = selectEffectiveDrafts(drafts)
     const items = buildBatchItems(effective, []) as Array<Record<string, unknown>>
     expect(items).toEqual([{ id: 2051, delete: true }])
+  })
+
+  it('2026-11-14 新增行不落库：内存草稿行按新契约整行提交，落库行保持旧格式', () => {
+    const effective = selectEffectiveDrafts([
+      { indicatorId: 2052, changes: { remark: '新备注' }, labels: ['下发备注'] }
+    ])
+    const items = buildBatchItemsWithCreateDrafts(
+      effective,
+      [2064],
+      [
+        {
+          name: '新增子指标甲',
+          weight: 10,
+          type1: '定量',
+          parentIndicatorId: 2001,
+          taskId: 3001,
+          remark: ''
+        }
+      ]
+    ) as Array<Record<string, unknown>>
+    // 内存草稿行：完整创建字段、无 id（键名与后端 hasCreateDraftFields 识别口径一致）
+    expect(items[0]).toEqual({
+      create: true,
+      indicatorDesc: '新增子指标甲',
+      weightPercent: 10,
+      indicatorType: '定量',
+      parentIndicatorId: 2001,
+      taskId: 3001,
+      remark: ''
+    })
+    expect(items[0]).not.toHaveProperty('id')
+    // 职能页签落库行：旧格式 {id, create:true} 后端继续兼容
+    expect(items[1]).toEqual({ id: 2064, create: true })
+    // 攒改条目不变
+    expect(items[2]).toEqual({ id: 2052, remark: '新备注' })
   })
 
   it('reports nothing submittable when every draft is empty', () => {

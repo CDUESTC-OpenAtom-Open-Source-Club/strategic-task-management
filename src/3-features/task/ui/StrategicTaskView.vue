@@ -169,6 +169,7 @@ const {
   canDeleteCollegeIndicator,
   canDistribute,
   canEdit,
+  isPendingCreateDraftRow,
   isCurrentPlanUnderApproval,
   canEditIndicators,
   canWriteStrategicTask,
@@ -609,8 +610,7 @@ const collegeTabTwoStepGuideTip = computed(() => {
  */
 const collegeTabSubPlanStatus = computed(() => {
   const context = effectivePlanContext?.value as
-    | { source?: string; plan?: Record<string, unknown> | null }
-    | undefined
+    { source?: string; plan?: Record<string, unknown> | null } | undefined
   if (!context || context.source !== 'college') {
     return null
   }
@@ -1725,8 +1725,7 @@ const currentStrategicImportCycleId = computed(() => {
   }
 
   const cycle = timeContext.cycles.find(item => Number(item.year) === timeContext.currentYear) as
-    | { cycleId?: number | string; id?: number | string }
-    | undefined
+    { cycleId?: number | string; id?: number | string } | undefined
   const numericCycleId = Number(cycle?.cycleId ?? cycle?.id)
   return Number.isFinite(numericCycleId) && numericCycleId > 0 ? numericCycleId : null
 })
@@ -3169,9 +3168,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                           </template>
                           <span v-else class="placeholder-text">未命名指标</span>
                         </template>
-                        <!-- 异动历史徽章（有变更时显示，悬停看历史） -->
+                        <!-- 异动历史徽章（有变更时显示，悬停看历史）；
+                             2026-11-14（新增行不落库）：内存草稿行没有数据库 id，
+                             徽章不渲染（避免对 draft-* 临时 id 发起历史查询） -->
                         <div
-                          v-if="row.id"
+                          v-if="row.id && !isPendingCreateDraftRow(row)"
                           class="indicator-cell-footer indicator-cell-footer--corner"
                         >
                           <MutationBadgePopover
@@ -3213,10 +3214,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                             保存中...
                           </span>
                           <span v-else class="weight-text">{{ row.weight }}</span>
-                          <!-- 2026-10-30 用户定案：权重异动记录挂在权重格子右上角 -->
+                          <!-- 2026-10-30 用户定案：权重异动记录挂在权重格子右上角；
+                               2026-11-14（新增行不落库）：内存草稿行没有数据库 id，徽章不渲染 -->
                           <div class="weight-cell__badge">
                             <MutationBadgePopover
-                              v-if="row.id"
+                              v-if="row.id && !isPendingCreateDraftRow(row)"
                               :indicator-id="row.id"
                               :fields="MUTATION_FIELDS_WEIGHT"
                               :mutation-in-flight="isEntityMutationInFlight('INDICATOR', row.id)"

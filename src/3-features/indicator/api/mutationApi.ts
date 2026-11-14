@@ -70,16 +70,26 @@ export const mutationApi = {
    * 整批一次提交；后端先全部应用再统一做权重合计校验，任一失败整批不生效。
    * item：{ id, create?: true 表示新增指标, indicator_desc?/weight_percent?/remark?: 变更值 }
    * 任务改名条目：{ id: 任务ID, entity_type: 'TASK', name: 新任务名 }
+   *
+   * 2026-11-14（新增行不落库）create 条目新契约——前端内存草稿行整行提交：
+   * { create: true, indicatorDesc, weightPercent, indicatorType, parentIndicatorId,
+   *   taskId?, remark? }，**不带 id**（后端按新建同事务落库 + 打异动标记 + 批次闭合
+   * 权重校验）；键名与后端 IndicatorMutationService.hasCreateDraftFields 识别口径
+   * 严格一致。旧格式 {id, create:true}（职能页签已下发计划新增，行已落库）继续兼容。
    */
   async initiateBatch(
     items: Array<{
-      id: number | string
+      id?: number | string
       create?: boolean
       entity_type?: 'INDICATOR' | 'TASK'
       name?: string
       indicator_desc?: string
       weight_percent?: number
       remark?: string
+      indicatorDesc?: string
+      indicatorType?: string
+      parentIndicatorId?: number
+      taskId?: number
     }>
   ): Promise<ApiResponse<string[]>> {
     // 后端接收裸数组（List<Map>）；早期版本发 {items} 会 400

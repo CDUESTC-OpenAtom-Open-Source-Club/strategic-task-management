@@ -161,24 +161,31 @@ describe('学院「新增行」父级锚点接线（方案甲 2026-11-13 源码�
     expect(findCollegeForm()).not.toMatch(/v-model="newRow\.type1"[\s\S]{0,200}disabled/)
   })
 
-  it('提交必带父级：未选拦「请选择关联的核心指标」，payload 直传 parentIndicatorId 不再可选', () => {
+  it('提交必带父级：未选拦「请选择关联的核心指标」，草稿行整行携带父级锚点（2026-11-14 新增行不落库）', () => {
     const saveStart = modelSource.indexOf('const saveCollegeChildIndicator')
     expect(saveStart).toBeGreaterThan(0)
     const saveBody = modelSource.slice(
       saveStart,
-      modelSource.indexOf('await refreshTaskPageAfterIndicatorMutation', saveStart)
+      modelSource.indexOf('const showAssignmentDialog', saveStart)
     )
 
     // 未选父级 → 保存被拦（前端必填校验）
     expect(saveBody).toContain("ElMessage.warning('请选择关联的核心指标')")
-    // payload 必传父级（2026-11-08 的 `parentIndicatorId: parentIndicatorId ?? undefined` 可选语义移除）
-    expect(saveBody).toMatch(/parentIndicatorId,\n\s+type: childIndicatorType/)
-    expect(saveBody).not.toContain('parentIndicatorId ?? undefined')
-    // 提交类型以父级核心指标类型为准（锚点一致性兜底）
+    // 2026-11-14（新增行不落库）：保存不再调 createIndicator 落库——纯内存 push
+    expect(saveBody).not.toContain('indicatorApi.createIndicator')
+    expect(saveBody).toContain(
+      'pendingCreateDrafts.value = [...pendingCreateDrafts.value, draftRow]'
+    )
+    // 草稿行整行携带父级锚点与父级继承字段（发起异动时随 create 条目提交后端）
+    expect(saveBody).toContain('parentIndicatorId,')
     expect(saveBody).toContain('const childIndicatorType')
     expect(saveBody).toContain(
       "parentRow && (parentRow.type1 === '定性' || parentRow.type1 === '定量')"
     )
+    // 草稿行没有后端 id：id = 前端临时 id（draft- 前缀，仅前端识别用）
+    expect(saveBody).toContain('draft-${Date.now()}-${++pendingCreateDraftSeq}')
+    // 保存成功提示带「尚未落库」语义（用户可感知刷新即丢）
+    expect(saveBody).toContain('尚未落库')
   })
 
   it('职能页签死代码清理：collegeAddMode 条件标题与永不渲染的父级选择器移除', () => {
@@ -245,5 +252,188 @@ describe('学院导入模板父级预填 seeds（方案甲 2026-11-13 接线契�
     expect(modelSource).toMatch(/type2: getIndicatorCategoryLabel\(item\)/)
     // 视图侧无人消费的 selectedCollegeDispatchParentIndicators 声明一并移除
     expect(modelSource).not.toMatch(/const selectedCollegeDispatchParentIndicators/)
+  })
+})
+
+/**
+ * 2026-11-14（用户定案：新增行不落库）学院页签「新增行」内存草稿契约：
+ *
+ * <p>没点「发起异动」之前，新增行只是本地内存草稿——保存 = 写入内存（表格立即显示、
+ * 权重合计实时计入、无后端请求）；刷新页面 = 草稿丢失、界面还原（无 sessionStorage）；
+ * 点「发起异动」= 才把草稿按完整创建字段提交后端落库 + 进审批链；行内删除 =
+ * 直接从内存移除（不调后端）。</p>
+ *
+ * <p>职能页签 DISTRIBUTED 分支（saveNewRow）**保持既有落库 + 旧格式 {id, create:true}**
+ * ——后端 create 条目新分支硬性要求 parentIndicatorId（IndicatorMutationService
+ * :402-405），核心指标行没有父级，内存化会导致发起异动整批 400；后端注释
+ * 「旧格式继续兼容（别的地方还在用）」即指该分支。</p>
+ */
+describe('学院新增行内存草稿（2026-11-14 不落库改造 源码契约）', () => {
+  const sliceFrom = (source: string, startMarker: string, endMarker: string): string => {
+    const start = source.indexOf(startMarker)
+    expect(start).toBeGreaterThan(0)
+    const end = source.indexOf(endMarker, start)
+    expect(end).toBeGreaterThan(start)
+    return source.slice(start, end)
+  }
+
+  it('草稿行并入学院表格行集：collegeTableIndicators 合并 collegeCreateDraftRows 并整表重排', () => {
+    const computedBody = sliceFrom(
+      modelSource,
+      'const collegeTableIndicators = computed',
+      'const isIndicatorInCollegePlanScope'
+    )
+    // 库存行 + 内存草稿行合并后统一排序（草稿行与真实兄弟行同组参与 sortOrder 排序）
+    expect(computedBody).toContain('[...storeRows, ...collegeCreateDraftRows.value]')
+    expect(computedBody).toContain('.sort(compareCollegeTableRows)')
+    // 排序比较器对 draft-* 临时 id NaN 安全（草稿行排在同序位真实行之后）
+    expect(modelSource).toContain('Number.isFinite(idA) ? idA : Number.MAX_SAFE_INTEGER')
+    // 草稿行按同一过滤口径收口：归属部门 + 学院名
+    const draftRowsBody = sliceFrom(
+      modelSource,
+      'const collegeCreateDraftRows = computed',
+      'const collegeTableIndicators = computed'
+    )
+    expect(draftRowsBody).toContain('resolveRowOwnerDept')
+    expect(draftRowsBody).toContain('deptName === target || deptName.includes(target)')
+  })
+
+  it('权重合计实时计入内存行：collegeBasicWeightTotal 读 collegeTableIndicators（草稿行已并入行集）', () => {
+    const weightTotalBody = sliceFrom(
+      modelSource,
+      'const collegeBasicWeightTotal = computed',
+      '// PR#83 头部'
+    )
+    expect(weightTotalBody).toContain('collegeTableIndicators.value')
+    expect(weightTotalBody).toContain('isBasicIndicatorForCurrentRules')
+    // 草稿行自带父级 taskId / 任务类型标签，能过基础性判定（与真实子指标同构）
+    expect(modelSource).toContain(
+      'type2: getIndicatorCategoryLabel(parentRow as StrategicIndicator)'
+    )
+    expect(modelSource).toMatch(/const draftRow: PendingCreateDraft = \{/)
+  })
+
+  it('「发起异动」按钮与横幅计数覆盖内存行：hasMutationDraft / mutationDraftCount 计入 pendingCreateDrafts', () => {
+    expect(modelSource).toMatch(
+      /hasRealMutationDraft \|\|\s*\n\s*taskNameDrafts\.value\.length > 0 \|\|\s*\n\s*pendingCreatedIndicatorIds\.value\.length > 0 \|\|\s*\n\s*\/\/ 2026-11-14（新增行不落库）：学院页签内存草稿行同样点亮「发起异动」\s*\n\s*pendingCreateDrafts\.value\.length > 0/
+    )
+    expect(modelSource).toMatch(
+      /taskNameDrafts\.value\.length \+\s*\n\s*pendingCreatedIndicatorIds\.value\.length \+\s*\n\s*pendingCreateDrafts\.value\.length/
+    )
+  })
+
+  it('发起异动载荷按后端新契约整行提交：create 条目带完整创建字段、不带 id，成功后清内存集合', () => {
+    const submitBody = sliceFrom(
+      modelSource,
+      'const submitMutationDraft = async',
+      '// 指标双击编辑'
+    )
+    // 键名与后端 IndicatorMutationService.createAndMarkNewIndicatorInMutation 严格一致
+    expect(submitBody).toContain('create: true,')
+    expect(submitBody).toContain('indicatorDesc: draft.name,')
+    expect(submitBody).toContain('weightPercent: draft.weight,')
+    expect(submitBody).toContain('indicatorType: draft.type1,')
+    expect(submitBody).toContain('parentIndicatorId: draft.parentIndicatorId,')
+    expect(submitBody).toContain('taskId: draft.taskId,')
+    expect(submitBody).toContain('remark: draft.remark')
+    // 旧格式（职能页签落库行）继续兼容
+    expect(submitBody).toContain('pendingCreates.map(id => ({ id, create: true as const }))')
+    // 提交成功 = 草稿行已在后端落库，内存集合清空
+    expect(submitBody).toMatch(/pendingCreateDrafts\.value = \[\]/)
+  })
+
+  it('撤销新增不调后端：内存行删除 = 直接从集合移除（无 store.deleteIndicator / 无刷新链）', () => {
+    const draftRemoveBody = sliceFrom(
+      modelSource,
+      'const removePendingCreateDraftRow',
+      'const MUTATION_FIELD_MAP'
+    )
+    expect(draftRemoveBody).toContain('pendingCreateDrafts.value.filter')
+    expect(draftRemoveBody).not.toContain('deleteIndicator')
+    // 异动草稿删除分支：内存行先于一切后端路径拦截
+    const applyDeleteBody = sliceFrom(
+      modelSource,
+      'const applyDeleteMutationDraft',
+      'const resolveAuthoritativeIndicatorValue'
+    )
+    expect(applyDeleteBody).toMatch(
+      /if \(isPendingCreateDraftRow\(row\)\) \{[\s\S]*?removePendingCreateDraftRow\(row\)[\s\S]*?return\s*\n\s*\}/
+    )
+    // 草稿分支提示文案与职能页签落库行撤销文案区分开（后者仍走后端删除）
+    expect(applyDeleteBody).toContain('已撤销本次新增的草稿行')
+    // 直删路径守卫：handleDeleteIndicator 最早分支拦内存行（防走 ElMessageBox + store 直删）
+    const handleDeleteBody = sliceFrom(
+      modelSource,
+      'const handleDeleteIndicator',
+      '// ================== 审批流程相关'
+    )
+    expect(handleDeleteBody.indexOf('isPendingCreateDraftRow(row)')).toBeGreaterThan(-1)
+    expect(handleDeleteBody.indexOf('isPendingCreateDraftRow(row)')).toBeLessThan(
+      handleDeleteBody.indexOf('canDeleteIndicator(row)')
+    )
+  })
+
+  it('刷新语义：内存草稿无任何持久化——保存路径不写 sessionStorage，集合声明块无存储键', () => {
+    const saveBody = sliceFrom(
+      modelSource,
+      'const saveCollegeChildIndicator',
+      'const showAssignmentDialog'
+    )
+    expect(saveBody).not.toContain('sessionStorage')
+    expect(saveBody).not.toContain('refreshTaskPageAfterIndicatorMutation')
+    // pendingCreateDrafts 是纯内存 ref：声明点到职能页签落库行集合声明之间无存储键/持久化函数
+    // （类型 JSDoc 里「无 sessionStorage」的语义描述本身不参与切片）
+    const draftDeclBody = sliceFrom(
+      modelSource,
+      'const pendingCreateDrafts = ref<PendingCreateDraft[]>',
+      'const pendingCreatedIndicatorIds = ref'
+    )
+    expect(draftDeclBody).not.toContain('sessionStorage')
+    expect(draftDeclBody).not.toContain('PENDING_CREATE_STORAGE_KEY')
+    // 存储键仍存在但只服务职能页签落库行（pendingCreatedIndicatorIds），与草稿无关
+    expect(modelSource).toMatch(/只剩\*\*职能页签\*\* DISTRIBUTED\s*\n\s*\* 分支在用/)
+  })
+
+  it('双击编辑内存行 = 原地更新草稿（不进 mutationDrafts，临时 id 不会炸提交载荷）', () => {
+    const editSaveBody = sliceFrom(
+      modelSource,
+      'const saveIndicatorEdit = async',
+      'const cancelIndicatorEdit'
+    )
+    expect(editSaveBody).toMatch(
+      /if \(isPendingCreateDraftRow\(row\) && MUTATION_FIELD_MAP\[field\]\) \{[\s\S]*?pendingCreateDrafts\.value\.map/
+    )
+    expect(editSaveBody).toContain('weight: Number(value)')
+    // 草稿行分支先于 effectiveHasDistributedIndicators 攒改分支
+    expect(editSaveBody.indexOf('isPendingCreateDraftRow(row)')).toBeLessThan(
+      editSaveBody.indexOf('effectiveHasDistributedIndicators.value && MUTATION_FIELD_MAP[field]')
+    )
+  })
+
+  it('草稿行不产生网络噪音：上报/异动历史按临时 id 短路，视图徽章不渲染', () => {
+    // 上报历史缓存：非正数 id（draft-*）直接按「无上报」处理
+    const fillsSource = readSource('src/3-features/indicator/model/useIndicatorFills.ts')
+    expect(fillsSource).toMatch(/!Number\.isFinite\(numericId\) \|\| numericId <= 0/)
+    // 异动历史缓存：同样短路
+    const historySource = readSource('src/3-features/indicator/model/mutationHistory.ts')
+    expect(historySource).toMatch(/!Number\.isFinite\(numericId\) \|\| numericId <= 0/)
+    // 学院表格两处异动徽章按草稿行守卫（渲染层不再对临时 id 发请求）
+    expect(viewSource).toMatch(/v-if="row\.id && !isPendingCreateDraftRow\(row\)"/)
+    // 上报完成度聚合剔除内存行（草稿行不该进「有未填报」口径）
+    expect(modelSource).toMatch(
+      /collegeTableIndicators\.value\.filter\(row => !isPendingCreateDraftRow\(row\)\)/
+    )
+  })
+
+  it('职能页签 DISTRIBUTED 分支保持落库 + 旧格式（后端 create 条目要求 parentIndicatorId，内存化不可行）', () => {
+    const saveNewRowBody = sliceFrom(modelSource, 'const saveNewRow = async', '// 删除指标')
+    // 职能页签新增行仍经 store 落库（addIndicator），落库后进 pendingCreatedIndicatorIds
+    expect(saveNewRowBody).toContain('strategicStore.addIndicator')
+    expect(saveNewRowBody).toContain(
+      'pendingCreatedIndicatorIds.value = [...pendingCreatedIndicatorIds.value, createdIndicatorId]'
+    )
+    // 职能页签 DRAFT 计划新增行保持落库（编制计划语义，红线）：saveNewRow 未改直写主链
+    expect(saveNewRowBody).toContain('await saveCollegeChildIndicator(collegeWeight)')
+    expect(saveNewRowBody).toContain('collegeAddMode.value')
   })
 })
