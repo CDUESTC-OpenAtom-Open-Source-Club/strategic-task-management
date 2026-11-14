@@ -527,6 +527,13 @@ export interface Plan {
   targetOrgName?: string
   orgName?: string
   planLevel?: string
+  /**
+   * 归口职能部门组织 ID（2026-11-05 战略部直发学院指标改造后的存量回填字段，
+   * 后端 PlanResponse.functionalOrgId，V104 已回填存量）。
+   * FUNC_TO_COLLEGE 计划的「归口部门」以此为准（created_by_org_id 恒为战略发展部 35）；
+   * 历史遗留计划可能为空，此时回退 createdByOrgId 口径。
+   */
+  functionalOrgId?: number
   // 前端辅助字段
   totalIndicators?: number // 总指标数
   completedIndicators?: number // 已完成指标数
@@ -688,6 +695,12 @@ export interface IndicatorFillForm {
   selfRating?: string
   /** 手工指定归属月份（P1）：YYYYMM；仅可选最早未填报月，后端强校验 */
   reportMonth?: string
+  /**
+   * 2026-11-13（学院上报按归口部门分批提交）：可选归口职能部门 ID。
+   * 学院页选中「归属部门」后保存填报时传入——草稿按 (月, 归口部门) 隔离；
+   * 未选部门不传（旧行为，聚合草稿）。
+   */
+  functionalOrgId?: number | string
   batch_items?: Array<{
     indicator_id: string | number
     indicator_name?: string

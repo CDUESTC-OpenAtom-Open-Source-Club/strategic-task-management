@@ -30,7 +30,21 @@ import { logger } from '@/shared/lib/utils/logger'
 import { alertApi, type ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import type { Plan } from '@/shared/types'
 import { canUseAsFunctionalParentIndicator } from '@/features/indicator/lib/scope'
+import {
+  collegeDispatchExpectedWorkflowCodes,
+  resolveDispatchSubmitWorkflowCode
+} from '@/features/indicator/lib/dispatchWorkflowCodes'
 import { resolveDistributionSubmitLockReason } from '@/features/indicator/lib/distributionSubmitGate'
+import {
+  filterDispatchOwnedCollegeIndicators,
+  groupDispatchCollegeChildIndicators,
+  resolveDispatchRowOwningDept
+} from '@/features/indicator/lib/distributeRowOwnership'
+import {
+  matchesCollegePlanAnchor,
+  selectCollegeFunctionalPlan,
+  type AnchorPlanLike
+} from '@/features/indicator/lib/collegeFunctionalPlanAnchor'
 import { getPlanStatusDisplay, normalizePlanStatus } from '@/features/task/lib/planStatus'
 import {
   MANUAL_ALERT_LOCKED_HINT,
@@ -47,6 +61,15 @@ import {
   getMyPendingTasks
 } from '@/features/workflow/api/queries'
 import { buildQueryKey, invalidateQueries } from '@/shared/lib/utils/cache'
+import {
+  canOperateDistributionPage,
+  canWithdrawDispatchPlan,
+  canWithdrawDistributionPlan,
+  canWriteDispatchOwnedRow,
+  canWriteDistributionPage,
+  isDispatchOwnerVisible,
+  STRATEGIC_DEPT_ROLE
+} from '@/5-shared/lib/permissions/strategyDispatchAccess'
 import {
   GLOBAL_DATA_REFRESH_REQUEST_EVENT,
   requestGlobalDataRefresh,
@@ -339,16 +362,72 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     return props.viewingRole === 'functional_dept'
   })
 
-  const currentDispatchWorkflowCode = computed(() => {
-    if (isStrategicDept.value) {
-      return 'PLAN_DISPATCH_STRATEGY'
-    }
+  // ============================================================================
+  // 登录角色 vs 视角角色（2026-11-05 战略部直发学院指标改造）
+  // ----------------------------------------------------------------------------
+  // ⚠️ 两套角色不可混用：
+  // - 登录角色（authStore.userRole）：账号真实角色，恒定。判断「能不能操作」只用它。
+  // - 视角角色（props.viewingRole）：战略部用部门切换器切到职能部门视角时会变成
+  //   'functional_dept'。判断「数据属于哪个部门」才用它。
+  // 改造前把「视角角色 = 战略部」当只读开关，导致战略部一切换视角就被误锁只读。
+  // ============================================================================
+  const loginRole = computed(() => authStore.userRole)
 
-    return 'PLAN_DISPATCH_FUNCDEPT'
+  /** 登录角色是战略发展部（真实登录角色，不随视角切换变化） */
+  const isStrategicDeptLogin = computed(() => loginRole.value === STRATEGIC_DEPT_ROLE)
+
+  /** 登录角色是职能部门（真实登录角色，不随视角切换变化） */
+  const isFunctionalDeptLogin = computed(() => loginRole.value === 'functional_dept')
+
+  /** 本页可参与者：战略部（可操作）+ 职能部门（只读，但保留撤回） */
+  const canOperateDistribution = computed(() => canOperateDistributionPage(loginRole.value))
+
+  /** 本页写操作（新增/编辑/删除/导入/复制/发起下发审批）：仅战略部 */
+  const canWriteDistribution = computed(() => canWriteDistributionPage(loginRole.value))
+
+  /** 本页撤回权限：战略部 + 职能部门（职能部门历史上发起的在审计划要能撤回） */
+  const canWithdrawDistribution = computed(() => canWithdrawDistributionPlan(loginRole.value))
+
+  /**
+   * 下发方（归属部门）口径：战略部登录时恒为「战略发展部」——
+   * 改造后学院指标由战略发展部下发，视角部门只用于浏览他部门历史数据，
+   * 不再决定新建指标的归属。职能部门登录时沿用原口径（当前视角部门）。
+   */
+  const dispatchOwnerDept = computed(() => {
+    if (isStrategicDeptLogin.value) {
+      return orgStore.getStrategicDeptName()
+    }
+    return currentDept.value
   })
 
-  // 只读模式：战略发展部或者历史快照模式
-  const _isReadOnly = computed(() => timeContext.isReadOnly || isStrategicDept.value)
+  /** 战略发展部名称（归属解析用：识别「战略部自有行」，与战略任务页同源 orgStore 口径） */
+  const strategicDeptName = computed(() => orgStore.getStrategicDeptName())
+
+  const dispatchOwnerOrgId = computed(() => {
+    if (isStrategicDeptLogin.value) {
+      const strategicOrgId = Number(orgStore.strategicDept?.id ?? NaN)
+      return Number.isFinite(strategicOrgId) && strategicOrgId > 0 ? strategicOrgId : null
+    }
+    return getOrgIdByDeptName(currentDept.value) ?? null
+  })
+
+  // 下发审批流程码：按「登录角色」判定，不按视角角色。
+  //
+  // 2026-11-10：学院指标下发（FUNC_TO_COLLEGE，created_by=战略发展部）改用专用流程
+  // PLAN_DISPATCH_COLLEGE「Plan下发审批（二级学院）」（三步：填报人提交 → 战略发展部
+  // 负责人 → 分管校领导终审，席位全部在战略部 org35）。后端提交校验只认新码，
+  // 旧码提交会被 400 拒绝。职能部门下发（STRAT_TO_FUNC）继续走 PLAN_DISPATCH_STRATEGY。
+  // 若这里按视角角色判定，战略部用部门切换器切到职能部门视角后会拿到已停用的
+  // PLAN_DISPATCH_FUNCDEPT → 发起下发必然失败（2026-11-05 起按登录角色的定案沿用）。
+  // 职能部门登录时仍取 FUNCDEPT：用于识别其历史在审实例的流程（只读/撤回场景）。
+  const currentDispatchWorkflowCode = computed(() => {
+    return resolveDispatchSubmitWorkflowCode(loginRole.value)
+  })
+
+  // 只读模式：只认历史快照模式。
+  // ⚠️ 改造前这里是 `timeContext.isReadOnly || isStrategicDept.value`——把「视角角色=战略部」
+  // 当成了只读开关，战略部切到职能部门视角后会被误锁成只读（违反「职能部门能力补充给战略部」）。
+  const _isReadOnly = computed(() => timeContext.isReadOnly)
 
   // 获取所有学院（从数据库动态获取）
   const colleges = computed(() => orgStore.getAllCollegeNames())
@@ -387,17 +466,27 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   const currentCollegeWorkflowDetail = ref<WorkflowInstanceDetailResponse | null>(null)
   const approvalStatusPopoverLoading = ref(false)
 
-  // 专门用于审批抽屉的指标列表（当前选中学院的所有子指标，只显示当前部门下发的）
+  // 专门用于审批抽屉的指标列表（当前选中学院的所有子指标，只显示归口为当前部门的）
+  // 2026-11-13 用户反馈修复：旧过滤按 ownerDept=当前部门——战略部直发改造后学院子指标
+  // owner 恒为战略发展部，全被滤空 → 审批详情卡快照匹配失败，降级「指标 #ID / 责任部门
+  // -- / 权重 --」。归口口径改为父级核心指标的目标部门（resolveDispatchRowOwningDept，
+  // 与本页表格归口可见性同源）；存量 owner=职能部门的行 ownerDept 原样兼容。
   const approvalIndicators = computed(() => {
     if (!selectedCollege.value) {
       return []
     }
-    // 只返回当前部门下发给该学院的指标
+    // 归口为当前部门的指标（含当前部门存量下发 + 战略部直发挂本部门归口的）
     return strategicStore.indicators.filter(i => {
       if (i.isStrategic) {
         return false
       }
-      if (!isSameDepartment(i.ownerDept, currentDept.value)) {
+      const owningDept = resolveDispatchRowOwningDept({
+        row: i,
+        indicators: strategicStore.indicators,
+        strategicDeptName: '战略发展部',
+        normalizeDepartmentName
+      })
+      if (!isSameDepartment(owningDept, currentDept.value)) {
         return false
       }
       return matchesDepartment(i.responsibleDept, selectedCollege.value!)
@@ -465,60 +554,31 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     }
 
     const collegeOrgId = getOrgIdByDeptName(collegeName)
-    const currentOrgId = currentDepartmentOrgId.value
+    // 2026-11-05（codex P2-3）：学院下发计划的「创建方」是**下发方**，不是当前视角部门。
+    // 改造前下发方=职能部门，用 currentDepartmentOrgId（视角部门）比对恰好正确；
+    // 改造后下发方=战略部，若仍用视角部门比对，战略部切到职能部门/学院视角时会
+    // 选中遗留的职能部门计划、或一条都选不中 → 编辑能进行但提交用错 plan ID。
+    // 故：战略部登录用 dispatchOwnerOrgId（=战略部），职能部门登录保持原口径（零变化）。
+    const currentOrgId = isStrategicDeptLogin.value
+      ? dispatchOwnerOrgId.value
+      : currentDepartmentOrgId.value
 
-    // 2026-10-19 缺陷修复：此处只应取「职能部门→学院」这一层级的计划。
-    // 此前未校验 planLevel，当同一对部门之间同时存在 STRAT_TO_FUNC 空草稿
-    // （如纪委→计算机学院的 705463）时会被 find 先命中，导致选中学院后
-    // 审批历史查的是错误计划（查不到真正下发链 403757 的实例）。
-    const candidates = planStore.plans.filter(plan => {
-      const planAny = plan as Plan & {
-        targetOrgId?: number | string
-        targetOrgName?: string
-        orgId?: number | string
-        orgName?: string
-        createdByOrgId?: number | string
-        year?: number | string
-        cycleId?: number | string
-        planLevel?: string
-      }
-      const planYear = resolvePlanYear(planAny)
-      const targetOrgId = Number(planAny.targetOrgId ?? planAny.org_id ?? planAny.orgId ?? NaN)
-      const targetOrgName = normalizeDepartmentName(planAny.targetOrgName || planAny.orgName || '')
-      const createdByOrgId = Number(planAny.createdByOrgId ?? NaN)
-      const matchesOrgId =
-        collegeOrgId != null && Number.isFinite(targetOrgId) && targetOrgId === collegeOrgId
-      const matchesOrgName = targetOrgName === collegeName
-      const matchesCreatedByOrg =
-        currentOrgId == null || !Number.isFinite(createdByOrgId) || createdByOrgId === currentOrgId
-      const planLevel = String(planAny.planLevel || '')
-        .trim()
-        .toUpperCase()
-      const matchesLevel = planLevel === '' || planLevel === 'FUNC_TO_COLLEGE'
-
-      return (
-        planYear === timeContext.currentYear &&
-        (matchesOrgId || matchesOrgName) &&
-        matchesCreatedByOrg &&
-        matchesLevel
-      )
-    })
-
-    // 同层级多份计划时优先取已下发（有审批链），其次按 id 倒序取最新
-    const isDistributed = (plan: Plan) =>
-      String((plan as { status?: string }).status || '')
-        .trim()
-        .toUpperCase() === 'DISTRIBUTED'
-
+    // 2026-11-13（归口锚定修正）：锚定口径收口到 lib/collegeFunctionalPlanAnchor.ts——
+    // 归口计划（functional_org_id=本部门）优先；回退 legacy（created_by_org_id=本部门）
+    // 且必须有存活指标（legacy 空壳 DRAFT 不参与状态展示）。改造后 FUNC_TO_COLLEGE
+    // 计划 created_by 恒为战略部（35）、归口部门在 functional_org_id，旧
+    // 「createdByOrgId===本部门」口径会让教务处登录锚到 legacy 空壳草稿（404456 等）
+    // → 头部「草稿 / 权重 0」，真正已下发的归口计划（705488）反而锚不到。
+    // 同层级多份计划时优先取已下发（有审批链），其次按 id 倒序取最新（lib 内同款排序）。
     return (
-      [...candidates].sort((left, right) => {
-        const leftDistributed = isDistributed(left) ? 1 : 0
-        const rightDistributed = isDistributed(right) ? 1 : 0
-        if (leftDistributed !== rightDistributed) {
-          return rightDistributed - leftDistributed
-        }
-        return Number(right.id ?? 0) - Number(left.id ?? 0)
-      })[0] || null
+      (selectCollegeFunctionalPlan(planStore.plans as AnchorPlanLike[], {
+        collegeOrgId: collegeOrgId ?? null,
+        collegeName,
+        ownerOrgId: currentOrgId,
+        currentYear: timeContext.currentYear,
+        resolvePlanYear: planAny => resolvePlanYear(planAny),
+        normalizeOrgName: normalizeDepartmentName
+      }) as Plan | null) || null
     )
   })
 
@@ -614,30 +674,18 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       return false
     }
 
-    const collegeOrgId = getOrgIdByDeptName(collegeName)
-    const currentOrgId = currentDepartmentOrgId.value
-    const planAny = plan as Plan & {
-      targetOrgId?: number | string
-      targetOrgName?: string
-      orgId?: number | string
-      orgName?: string
-      createdByOrgId?: number | string
-    }
-    const planYear = resolvePlanYear(planAny)
-    const targetOrgId = Number(planAny.targetOrgId ?? planAny.org_id ?? planAny.orgId ?? NaN)
-    const targetOrgName = normalizeDepartmentName(planAny.targetOrgName || planAny.orgName || '')
-    const createdByOrgId = Number(planAny.createdByOrgId ?? NaN)
-    const matchesOrgId =
-      collegeOrgId != null && Number.isFinite(targetOrgId) && targetOrgId === collegeOrgId
-    const matchesOrgName = targetOrgName === collegeName
-    const matchesCreatedByOrg =
-      currentOrgId == null || !Number.isFinite(createdByOrgId) || createdByOrgId === currentOrgId
-
-    return (
-      planYear === timeContext.currentYear &&
-      (matchesOrgId || matchesOrgName) &&
-      matchesCreatedByOrg
-    )
+    // 2026-11-13（归口锚定修正）：与 currentSelectedCollegePlan 同口径
+    // （lib/collegeFunctionalPlanAnchor.matchesCollegePlanAnchor）——
+    // 归口计划（functional_org_id=本部门）或「有存活指标的 legacy 计划」
+    // （created_by_org_id=本部门）命中即视为当前上下文；空壳不参与。
+    return matchesCollegePlanAnchor(plan as AnchorPlanLike, {
+      collegeOrgId: getOrgIdByDeptName(collegeName) ?? null,
+      collegeName,
+      ownerOrgId: currentDepartmentOrgId.value,
+      currentYear: timeContext.currentYear,
+      resolvePlanYear: planAny => resolvePlanYear(planAny),
+      normalizeOrgName: normalizeDepartmentName
+    })
   }
 
   const buildTaskTypeMap = (tasks: Array<Record<string, unknown>>): Record<string, string> => {
@@ -835,21 +883,41 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       currentCollegePlanReportSummary.value?.canWithdraw ??
       currentActiveCollegePlan.value?.canWithdraw
 
+    // 2026-11-05（codex P1-2）：撤回是「撤销自己刚提交的下发」，
+    // 战略发展部账号未必持有 ROLE_REPORTER（填报人角色）——若此处仍强制该角色，
+    // 战略部提交下发后计划进入 pending_locked，撤回按钮消失，即便后端返回
+    // canWithdraw=true 也无法撤回，审批卡死只能等他人处理。
+    // 口径：登录角色是战略发展部时放行（该页对战略部本就可操作）；
+    // 职能部门仍按原口径要求 ROLE_REPORTER（行为零变化）。
+    const canWithdrawByRole = canWithdrawDispatchPlan({
+      loginRole: loginRole.value,
+      isReporter: isCurrentUserReporter.value
+    })
+
     return (
       ['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(selectedCollegePlanUiStatus.value) &&
-      isCurrentUserReporter.value &&
+      canWithdrawByRole &&
       Boolean(canWithdraw)
     )
   })
 
-  // 是否可以编辑子指标（只有职能部门可以，审批中锁定）
+  // 是否可以编辑子指标（改造后：战略部可编辑；职能部门在本页只读；审批中锁定）
   const canEditChild = computed(() => {
-    return (
-      isFunctionalDept.value &&
-      !timeContext.isReadOnly &&
-      canEditCurrentCollegePlan.value &&
-      canCurrentUserSubmitCurrentDepartmentDistribution.value
-    )
+    if (!canWriteDistribution.value) {
+      return false
+    }
+    if (timeContext.isReadOnly) {
+      return false
+    }
+    if (!canEditCurrentCollegePlan.value) {
+      return false
+    }
+    // 战略部：以战略发展部身份直接下发，不受「本部门填报人」限制；
+    // 职能部门：沿用原口径（本部门组织下的填报人才可编辑）。
+    if (isStrategicDeptLogin.value) {
+      return true
+    }
+    return canCurrentUserSubmitCurrentDepartmentDistribution.value
   })
 
   const retainedRouteApprovalEntityType = ref<'PLAN' | 'PLAN_REPORT' | undefined>(undefined)
@@ -973,11 +1041,16 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   })
 
   const currentApprovalWorkflowCode = computed<string | string[]>(() => {
+    // 下发链期望码：按登录角色取（战略部 = 学院下发新码 + 存量借道码；职能部门 = FUNCDEPT
+    // 历史识别码，零变化）。战略部集合里的存量借道码 PLAN_DISPATCH_STRATEGY 保证
+    // 切换上线时仍以旧码在审的学院下发实例不被误滤（抽屉空白 / 撤回不可达）。
+    const dispatchChainCodes = collegeDispatchExpectedWorkflowCodes(loginRole.value)
+
     if (
       approvalWorkflowReportSummary.value?.id ||
       hasPlanReportWorkflowContext(latestCollegePlanReportSummary.value)
     ) {
-      return ['PLAN_APPROVAL_COLLEGE', currentDispatchWorkflowCode.value]
+      return ['PLAN_APPROVAL_COLLEGE', ...dispatchChainCodes]
     }
 
     // 2026-10-24（铃铛跳转修复）：上报深链打开时报告摘要尚未加载，
@@ -989,10 +1062,10 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         .trim()
         .toUpperCase() === 'PLAN_REPORT'
     ) {
-      return ['PLAN_APPROVAL_COLLEGE', currentDispatchWorkflowCode.value]
+      return ['PLAN_APPROVAL_COLLEGE', ...dispatchChainCodes]
     }
 
-    return currentDispatchWorkflowCode.value
+    return dispatchChainCodes
   })
 
   const normalizeWorkflowStepName = (value?: string | null) => {
@@ -1469,6 +1542,23 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     return currentUserOrgId.value === currentOrgId
   })
 
+  /**
+   * 2026-11-05：可在本页发起下发的判定（改造后由战略发展部统一发起）。
+   *
+   * - 战略部登录：以战略发展部身份直接下发，不受「本部门组织下的填报人」限制——
+   *   战略部账号通常不带 ROLE_REPORTER，沿用旧判定会被误锁成「不可下发」。
+   * - 职能部门登录：沿用原口径（本部门组织下的填报人），行为零变化（本页已是只读）。
+   */
+  const canSubmitCurrentDepartmentDistribution = computed(() => {
+    if (!canWriteDistribution.value) {
+      return false
+    }
+    if (isStrategicDeptLogin.value) {
+      return true
+    }
+    return canCurrentUserSubmitCurrentDepartmentDistribution.value
+  })
+
   const resolveCurrentStepExpectedRoleCodes = () => {
     const stepName = String(currentActiveCollegePlan.value?.currentStepName || '').trim()
     if (!stepName) {
@@ -1754,13 +1844,13 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     return resolveDistributionSubmitLockReason({
       isReadOnly: timeContext.isReadOnly,
       hasDepartmentOrg: Boolean(currentDepartmentOrgIdFromTable.value),
-      canCurrentUserSubmit: canCurrentUserSubmitCurrentDepartmentDistribution.value,
+      canCurrentUserSubmit: canSubmitCurrentDepartmentDistribution.value,
       functionalDeptMutationInFlight: functionalDeptMutationInFlight.value,
       collegeMutationInFlight: collegeMutationInFlight.value,
       collegeMutationLockCollegeName: collegeMutationLockDetail.value?.collegeName,
       collegeMutationLockStepName: collegeMutationLockDetail.value?.stepName,
       functionalMutationLockStepName: functionalMutationLockDetail.value?.stepName,
-      hasChildIndicators: getMyCollegeIndicators(selectedCollege.value || '').length > 0,
+      hasChildIndicators: getDispatchOwnerCollegeIndicators(selectedCollege.value || '').length > 0,
       collegeTotalWeight: collegeTotalWeight.value,
       isBatchDistributing: isBatchDistributing.value
     })
@@ -2441,41 +2531,19 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   // 计数遍历「本部门下发 + 责任部门=该学院」的全部子指标，表格却要求子指标必须
   // 挂在「本部门可见的根父指标」下；父指标被软删 / 非根 / 不属于本部门时，
   // 计数仍为 1 而表格 No Data。现在两侧共用这一份数据：计数取 Map 长度，表格取 Map 明细。
+  // 2026-11-10 归口可见性修复：部门归属口径改用共享归属解析（战略部自有行 → 父级核心
+  // 指标的目标部门 = 归口职能部门；存量行 → ownerDept 原样；孤儿行退回 ownerDept），
+  // 归口职能部门登录也能看到「本部门归口的战略部下发子指标」；可见性政策仍由
+  // isDispatchOwnerVisible 统一裁决（战略部登录恒全量可见，不回归）。判定逻辑在
+  // lib/distributeRowOwnership.ts（纯函数，与单测共用同一份实现）。
   const collegeChildIndicators = computed<Map<string, StrategicIndicator[]>>(() => {
-    const grouped = new Map<string, StrategicIndicator[]>()
-
-    strategicStore.indicators.forEach(indicator => {
-      if (indicator.isStrategic) {
-        return
-      }
-      // 只统计当前部门下发的指标
-      if (!isSameDepartment(indicator.ownerDept, currentDept.value)) {
-        return
-      }
-
-      // responsibleDept 运行时可能是字符串或字符串数组，逐项归一化后按学院分组
-      const rawDept = indicator.responsibleDept as string | string[] | undefined
-      const deptValues: string[] = Array.isArray(rawDept) ? rawDept : rawDept ? [rawDept] : []
-
-      const collegeKeys = new Set<string>()
-      deptValues.forEach(dept => {
-        const normalized = normalizeDepartmentName(dept)
-        if (normalized) {
-          collegeKeys.add(normalized)
-        }
-      })
-
-      collegeKeys.forEach(collegeKey => {
-        const bucket = grouped.get(collegeKey)
-        if (bucket) {
-          bucket.push(indicator)
-          return
-        }
-        grouped.set(collegeKey, [indicator])
-      })
+    return groupDispatchCollegeChildIndicators({
+      indicators: strategicStore.indicators,
+      loginRole: loginRole.value,
+      currentDept: currentDept.value,
+      strategicDeptName: strategicDeptName.value,
+      normalizeDepartmentName: normalizeDepartmentName
     })
-
-    return grouped
   })
 
   // 获取学院的子指标数量（与右侧表格同源，保证「计数 = 表格行数」）
@@ -2598,7 +2666,10 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   })
 
   const availableParentIndicators = computed<StrategicIndicator[]>(() => {
-    if (!isFunctionalDept.value) {
+    // 2026-11-05：判定改用**登录角色**（原为视角角色）。
+    // 改造后学院指标由战略发展部下发，父级核心指标是「战略发展部 → 职能部门」那一批，
+    // 因此战略部登录时取全部战略指标；职能部门登录时沿用原口径（本部门可见的核心指标）。
+    if (!isFunctionalDeptLogin.value) {
       return strategicStore.indicators.filter(i => i.isStrategic)
     }
 
@@ -2666,12 +2737,16 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   })
 
   // 获取指标的子指标（只显示当前部门下发的）
+  // 2026-11-05：战略部登录放宽为「本下发方 + 存量兼容」，职能部门登录口径不变。
   const _getChildIndicators = (parentId: string) => {
     return strategicStore.indicators.filter(
       i =>
         i.parentIndicatorId === parentId &&
         !i.isStrategic &&
-        isSameDepartment(i.ownerDept, currentDept.value)
+        isDispatchOwnerVisible({
+          loginRole: loginRole.value,
+          ownerMatchesCurrentDept: isSameDepartment(i.ownerDept, currentDept.value)
+        })
     )
   }
 
@@ -2789,6 +2864,12 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
   // 打开添加指标表单
   const openAddIndicatorForm = () => {
+    // 2026-11-05：改造后新增子指标是战略部的操作，职能部门在本页只读
+    if (!canWriteDistribution.value) {
+      ElMessage.warning('学院指标下发由战略发展部统一发起；如需调整请通过异动审批流程')
+      return
+    }
+
     if (!canEditCurrentCollegePlan.value) {
       ElMessage.warning('当前计划审批中，暂不能编辑或新增子指标')
       return
@@ -2910,6 +2991,11 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
   // 保存新增指标（状态为草稿）- 立即调用后端API创建
   const saveNewIndicator = async () => {
+    // 2026-11-05：新增子指标是战略部的操作，职能部门在本页只读（兜底，防止绕过 UI 闸门）
+    if (!canWriteDistribution.value) {
+      ElMessage.warning('学院指标下发由战略发展部统一发起；如需调整请通过异动审批流程')
+      return
+    }
     // 验证数据
     if (!newIndicatorForm.value.parentIndicatorId) {
       ElMessage.warning('请选择关联的核心指标')
@@ -2946,7 +3032,9 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
       const indicatorTaskId = Number(getIndicatorTaskId(parentIndicator as StrategicIndicator))
       const parentIndicatorId = Number(newIndicatorForm.value.parentIndicatorId)
-      const ownerOrgId = getOrgIdByDeptName(currentDept.value)
+      // 2026-11-05：归属部门口径改用「下发方」——战略部登录时恒为战略发展部（org 35），
+      // 职能部门登录时仍为当前部门（口径不变）。
+      const ownerOrgId = dispatchOwnerOrgId.value
       const targetOrgId = getOrgIdByDeptName(selectedCollege.value)
 
       // 验证必要参数
@@ -2954,7 +3042,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         throw new Error('指标缺少有效 taskId')
       }
       if (!ownerOrgId) {
-        throw new Error(`无法解析当前部门组织ID: ${currentDept.value}`)
+        throw new Error(`无法解析下发方组织ID: ${dispatchOwnerDept.value}`)
       }
       if (!targetOrgId) {
         throw new Error(`无法解析目标学院组织ID: ${selectedCollege.value}`)
@@ -3008,7 +3096,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         responsiblePerson: '',
         status: 'draft',
         isStrategic: false,
-        ownerDept: currentDept.value,
+        ownerDept: dispatchOwnerDept.value,
         parentIndicatorId: newIndicatorForm.value.parentIndicatorId,
         year: timeContext.currentYear,
         statusAudit: []
@@ -3058,13 +3146,19 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       return
     }
 
-    const sourceIndicators = getMyCollegeIndicators(sourceCollege)
+    // 2026-11-05（战略部直发学院指标）：复制路径必须用「本下发方」窄口径。
+    // getMyCollegeIndicators 在战略部登录时返回该学院**全部 owner** 的子指标，
+    // 而下面的「清空已有」会逐条 deleteIndicator —— 用宽口径会把其它职能部门 owner 的
+    // 存量历史指标真删掉（弹窗文案自称不可恢复），违反「存量只保留为只读历史」，
+    // 且批量撤回正依赖这些在审指标存在。源侧同理，避免把他部门指标复制成本次下发的新指标。
+    // 职能部门登录时 dispatchOwnerDept === 当前部门，本改动等价于原口径（零变化）。
+    const sourceIndicators = getDispatchOwnerCollegeIndicators(sourceCollege)
     if (sourceIndicators.length === 0) {
       ElMessage.warning('来源学院当前没有可复制的子指标')
       return
     }
 
-    const currentIndicators = getMyCollegeIndicators(targetCollege)
+    const currentIndicators = getDispatchOwnerCollegeIndicators(targetCollege)
     if (copyClearExisting.value) {
       const blockedIndicator = currentIndicators.find(indicator => !canManageChildDraft(indicator))
       if (blockedIndicator) {
@@ -3111,7 +3205,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
         const parentIndicator = availableParentIndicators.value.find(
           indicator => Number(indicator.id) === parentIndicatorId
         )
-        const ownerOrgId = getOrgIdByDeptName(currentDept.value)
+        const ownerOrgId = dispatchOwnerOrgId.value
         const targetOrgId = getOrgIdByDeptName(targetCollege)
         const indicatorTaskId = Number(
           parentIndicator
@@ -3422,7 +3516,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
           responsiblePerson: '',
           status: 'draft',
           isStrategic: false,
-          ownerDept: currentDept.value,
+          ownerDept: dispatchOwnerDept.value,
           parentIndicatorId: parentId,
           year: timeContext.currentYear,
           statusAudit: [] // 默认为空，状态为草稿
@@ -3772,18 +3866,56 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   // ================== 审批相关 ==================
 
   // 辅助函数：获取当前部门下发给指定学院的子指标
+  // 2026-11-05：战略部登录放宽为「本下发方 + 存量兼容」，职能部门登录口径不变。
   const getMyCollegeIndicators = (college: string) => {
     return strategicStore.indicators.filter(i => {
       if (i.isStrategic) {
         return false
       }
-      if (i.ownerDept !== currentDept.value) {
+      if (
+        !isDispatchOwnerVisible({
+          loginRole: loginRole.value,
+          ownerMatchesCurrentDept: i.ownerDept === currentDept.value
+        })
+      ) {
         return false
       }
       if (Array.isArray(i.responsibleDept)) {
         return i.responsibleDept.includes(college)
       }
       return i.responsibleDept === college
+    })
+  }
+
+  /**
+   * 读取指标归属部门（store 的指标类型未声明 ownerDept，这里按运行时真实字段读取）。
+   * 语义与直接读 `indicator.ownerDept` 完全一致（非字符串一律当 undefined）。
+   */
+  const readIndicatorOwnerDept = (indicator: unknown): string | undefined => {
+    const raw = (indicator as Record<string, unknown>).ownerDept
+    return typeof raw === 'string' ? raw : undefined
+  }
+
+  /**
+   * 本次下发所属计划的子指标（按「下发方」口径收窄）。
+   *
+   * 2026-11-05：改造后学院指标由战略发展部下发（owner=战略发展部），职能部门的历史数据
+   * （owner=职能部门）挂在旧计划上，不参与本次下发的权重合计与草稿判定——
+   * 否则战略部会把存量权重一并计入，永远凑不满 100、无法发起下发。
+   * 职能部门登录时本过滤等价于原口径（ownerDept === 当前部门），行为零变化。
+   *
+   * 2026-11-10：判定逻辑收口到 lib/distributeRowOwnership.ts 的
+   * filterDispatchOwnedCollegeIndicators（纯函数，与单测共用同一份实现，行为逐字等价）。
+   * 注意：2026-11-10 归口可见性修复只放宽「看得见」（计数/表格），本写路径口径不变——
+   * 战略部直发行不计入职能部门的权重合计与下发门禁。
+   */
+  const getDispatchOwnerCollegeIndicators = (college: string) => {
+    return filterDispatchOwnedCollegeIndicators({
+      indicators: strategicStore.indicators,
+      college,
+      loginRole: loginRole.value,
+      currentDept: currentDept.value,
+      dispatchOwnerDept: dispatchOwnerDept.value
     })
   }
 
@@ -3819,6 +3951,12 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   // 计划级 withdrawPlan / 指标级 batch-withdraw 的既有业务逻辑均未改动，仅换本页
   // 按钮调用的端点。
   const handleBatchWithdraw = async (college: string) => {
+    // 2026-11-05：撤回是本页唯一对职能部门开放的写操作（职能部门历史上发起的在审计划要能撤回）
+    if (!canWithdrawDistribution.value) {
+      ElMessage.warning('当前登录身份不能执行撤回')
+      return
+    }
+
     if (!canWithdrawCurrentCollegePlan.value) {
       ElMessage.warning('当前计划不处于可撤回状态')
       return
@@ -3874,6 +4012,13 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       return
     }
 
+    // 2026-11-05：改造后下发由战略发展部统一发起，职能部门在本页只读（按钮已隐藏，
+    // 这里再兜一道，避免深链/脚本直调绕过 UI 闸门）。
+    if (!canWriteDistribution.value) {
+      ElMessage.warning('学院指标下发由战略发展部统一发起；如需调整请通过异动审批流程')
+      return
+    }
+
     // 异动锁兜底：按钮虽已置灰（is-disabled/aria-disabled 仅视觉态），
     // 点击仍会走到这里，与后端 PlanApplicationService 守卫保持同口径直接拦截。
     if (functionalDeptMutationInFlight.value) {
@@ -3892,7 +4037,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       return
     }
 
-    if (!canCurrentUserSubmitCurrentDepartmentDistribution.value) {
+    if (!canSubmitCurrentDepartmentDistribution.value) {
       ElMessage.warning('只有当前部门组织下的填报人才可以下发')
       return
     }
@@ -3902,7 +4047,9 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       return
     }
 
-    const childIndicators = getMyCollegeIndicators(college)
+    // 权重合计与草稿判定按「本次下发的下发方」口径（战略部 → 战略发展部新下发的子指标），
+    // 职能部门历史存量不计入（否则存量权重会把合计顶过 100）。
+    const childIndicators = getDispatchOwnerCollegeIndicators(college)
     const basicTaskIndicators = childIndicators.filter(isBasicTaskIndicator)
     const basicTaskWeightTotal = basicTaskIndicators.reduce(
       (sum, indicator) => sum + Number(indicator.weight || 0),
@@ -4028,11 +4175,17 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   // 获取学院下子指标的统一状态（用于判断显示哪些批量操作按钮，只统计当前部门下发的）
   const getCollegeStatus = (college: string) => {
     // 只统计当前部门下发给该学院的指标
+    // 2026-11-05：战略部登录放宽为「本下发方 + 存量兼容」，职能部门登录口径不变。
     const childIndicators = strategicStore.indicators.filter(i => {
       if (i.isStrategic) {
         return false
       }
-      if (i.ownerDept !== currentDept.value) {
+      if (
+        !isDispatchOwnerVisible({
+          loginRole: loginRole.value,
+          ownerMatchesCurrentDept: i.ownerDept === currentDept.value
+        })
+      ) {
         return false
       }
       if (Array.isArray(i.responsibleDept)) {
@@ -4130,12 +4283,26 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   })
 
   // 计算当前选中学院基础性任务下子指标的总权重
+  // 2026-11-05：按「本次下发的下发方」口径统计（战略部 → 只统计战略发展部下发的子指标，
+  // 不把职能部门历史存量计入），否则战略部永远凑不满 100。
+  // 2026-11-13（归口锚定修正）：职能部门登录改按「归口可见行集」（与表格同源
+  // collegeChildIndicators）统计——归口计划（functional_org_id=本部门）的子指标
+  // owner=战略发展部，旧 ownerDept===本部门过滤会把它漏计（工学院×教务处
+  // 已下发 100 却显示 0/100）。战略部登录保持「下发方自有行」口径不变（写路径零回归）。
   const collegeTotalWeight = computed(() => {
     if (!selectedCollege.value) {
       return 0
     }
 
-    return getMyCollegeIndicators(selectedCollege.value)
+    if (!isStrategicDeptLogin.value) {
+      const collegeKey = normalizeDepartmentName(selectedCollege.value)
+      const visibleRows = collegeChildIndicators.value.get(collegeKey) ?? []
+      return visibleRows
+        .filter(isBasicTaskIndicator)
+        .reduce((sum, indicator) => sum + Number(indicator.weight || 0), 0)
+    }
+
+    return getDispatchOwnerCollegeIndicators(selectedCollege.value)
       .filter(isBasicTaskIndicator)
       .reduce((sum, indicator) => sum + Number(indicator.weight || 0), 0)
   })
@@ -4334,6 +4501,28 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     return 'draft'
   }
 
+  /**
+   * 该子指标是否由「本次下发方」拥有（可写）。
+   *
+   * 2026-11-05（codex P1-1）：可见性已按「战略部可见全部」放宽（isDispatchOwnerVisible），
+   * 但写闸门若只看「计划状态=draft + 指标状态=draft」，战略部就能改写/删除**职能部门 owner
+   * 的存量行** —— 而需求 4 要求存量保留为只读历史。
+   * 因此可见性放宽、写入收紧：只有归属本次下发方的行才可写。
+   *
+   * 职能部门登录时 dispatchOwnerDept 等于当前部门，本判定与改造前的
+   * 「ownerDept === 当前部门」逐字等价 → 职能部门视角零变化。
+   */
+  const isDispatchOwnedChild = (child: StrategicIndicator | undefined): boolean => {
+    if (!child) {
+      return false
+    }
+    return canWriteDispatchOwnedRow({
+      loginRole: loginRole.value,
+      rowOwnerDept: readIndicatorOwnerDept(child) || '',
+      dispatchOwnerDept: dispatchOwnerDept.value
+    })
+  }
+
   const canManageChildDraft = (child: StrategicIndicator | undefined): boolean => {
     if (!child || !canEditChild.value) {
       return false
@@ -4342,6 +4531,11 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     // 该页面按“学院维度”统一下发与撤回；
     // 一旦学院整体已进入待审批/进行中，不再允许对单条草稿指标做逐条编辑或删除。
     if (currentCollegePlanActionState.value !== 'draft') {
+      return false
+    }
+
+    // 2026-11-05（codex P1-1）：只允许改「本次下发方」的指标，其余（职能部门 owner 的存量行）只读。
+    if (!isDispatchOwnedChild(child)) {
       return false
     }
 
@@ -4864,6 +5058,10 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     currentDepartmentOrgId,
     currentDepartmentOrgIdFromTable,
     currentDepartmentPlan,
+    // 2026-11-05（codex P2-4）：导入来源必须是「本次下发方」——
+    // 后端已收紧为「来源组织必须是战略部」，若仍传视角部门，切到职能部门/学院视角时导入必被拒。
+    dispatchOwnerOrgId,
+    dispatchOwnerDept,
     currentDepartmentPlanDetails,
     currentDepartmentPlanIndicators,
     currentDept,
@@ -4927,12 +5125,17 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     isCurrentUserReporter,
     isDeletingChild,
     isFunctionalDept,
+    isFunctionalDeptLogin,
     isInteractingWithCollegeSelect,
     isQualitativeIndicator,
     isSameDepartment,
     isSavingChildCell,
     isSavingIndicator,
     isStrategicDept,
+    isStrategicDeptLogin,
+    canOperateDistribution,
+    canWriteDistribution,
+    canWithdrawDistribution,
     lastEditTime,
     latestCollegePlanReportSummary,
     loadCurrentCollegePlanReportSummary,

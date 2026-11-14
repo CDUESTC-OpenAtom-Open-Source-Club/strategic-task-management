@@ -27,6 +27,12 @@ import { useAuthStore } from '@/features/auth/model/store'
 import { useTimeContextStore } from '@/shared/lib/timeContext'
 import { useOrgStore } from '@/features/organization/model/store'
 import { usePermission } from '@/5-shared/lib/permissions'
+import {
+  canOperateStrategicTaskPage,
+  isDispatchOwnerVisible,
+  resolveRowOwnerDept as resolveRowOwnerDeptPure,
+  STRATEGIC_DEPT_ROLE
+} from '@/5-shared/lib/permissions/strategyDispatchAccess'
 import AppAvatar from '@/shared/ui/avatar/AppAvatar.vue'
 import { logger } from '@/shared/lib/utils/logger'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
@@ -51,6 +57,32 @@ import {
   canCurrentUserHandleMutationEntry,
   normalizeWorkflowStepMatchKey
 } from '@/features/task/lib/mutationApprovalHandleable'
+import {
+  buildCollegeDeptEligibleByDept,
+  buildCollegeDeptPlanWinnerByDept,
+  buildCollegeDeptReportStatusByDept,
+  buildCollegeParentAnchorIndicators,
+  COLLEGE_DEPT_NOT_DISPATCHED_BADGE,
+  isDistributedCoreIndicator,
+  resolveCollegeDeptCurrent,
+  resolveCollegeDeptPhaseBadge,
+  type CollegeDeptPhaseBadge,
+  type CollegeDeptPlanReportLike,
+  type CollegeDeptPlanStatusPlanLike
+} from '@/features/task/lib/collegeDispatchEligibility'
+import {
+  hasCollegeMutationApprovalInFlight,
+  isReportApprovalStatusInFlight,
+  mergeReturnedMutationChains,
+  resolveCollegeReportApprovalStatusMeta,
+  resolveCollegeReturnedChainOwnerOrgId,
+  resolveMutationGateWeightTotal
+} from '@/features/task/lib/collegeTabDistribute'
+import {
+  resolveCollegeReportPlanScope,
+  type CollegeReportScopeIndicatorLike,
+  type CollegeReportScopePlanLike
+} from '@/features/task/lib/collegeReportScope'
 import { ApprovalProgressDrawer } from '@/features/approval'
 import { notifyApprovalStateRefresh } from '@/features/approval/lib'
 import { useApprovalRouteAutopen } from '@/features/approval/lib'
@@ -145,6 +177,21 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const isReadOnly = computed(() => timeContext.isReadOnly)
 
   /**
+   * 2026-11-05（战略部直发学院指标）：真实登录角色 vs 视角角色。
+   *
+   * - 登录角色（authStore.userRole）：恒为账号真实角色 → 判断「能不能操作」只用它。
+   * - 视角角色（props.selectedRole / viewingRole）：战略部切部门视角时会变 →
+   *   只用于判断「数据属于哪个部门」。
+   *
+   * 改造后：职能部门对战略任务页**只读**（新增行/双击编辑/发起异动/发起下发/撤回全禁用）；
+   * 战略部保持原有全部能力。
+   */
+  const isStrategicDeptLogin = computed(() => authStore.userRole === STRATEGIC_DEPT_ROLE)
+
+  /** 本页是否允许写操作（仅战略部） */
+  const canWriteStrategicTask = computed(() => canOperateStrategicTaskPage(authStore.userRole))
+
+  /**
    * 编辑权只属于填报人（2026-10-21 用户定案）。
    *
    * 口径：从草稿计划到已下发计划，能改数据的始终只有填报人——草稿阶段是他填报，
@@ -163,6 +210,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   const canEdit = computed(() => {
     if (isReadOnly.value) {
+      return false
+    }
+    // 2026-11-05：职能部门登录时本页只读——新增行/双击编辑/发起异动全部禁用。
+    // 判定用**真实登录角色**（authStore.userRole），不能用视角角色，
+    // 否则战略部切到职能部门视角会被误锁成只读。
+    if (!canWriteStrategicTask.value) {
       return false
     }
     return isReporter.value
@@ -309,6 +362,60 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     return departmentNameIdMap.value.get(normalized) ?? null
   }
 
+  /**
+   * 战略发展部组织 ID（org 35）：改造后学院指标统一由战略发展部下发，
+   * 学院 tab 的 owner 口径在战略部视角下取它（职能部门视角仍取当前选中部门）。
+   */
+  const strategicDeptOrgId = computed(() => {
+    const byName = resolveDepartmentIdByName(orgStore.getStrategicDeptName())
+    if (byName) {
+      return byName
+    }
+    return 35
+  })
+
+  /** 战略发展部名称（owner 口径比对用） */
+  const strategicDeptName = computed(() => orgStore.getStrategicDeptName())
+
+  /**
+   * 解析一行指标的「归属部门」（页面按所选部门下钻时用）。
+   *
+   * 2026-11-05（codex P2-5）：改造后学院子指标由战略发展部下发，其 ownerDept = 战略发展部，
+   * 但它在业务上归属于「其父级核心指标所下发的那个职能部门」。若直接按 ownerDept 下钻，
+   * 战略部在学院 tab 会把两个职能部门的历史行混在一起，页面「按所选部门下钻」失效，
+   * 且行可能在错误上下文被操作。
+   *
+   * 口径：
+   * - 存量行（owner = 职能部门）→ 归属部门 = ownerDept（保持原语义）
+   * - 战略部自有行（owner = 战略发展部）→ 归属部门 = 父级核心指标的目标部门
+   *   （父级核心指标 owner=战略部、target=职能部门，其 responsibleDept 即该职能部门）
+   * - 职能部门登录 → ownerDept 原样返回（行为零变化）
+   */
+  const resolveRowOwnerDept = (item: {
+    id?: number | string
+    ownerDept?: string
+    parentIndicatorId?: number | string
+  }): string => {
+    const ownerDept = normalizeDepartmentName(item.ownerDept || '')
+    const parentId = Number(item.parentIndicatorId ?? NaN)
+    let parentTarget = ''
+    if (Number.isFinite(parentId) && parentId > 0) {
+      const parent = normalizedIndicators.value.find(
+        candidate => Number(candidate.id ?? NaN) === parentId
+      ) as
+        { responsibleDept?: string; targetDepartment?: string; targetOrgName?: string } | undefined
+      parentTarget = normalizeDepartmentName(
+        String(parent?.responsibleDept ?? parent?.targetDepartment ?? parent?.targetOrgName ?? '')
+      )
+    }
+    return resolveRowOwnerDeptPure({
+      loginRole: authStore.userRole,
+      strategicDeptName: strategicDeptName.value,
+      rowOwnerDept: ownerDept,
+      parentTargetDept: parentTarget
+    })
+  }
+
   const ensureInitialSelectedDepartment = (departments: string[]): void => {
     if (departments.length === 0 || selectedDepartment.value) {
       return
@@ -437,6 +544,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   // 后端任务类型映射：taskId -> taskType（BASIC/DEVELOPMENT/...）
   const backendTaskTypeMap = ref<Record<string, string>>({})
+  // 2026-11-09（页签分流）：taskId -> planId。
+  // 为什么需要它：指标本身不带计划字段，指标归属哪个计划由 task.plan_id 决定
+  // （后端指标查询即以 t.plan_id 关联 plan）。学院口径要求「该学院该计划下」的行集，
+  // 只能顺着 指标 → taskId → task.plan_id 找到它所属的计划。
+  const backendTaskPlanMap = ref<Record<string, number>>({})
   const currentPlanTaskTypeMap = ref<Record<string, string>>({})
   const currentPlanTaskIdSet = ref<Set<string>>(new Set())
 
@@ -573,6 +685,28 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       .filter(Boolean)
   }
 
+  /**
+   * 2026-11-09（页签分流）：taskId -> planId 映射。
+   *
+   * <p>后端 TaskResponse 直接带 planId（任务表的 plan_id 外键），前端据此把「指标」和
+   * 「计划」关联起来：学院口径要按「该学院该计划」圈定行集，而指标行上没有计划字段。</p>
+   */
+  const buildTaskPlanMap = (tasks: Array<Record<string, unknown>>): Record<string, number> => {
+    const map: Record<string, number> = {}
+    tasks.forEach(task => {
+      const taskId = normalizeTaskId(
+        (task as { taskId?: string | number; id?: string | number }).taskId
+      )
+      const fallbackTaskId = normalizeTaskId((task as { id?: string | number }).id)
+      const planId = Number((task as { planId?: number | string | null }).planId)
+      const key = taskId || fallbackTaskId
+      if (key && Number.isFinite(planId) && planId > 0) {
+        map[key] = planId
+      }
+    })
+    return map
+  }
+
   const loadBackendTaskTypeMap = async (options: { force?: boolean } = {}) => {
     taskTypeMapLoading.value = true
     try {
@@ -584,24 +718,28 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         Array.isArray(byYearResponse.data) &&
         byYearResponse.data.length > 0
       ) {
-        backendTaskTypeMap.value = buildTaskTypeMap(
-          byYearResponse.data as Array<Record<string, unknown>>
-        )
+        const taskRows = byYearResponse.data as Array<Record<string, unknown>>
+        backendTaskTypeMap.value = buildTaskTypeMap(taskRows)
+        // 2026-11-09（页签分流）：同一次任务列表同时建立「task → 计划」映射，
+        // 学院口径要靠它判断一行指标是否属于该学院的当前计划。不额外发请求。
+        backendTaskPlanMap.value = buildTaskPlanMap(taskRows)
         return
       }
 
       // 兼容回退：部分环境按年查询任务为空（周期口径不一致），改用全量任务建立映射
       const allTasksResponse = await strategicApi.getAllTasks({ force: options.force })
       if (allTasksResponse?.success && Array.isArray(allTasksResponse.data)) {
-        backendTaskTypeMap.value = buildTaskTypeMap(
-          allTasksResponse.data as Array<Record<string, unknown>>
-        )
+        const taskRows = allTasksResponse.data as Array<Record<string, unknown>>
+        backendTaskTypeMap.value = buildTaskTypeMap(taskRows)
+        backendTaskPlanMap.value = buildTaskPlanMap(taskRows)
         return
       }
 
       backendTaskTypeMap.value = {}
+      backendTaskPlanMap.value = {}
     } catch (error) {
       backendTaskTypeMap.value = {}
+      backendTaskPlanMap.value = {}
       logger.error('[StrategicTaskView] 加载后端任务类型失败:', error)
     } finally {
       taskTypeMapLoading.value = false
@@ -859,6 +997,22 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     canWithdraw?: boolean
     status?: string | null
   } | null>(null)
+  // 2026-11-11（阻断 D-02 上报互斥跨口径串台）：学院子计划的上报审批摘要**专用存储**。
+  // 共享的 currentPlanReportSummary 会被职能部门口径的刷新链（refreshCurrentDepartmentView /
+  // 心跳轻刷新 / 审批刷新，均不带 collegeScope）覆盖成 FUNC_DEPT 计划的摘要——
+  // 纪委办 FUNC_DEPT 上报在审时，计算机学院（自身上报已 APPROVED、无任何在审）的
+  // 异动入口曾被误锁。学院摘要只由 collegeScope 查询写入（selectCollege / 切学院页签触发，
+  // 计划 705489 等各自独立），互斥判定按页签上下文取用，两个口径互不串台。
+  const collegeScopePlanReportSummary = ref<{
+    id: number
+    workflowInstanceId?: number | null
+    currentTaskId?: number | null
+    workflowStatus?: string | null
+    currentStepName?: string | null
+    currentApproverName?: string | null
+    canWithdraw?: boolean
+    status?: string | null
+  } | null>(null)
   const latestPlanReportSummary = ref<{ id: number } | null>(null)
 
   // 2026-10-28 迭代计划 M2：审批看板显示当前填报周期——上级看下级数据时能判断数据归属周期。
@@ -868,31 +1022,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 与指标填报页起算月同源，避免前端自算 1/12 月边界算错（计划文档「风险与注意 2」）。
   const reportMonth = ref('')
   const reportMonthCache = new Map<string, string>()
-  watch(
-    () => currentPlan.value?.id,
-    async planId => {
-      if (!planId) {
-        reportMonth.value = ''
-        return
-      }
-      const key = String(planId)
-      const cached = reportMonthCache.get(key)
-      if (cached !== undefined) {
-        reportMonth.value = cached
-        return
-      }
-      try {
-        const response = await planApi.getPlanDetails(planId)
-        const raw = String(response.data?.dispatchMonth || '').trim()
-        const month = /^\d{6}$/.test(raw) ? raw : ''
-        reportMonthCache.set(key, month)
-        reportMonth.value = month
-      } catch (error) {
-        logger.warn('[StrategicTaskView] 当前填报周期获取失败:', error)
-      }
-    },
-    { immediate: true }
-  )
+  // 2026-11-13（学院口径）：reportMonth 的 watch 已移至 effectivePlanContext 之后
+  // （下方「当前填报周期数据源分流」处）——getter 需读取 isCollegePlanContextActive /
+  // selectedCollegeDispatchPlanId（均声明在其后），且 immediate: true 会在注册时立即求值，
+  // 前置在此会 TDZ。reportMonth / reportMonthCache 仅是 ref/Map，留在原位无影响。
 
   const approvalWorkflowReportSummary = computed(() => {
     const currentWorkflowInstanceId = Number(
@@ -1184,15 +1317,19 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     const approverName = currentApprovalApproverName.value
     const candidateNames = currentApprovalCandidateNames.value
 
-    // PR#83 头部「审批状态」与学院页签「上报状态」列逐态对齐：
-    // 有在审→审批中；否则有回退→已回退；否则有未填报→未填报；全部已上报→已上报。
-    // 仅在学院页签生效（该页签才有「上报状态」列）；职能部门页签保持原计划级语义。
-    const fillApproval = currentPlanFillApprovalSummary.value
+    // PR#83 头部「审批状态」与学院页签「上报状态」列逐态对齐的旧口径已被
+    // 2026-11-13（上报进度按归口部门收口）取代：学院页签「审批状况」签数据源由
+    // 行级 fills 聚合（getIndicatorFillHistory 恒不带 functionalOrgId = 全院报告聚合，
+    // 选了职能部门也显示全院口径）改为任务1收口后的 collegeScopePlanReportSummary
+    // （学院×部门独立报告状态）。未填报/草稿/审批中/已上报/已回退映射既有文案
+    // （resolveCollegeReportApprovalStatusMeta，零新文案）。行级 fills 聚合
+    // （currentPlanFillApprovalSummary + refreshCurrentPlanFillApprovalSummary）保留：
+    // 其 invalidate+notify 副作用驱动「上报状态」单元格同源刷新。
 
     // 2026-10-24 用户定案（学院隔离 + C 项口径）：学院页签标签名「审批状况」，
     // 状态聚合 = 该学院的「上报审批 + 异动审批」合并视角——两者互斥：
     // 异动在审时上报被锁（不会同时存在两条在途），异动在审优先显示；
-    // 聚合未就绪显示加载中、无任何在途与填报行按「未填报」——绝不回落到计划级/其他实例的状态
+    // 无在途时按所选部门的上报状态显示——绝不回落到计划级/其他实例的状态
     // （否则宣传部上下文会把自己上报给战略部的环节显示到马院语境里，互相掺杂）。
     if (collegeFillStatusScope.value) {
       // 异动审批在审（该部门上下文的异动实例）：优先级最高，互斥锁生效的可见信号
@@ -1206,51 +1343,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         }
       }
 
-      if (!fillApproval.loaded) {
-        return {
-          label: '…',
-          tagType: 'info' as const,
-          description: '正在加载该学院的审批状态。'
-        }
-      }
-
-      if (fillApproval.hasRows) {
-        if (fillApproval.hasSubmitted) {
-          return {
-            label: '审批中',
-            tagType: 'warning' as const,
-            description: '当前计划有指标的填报正在审批中。'
-          }
-        }
-
-        if (fillApproval.hasRejected) {
-          return {
-            label: '已回退',
-            tagType: 'danger' as const,
-            description: '当前计划有指标的填报被回退，等待重新上报。'
-          }
-        }
-
-        if (fillApproval.hasUnfilled) {
-          return {
-            label: '未填报',
-            tagType: 'info' as const,
-            description: '当前计划有指标尚未填报。'
-          }
-        }
-
-        return {
-          label: '已上报',
-          tagType: 'success' as const,
-          description: '当前计划的指标填报均已上报。'
-        }
-      }
-
-      return {
-        label: '未填报',
-        tagType: 'info' as const,
-        description: '当前学院还没有填报记录。'
-      }
+      return resolveCollegeReportApprovalStatusMeta({
+        reportSummary: collegeScopePlanReportSummary.value
+      })
     }
 
     // 2026-10-30（纯附加）：职能部门页签对齐学院页签的异动优先语义——
@@ -1447,10 +1542,28 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     )) {
       currentPlanReportSummary.value = null
       latestPlanReportSummary.value = null
+      // 2026-11-11（D-02）：collegeScope 查询目标解析失败（未选学院 / 子计划未匹配）
+      // 同样要清空学院专用摘要，避免带着上一个学院的上报状态误判互斥锁。
+      if (options.collegeScope === true) {
+        collegeScopePlanReportSummary.value = null
+      }
       return
     }
 
-    const cacheKey = `${planId}:${reportOrgId}:${timeContext.currentYear}`
+    // 2026-11-13（学院上报按归口部门分批提交）：collegeScope 查询追加 functionalOrgId
+    // （学院页签右侧下拉所选归口部门，与 collegeDispatchDeptEffective 同源解析）——
+    // 后端新契约 GET /reports/plan/{planId}?functionalOrgId=（传了=只看该部门报告），
+    // 学院×部门=独立报告与审批链，摘要必须按部门收口；未选部门（两选未齐）传 null
+    // = 聚合口径，保持既有行为。collegeDispatchDeptEffective 声明在本文件更后位置
+    // （学院页签下拉区），computed 惰性求值 + 函数体运行期取值，无 TDZ。
+    const collegeFunctionalOrgId =
+      options.collegeScope === true
+        ? resolveDepartmentIdByName(collegeDispatchDeptEffective.value)
+        : null
+
+    const cacheKey = collegeFunctionalOrgId
+      ? `${planId}:${reportOrgId}:${timeContext.currentYear}:fno:${collegeFunctionalOrgId}`
+      : `${planId}:${reportOrgId}:${timeContext.currentYear}`
     if (
       !options.force &&
       currentPlanReportSummaryPromise &&
@@ -1468,17 +1581,26 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       planId,
       reportOrgId,
       year: timeContext.currentYear,
+      functionalOrgId: collegeFunctionalOrgId ?? null,
       force: options.force === true
     })
     currentPlanReportSummaryPromise = indicatorFillApi.getCurrentMonthPlanReportSummaries(
       planId,
-      reportOrgId
+      reportOrgId,
+      undefined,
+      collegeFunctionalOrgId ?? undefined
     )
 
     try {
       const summaries = await currentPlanReportSummaryPromise
       currentPlanReportSummary.value = summaries.currentReport
       latestPlanReportSummary.value = summaries.latestReport
+      // 2026-11-11（D-02）：collegeScope 查询结果另存学院专用摘要。职能部门口径的
+      // 后续刷新只覆盖共享摘要（自评进度列等 UI 回显仍走共享摘要 + 切页签重拉），
+      // 学院互斥判定不再被 FUNC_DEPT 口径的在审状态串台。
+      if (options.collegeScope === true) {
+        collegeScopePlanReportSummary.value = summaries.currentReport
+      }
     } finally {
       currentPlanReportSummaryPromise = null
     }
@@ -1556,7 +1678,24 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       hydratePendingCreatedIndicators()
       await loadCurrentPlanTaskScope({ force: options.force })
       await syncCurrentPlanReportSummaries({ force: options.force })
+      // 2026-11-13（学院口径上报进度）：学院上下文的审批后刷新同步重拉「学院×部门」
+      // 上报摘要（refreshTaskPageAfterIndicatorMutation 会先经 resetApprovalWorkflowStateCache
+      // 清空 collegeScope 摘要），否则审批状况签与上报互斥锁停留在空态直到重新选择。
+      // isCollegePlanContextActive 声明在本文件更后位置，运行期取值，无 TDZ。
+      if (isCollegePlanContextActive.value) {
+        await syncCurrentPlanReportSummaries({ force: options.force, collegeScope: true })
+        // 2026-11-13（单一状态徽标）：上报动作/审批流转后同步重拉学院下拉的上报
+        // 侧状态表（force 绕过 loadKey 去重），否则徽标停留在旧阶段直到切学院。
+        // refreshCollegeDeptPhaseReportStatuses 声明在本文件后部（学院页签下拉区），
+        // 本函数只被运行期调用，无 TDZ。
+        void refreshCollegeDeptPhaseReportStatuses({ force: true })
+      }
       if (
+        // 2026-11-14（学院页签撤回相位缺陷）：学院上下文激活时也必须预载工作流详情
+        // —— 学院分支按子计划（selectedCollegeDispatchPlanId）强查 canWithdraw，
+        // 是 collegeSubPlanCanWithdraw（按钮置灰数据源）的供给链。此前门禁只认
+        // 职能部门自身计划状态，战略部自身计划恒 DRAFT 时学院页签拿不到详情。
+        isCollegePlanContextActive.value ||
         currentPlanStatus.value === 'PENDING' ||
         currentPlanStatus.value === 'DISTRIBUTED' ||
         hasApprovalWorkflowReportBinding.value
@@ -1571,9 +1710,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
   }
 
+  // 职能部门下发链（STRAT_TO_FUNC）提交码，保持不变
   const PLAN_APPROVAL_SUBMIT_WORKFLOW_CODE = 'PLAN_DISPATCH_STRATEGY'
+  // 审批抽屉期望码白名单。2026-11-10 追加 PLAN_DISPATCH_COLLEGE：学院下发
+  // （FUNC_TO_COLLEGE，created_by=战略发展部）改用专用审批流程，其在审实例
+  // 以新码出现，不进白名单会被抽屉误滤（计划审批页签空白/审批不可达）。
   const PLAN_APPROVAL_HISTORY_WORKFLOW_CODES = [
     'PLAN_DISPATCH_STRATEGY',
+    'PLAN_DISPATCH_COLLEGE',
     'PLAN_DISPATCH_FUNCDEPT',
     'PLAN_APPROVAL_FUNCDEPT',
     'PLAN_APPROVAL_COLLEGE',
@@ -2471,6 +2615,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       return '历史快照为只读状态'
     }
 
+    // 2026-11-05：职能部门登录时本页只读 → 发起下发/撤回/撤回异动一律禁用。
+    // 判定用**真实登录角色**，不能用视角角色（战略部切视角后仍要可操作）。
+    if (!canWriteStrategicTask.value) {
+      return '当前角色仅可查看，不能发起下发或撤回'
+    }
+
     // 2026-10-31 P-05：异动在审且当前用户为发起人（未过撤回窗口）时撤回恒可点，
     // 不再受计划相位影响（草稿相位「权重未等于百分之百」「非填报人」等理由不再
     // 拦撤回）——与按钮文案/图标/点击分流同口径。下方既有相位分支原样保留。
@@ -2954,6 +3104,16 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         syncCurrentPlanReportSummaries({ force: true })
       ])
 
+      // 2026-11-13（学院口径上报进度）：学院上下文轻刷新补拉「学院×部门」上报摘要
+      // （带 functionalOrgId），跨窗口审批流转后「审批状况」签与上报互斥锁实时收敛；
+      // fire-and-forget，不串行化轻刷新主链。
+      if (isCollegePlanContextActive.value) {
+        void syncCurrentPlanReportSummaries({ force: true, collegeScope: true })
+        // 2026-11-13（单一状态徽标）：轻刷新链同步收敛学院下拉的上报侧状态表
+        // （跨窗口审批流转后徽标实时更新）。
+        void refreshCollegeDeptPhaseReportStatuses({ force: true })
+      }
+
       if (isApprovalDrivenRefreshSource(source)) {
         await Promise.allSettled([
           approvalStore.loadPendingApprovals(),
@@ -2964,6 +3124,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         void refreshCurrentPlanFillApprovalSummary()
 
         if (
+          // 2026-11-14（学院页签撤回相位缺陷）：学院上下文激活时同样重载子计划
+          // 工作流详情（学院分支强查 canWithdraw），审批流转推送后按钮相位随 step 推进切换
+          isCollegePlanContextActive.value ||
           currentPlanStatus.value === 'PENDING' ||
           currentPlanStatus.value === 'DISTRIBUTED' ||
           hasApprovalWorkflowReportBinding.value
@@ -2982,7 +3145,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         // PR#83 轻量刷新同样重算填报审批态聚合，避免陈旧的 hasSubmitted/hasRejected
         // 覆盖刚刷新出来的终态工作流
         void refreshCurrentPlanFillApprovalSummary()
-        if (currentPlanStatus.value === 'PENDING' || currentPlanStatus.value === 'DISTRIBUTED') {
+        if (
+          // 2026-11-14（学院页签撤回相位缺陷）：同上，学院上下文激活时重载子计划详情
+          isCollegePlanContextActive.value ||
+          currentPlanStatus.value === 'PENDING' ||
+          currentPlanStatus.value === 'DISTRIBUTED'
+        ) {
           await preloadApprovalWorkflowDetail()
         }
       }
@@ -3174,40 +3342,60 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 2026-10-19 修复（二级学院链路组织错配）：二级学院表展示的是「当前职能部门 → 选中学院」
   // 的上报，报告挂在 FUNC_TO_COLLEGE 计划（如 纪委办→计算机学院 403757）下，
   // 与左侧选中职能部门的 STRAT_TO_FUNC 计划不同。解析失败时返回 null（宁可空，不串数据）。
+  // 2026-11-05（战略部直发学院指标）：FUNC_TO_COLLEGE 计划的创建方口径按登录角色分流——
+  // 战略部登录 → 创建方是战略发展部（org 35）；职能部门登录 → 仍是当前选中职能部门（零变化）。
+  // 仍然是**严格等值**匹配（不放开为「任意 createdByOrgId」），宁可空，不串数据。
+  // 2026-11-13（状态签归口收口 · 用户实测缺陷）：战略部登录时，匹配条件此前只看
+  // 「学院 + 创建方=战略部」，**完全不看归口部门**——同一学院下多个归口部门的计划创建方
+  // 相同（恒为 35），于是计算机学院名下唯一符合的 FUNC_TO_COLLEGE 计划（705489，归口=
+  // 纪委办 37）在右侧下拉选「教务处」时也被命中 → 右上角「计划状态」误显「已下发」，
+  // 而表格/权重/审批状况读的是部门收口数据源（No Data / 0/100 / 未填报）→ 三签矛盾。
+  // 新口径（战略部登录）：创建方 = 战略发展部 **且** 归口部门 = 学院页签右侧下拉所选部门
+  // （归口优先 plan.functionalOrgId；归口字段为空的存量空壳计划不参与匹配，详见
+  // lib/collegeReportScope.ts）。职能部门登录：创建方口径零变化，不启用归口收口。
   const resolveSelectedCollegeReportScope = (): { planId: number; orgId: number } | null => {
     const collegeOrgId = resolveDepartmentIdByName(selectedCollege.value)
     const funcOrgId = resolveDepartmentIdByName(selectedDepartment.value)
     if (!collegeOrgId || !funcOrgId) {
       return null
     }
-    const planCombination = plan => {
-      const planAny = plan as Record<string, unknown>
-      const level = String(planAny.planLevel ?? planAny.plan_level ?? '')
-        .trim()
-        .toUpperCase()
-      return {
-        match:
-          level === 'FUNC_TO_COLLEGE' &&
-          Number(planAny.targetOrgId ?? planAny.orgId ?? NaN) === collegeOrgId &&
-          Number(planAny.createdByOrgId ?? planAny.created_by_org_id ?? NaN) === funcOrgId,
-        year: resolvePlanYear(planAny)
+    const creatorOrgId = isStrategicDeptLogin.value ? strategicDeptOrgId.value : funcOrgId
+    // 学院页签右侧下拉所选归属部门（collegeDispatchDeptEffective 声明在本文件更后位置，
+    // computed 惰性求值 + 函数体运行期取值，无 TDZ——同 line 1554 的既有取数口径）。
+    const selectedDeptName = collegeDispatchDeptEffective.value
+    const scope = resolveCollegeReportPlanScope(
+      planStore.plans as CollegeReportScopePlanLike[],
+      normalizedIndicators.value as CollegeReportScopeIndicatorLike[],
+      {
+        collegeOrgId,
+        collegeName: normalizeDepartmentName(selectedCollege.value || ''),
+        creatorOrgId,
+        // 职能部门登录（零变化红线）：不按归口收口——职能部门的历史学院计划
+        // created_by=本部门、归口字段普遍为空，按归口收口会把它们全部排除（回归）。
+        scopeByFunctionalOrg: isStrategicDeptLogin.value,
+        selectedDeptOrgId: isStrategicDeptLogin.value
+          ? resolveDepartmentIdByName(selectedDeptName)
+          : null,
+        selectedDeptName,
+        currentYear: timeContext.currentYear,
+        resolvePlanYear: planAny => resolvePlanYear(planAny),
+        normalize: normalizeDepartmentName
       }
-    }
-    // 跨年度同组合计划并存（如 403757/503757），必须优先命中年份精确等于当年的；
-    // 年度不可判定的（resolvePlanYear 返回 null，如 cycleId 不在已知映射内）仅作兜底，
-    // 否则会把其他年度的空计划当成当前查询目标，明细恒为空。
-    const combinationPlans = planStore.plans
-      .map(plan => ({ plan, ...planCombination(plan) }))
-      .filter(candidate => candidate.match)
-    const matchedPlan =
-      combinationPlans.find(candidate => candidate.year === timeContext.currentYear)?.plan ||
-      combinationPlans.find(candidate => candidate.year === null)?.plan ||
-      null
-    if (!matchedPlan?.id) {
-      return null
-    }
-    return { planId: Number(matchedPlan.id), orgId: collegeOrgId }
+    )
+    return scope
   }
+
+  /**
+   * 2026-11-05（issue #96 · 1.3）：本学院的下发计划 id（战略部在学院页签「发起下发审批」用）。
+   *
+   * <p>口径与 resolveSelectedCollegeReportScope 一致：战略部登录 → 计划创建方是战略发展部；
+   * 职能部门登录 → 计划创建方仍是当前选中职能部门（零变化）。
+   * 找不到计划时返回 null —— 组件据此提示「当前学院还没有可提交审批的下发计划」。
+   */
+  const selectedCollegeDispatchPlanId = computed<number | null>(() => {
+    const scope = resolveSelectedCollegeReportScope()
+    return scope ? scope.planId : null
+  })
 
   // 从 Store 获取指标列表（带里程碑），按年份和部门过滤，按任务类型和战略任务分组排序
   const indicators = computed(() => {
@@ -3590,7 +3778,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     name: '',
     type1: '定量' as '定性' | '定量',
     type2: '基础性' as '发展性' | '基础性',
-    weight: 0,
+    // 2026-11-13（用户拍板）：默认值 0 → 空——0 会被误读成「已填的合法权重」，
+    // 留空强制用户显式输入；保存链「请填写大于 0 的权重」校验保持不变（空值
+    // Number(undefined)=NaN 同样被拦）。
+    weight: undefined as number | undefined,
     remark: '',
     /** 2026-10-23：二级学院 tab 新增子指标时，必须指定挂靠的核心指标 */
     parentIndicatorId: '' as string
@@ -3608,57 +3799,136 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const collegeAddMode = ref(false)
 
   /**
-   * 二级学院 tab 可挂靠的核心指标。
+   * 学院锚点核心指标基座（2026-11-13 方案甲恢复）：与后端导入锚点同口径的
+   * 「学院页签右侧下拉所选职能部门已接收的战略部已下发核心指标」，按 id 升序。
    *
-   * 数据口径（实测）：核心指标 ownerDept=战略发展部、responsibleDept=职能部门；
-   * 子指标 ownerDept=职能部门、responsibleDept=学院。
-   * 因此「当前职能部门可下发给该学院的核心指标」= 无父指标 + responsibleDept=当前职能部门。
-   * 学院只作为接收方（targetOrgId），不参与父指标筛选。
+   * <p>过滤细节全部收敛在 lib 纯函数 buildCollegeParentAnchorIndicators
+   * （与单测共用同一份逻辑）：根指标 + status=DISTRIBUTED（草稿核心指标不能做父级）
+   * + owner=战略发展部 + 目标部门=右侧下拉所选职能部门。</p>
+   *
+   * <p>2026-11-13 修正：键从左侧 selectedDepartment（职能部门页签口径）改为
+   * collegeDispatchDeptEffective（学院页签右侧下拉，与「新增行 / 导入」的两步选择同源）；
+   * 旧口径还漏掉 status 过滤——草稿核心指标会被当成可挂父级。</p>
+   *
+   * <p>collegeDispatchDeptEffective 声明在本文件更后位置（学院页签下拉区）——
+   * computed 惰性求值，首次读取发生在 setup 返回之后，不会踩 TDZ
+   * （见 AGENTS.md §13.1；下方消费方同理）。</p>
    */
-  const collegeParentIndicatorOptions = computed(() => {
-    const ownerDept = normalizeDepartmentName(selectedDepartment.value || '')
-    if (!ownerDept) {
-      return []
-    }
-    const seen = new Set<string>()
-    const options: Array<{ id: string; name: string; taskContent: string }> = []
-    normalizedIndicators.value.forEach(item => {
-      if (item.parentIndicatorId) {
-        return
-      }
-      const candidate = item as {
-        targetDepartment?: string
-        targetOrgName?: string
-        responsibleDept?: string
-      }
-      const deptName = normalizeDepartmentName(
-        String(
-          candidate.targetDepartment ?? candidate.targetOrgName ?? candidate.responsibleDept ?? ''
-        )
-      )
-      if (deptName !== ownerDept && !deptName.includes(ownerDept)) {
-        return
-      }
-      const key = String(item.id)
-      if (seen.has(key)) {
-        return
-      }
-      seen.add(key)
-      options.push({
-        id: key,
+  const collegeDispatchAnchorIndicators = computed<StrategicIndicator[]>(
+    () =>
+      buildCollegeParentAnchorIndicators(normalizedIndicators.value, {
+        ownerDept: collegeDispatchDeptEffective.value,
+        strategicDeptName: strategicDeptName.value,
+        normalize: normalizeDepartmentName
+      }) as StrategicIndicator[]
+  )
+
+  /**
+   * 二级学院 tab「新增行」可挂靠的核心指标选项（方案甲 2026-11-13：父级必选）。
+   *
+   * <p>数据口径：核心指标 ownerDept=战略发展部、target=职能部门（已下发 DISTRIBUTED）；
+   * 子指标挂到其下后 target=学院。</p>
+   *
+   * <p>2026-11-14（用户定案：同一父级可下发给多个学院）：父级候选**不按学院过滤**——
+   * 同一归口部门的核心指标本来就同时下发给多个学院（生产形态：党委办公室 →
+   * 工学院 + 计算机学院），同一个父级在多个学院的列表里重复出现是正确的。</p>
+   */
+  const collegeParentIndicatorOptions = computed(() =>
+    collegeDispatchAnchorIndicators.value.map(item => {
+      const typed = item as { type1?: string }
+      return {
+        id: String(item.id),
         name: String(item.name || ''),
-        taskContent: String(item.taskContent || '')
-      })
+        taskContent: String(item.taskContent || ''),
+        /** 父级自身类型（定量/定性）：选中后带出并锁定子指标「指标类型」（锚点口径） */
+        type1: String(typed.type1 || ''),
+        /** 2026-11-13（对齐 main 原版）：父级所属任务类型标签（基础性/发展性），
+         *  供「关联指标」下拉选项行右侧第二枚 tag 用——取法与
+         *  {@link collegeImportParentIndicators} 的 type2 完全同款。 */
+        type2: getIndicatorCategoryLabel(item)
+      }
     })
-    return options
+  )
+
+  /**
+   * 2026-11-13（对齐 main 原版）：学院新增行「关联指标」下拉的**按任务分组**数据源，
+   * 与「指标下发与审批」页 useIndicatorDistributeView 的 plansWithIndicators 同构：
+   * 组头 = 任务完整长文案（el-option-group label）+ popper 样式补的灰色「任务」标记；
+   * 组内选项 = 核心指标名 + 右侧 定量/定性、基础性/发展性 双 tag。
+   *
+   * <p>分组口径：taskContent 相同的锚点归一组（空文案兜底「未分类」，与 main 同款）；
+   * 组间顺序 = collegeParentIndicatorOptions 的锚点 id 升序（Map 插入序）；组 type2
+   * 取组内首个锚点的任务类型标签，兜底「发展性」（main `indicators[0]?.type2 ||
+   * '发展性'` 同款）。</p>
+   */
+  const collegeParentIndicatorGroups = computed(() => {
+    const taskMap = new Map<
+      string,
+      {
+        taskContent: string
+        type2: '基础性' | '发展性'
+        indicators: (typeof collegeParentIndicatorOptions.value)[number][]
+      }
+    >()
+
+    collegeParentIndicatorOptions.value.forEach(option => {
+      const taskContent = option.taskContent || '未分类'
+      let group = taskMap.get(taskContent)
+      if (!group) {
+        group = { taskContent, type2: option.type2 || '发展性', indicators: [] }
+        taskMap.set(taskContent, group)
+      }
+      group.indicators.push(option)
+    })
+
+    return Array.from(taskMap.values())
   })
 
-  /** 二级学院 tab 新增子指标：校验 → 调后端 createIndicator → 进待发起异动列表 */
+  /**
+   * 2026-11-13（方案甲恢复）：学院页签「导入」模板的父级预填 seeds。
+   *
+   * <p>口径 = {@link collegeDispatchAnchorIndicators} 同一基座（右侧下拉所选部门已接收、
+   * 战略部已下发的根核心指标，按 id 升序——后端锚点 ORDER BY i.id，乱序预填会触发
+   * 导入的父级组顺序阻断），映射成 BusinessImportDialog 的 seed 形状：</p>
+   * <ul>
+   *   <li>type1 = 父级自身类型 → 模板「核心指标类型」列（锚点只读校验）；</li>
+   *   <li>type2 = 父级所属任务类型标签（基础性/发展性，经任务类型映射）→
+   *       模板「任务类型」列（锚点只读校验，与系统不一致阻断点名）。</li>
+   * </ul>
+   *
+   * <p>取代 2026-11-08 单层改造时的空数组 COLLEGE_IMPORT_PARENT_INDICATORS——
+   * 恢复与原「指标下发与审批」页一致的「父级行预填、子指标三列留空」体验。
+   * 原 selectedCollegeDispatchParentIndicators（视图侧已无人消费）一并移除。</p>
+   */
+  const collegeImportParentIndicators = computed(() =>
+    collegeDispatchAnchorIndicators.value.map(item => {
+      const typed = item as { type1?: string }
+      return {
+        name: String(item.name || ''),
+        taskContent: String(item.taskContent || ''),
+        type1: String(typed.type1 || ''),
+        type2: getIndicatorCategoryLabel(item)
+      }
+    })
+  )
+
+  /**
+   * 2026-11-14（用户定案：新增行不落库）二级学院 tab 新增子指标：校验 →
+   * **写入内存草稿**（不调 createIndicator、不落库、无后端请求）。
+   *
+   * <p>草稿行即刻通过 {@link collegeTableIndicators} 并入表格与权重合计；
+   * 点「发起异动」时按完整创建字段整行提交后端（POST /indicators/mutations/batch
+   * 的 create 条目新契约，键名见 {@link submitMutationDraft}）；刷新页面草稿即丢
+   * （纯内存，无 sessionStorage 持久化——刷新即还原是产品语义）；行内删除 = 直接
+   * 从内存移除（不调后端）。</p>
+   */
   const saveCollegeChildIndicator = async (weight: number) => {
     if (!selectedCollege.value) {
       ElMessage.warning('请先在左侧选择学院')
       return
     }
+    // 2026-11-13（方案甲恢复，用户拍板）：父级从「可选」改回「必填」——新增行与导入模板
+    // 同一锚点口径（挂到已下发核心指标下），不再产生 parent=null 的单层孤儿数据。
     const parentIdRaw = String(newRow.value.parentIndicatorId || '').trim()
     if (!parentIdRaw) {
       ElMessage.warning('请选择关联的核心指标')
@@ -3669,10 +3939,16 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       ElMessage.warning('关联的核心指标无效')
       return
     }
-    const ownerOrgId = resolveDepartmentIdByName(selectedDepartment.value)
+    const ownerOrgId = isStrategicDeptLogin.value
+      ? strategicDeptOrgId.value
+      : resolveDepartmentIdByName(selectedDepartment.value)
     const targetOrgId = resolveDepartmentIdByName(selectedCollege.value)
     if (!ownerOrgId) {
-      ElMessage.warning(`无法解析当前职能部门：${selectedDepartment.value}`)
+      ElMessage.warning(
+        isStrategicDeptLogin.value
+          ? '无法解析战略发展部组织'
+          : `无法解析当前职能部门：${selectedDepartment.value}`
+      )
       return
     }
     if (!targetOrgId) {
@@ -3680,60 +3956,69 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       return
     }
     const parentOption = collegeParentIndicatorOptions.value.find(o => o.id === parentIdRaw)
+    // 任务 id / 类型锚点：子指标的战略任务与「指标类型」都从父级核心指标继承
+    // （与导入锚点口径一致：父级名与类型须完全一致），不采纳表单手填的冲突值。
     const parentRow = strategicStore.indicators.find(
       item => String(item.id) === String(parentIndicatorId)
     )
-    const taskId = Number(getIndicatorTaskId(parentRow as StrategicIndicator))
-    if (!Number.isFinite(taskId) || taskId <= 0) {
+    const resolvedTaskId = Number(getIndicatorTaskId(parentRow as StrategicIndicator))
+    if (!Number.isFinite(resolvedTaskId) || resolvedTaskId <= 0) {
       ElMessage.warning('关联的核心指标缺少有效任务，无法新增子指标')
       return
     }
+    const taskId: number = resolvedTaskId
+    const childIndicatorType =
+      parentRow && (parentRow.type1 === '定性' || parentRow.type1 === '定量')
+        ? parentRow.type1
+        : newRow.value.type1
 
-    const loading = ElLoading.service({
-      lock: true,
-      text: '正在保存子指标...',
-      background: 'rgba(0, 0, 0, 0.7)'
-    })
-    try {
-      const createResp = await indicatorApi.createIndicator({
-        taskId,
-        indicatorDesc: String(newRow.value.name || '').trim(),
-        ownerOrgId,
-        targetOrgId,
-        weightPercent: weight,
-        sortOrder: 0,
-        remark: newRow.value.remark || '',
-        progress: 0,
-        year: timeContext.currentYear,
-        canWithdraw: false,
-        parentIndicatorId,
-        type: newRow.value.type1
-      })
-      if (!createResp.success || !createResp.data) {
-        throw new Error(createResp.message || '创建子指标失败')
-      }
-      const createdId = Number(createResp.data.id)
-      if (!Number.isFinite(createdId) || createdId <= 0) {
-        throw new Error('后端返回的子指标缺少有效 ID')
-      }
-      pendingCreatedIndicatorIds.value = [...pendingCreatedIndicatorIds.value, createdId]
-      ElMessage.info('子指标已新增；请确认学院指标权重合计为 100 后点顶部「发起异动」提交审批')
-      logger.info('[StrategicTaskView] 学院 tab 新增子指标:', {
-        createdId,
-        parentIndicatorId,
-        ownerOrgId,
-        targetOrgId,
-        taskContent: parentOption?.taskContent
-      })
-      await refreshTaskPageAfterIndicatorMutation()
-      cancelAdd()
-      updateEditTime()
-    } catch (error) {
-      logger.error('[StrategicTaskView] 学院 tab 新增子指标失败:', error)
-      ElMessage.error((error as { message?: string })?.message || '新增子指标失败')
-    } finally {
-      loading.close()
+    // 草稿行 id = 前端临时 id（draft- 前缀，仅前端识别用；提交时后端按新建处理、不需要 id）
+    const draftTempId = `draft-${Date.now()}-${++pendingCreateDraftSeq}`
+    const draftRow: PendingCreateDraft = {
+      id: draftTempId,
+      tempId: draftTempId,
+      name: String(newRow.value.name || '').trim(),
+      isQualitative: childIndicatorType === '定性',
+      type1: childIndicatorType,
+      type2: getIndicatorCategoryLabel(parentRow as StrategicIndicator),
+      progress: 0,
+      createTime: new Date().toLocaleDateString('zh-CN'),
+      weight,
+      targetValue: 100,
+      unit: '%',
+      responsibleDept: normalizeDepartmentName(selectedCollege.value),
+      responsiblePerson: authStore.userName || '未分配',
+      status: 'DRAFT',
+      isStrategic: false,
+      year: timeContext.currentYear,
+      statusAudit: [],
+      sortOrder: 0,
+      parentIndicatorId,
+      ownerDept: normalizeDepartmentName(
+        isStrategicDeptLogin.value ? strategicDeptName.value : selectedDepartment.value || ''
+      ),
+      targetOrgName: selectedCollege.value,
+      targetDepartment: selectedCollege.value,
+      taskId,
+      taskContent: String(parentRow?.taskContent || parentOption?.taskContent || ''),
+      remark: newRow.value.remark || '',
+      ownerOrgId,
+      targetOrgId,
+      canWithdraw: false
     }
+    pendingCreateDrafts.value = [...pendingCreateDrafts.value, draftRow]
+    ElMessage.info(
+      '子指标已暂存为草稿（尚未落库）；请确认学院指标权重合计为 100 后点顶部「发起异动」提交审批'
+    )
+    logger.info('[StrategicTaskView] 学院 tab 新增子指标（内存草稿，未落库）:', {
+      tempId: draftTempId,
+      parentIndicatorId,
+      ownerOrgId,
+      targetOrgId,
+      taskContent: draftRow.taskContent
+    })
+    cancelAdd()
+    updateEditTime()
   }
 
   // 任务下发相关状态
@@ -3828,8 +4113,47 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const mutationApiLoading = ref(false)
 
   /**
+   * 2026-11-14（用户定案：新增行不落库）学院页签「新增行」的内存草稿行。
+   *
+   * <p>形状 = 完整 StrategicIndicator（能直接过 {@link collegeTableIndicators} 的
+   * 过滤/排序/渲染）+ 提交/识别所需的扩展字段：</p>
+   * <ul>
+   *   <li>tempId = id = 'draft-时间戳-序号'（仅前端识别用；提交载荷不带 id）；</li>
+   *   <li>taskId/parentIndicatorId/ownerOrgId/targetOrgId：发起异动时整行提交后端；</li>
+   *   <li>ownerDept/targetOrgName/targetDepartment/responsibleDept：表格按归属部门
+   *       与学院名收口（resolveRowOwnerDept / collegeTableIndicators 过滤）用。</li>
+   * </ul>
+   *
+   * <p>生命周期：保存 → push 本集合（纯内存，无后端请求、无 sessionStorage——
+   * 刷新即丢是产品语义）；双击编辑 → 原地更新草稿字段（不进 mutationDrafts，
+   * 临时 id 进攒改提交会炸载荷）；行内删除/取消异动 → 直接从集合移除（不调后端）；
+   * 发起异动 → 按 create 条目新契约整行提交，成功后清空集合。</p>
+   */
+  interface PendingCreateDraft extends StrategicIndicator {
+    tempId: string
+    taskId: number
+    parentIndicatorId: number
+    ownerOrgId: number
+    targetOrgId: number
+    ownerDept: string
+    targetOrgName: string
+    targetDepartment: string
+    taskContent: string
+    remark: string
+    canWithdraw: boolean
+  }
+
+  const pendingCreateDrafts = ref<PendingCreateDraft[]>([])
+  let pendingCreateDraftSeq = 0
+
+  /**
    * 2026-10-20 用户定案：已下发计划新增的指标先落库但不立即发起异动，
    * 记在这里；点「发起异动」时与字段攒改一起统一上报、统一做权重合计校验。
+   *
+   * <p>2026-11-14（新增行不落库改造）口径收窄：本集合只剩**职能页签** DISTRIBUTED
+   * 分支在用（saveNewRow 已下发计划新增——该链路的新增行仍先落库再随异动提交，
+   * 旧格式 {id, create:true} 后端继续兼容）。学院页签新增行已改为纯内存草稿
+   * （pendingCreateDrafts，不落库），不再进本集合。</p>
    */
   const pendingCreatedIndicatorIds = ref<Array<string | number>>([])
 
@@ -3839,6 +4163,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
    * 「发起异动」按钮随之消失，指标既提交不了、又计入权重合计把后续异动卡死。
    * 现在把标记随每次变更同步持久化到 sessionStorage，页面重载后按
    * 「指标仍存在且仍为草稿」回填；提交/取消/删除等链路照常清空。
+   *
+   * <p>2026-11-14（新增行不落库改造）：该机制只剩职能页签 DISTRIBUTED 分支依赖
+   * （其新增行仍落库）；学院页签内存草稿行不落库、无孤儿问题，不走本持久化。</p>
    */
   const PENDING_CREATE_STORAGE_KEY = 'sism.mutation.pending-created-indicators'
 
@@ -3903,9 +4230,35 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     return (
       hasRealMutationDraft ||
       taskNameDrafts.value.length > 0 ||
-      pendingCreatedIndicatorIds.value.length > 0
+      pendingCreatedIndicatorIds.value.length > 0 ||
+      // 2026-11-14（新增行不落库）：学院页签内存草稿行同样点亮「发起异动」
+      pendingCreateDrafts.value.length > 0
     )
   })
+
+  /** 2026-11-14（新增行不落库）：一行是否为学院页签的内存草稿新增行（draft-* 临时 id）。 */
+  const isPendingCreateDraftRow = (row: unknown): boolean => {
+    const rowId = (row as { id?: unknown } | null)?.id
+    return (
+      rowId !== null &&
+      rowId !== undefined &&
+      rowId !== '' &&
+      pendingCreateDrafts.value.some(draft => String(draft.id) === String(rowId))
+    )
+  }
+
+  /**
+   * 2026-11-14（新增行不落库）：撤销/移除一条内存草稿行——直接从集合剔除，
+   * **不调后端**（草稿没落库，无后端数据可删）。
+   */
+  const removePendingCreateDraftRow = (row: unknown): boolean => {
+    const rowId = (row as { id?: unknown } | null)?.id
+    const before = pendingCreateDrafts.value.length
+    pendingCreateDrafts.value = pendingCreateDrafts.value.filter(
+      draft => String(draft.id) !== String(rowId)
+    )
+    return pendingCreateDrafts.value.length < before
+  }
 
   const MUTATION_FIELD_MAP: Record<
     string,
@@ -3926,6 +4279,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     const indicatorId = row?.id
     if (indicatorId === null || indicatorId === undefined || indicatorId === '') {
       ElMessage.warning('当前行不是可删除的指标数据')
+      return
+    }
+
+    // 2026-11-14（新增行不落库）：内存草稿行（学院页签新增、尚未落库）——
+    // 直接从内存移除即可，**不调后端**（后端没有这条数据可撤）。
+    if (isPendingCreateDraftRow(row)) {
+      removePendingCreateDraftRow(row)
+      ElMessage.info('已撤销本次新增的草稿行')
       return
     }
 
@@ -4160,12 +4521,16 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
    * 所以取消必须把它真的删掉，否则会出现两类事故：
    *   a) 按钮不消失（集合非空），下次点「发起异动」把用户以为已取消的指标一起提交；
    *   b) 残留的 DRAFT 指标继续计入权重合计，把整个部门的异动全部卡死（实测 110/100）。
+   *
+   * 2026-11-14（新增行不落库）：学院页签内存草稿行（pendingCreateDrafts）一并清空——
+   * 草稿没落库，直接丢弃即可，不走下面的后端删除循环。
    */
   const cancelMutationDraft = async () => {
     const createdIds = [...pendingCreatedIndicatorIds.value]
     mutationDrafts.value = []
     taskNameDrafts.value = []
     pendingCreatedIndicatorIds.value = []
+    pendingCreateDrafts.value = []
 
     const failedIds: string[] = []
     for (const id of createdIds) {
@@ -4332,7 +4697,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     const drafts = mutationDrafts.value
     const taskDrafts = taskNameDrafts.value
     const pendingCreates = pendingCreatedIndicatorIds.value
-    if (drafts.length === 0 && taskDrafts.length === 0 && pendingCreates.length === 0) {
+    const createDrafts = pendingCreateDrafts.value
+    if (
+      drafts.length === 0 &&
+      taskDrafts.length === 0 &&
+      pendingCreates.length === 0 &&
+      createDrafts.length === 0
+    ) {
       // 2026-10-31 用户定案：无草稿 = 原样重发退回的异动批次（按钮只在
       // 「有草稿或有退回链」时出现；两者皆无时兜底给出反馈）
       await resubmitReturnedMutationBatches()
@@ -4360,7 +4731,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       logger.warn('[StrategicTaskView] 发起异动跳过无实际变更的草稿:', skippedIds)
       ElMessage.info(`已跳过 ${skippedIds.length} 条无实际变更的指标（${skippedIds.join('、')}）`)
     }
-    if (effectiveDrafts.length === 0 && taskDrafts.length === 0 && pendingCreates.length === 0) {
+    if (
+      effectiveDrafts.length === 0 &&
+      taskDrafts.length === 0 &&
+      pendingCreates.length === 0 &&
+      createDrafts.length === 0
+    ) {
       ElMessage.warning('本次没有可提交的异动内容')
       return
     }
@@ -4368,11 +4744,21 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     // 2026-10-30 用户定案：发起异动与下发/审批同规则——基础性权重合计必须为 100。
     // 口径与后端闭合校验一致（BasicTaskWeightValidationService 按「本批异动生效后」
     // 的快照判定）：表格内存态已是「删减行剔除 + 权重攒改应用 + 待提交新增计入」
-    // 之后的生效前快照，departmentTotalWeight 即本批生效后的合计；≠100 在点击时
-    // 拦截并提示，不再等后端整批驳回。
-    if (Math.abs(departmentTotalWeight.value - 100) > 1e-6) {
+    // 之后的生效前快照，合计即本批生效后的合计；≠100 在点击时拦截并提示，
+    // 不再等后端整批驳回。
+    // 2026-11-11（阻断 D-01 权重口径错位）：门禁合计必须与**当前页签的指标集合**
+    // 同源——学院页签（学院上下文激活）读 collegeBasicWeightTotal（学院子指标集合、
+    // 与头部「基础性权重合计」同一数据源 collegeTableIndicators），不再误用职能部门
+    // 口径的 departmentTotalWeight（学院页签显示 100、点发起却按职能部门集合算出
+    // 90 被拦，后端按学院计划校验本是放行的）。职能页签口径原样保留（零回归）。
+    const gateWeightTotal = resolveMutationGateWeightTotal({
+      collegeScopeActive: isCollegePlanContextActive.value,
+      collegeBasicWeightTotal: collegeBasicWeightTotal.value,
+      departmentTotalWeight: departmentTotalWeight.value
+    })
+    if (Math.abs(gateWeightTotal - 100) > 1e-6) {
       ElMessage.warning(
-        `基础性权重合计必须为100%（当前为${Number(departmentTotalWeight.value.toFixed(2))}），请调整到100后再发起异动`
+        `基础性权重合计必须为100%（当前为${Number(gateWeightTotal.toFixed(2))}），请调整到100后再发起异动`
       )
       return
     }
@@ -4393,9 +4779,29 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       const { mutationApi } = await import('@/features/indicator/api/mutationApi')
 
       // 一起上报：新增指标、字段攒改、删除与任务改名整批一次提交，
-      // 后端统一做权重合计校验，任一失败整批不生效
+      // 后端统一做权重合计校验，任一失败整批不生效。
+      // 2026-11-14（新增行不落库）：内存草稿行（学院页签新增）按新契约整行提交——
+      // create 条目带完整创建字段、不带 id（后端同事务落库 + 打异动标记 +
+      // 批次闭合权重校验，任一失败整批 400 回滚）；键名与后端
+      // IndicatorMutationService.hasCreateDraftFields 识别口径严格一致。
       const items = [
-        ...pendingCreates.map(id => ({ id, create: true })),
+        ...createDrafts.map(draft => ({
+          create: true,
+          indicatorDesc: draft.name,
+          weightPercent: draft.weight,
+          indicatorType: draft.type1,
+          parentIndicatorId: draft.parentIndicatorId,
+          taskId: draft.taskId,
+          remark: draft.remark,
+          // 2026-11-14（P1 修复：新增行落错学院）：显式带上目标学院（UI 所选学院）。
+          // 后端 resolveNewIndicatorTargetOrgId 优先采信显式目标：与父级现有子指标的
+          // 目标学院不一致 → 整批 400 拒绝（明确拒绝 > 静默落进别的学院）。
+          // 缺省时后端会按「父级下游 FUNC_TO_COLLEGE 计划」解析目标学院——
+          // 那条计划可能指向另一个学院（如「教务处 → 工学院(56)」），
+          // 权重恰好凑得上 100 时会把本学院的新行静默落进工学院。
+          targetOrgId: draft.targetOrgId
+        })),
+        ...pendingCreates.map(id => ({ id, create: true as const })),
         ...effectiveDrafts.map(draft =>
           draft.deleteRequested
             ? { id: draft.indicatorId, delete: true }
@@ -4415,6 +4821,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       mutationDrafts.value = []
       taskNameDrafts.value = []
       pendingCreatedIndicatorIds.value = []
+      // 2026-11-14（新增行不落库）：提交成功 = 草稿行已在后端落库并进入审批链，
+      // 内存集合清空，表格行随刷新链从服务端数据重建
+      pendingCreateDrafts.value = []
       ElMessage.success('异动已提交审批；审批期间其他模块不受影响')
       void refreshTaskPageAfterIndicatorMutation()
       // 2026-10-30 修复：提交成功立即重拉异动审批实例——「发起异动」按钮的互斥置灰
@@ -4516,6 +4925,38 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       progress: 'progress',
       remark: 'remark',
       sortOrder: 'sortOrder'
+    }
+
+    // 2026-11-14（新增行不落库）：内存草稿行的双击编辑 = **原地更新草稿**——
+    // 不能进 mutationDrafts（草稿行是 draft-* 临时 id，进攒改提交会把无效 id
+    // 发给后端炸整批），发起异动时 create 载荷直接取草稿行最新字段。
+    if (isPendingCreateDraftRow(row) && MUTATION_FIELD_MAP[field]) {
+      const value = editingIndicatorValue.value
+      const originalValue = editingIndicatorOriginal.value
+      cancelIndicatorEdit()
+      const changed =
+        field === 'weight'
+          ? Number(value) !== Number(originalValue)
+          : normalizeEditableText(String(value ?? '')) !==
+            normalizeEditableText(String(originalValue ?? ''))
+      if (!changed) {
+        return
+      }
+      pendingCreateDrafts.value = pendingCreateDrafts.value.map(draft => {
+        if (String(draft.id) !== String(row.id)) {
+          return draft
+        }
+        if (field === 'weight') {
+          return { ...draft, weight: Number(value) }
+        }
+        if (field === 'name') {
+          return { ...draft, name: normalizeEditableText(String(value ?? '')) || draft.name }
+        }
+        return { ...draft, remark: String(value ?? '') }
+      })
+      ElMessage.info('新增行草稿已更新；点顶部「发起异动」后随批提交')
+      updateEditTime()
+      return
     }
 
     // 2026-10-14 用户定案：已下发指标的就地编辑只攒入异动草稿（内存态，不落库），
@@ -4937,7 +5378,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       name: '',
       type1: overrides.type1 ?? '定量',
       type2: overrides.type2 ?? '基础性',
-      weight: 0,
+      // 2026-11-13（用户拍板）：与 newRow 初始值同口径——权重默认空，不预置 0
+      weight: undefined,
       remark: '',
       parentIndicatorId: ''
     }
@@ -5130,6 +5572,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   // 删除指标
   const _deleteIndicator = (indicator: StrategicIndicator) => {
+    // 2026-11-14（新增行不落库）：内存草稿行不得进直删（后端无此数据）——内存移除
+    if (isPendingCreateDraftRow(indicator)) {
+      removePendingCreateDraftRow(indicator)
+      ElMessage.info('已撤销本次新增的草稿行')
+      return
+    }
+
     const indicatorId = indicator?.id
     if (indicatorId === null || indicatorId === undefined || indicatorId === '') {
       ElMessage.warning('当前行不是可删除的指标数据')
@@ -5201,15 +5650,39 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const selectedCollege = ref('')
 
   // 当前职能部门（职能部门 tab 左侧选中项）下发给学院的全部目标学院
+  // 2026-11-05：owner 口径按登录角色分流——战略部登录 → 「本下发方 + 存量兼容」
+  // （战略发展部下发的 + 职能部门历史存量的学院都要能看到）；职能部门登录 → 口径不变。
   const collegeDepartmentsScoped = computed(() => {
     const allColleges = collegeDepartments.value
+    // 2026-11-05（issue #96 · 1.1，首次下发死锁修复）：战略发展部是**下发方**，
+    // 必须能选中「还没下发过的学院」才能发起第一次下发。
+    // 而下面的口径是「按已有下发数据反推学院列表」——首次下发前一行数据都没有，
+    // 列表恒为空 → 选不中学院 → 表格区退化成空提示 → 下发操作区根本不渲染，
+    // 形成「没下发过就永远选不到学院、选不到学院就永远没法下发」的死锁。
+    // 故战略部登录时列出全部学院；职能部门仍按原口径（只列本部门已下发的学院，零变化）。
+    if (isStrategicDeptLogin.value) {
+      return [...allColleges].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+    }
     const ownerDept = normalizeDepartmentName(selectedDepartment.value || '')
     if (!ownerDept) {
       return allColleges
     }
     const scoped = new Set<string>()
     for (const item of normalizedIndicators.value) {
-      if (item.ownerDept !== ownerDept) {
+      // 2026-11-05（codex P2-5）：可见性仍按「战略部可见全部」放宽，
+      // 但**下钻作用域**按「行的归属部门」判定 —— 存量行归属其 owner 职能部门，
+      // 战略部自有行归属其父级核心指标的目标部门。否则两个职能部门的历史行会混在一起，
+      // 页面「按左侧所选部门下钻」失效。
+      const rowOwnerDept = resolveRowOwnerDept(item)
+      if (!rowOwnerDept) {
+        continue
+      }
+      if (
+        !isDispatchOwnerVisible({
+          loginRole: authStore.userRole,
+          ownerMatchesCurrentDept: rowOwnerDept === ownerDept
+        })
+      ) {
         continue
       }
       const candidate = item as {
@@ -5237,6 +5710,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     selectedCollege.value = college
     // 2026-10-19 修复：切换学院后重新拉取该学院的上报摘要（自评进度/进度说明回显依据）
     void syncCurrentPlanReportSummaries({ force: true, collegeScope: true })
+    // 2026-11-13（单一状态徽标）：切学院后重拉该学院各部门的上报侧状态表
+    // （学院×部门独立报告，徽标按部门收口）
+    void refreshCollegeDeptPhaseReportStatuses({ force: true })
+    // 2026-11-12（C3-D1 根因修复）：学院选择变化同样补拉学院口径退回待重报异动链——
+    // 此前 returnedMutationChains 只由 selectedDepartment（职能部门侧边栏）驱动加载，
+    // 学院页签全链零触发，驳回后的红横幅/重报双按钮在学院页签不可达
+    void loadCollegeReturnedMutationChains()
   }
 
   // 切换职能部门时，原选中学院可能不在新部门的下发范围——自动清空选中
@@ -5256,16 +5736,574 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     return map
   })
 
+  /**
+   * 2026-11-09（用户要求）：学院页签右侧的「职能部门」下拉筛选器。
+   *
+   * <p>用户口径：点进学院后**默认按职能部门顺序显示该学院全部指标**，
+   * 再由这个下拉单独筛某个部门的下发任务情况。因此学院表格不再跟左侧所选部门过滤
+   * （左侧只负责「看哪个学院」），改由本 ref 控制。
+   */
+  const collegeDispatchDeptFilter = ref('')
+
+  /**
+   * 2026-11-09（修复关键 bug）：各「归属部门」在本学院的真实上报状态。
+   *
+   * <p><b>为什么必须单独维护</b>：indicator 行上<b>没有</b>上报状态字段
+   * （status 只有 DRAFT/PENDING/DISTRIBUTED，是下发态；self_rating 在
+   * plan_report_indicator 表，不在 indicator 行上）。之前用
+   * {@code item.selfRating} 判断「已上报」，值恒为 undefined →
+   * 所有部门都被判成 normal，下拉里永远看不到绿色/橙色。这正是用户反馈
+   * 「状态标记颜色不生效」的根因。
+   *
+   * <p>现在改用与表格「上报状态」列完全同源的 {@code useIndicatorFills}
+   * （内部按 indicatorId 缓存、并发请求共享同一 Promise，不会放大请求量），
+   * 取每个指标最新一次非草稿上报的 status 再按部门汇总。
+   */
+  const collegeDeptFillStates = ref<Record<string, { approved: number; submitted: number }>>({})
+
+  const refreshCollegeDeptFillStates = async () => {
+    const target = normalizeDepartmentName(selectedCollege.value || '')
+    if (!target) {
+      collegeDeptFillStates.value = {}
+      return
+    }
+    const rows = normalizedIndicators.value.filter(item => {
+      const candidate = item as {
+        targetDepartment?: string
+        targetOrgName?: string
+        responsibleDept?: string
+      }
+      const deptName = normalizeDepartmentName(
+        String(
+          candidate.targetDepartment ?? candidate.targetOrgName ?? candidate.responsibleDept ?? ''
+        )
+      )
+      return deptName === target || deptName.includes(target)
+    })
+    const next: Record<string, { approved: number; submitted: number }> = {}
+    for (const row of rows) {
+      const dept = resolveRowOwnerDept(row) || strategicDeptName.value || '未归属部门'
+      const bucket = (next[dept] ??= { approved: 0, submitted: 0 })
+      // 走与 ReportStatusCell 同一个缓存化请求，单指标只会真正发出一次
+      const fills = await useIndicatorFills(row.id)
+      const latest = fills[0]
+      if (!latest) {
+        continue
+      }
+      if (latest.status === 'approved') {
+        bucket.approved += 1
+      } else if (latest.status === 'submitted') {
+        bucket.submitted += 1
+      }
+    }
+    collegeDeptFillStates.value = next
+  }
+
+  // 切学院 / 指标列表刷新后重算各部门上报状态（审批流转后也会经指标刷新触发）
+  watch(
+    () =>
+      [
+        normalizeDepartmentName(selectedCollege.value || ''),
+        normalizedIndicators.value.map(item => item.id).join(',')
+      ].join('|'),
+    () => {
+      void refreshCollegeDeptFillStates()
+    },
+    { immediate: true }
+  )
+
+  /**
+   * 下拉选项：把该学院收到的指标按「归属部门」分组，给出每个部门的下发情况。
+   *
+   * <p>状态口径（用户 2026-11-09 定）：
+   * <ul>
+   *   <li>有指标且有<b>审批中</b>（存在 submitted 的上报）→ 橙色（优先，因为更需要关注）；</li>
+   *   <li>有指标且<b>已上报</b>（存在 approved 的上报）→ 绿色；</li>
+   *   <li>其余（已下发、未上报）→ 正常显示，不做标记。</li>
+   * </ul>
+   *
+   * <p>2026-11-10（用户拍板）新增<b>下发资格</b>口径：eligible = 该部门在该考核周期
+   * 存在「已下发」（DISTRIBUTED，旧数据 ACTIVE 等价）状态的<b>核心指标</b>。
+   * 只有 eligible 部门可被下拉选中；无资格部门显示灰色（不再 disabled），
+   * 点击由 handleCollegeDeptFilterChange 拦截并提示。判定逻辑见
+   * {@link isDistributedCoreIndicator}（纯函数，与单测共用）。</p>
+   *
+   * <p>2026-11-10 缺陷修复：本 computed 的遍历<b>先按学院过滤</b>
+   * （target 必须匹配所选学院），而「已下发核心指标」行（owner=战略部、
+   * target=职能部门）永远不匹配学院名、进不了 eligible 判定 —— 纪委办名下
+   * 有 DISTRIBUTED 核心指标、但该学院名下无学院行时被误判无资格。故最终
+   * eligible = 学院行聚合（{@link isDistributedCoreIndicator}）OR 全量资格聚合
+   * （{@link collegeDeptEligibleByDept}，不按学院过滤）。学院行聚合保留作
+   * normalize 部门名差异的兜底，两者任一为 true 即放行。</p>
+   */
+
+  /**
+   * 全量资格聚合（2026-11-10 缺陷修复）：遍历 normalizedIndicators **全量、
+   * 不按学院过滤**，对每条「已下发核心指标」（{@link isDistributedCoreIndicator}）
+   * 以其目标部门为键标记 eligible —— 核心指标的 target 即其归属职能部门
+   * （与 resolveRowOwnerDept 取父级核心指标部门名的字段链一致）。数据源实证：
+   * store 走 getAllIndicators 按考核周期<b>全量</b>拉取（不分学院），核心指标行
+   * 必在 normalizedIndicators 中；normalizeDepartmentName 内含别名/ID 映射兜底。
+   * 聚合逻辑在 {@link buildCollegeDeptEligibleByDept}（纯函数，与单测共用）。
+   */
+  const collegeDeptEligibleByDept = computed(() =>
+    buildCollegeDeptEligibleByDept(normalizedIndicators.value, item => {
+      const candidate = item as {
+        targetDepartment?: string
+        targetOrgName?: string
+        responsibleDept?: string
+      }
+      return normalizeDepartmentName(
+        String(
+          candidate.targetDepartment || candidate.targetOrgName || candidate.responsibleDept || ''
+        )
+      )
+    })
+  )
+
+  const collegeDeptDispatchOptions = computed(() => {
+    const target = normalizeDepartmentName(selectedCollege.value || '')
+    if (!target) {
+      return [] as Array<{
+        dept: string
+        count: number
+        eligible: boolean
+        dispatchStatus: 'none' | 'dispatching' | 'dispatched'
+        reportStatus: 'none' | 'reporting' | 'reported'
+      }>
+    }
+    const byDept = new Map<
+      string,
+      {
+        count: number
+        dispatching: boolean
+        dispatched: boolean
+        reporting: boolean
+        reported: boolean
+        eligible: boolean
+      }
+    >()
+    for (const item of normalizedIndicators.value) {
+      const candidate = item as {
+        targetDepartment?: string
+        targetOrgName?: string
+        responsibleDept?: string
+      }
+      const deptName = normalizeDepartmentName(
+        String(
+          candidate.targetDepartment ?? candidate.targetOrgName ?? candidate.responsibleDept ?? ''
+        )
+      )
+      if (!(deptName === target || deptName.includes(target))) {
+        continue
+      }
+      const dept = resolveRowOwnerDept(item) || strategicDeptName.value || '未归属部门'
+      const entry = byDept.get(dept) ?? {
+        count: 0,
+        dispatching: false,
+        dispatched: false,
+        reporting: false,
+        reported: false,
+        eligible: false
+      }
+      entry.count += 1
+      // 下发状态：取指标自身的下发状态（PENDING=下发审批中 / DISTRIBUTED=已下发）。
+      // 这是「战略部 → 该学院」这一侧的进度，与上报状态是两个维度。
+      const indicatorStatus = String((item as { status?: unknown }).status ?? '').toUpperCase()
+      if (indicatorStatus.includes('PENDING') || indicatorStatus.includes('REVIEW')) {
+        entry.dispatching = true
+      }
+      if (indicatorStatus === 'DISTRIBUTED') {
+        entry.dispatched = true
+      }
+      // 2026-11-10（用户拍板）：下发资格 = 存在「已下发」核心指标
+      // （DISTRIBUTED，旧数据 ACTIVE 等价；子指标不算）。纯函数与单测共用同一口径。
+      if (isDistributedCoreIndicator(item as { status?: unknown; parentIndicatorId?: unknown })) {
+        entry.eligible = true
+      }
+      // 上报状态：取自真实的上报记录聚合（见 refreshCollegeDeptFillStates），
+      // 不能用 indicator 上的 status/selfRating —— 那两个字段判断不出「已上报/上报中」。
+      const fillState = collegeDeptFillStates.value[dept]
+      if (fillState && fillState.submitted > 0) {
+        entry.reporting = true
+      }
+      if (fillState && fillState.approved > 0) {
+        entry.reported = true
+      }
+      byDept.set(dept, entry)
+    }
+    // 2026-11-09（用户要求）：选项顺序必须是**部门排序**（组织机构顺序），
+    // 不能是指标遍历顺序 —— 用户按组织架构顺序找部门，而不是「第一条指标所属的部门」。
+    // 2026-11-09（用户拍板：两步显式选择）：不再有「默认选中 options[0]」的兜底，
+    // 排序只决定下拉列表的呈现顺序。
+    const deptOrder = new Map(
+      functionalDepartments.value.map((name, index) => [normalizeDepartmentName(name), index])
+    )
+    return Array.from(byDept.entries())
+      .map(([dept, entry]) => ({
+        dept,
+        count: entry.count,
+        // 2026-11-10（用户拍板）：存在「已下发」核心指标 = 有资格被下拉选中。
+        // 2026-11-10 缺陷修复：学院行聚合 OR 全量资格聚合（collegeDeptEligibleByDept，
+        // 覆盖「核心指标已下发但该学院名下无学院行」的部门，如纪委办）。
+        eligible: entry.eligible || collegeDeptEligibleByDept.value.get(dept) === true,
+        // 下发维度（战略部 → 该学院）：进行中 / 已完成
+        dispatchStatus: entry.dispatching
+          ? ('dispatching' as const)
+          : entry.dispatched
+            ? ('dispatched' as const)
+            : ('none' as const),
+        // 上报维度（该学院 → 审批）：进行中 / 已完成
+        reportStatus: entry.reporting
+          ? ('reporting' as const)
+          : entry.reported
+            ? ('reported' as const)
+            : ('none' as const)
+      }))
+      .sort((left, right) => {
+        const leftIndex = deptOrder.get(left.dept) ?? Number.MAX_SAFE_INTEGER
+        const rightIndex = deptOrder.get(right.dept) ?? Number.MAX_SAFE_INTEGER
+        if (leftIndex !== rightIndex) {
+          return leftIndex - rightIndex
+        }
+        return left.dept.localeCompare(right.dept)
+      })
+  })
+
+  /**
+   * 「部门 × 所选学院」的获胜下发计划表（2026-11-13 状态徽标修正 → 单一徽标合并）。
+   *
+   * <p>判定基准改为「战略发展部 → 该学院 × 该部门的 FUNC_TO_COLLEGE 计划
+   * （created_by=35、归口部门在 functional_org_id）的计划状态」——旧 basis
+   * （学院行按 ownerDept 聚合取 indicator.status）在改造后取不到：
+   * 学院子指标 owner 恒为战略发展部，部门名下零学院行 → 教务处
+   * dispatchStatus='none' 而 eligible=true → 「未下发」不显示、其它 tag
+   * 也不命中 → 下拉里「教务处」右侧空白（用户实测）。</p>
+   *
+   * <p>2026-11-13（用户拍板「只能显示一个状态」）：winner 版本额外带 planId ——
+   * 计划已下发的部门需要按 plan 拉 GET /reports/plan/{planId} 全量报告分组取
+   * 上报侧状态（见 refreshCollegeDeptPhaseReportStatuses）；纯逻辑在 lib
+   * buildCollegeDeptPlanWinnerByDept（与单测共用）。</p>
+   */
+  const collegeDeptPlanWinnerByDept = computed(() =>
+    buildCollegeDeptPlanWinnerByDept(
+      planStore.plans as CollegeDeptPlanStatusPlanLike[],
+      functionalDepartments.value,
+      {
+        collegeOrgId: resolveDepartmentIdByName(selectedCollege.value),
+        collegeName: normalizeDepartmentName(selectedCollege.value || ''),
+        currentYear: timeContext.currentYear,
+        resolvePlanYear: planAny => resolvePlanYear(planAny),
+        resolveDeptOrgId: deptName => resolveDepartmentIdByName(deptName),
+        normalize: normalizeDepartmentName
+      }
+    )
+  )
+
+  /**
+   * 「部门 × 所选学院」的上报侧最新状态表（2026-11-13 徽标合并）。
+   *
+   * <p>键 = 归一化部门名，值 = 该学院×部门最新一轮 PLAN_REPORT 的工作流状态
+   * （PENDING / IN_REVIEW / SUBMITTED / APPROVED / REJECTED / RETURNED /
+   * CANCELLED / WITHDRAWN / DRAFT，trim+大写归一）。由
+   * refreshCollegeDeptPhaseReportStatuses 异步写入；同步消费方
+   * （collegeDeptDropdownItems）在数据到达前按「无上报」处理 → 已下发部门先显示
+   * 「已下发」，报告列表返回后按语义升级为 审批中/已上报/已回退。</p>
+   */
+  const collegeDeptReportStatusByDept = ref<Map<string, string>>(new Map())
+  let collegeDeptReportStatusLoadKey = ''
+
+  /**
+   * 拉取「已下发」部门获胜计划的全量报告并按 functionalOrgId 分组写
+   * collegeDeptReportStatusByDept（2026-11-13 徽标合并）。
+   *
+   * <p>请求策略（避免每部门单独发请求）：只对「计划已下发」的部门取获胜计划
+   * planId，去重后逐计划调 indicatorFillApi.getPlanReportList（GET
+   * /reports/plan/{planId} 聚合口径全量报告，planApi 侧 TTL 缓存 + 在途去重），
+   * 前端按 report.functionalOrgId 分组归属部门（lib
+   * buildCollegeDeptReportStatusByDept，与单测共用）。旧共享计划（一份计划装
+   * 多部门报告）一次拉全覆盖多部门；V104 起每部门独立计划时每计划一次请求
+   * （已是后端最小粒度）。分组纯逻辑消费 resolveCollegeDeptPhaseBadge 前置数据。</p>
+   *
+   * <p>去重键 = 学院归一名 + 已下发计划 id 集：获胜计划集没变就复用上次结果；
+   * force（学院上下文摘要刷新/上报动作后）绕过键去重重拉。函数体运行期才读
+   * selectedCollege（声明于本文件前部）与 collegeDeptPlanWinnerByDept（上方），
+   * 无 TDZ。</p>
+   */
+  const refreshCollegeDeptPhaseReportStatuses = async (options: { force?: boolean } = {}) => {
+    const winnerByDept = collegeDeptPlanWinnerByDept.value
+    const distributedPlanIds = new Set<number>()
+    for (const winner of winnerByDept.values()) {
+      // 只有「已下发」部门的徽标消费上报侧状态（其余阶段停在计划侧语义）
+      if (normalizePlanStatus(winner.status) !== 'DISTRIBUTED') {
+        continue
+      }
+      if (winner.planId != null && Number.isFinite(winner.planId) && winner.planId > 0) {
+        distributedPlanIds.add(winner.planId)
+      }
+    }
+    const loadKey =
+      normalizeDepartmentName(selectedCollege.value || '') +
+      '|' +
+      [...distributedPlanIds].sort((left, right) => left - right).join(',')
+    if (!options.force && loadKey === collegeDeptReportStatusLoadKey) {
+      return
+    }
+    collegeDeptReportStatusLoadKey = loadKey
+
+    if (distributedPlanIds.size === 0) {
+      collegeDeptReportStatusByDept.value = new Map()
+      return
+    }
+
+    const reportsByPlanId = new Map<number, CollegeDeptPlanReportLike[]>()
+    await Promise.all(
+      [...distributedPlanIds].map(async planId => {
+        try {
+          const reports = await indicatorFillApi.getPlanReportList(planId)
+          reportsByPlanId.set(planId, reports as CollegeDeptPlanReportLike[])
+        } catch (error) {
+          logger.warn('[StrategicTaskView] 学院下拉上报状态拉取失败:', { planId, error })
+        }
+      })
+    )
+
+    collegeDeptReportStatusByDept.value = buildCollegeDeptReportStatusByDept({
+      winnerByDept,
+      reportsByPlanId,
+      resolveDeptOrgId: deptName => resolveDepartmentIdByName(deptName)
+    })
+  }
+
+  // 触发链：获胜计划集 / 所选学院变化 → 重拉上报状态（fire-and-forget，函数内部按
+  // loadKey 去重；报告轮次变化走下方 collegeScope 摘要刷新链的 force 触发）。
+  // immediate：计划先于本 watch 就绪时（HMR / 页面复用）也要补拉。
+  watch(
+    () => {
+      const parts: string[] = [normalizeDepartmentName(selectedCollege.value || '')]
+      for (const [dept, winner] of collegeDeptPlanWinnerByDept.value) {
+        parts.push(`${dept}=${winner.planId ?? 'x'}:${winner.status}`)
+      }
+      return parts.sort().join('|')
+    },
+    () => {
+      void refreshCollegeDeptPhaseReportStatuses()
+    },
+    { immediate: true }
+  )
+
+  /**
+   * 下拉菜单的完整选项：**全部职能部门**（用户要求「显示所有职能部门」），
+   * 再叠加该部门对当前学院的下发情况。
+   *
+   * <p>2026-11-10（用户拍板）：没下发资格的部门也要出现（灰色样式，**可点击**，
+   * 点击由 handleCollegeDeptFilterChange 拦截并提示「当前职能部门未有已下发的任务」），
+   * 这样战略部一眼能看出「这个学院还有哪些部门没下发」。</p>
+   *
+   * <p>2026-11-13（用户拍板「只能显示一个状态」——下发 + 上报双 tag 合并为单一
+   * 徽标）：每项 phaseBadge = resolveCollegeDeptPhaseBadge（计划状态 + 该学院×部门
+   * 上报侧最新状态按阶段归一，lib 纯函数与单测共用）；无计划 → 既有词表兜底
+   * COLLEGE_DEPT_NOT_DISPATCHED_BADGE（「未下发」warning）——徽标**恒非空**，
+   * 模板渲染无条件单一 el-tag（label/type 全绑定，组件实例永不卸载）：此前
+   * 「v-if 徽标 + v-else 兜底」分支写法在菜单隐藏期间换分支时 el-tag 内置过渡
+   * 的 leave 动画收不到 transitionend，新旧双 tag 滞留 DOM（工学院×纪委办实测
+   * 「已上报+未下发」并存）。上报侧状态来自 collegeDeptReportStatusByDept
+   * （异步刷新链，见 refreshCollegeDeptPhaseReportStatuses）。用户口径：下发
+   * 阶段显示下发侧状态（草稿/审批中/已下发）；已下发之后显示上报侧最新状态
+   * （审批中/已回退/已上报，无上报=已下发），不允许空白。</p>
+   */
+  const collegeDeptDropdownItems = computed(() => {
+    const dispatchByDept = new Map(collegeDeptDispatchOptions.value.map(item => [item.dept, item]))
+    const items: Array<{
+      dept: string
+      count: number
+      eligible: boolean
+      dispatchStatus: 'none' | 'dispatching' | 'dispatched'
+      reportStatus: 'none' | 'reporting' | 'reported'
+      phaseBadge: CollegeDeptPhaseBadge
+    }> = []
+    const seen = new Set<string>()
+    for (const dept of functionalDepartments.value) {
+      const name = normalizeDepartmentName(dept)
+      if (!name || seen.has(name)) {
+        continue
+      }
+      seen.add(name)
+      const hit = dispatchByDept.get(name)
+      items.push({
+        dept: name,
+        count: hit?.count ?? 0,
+        // 2026-11-10 缺陷修复：部门零学院行（不在 dispatchByDept）但有已下发
+        // 核心指标时，hit 为 undefined —— 不能兜底 false，需查全量资格聚合。
+        eligible: hit?.eligible ?? collegeDeptEligibleByDept.value.get(name) === true,
+        dispatchStatus: hit?.dispatchStatus ?? 'none',
+        reportStatus: hit?.reportStatus ?? 'none',
+        phaseBadge:
+          resolveCollegeDeptPhaseBadge({
+            planStatus: collegeDeptPlanWinnerByDept.value.get(name)?.status,
+            reportStatus: collegeDeptReportStatusByDept.value.get(name)
+          }) ?? COLLEGE_DEPT_NOT_DISPATCHED_BADGE
+      })
+    }
+    // 归属部门可能不在「职能部门」清单里（例如战略部直发的存量行），补在后面，
+    // 否则这些行在列表里能看到、却无法被单独筛出来。
+    for (const [dept, hit] of dispatchByDept.entries()) {
+      if (!seen.has(dept)) {
+        items.push({
+          dept,
+          count: hit.count,
+          eligible: hit.eligible,
+          dispatchStatus: hit.dispatchStatus,
+          reportStatus: hit.reportStatus,
+          phaseBadge:
+            resolveCollegeDeptPhaseBadge({
+              planStatus: collegeDeptPlanWinnerByDept.value.get(dept)?.status,
+              reportStatus: collegeDeptReportStatusByDept.value.get(dept)
+            }) ?? COLLEGE_DEPT_NOT_DISPATCHED_BADGE
+        })
+      }
+    }
+    return items
+  })
+
+  /**
+   * 实际生效的部门筛选值。
+   *
+   * <p>2026-11-09（用户拍板：两步显式选择，**无自动兜底**）：只返回用户的显式选择
+   * —— 没选就是空串，不存在「自动选中第一个有指标部门」的兜底。上层据此联动：
+   * collegeTableIndicators 返回空表，中央空态与工具栏按钮引导用户先选职能部门
+   * （两选齐之前内容区与操作全部置灰）。此前的「computed 兜底部门排序第一个
+   * 有下发指标的部门」口径作废。</p>
+   */
+  const collegeDispatchDeptEffective = computed(() =>
+    normalizeDepartmentName(collegeDispatchDeptFilter.value || '')
+  )
+
+  /**
+   * 当前选中的下拉项（用于在箭头右侧显示「当前是哪个部门」的小字）。
+   *
+   * <p>2026-11-13 回显缺陷修复：旧实现只在 collegeDeptDispatchOptions 里找——
+   * 该列表只聚合「target=所选学院」的学院行，部门有下发资格（已下发核心指标）
+   * 但该学院名下还没有学院行时不在其中 → find 不命中 → 回显恒为占位
+   * 「请选择职能部门」（用户实测：选「纪委办公室 | 监察处」后按钮不回显）。
+   * 改走 lib 纯函数 resolveCollegeDeptCurrent：dispatchOptions → dropdownItems
+   * （覆盖全部可选部门）→ filter 归一值兜底，双侧归一后比较。</p>
+   */
+  const collegeDeptCurrent = computed(() =>
+    resolveCollegeDeptCurrent({
+      effectiveDept: collegeDispatchDeptEffective.value,
+      dispatchOptions: collegeDeptDispatchOptions.value,
+      dropdownItems: collegeDeptDropdownItems.value,
+      normalize: normalizeDepartmentName
+    })
+  )
+
+  /**
+   * 2026-11-09（用户要求）：**强制显示单个部门**，不再有「全部部门」这一态。
+   *
+   * <p>2026-11-09（用户拍板：两步显式选择）：effective 不再自动兜底，
+   * 这里只在「切换学院」时把用户的手动选择清掉，避免带着上一个学院的部门去看新学院。
+   * 未显式选部门时 effective 为空 → 表格空态并引导先选职能部门。
+   */
+  watch(
+    () => normalizeDepartmentName(selectedCollege.value || ''),
+    () => {
+      collegeDispatchDeptFilter.value = ''
+    }
+  )
+
+  /**
+   * 2026-11-14（新增行不落库）：学院页签表格行排序（原 collegeTableIndicators 内联
+   * 比较器抽出，供「库存行 + 内存草稿行」合并后的整表重排复用）。
+   *
+   * <p>2026-10-28 用户定案：跨页面同一顺序——核心指标按（sortOrder, id）排，
+   * 同核心指标下的子指标按（sortOrder, id）排。末位 id 平局判定对 draft-* 临时 id
+   * NaN 安全（草稿行排在同序位真实行之后，不破坏既有行序）。</p>
+   */
+  const compareCollegeTableRows = (a: StrategicIndicator, b: StrategicIndicator): number => {
+    const pidA = String(a.parentIndicatorId ?? '')
+    const pidB = String(b.parentIndicatorId ?? '')
+    if (pidA !== pidB) {
+      const soA = Number(indicatorById.value.get(pidA)?.sortOrder ?? 0) || 0
+      const soB = Number(indicatorById.value.get(pidB)?.sortOrder ?? 0) || 0
+      if (soA !== soB) {
+        return soA - soB
+      }
+      return (Number(pidA) || 0) - (Number(pidB) || 0)
+    }
+    const orderA = Number(a.sortOrder ?? 0) || 0
+    const orderB = Number(b.sortOrder ?? 0) || 0
+    if (orderA !== orderB) {
+      return orderA - orderB
+    }
+    const idA = Number(a.id)
+    const idB = Number(b.id)
+    return (
+      (Number.isFinite(idA) ? idA : Number.MAX_SAFE_INTEGER) -
+      (Number.isFinite(idB) ? idB : Number.MAX_SAFE_INTEGER)
+    )
+  }
+
+  /**
+   * 2026-11-14（新增行不落库）：学院页签的内存草稿新增行（待发起异动的本地行）。
+   *
+   * <p>按 collegeTableIndicators 同一过滤口径收口（右侧下拉所选部门 + 学院名），
+   * 使草稿行与真实行在表格里同组显示、同序参与排序。</p>
+   */
+  const collegeCreateDraftRows = computed(() => {
+    if (pendingCreateDrafts.value.length === 0 || !selectedCollege.value) {
+      return []
+    }
+    const target = normalizeDepartmentName(selectedCollege.value)
+    const ownerDept = collegeDispatchDeptEffective.value
+    if (!ownerDept) {
+      return []
+    }
+    return pendingCreateDrafts.value
+      .filter(draft => {
+        const rowOwnerDept = resolveRowOwnerDept(draft as unknown as StrategicIndicator)
+        if (rowOwnerDept !== ownerDept) {
+          return false
+        }
+        const deptName = normalizeDepartmentName(
+          String(draft.targetDepartment ?? draft.targetOrgName ?? draft.responsibleDept ?? '')
+        )
+        return deptName === target || deptName.includes(target)
+      })
+      .map(draft => ({ ...draft }) as StrategicIndicator)
+  })
+
   const collegeTableIndicators = computed(() => {
     if (!selectedCollege.value) {
       return []
     }
     const target = normalizeDepartmentName(selectedCollege.value)
-    const ownerDept = normalizeDepartmentName(selectedDepartment.value || '')
-    return normalizedIndicators.value
+    // 2026-11-09（用户要求）：过滤依据由「左侧所选部门」改为「右侧下拉所选部门」——
+    // 2026-11-09（用户拍板：两步显式选择）：未显式选择部门时不再兜底第一个部门，
+    // 直接返回空表，由中央空态引导用户先选职能部门。
+    const ownerDept = collegeDispatchDeptEffective.value
+    if (!ownerDept) {
+      return []
+    }
+    const storeRows = normalizedIndicators.value
       .map(item => applyReportDetailOverlayToRow(item))
       .filter(item => {
-        if (ownerDept && item.ownerDept !== ownerDept) {
+        // 2026-11-05（codex P2-5）：可见性放宽、作用域按归属部门收紧（见 resolveRowOwnerDept）
+        const rowOwnerDept = resolveRowOwnerDept(item)
+        const ownerMatches = !ownerDept || rowOwnerDept === ownerDept
+        // 2026-11-09（用户要求，修复筛选失效）：这里必须**显式**按所选部门收口。
+        // 原因：下方的 isDispatchOwnerVisible 对战略部登录**恒返回 true**（可见性改造时放宽的），
+        // 它不会因为 ownerMatches=false 而拦行 —— 结果就是下拉选了「教务处」，
+        // 表格却仍然把所有部门下发的指标全列出来（用户实测反馈的就是这个现象）。
+        if (!ownerMatches) {
+          return false
+        }
+        if (
+          !isDispatchOwnerVisible({
+            loginRole: authStore.userRole,
+            ownerMatchesCurrentDept: ownerMatches
+          })
+        ) {
           return false
         }
         const candidate = item as {
@@ -5280,27 +6318,57 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         )
         return deptName === target || deptName.includes(target)
       })
-      .sort((a, b) => {
-        // 2026-10-28 用户定案：跨页面同一顺序——核心指标按（sortOrder, id）排，
-        // 同核心指标下的子指标按（sortOrder, id）排；与指标填报页/下发审批页逐行一致。
-        // （此前按父指标名称拼音排序，与下发页/填报页的下发顺序不一致）
-        const pidA = String(a.parentIndicatorId ?? '')
-        const pidB = String(b.parentIndicatorId ?? '')
-        if (pidA !== pidB) {
-          const soA = Number(indicatorById.value.get(pidA)?.sortOrder ?? 0) || 0
-          const soB = Number(indicatorById.value.get(pidB)?.sortOrder ?? 0) || 0
-          if (soA !== soB) {
-            return soA - soB
-          }
-          return (Number(pidA) || 0) - (Number(pidB) || 0)
-        }
-        const orderA = Number(a.sortOrder ?? 0) || 0
-        const orderB = Number(b.sortOrder ?? 0) || 0
-        if (orderA !== orderB) {
-          return orderA - orderB
-        }
-        return Number(a.id) - Number(b.id)
-      })
+    // 2026-11-14（新增行不落库）：内存草稿行并入行集——表格立即显示该行、
+    // 权重合计（collegeBasicWeightTotal 读本行集）实时计入
+    return [...storeRows, ...collegeCreateDraftRows.value].sort(compareCollegeTableRows)
+  })
+
+  /**
+   * 2026-11-09（页签分流）：一行学院指标是否属于「该学院的当前计划」。
+   *
+   * <p>归属链：指标 → taskId → task.plan_id → 与学院当前计划 id 比对。指标行本身不带
+   * 计划字段，后端也是以 t.plan_id 关联 plan 来判定指标归属，所以只能顺着 task 找。</p>
+   *
+   * <p>取不到归属信息时（学院计划解析不出来 / 任务映射尚未加载 / 指标没有 task）
+   * 一律**不过滤**该行：宁可多显示几行，也不能让学院口径直接显示成 0 / 100——
+   * 这与本文件既有的「宁可多显示，不可显示为空」口径一致。</p>
+   */
+  const isIndicatorInCollegePlanScope = (row: StrategicIndicator, scopePlanId: number): boolean => {
+    if (!Number.isFinite(scopePlanId) || scopePlanId <= 0) {
+      return true
+    }
+    const taskId = getIndicatorTaskId(row)
+    if (!taskId) {
+      return true
+    }
+    const rowPlanId = Number(backendTaskPlanMap.value[taskId] ?? Number.NaN)
+    if (!Number.isFinite(rowPlanId) || rowPlanId <= 0) {
+      return true
+    }
+    return rowPlanId === scopePlanId
+  }
+
+  /**
+   * 2026-11-09（页签分流）：二级学院页签的「基础性权重合计」。
+   *
+   * <p>口径 = 所选学院在当前计划下全部基础性指标的权重合计（分母固定 100）。
+   * 与职能部门口径（departmentTotalWeight：该部门下基础性任务权重合计）互不串台。</p>
+   *
+   * <p>为什么必须按计划圈行：战略部直发后，学院可能同时残留「职能部门历史下发」的行
+   * （owner=职能部门）。不按计划过滤会把存量行一起算进来，合计永远大于 100，
+   * 与需求口径「该学院该计划下全部基础性指标合计 100」不符。</p>
+   */
+  const collegeBasicWeightTotal = computed(() => {
+    if (!selectedCollege.value) {
+      return 0
+    }
+    // 2026-11-09（用户要求）：合计口径改为「**当前表格里显示的那些行**」的基础性权重之和。
+    // 原实现额外叠加 isIndicatorInCollegePlanScope（只看当前计划），会出现
+    // 「表格显示 1 条 100、合计却算另一个计划的 0」的割裂；学院页签现在由部门下拉决定行集，
+    // 合计必须跟着同一个行集走，用户看到的数字才对得上。
+    return collegeTableIndicators.value
+      .filter(row => isBasicIndicatorForCurrentRules(row as StrategicIndicator))
+      .reduce((sum, row) => sum + Number(row.weight || 0), 0)
   })
 
   // PR#83 头部「审批状态」与二级学院页签「上报状态」列一致性：
@@ -5332,6 +6400,46 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     () => collegeFillStatusScope.value && Boolean(selectedCollege.value)
   )
 
+  // 2026-11-13（学院口径上报进度按部门收口）：学院页签右侧部门下拉变化 / 学院上下文
+  // 刚激活（切页签且两选已齐）时，重拉 collegeScope 上报摘要（带 functionalOrgId 尾参，
+  // 见 syncCurrentPlanReportSummaries）——此前只在 selectCollege 触发，摘要不随部门
+  // 切换收口，「审批状况」签与上报互斥锁会停留在上一个部门的口径。部门被清空
+  // （切换学院联动清除）时跳过：两选未齐该签本就隐藏、操作全置灰，切学院后
+  // selectCollege 已带 force 重拉过聚合口径。watch 源在注册时立即求值一次，
+  // 必须等 isCollegePlanContextActive 声明之后再注册（避免 TDZ，同 reportMonthPlanId 注）。
+  watch(
+    [collegeDispatchDeptEffective, isCollegePlanContextActive],
+    ([dept, active], [prevDept, prevActive]) => {
+      if (!active || !dept) {
+        return
+      }
+      // 已激活且部门未变（其他响应式抖动）不重拉；页签刚激活（prevActive=false）必拉
+      if (prevActive && dept === prevDept) {
+        return
+      }
+      void syncCurrentPlanReportSummaries({ force: true, collegeScope: true })
+      // 2026-11-13（单一状态徽标）：页签激活/部门切换同步收敛学院下拉的上报侧状态表
+      void refreshCollegeDeptPhaseReportStatuses({ force: true })
+    }
+  )
+
+  // 2026-11-14（学院页签撤回相位缺陷）：学院上下文激活 / 子计划 id 解析变化即预载
+  // 子计划工作流详情（preloadApprovalWorkflowDetail 学院分支按 selectedCollegeDispatchPlanId
+  // 强查 canWithdraw）—— collegeSubPlanCanWithdraw（按钮置灰数据源）的供给链。
+  // 此前预载门禁只认职能部门自身计划状态（zlb_admin 自身计划恒 DRAFT 且无上报绑定 →
+  // 恒不触发），学院页签永远拿不到 canWithdraw 真值，置灰判定空转。
+  // 另在 refreshCurrentDepartmentView 与全局刷新链（审批驱动/轻量）的门禁处补了
+  // isCollegePlanContextActive 分支：发起/撤回/审批动作后的刷新也会重载子计划详情。
+  // preloadApprovalWorkflowDetail 声明在本文件后部，watch 回调运行期取值，无 TDZ
+  // （同上方 watch 的 syncCurrentPlanReportSummaries 前向引用模式）。
+  watch([isCollegePlanContextActive, selectedCollegeDispatchPlanId], ([active, planId]) => {
+    const numericPlanId = Number(planId)
+    if (!active || !Number.isFinite(numericPlanId) || numericPlanId <= 0) {
+      return
+    }
+    void preloadApprovalWorkflowDetail()
+  })
+
   const effectivePlanContext = computed<{
     source: 'college' | 'functional'
     plan: Record<string, unknown> | null
@@ -5348,6 +6456,128 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     )
     return { source: 'college', plan: (plan as Record<string, unknown>) ?? null }
   })
+
+  /**
+   * 2026-11-13（用户反馈：学院下发审批历史不可见）：审批中心抽屉的学院口径锚定。
+   *
+   * <p>此前抽屉 plan / workflowEntityId / departmentName / planName 全部锚定
+   * currentPlan（职能部门自身计划），学院页签下 flow6（PLAN_DISPATCH_COLLEGE）
+   * 实例挂在 FUNC_TO_COLLEGE 子计划上（如计算机学院 705489），锚定错位导致
+   * 「计划审批/审批流程/审批历史」三个 tab 全空。学院页签两选齐时全部换锚子计划；
+   * 职能页签口径原样保留（零回归红线）。</p>
+   */
+  const approvalDrawerPlan = computed<Record<string, unknown> | null>(() => {
+    if (isCollegePlanContextActive.value) {
+      return effectivePlanContext.value.plan
+    }
+    return (currentPlan.value as Record<string, unknown> | null) ?? null
+  })
+
+  const approvalDrawerDepartmentName = computed<string>(() => {
+    return isCollegePlanContextActive.value
+      ? String(selectedCollege.value || '')
+      : String(selectedDepartment.value || '')
+  })
+
+  const approvalDrawerPlanName = computed<string>(() => {
+    if (isCollegePlanContextActive.value) {
+      const plan = effectivePlanContext.value.plan as { name?: unknown; taskName?: unknown } | null
+      const fromPlan = String(plan?.taskName || plan?.name || '').trim()
+      if (fromPlan) return fromPlan
+      return selectedCollege.value
+        ? `2026年度 计划（战略发展部 -> ${selectedCollege.value}）`
+        : String(selectedDepartment.value || '')
+    }
+    return String(
+      (currentPlan.value as { taskName?: unknown; name?: unknown } | null)?.taskName ||
+        (currentPlan.value as { name?: unknown } | null)?.name ||
+        selectedDepartment.value ||
+        ''
+    )
+  })
+
+  // 学院页签下 flow6 实例的 business entity = 子计划本身；职能页签沿用现行 primary 解析。
+  const approvalDrawerWorkflowEntityType = computed<'PLAN' | 'PLAN_REPORT'>(() => {
+    return isCollegePlanContextActive.value ? 'PLAN' : primaryApprovalWorkflowEntityType.value
+  })
+
+  const approvalDrawerWorkflowEntityId = computed<number | string | undefined>(() => {
+    if (isCollegePlanContextActive.value) {
+      return selectedCollegeDispatchPlanId.value ?? undefined
+    }
+    return primaryApprovalWorkflowEntityId.value
+  })
+
+  // 学院子计划场景没有「二级实体」（上报摘要是上报链口径，不属于下发抽屉）；职能页签原样。
+  const approvalDrawerSecondaryWorkflowEntityType = computed<'PLAN' | 'PLAN_REPORT' | undefined>(
+    () => {
+      return isCollegePlanContextActive.value
+        ? undefined
+        : secondaryApprovalWorkflowEntityType.value
+    }
+  )
+
+  const approvalDrawerSecondaryWorkflowEntityId = computed<number | string | undefined>(() => {
+    return isCollegePlanContextActive.value ? undefined : secondaryApprovalWorkflowEntityId.value
+  })
+
+  // 2026-11-13（学院口径上报审批可见）：学院页签两选齐且 collegeScope 摘要已解析出
+  // 报告 id 时，产出该「学院×部门」的 PLAN_REPORT 实体——经 relatedWorkflowEntities
+  // 追加进审批中心抽屉的审批历史 targets（useApprovalProgressState historyTargets
+  // related 循环），学院对部门的上报审批实例（flow4）与下发审批（flow6，主锚子计划）
+  // 双历史同屏。职能页签 / 未选部门 / 摘要未命中报告 → null（不造空实体）。
+  const collegeScopeReportWorkflowEntity = computed<{
+    entityType: 'PLAN_REPORT'
+    entityId: number
+  } | null>(() => {
+    if (!isCollegePlanContextActive.value) {
+      return null
+    }
+    const reportId = Number(collegeScopePlanReportSummary.value?.id ?? NaN)
+    if (!Number.isFinite(reportId) || reportId <= 0) {
+      return null
+    }
+    return { entityType: 'PLAN_REPORT', entityId: reportId }
+  })
+
+  // 2026-11-13（学院口径）：学院页签读 FUNC_TO_COLLEGE 子计划的 dispatchMonth，
+  // 职能页签读职能部门自身计划（口径不变）。此前恒读 currentPlan，学院页签下
+  // 「当前填报周期」标签不渲染（子计划的 dispatchMonth 从未被拉取）。
+  // watch 从 reportMonth 声明处（约 1013 行）移到此处：getter 立即执行一次
+  // （immediate: true），必须等 isCollegePlanContextActive / selectedCollegeDispatchPlanId
+  // 都已声明（本 computed 群之后才安全），避免 TDZ。
+  const reportMonthPlanId = computed<number | null>(() => {
+    if (isCollegePlanContextActive.value) {
+      return selectedCollegeDispatchPlanId.value
+    }
+    const id = currentPlan.value?.id
+    return Number.isFinite(Number(id)) && Number(id) > 0 ? Number(id) : null
+  })
+  watch(
+    () => reportMonthPlanId.value,
+    async planId => {
+      if (!planId) {
+        reportMonth.value = ''
+        return
+      }
+      const key = String(planId)
+      const cached = reportMonthCache.get(key)
+      if (cached !== undefined) {
+        reportMonth.value = cached
+        return
+      }
+      try {
+        const response = await planApi.getPlanDetails(planId)
+        const raw = String(response.data?.dispatchMonth || '').trim()
+        const month = /^\d{6}$/.test(raw) ? raw : ''
+        reportMonthCache.set(key, month)
+        reportMonth.value = month
+      } catch (error) {
+        logger.warn('[StrategicTaskView] 当前填报周期获取失败:', error)
+      }
+    },
+    { immediate: true }
+  )
 
   // 学院页签保守锁：子计划未解析到 → 双击既不进异动草稿、也不允许直写
   const collegeSubPlanUnresolved = computed(
@@ -5419,6 +6649,48 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // departmentMutationPendingApprovals 本体口径不变——isMutationApprovalInFlight
   // （发起异动互斥锁）/ isEntityMutationInFlight（异动角标）/ 状态标签分支均不受影响。
   const departmentChainMutationPendingApprovals = ref<Array<Record<string, any>>>([])
+
+  /**
+   * 2026-11-12（C3-D1 HIGH 修复）：学院页签口径的「退回待重报」异动链补拉。
+   *
+   * <p>缺陷（2026-11-12 C3-工学院异动全链 C3-D1）：returnedMutationChains 仅由
+   * loadDepartmentMutationWorkflowEntities 按职能部门 orgId 加载，而战略部直发的
+   * 学院子指标 owner=战略发展部（org 35）、target=学院 —— 职能口径查询
+   * （owner/target=org 36 起）恒不命中，学院页签异动被驳回后红横幅
+   * 「已退回待重报」与「发起异动/取消异动」双按钮全链不可达（后端 SQL 按
+   * owner_org_id=orgId 可命中，数据在、前端不拉）。</p>
+   *
+   * <p>owner 口径按登录角色分流（与 resolveSelectedCollegeReportScope 创建方口径一致，
+   * 纯函数实现与单测共用 —— collegeTabDistribute.resolveCollegeReturnedChainOrgId）：
+   * 战略部登录取 strategicDeptOrgId（org 35，owner 侧命中）；职能部门登录取当前
+   * 选中职能部门（存量学院行 owner=职能部门，与职能页签既有查询同口径，重复合并
+   * 按 instance_id 去重、零增量）。学院页签的选择变化（selectCollege / 页签激活 /
+   * 页签内部门过滤）与既有刷新链（selectedDepartment watch / 审批抽屉打开 /
+   * 异动提交·重发·取消）都会触发本补拉，保证退回链清单随上下文实时到位。</p>
+   */
+  const loadCollegeReturnedMutationChains = async () => {
+    const ownerOrgId = resolveCollegeReturnedChainOwnerOrgId({
+      isStrategicDeptLogin: isStrategicDeptLogin.value,
+      strategicDeptOrgId: strategicDeptOrgId.value,
+      funcOrgId: resolveDepartmentIdByName(selectedDepartment.value)
+    })
+    if (!ownerOrgId) {
+      return
+    }
+    try {
+      const { mutationApi } = await import('@/features/indicator/api/mutationApi')
+      const response = await mutationApi.returnedChains(ownerOrgId)
+      const items = Array.isArray(response.data) ? response.data : []
+      returnedMutationChains.value = mergeReturnedMutationChains(
+        returnedMutationChains.value,
+        items
+      )
+    } catch (error) {
+      // 失败不清空既有清单（职能口径已加载的链仍在），只记日志
+      logger.warn('[StrategicTaskView] 学院口径加载退回待重报异动链失败:', error)
+    }
+  }
+
   const loadDepartmentMutationWorkflowEntities = async () => {
     try {
       const orgId = resolveDepartmentIdByName(selectedDepartment.value)
@@ -5480,6 +6752,15 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         logger.warn('[StrategicTaskView] 加载退回待重报异动链失败:', returnedError)
         returnedMutationChains.value = []
       }
+
+      // 2026-11-12（C3-D1 根因修复）：学院页签口径的退回链补拉。职能口径查询按
+      // owner/target=职能部门 orgId 命中，战略部直发的学院子指标（owner=35）的
+      // 退回活链查不到 → 学院页签驳回后红横幅/重报双按钮不可达（数据在、前端不拉）。
+      // 这里在每次主清单刷新后按学院 owner 口径补拉并按 instance_id 并入，
+      // 让 selectedDepartment 切换/审批抽屉打开/异动提交/重发/取消等既有刷新链
+      // 全部自动带上学院口径（函数内部 owner 口径见
+      // resolveCollegeReturnedChainOwnerOrgId 注释）。
+      await loadCollegeReturnedMutationChains()
 
       // 2026-10-21：异动本身也是一条审批流程，「审批流程」页签要能显示它走到哪一步。
       // 按实例取流程详情挂到对应条目上（与计划审批同一套 getWorkflowInstanceDetail 接口）。
@@ -5685,6 +6966,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     if (
       departmentMutationPendingApprovals.value.some(
         item => item.entityType === entityType && Number(item.entityId) === id
+      ) ||
+      // 2026-11-14（低危 D2）：学院子指标异动实例（source=战略发展部、target=学院）
+      // 只落在链下学院追回清单——主清单按职能部门 orgId 查询不命中，角标在审态不亮。
+      // 并入链下清单（与 isCollegeMutationApprovalInFlight /
+      // canWithdrawMutationInFlight 的合并口径同款），主清单口径不变。
+      departmentChainMutationPendingApprovals.value.some(
+        item => item.entityType === entityType && Number(item.entityId) === id
       )
     ) {
       return true
@@ -5725,17 +7013,38 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 2026-10-24 用户定案（异动/上报互斥）：同一学院链上「上报审批在途」与「异动审批在途」
   // 二选一——上报在审时异动发起入口锁定；异动在审时上报提交被锁（另一方向同理）。
   // 信号源：当前部门上下文的上报审批摘要（workflowStatus 处于在途态即视为上报在审）。
+  // 2026-11-11（阻断 D-02 跨口径串台）：学院页签必须读**学院子计划自身**的上报审批摘要
+  // （collegeScope 专用存储，随 selectCollege 按学院各自拉取）——共享摘要会被职能部门
+  // 口径的刷新链覆盖，纪委办 FUNC_DEPT 上报在审曾把计算机学院（自身上报已通过）的
+  // 异动入口误锁。职能部门页签仍读共享摘要，反向（学院在审误锁职能部门指标）同源消除：
+  // 职能页签激活时 isCollegePlanContextActive 为 false，永不读学院摘要。
   const isReportApprovalInFlight = computed(() => {
-    const status = String(
-      currentPlanReportSummary.value?.workflowStatus || currentPlanReportSummary.value?.status || ''
-    )
-      .trim()
-      .toUpperCase()
-    return ['PENDING', 'IN_REVIEW', 'SUBMITTED', 'RETURNED'].includes(status)
+    const summary = isCollegePlanContextActive.value
+      ? collegeScopePlanReportSummary.value
+      : currentPlanReportSummary.value
+    return isReportApprovalStatusInFlight(summary?.workflowStatus || summary?.status)
   })
 
   const isMutationApprovalInFlight = computed(
     () => departmentMutationPendingApprovals.value.length > 0
+  )
+
+  // 2026-11-12（C3 观察项 O-3 → 低⑩修复）：学院页签「新增行」在审互斥。
+  // 职能页签口径 = isMutationApprovalInFlight（本部门在审异动清单非空）；学院子指标
+  // 异动实例 source=战略发展部/职能部门、target=学院，按职能部门 orgId 的主清单查不到
+  // （C3：异动提交后学院页签「新增行」仍可点）。对齐职能页签同款判定：主清单 +
+  // 链下学院追回清单合并后，按 targetOrgId = 所选学院组织 id 收口 —— 只锁当前学院的
+  // 在审异动，不把其他学院的串进来。仅消费于学院页签的「新增行」禁用条件，
+  // 职能页签与发起异动互斥锁（isMutationApprovalInFlight 既有口径）不受影响。
+  // 纯函数实现与单测共用（collegeTabDistribute.hasCollegeMutationApprovalInFlight）。
+  const isCollegeMutationApprovalInFlight = computed(() =>
+    hasCollegeMutationApprovalInFlight(
+      [
+        ...departmentMutationPendingApprovals.value,
+        ...departmentChainMutationPendingApprovals.value
+      ],
+      resolveDepartmentIdByName(selectedCollege.value)
+    )
   )
 
   // 2026-10-30（多态撤回·异动分支）：工具栏「撤回」在异动在审时是否按「撤回异动」处理。
@@ -5743,8 +7052,20 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 仅发起人（submitter_name 与当前登录人姓名比对）且未过撤回窗口（当前节点不含
   // 终审/分管校领导）才可撤；后端 cancelInstance 仍会二次校验 requester 与窗口。
   // 一次异动提交的一批实例同一发起人，故在途清单按 every 判定。
+  //
+  // 2026-11-14（P1 配套缺口修复：学院子指标异动的撤回入口）：学院新增行发起的异动
+  // （source=战略发展部、target=学院）只落在链下学院追回清单
+  // （departmentChainMutationPendingApprovals，主清单按职能部门 orgId 查不到）——
+  // 旧口径只读主清单 → 「撤回异动」按钮对这类批次恒置灰（title「当前状态不可操作」），
+  // 发起人没有任何 UI 入口可撤回。改为主清单 + 追回清单**合并判定**（与
+  // isCollegeMutationApprovalInFlight 的合并口径同款），两份清单条目形状一致
+  // （都带 submitterName / currentStepName）。职能页签既有批次（主清单）判定不变。
   const canWithdrawMutationInFlight = computed(() => {
-    if (!isMutationApprovalInFlight.value) {
+    const pendingApprovals = [
+      ...departmentMutationPendingApprovals.value,
+      ...departmentChainMutationPendingApprovals.value
+    ]
+    if (pendingApprovals.length === 0) {
       return false
     }
     const currentUserName = String(
@@ -5753,7 +7074,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     if (!currentUserName) {
       return false
     }
-    return departmentMutationPendingApprovals.value.every(entry => {
+    return pendingApprovals.every(entry => {
       const submitterName = String(entry.submitterName || '').trim()
       if (!submitterName || submitterName !== currentUserName) {
         return false
@@ -5769,8 +7090,28 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 2026-10-31 用户定案修订（退回填报人节点两按钮常驻）：「发起异动」与「取消异动」
   // 并排常驻；发起异动可不修改原样重发（无草稿 = 按上次提交内容重发，见
   // resubmitReturnedMutationBatches），置灰仅保留在审互斥口径（上报在审/异动在审）。
+  // 2026-11-14（B4 用户实测：未下发计划上下文入口露出）：学院页签「新增行 / 发起异动 /
+  // 导入」按当前解析出的学院子计划相位 gating——异动的前提是计划已下发（DISTRIBUTED）。
+  // 学院 × 归口部门组合解析出的子计划未下发（effectivePlanStatus 非 DISTRIBUTED，
+  // 含「未下发 / 草稿 / 审批中」，含子计划解析不到 collegeSubPlanUnresolved——该组合
+  // 本来就没有已下发计划）→ 写入口一律置灰 + tooltip。此前只有后端守卫兜底
+  // （assertPlanDistributedForIndicator / 无法确定目标学院 400），界面上「没下发的
+  // 计划也能新增/发起」全部露出。职能页签不 gating（行为零变化）。
+  // 判定数据源与页头「计划状态」签同源（effectivePlanStatus ← effectivePlanContext
+  // ← resolveSelectedCollegeReportScope），gate 与显示永不打架。
+  const collegeTabPlanNotDistributed = computed(() => {
+    if (!isCollegePlanContextActive.value) {
+      return false
+    }
+    return effectivePlanStatus.value !== 'DISTRIBUTED'
+  })
+
   const mutationSubmitBlocked = computed(
-    () => isReportApprovalInFlight.value || isMutationApprovalInFlight.value
+    () =>
+      isReportApprovalInFlight.value ||
+      isMutationApprovalInFlight.value ||
+      // 2026-11-14（B4）：学院页签子计划未下发时不允许发起异动（仅学院页签生效）
+      (isCollegePlanContextActive.value && collegeTabPlanNotDistributed.value)
   )
   const mutationSubmitBlockedReason = computed(() => {
     if (isReportApprovalInFlight.value) {
@@ -5778,6 +7119,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
     if (isMutationApprovalInFlight.value) {
       return '当前部门存在进行中的异动审批，暂不能重复发起；请先在审批中心处理完'
+    }
+    if (isCollegePlanContextActive.value && collegeTabPlanNotDistributed.value) {
+      return '该学院×部门的计划未下发，暂不能发起异动：异动的前提是计划已下发（DISTRIBUTED）'
     }
     return ''
   })
@@ -5827,13 +7171,15 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   })
 
   // 2026-10-28 迭代计划 M6：草稿丢失可感知——顶部横幅计数 + 离开/刷新前确认。
+  // 2026-11-14（新增行不落库）：学院页签内存草稿行一并计入。
   const mutationDraftCount = computed(
     () =>
       mutationDrafts.value.filter(
         draft => draft.deleteRequested || Object.keys(draft.changes || {}).length > 0
       ).length +
       taskNameDrafts.value.length +
-      pendingCreatedIndicatorIds.value.length
+      pendingCreatedIndicatorIds.value.length +
+      pendingCreateDrafts.value.length
   )
 
   const currentPlanFillApprovalSummary = ref<{
@@ -5853,8 +7199,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   let fillApprovalSummaryRequestId = 0
 
   async function refreshCurrentPlanFillApprovalSummary(): Promise<void> {
-    // 只在学院页签聚合：职能部门页签没有逐指标状态列，不存在该矛盾，保持原有计划级语义
-    const rows = collegeFillStatusScope.value ? collegeTableIndicators.value : []
+    // 只在学院页签聚合：职能部门页签没有逐指标状态列，不存在该矛盾，保持原有计划级语义。
+    // 2026-11-14（新增行不落库）：内存草稿行没有数据库 id（draft-*），不能进聚合——
+    // 它们还没有落库、不该出现在上报完成度/「有未填报」口径里，也会对临时 id 发起
+    // 无意义的后端查询
+    const rows = collegeFillStatusScope.value
+      ? collegeTableIndicators.value.filter(row => !isPendingCreateDraftRow(row))
+      : []
     const requestId = ++fillApprovalSummaryRequestId
 
     if (rows.length === 0) {
@@ -5926,46 +7277,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     { immediate: true }
   )
 
-  // 二级学院 tab：核心指标列合并单元格元数据（同属一个核心指标的行首行 rowspan=组内行数）
-  const collegeSpanMetaMap = computed(() => {
-    const meta = new Map<number, { rowspan: number; colspan: number }>()
-    const rows = collegeTableIndicators.value
-    let index = 0
-    while (index < rows.length) {
-      const head = rows[index]
-      const parentKey = String(head?.parentIndicatorId ?? head?.id ?? '')
-      let end = index + 1
-      while (end < rows.length) {
-        const candidate = rows[end]
-        if (!candidate || String(candidate.parentIndicatorId ?? candidate.id ?? '') !== parentKey) {
-          break
-        }
-        end += 1
-      }
-      meta.set(index, { rowspan: end - index, colspan: 1 })
-      for (let i = index + 1; i < end; i += 1) {
-        meta.set(i, { rowspan: 0, colspan: 0 })
-      }
-      index = end
-    }
-    return meta
-  })
-
-  const collegeSpanMethod = ({
-    rowIndex,
-    columnIndex
-  }: {
-    row: Record<string, unknown>
-    column: unknown
-    rowIndex: number
-    columnIndex: number
-  }) => {
-    // 仅核心指标列（第 0 列）合并
-    if (columnIndex === 0) {
-      return collegeSpanMetaMap.value.get(rowIndex) ?? { rowspan: 1, colspan: 1 }
-    }
-    return { rowspan: 1, colspan: 1 }
-  }
+  // 2026-11-08（单层下发）：学院指标不再有父级核心指标，学院表格的「核心指标」列与其
+  // 合并单元格（collegeSpanMetaMap / collegeSpanMethod，按 parentIndicatorId 分组）一并移除。
+  // 每行自成一条学院指标，表格按行平铺即可，不再需要 span-method。
 
   const _selectTask = (index: number) => {
     currentTaskIndex.value = index
@@ -6021,7 +7335,16 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const reportHistoryOpen = ref<string[]>([])
 
   // 专门用于审批抽屉的指标列表（显示当前选中部门的所有指标，一个部门的所有指标状态应该统一）
+  // 2026-11-13 用户反馈修复（学院页签审批详情卡降级「指标 #ID / -- / --」）：
+  // 学院页签两选齐时，上报快照明细挂的是**学院子指标**（二级），旧过滤
+  // `isStrategic===true` 只留核心指标 + responsibleDept=选中职能部门（子指标是
+  // 计算机学院）——两条全不命中 → props.indicators 无子指标行，快照按 ID 匹配
+  // 全失败。学院上下文改传 collegeTableIndicators（两选收口的行集，含子指标）；
+  // 职能页签口径原样保留（零回归）。
   const approvalIndicators = computed(() => {
+    if (isCollegePlanContextActive.value) {
+      return collegeTableIndicators.value
+    }
     if (!selectedDepartment.value) {
       return []
     }
@@ -6042,6 +7365,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   function resetApprovalWorkflowStateCache(): void {
     preloadedPlanWorkflowDetail.value = null
     currentPlanReportSummary.value = null
+    // 2026-11-11（D-02）：部门/年度切换会让 collegeScope 解析目标失效，
+    // 学院专用摘要一并清空（selectCollege / 切学院页签会带 force 重拉）。
+    collegeScopePlanReportSummary.value = null
     latestPlanReportSummary.value = null
     currentPlanReportSummaryPromise = null
     currentPlanReportSummaryKey = ''
@@ -6116,6 +7442,29 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   async function preloadApprovalWorkflowDetail(): Promise<void> {
     preloadedPlanWorkflowDetail.value = null
+
+    // 2026-11-13（学院口径锚定）：学院页签两选齐时，抽屉详情直接按子计划查 flow6 实例，
+    // 不走职能页签的 report 优先/职能部门计划分支。
+    if (isCollegePlanContextActive.value) {
+      const collegePlanId = selectedCollegeDispatchPlanId.value
+      if (Number.isFinite(collegePlanId) && Number(collegePlanId) > 0) {
+        try {
+          const response = await getWorkflowInstanceDetailByBusiness(
+            'PLAN',
+            Number(collegePlanId),
+            {
+              force: true
+            }
+          )
+          if (response.success && response.data) {
+            preloadedPlanWorkflowDetail.value = response.data
+          }
+        } catch (error) {
+          logger.warn('[StrategicTaskView] 预加载学院子计划审批详情失败:', { collegePlanId, error })
+        }
+      }
+      return
+    }
 
     const reportId = Number(
       hasApprovalWorkflowReportBinding.value
@@ -6333,6 +7682,22 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     )
     departmentPlanFamilyWorkflowEntities.value = entities
   }
+
+  // 2026-11-13（学院口径上报审批可见）：抽屉 related 实体合并——学院页签两选齐且
+  // collegeScope 摘要命中报告时，在该部门计划族实体**前部**拼接「学院×部门」报告实体
+  // （上报 flow4 历史）；职能页签原样只传部门计划族（零回归）。historyTargets 由
+  // useApprovalProgressState 的 related 循环追加并按 type:id 去重，顺序无语义、
+  // 报告实体放前部便于排查。声明在 departmentPlanFamilyWorkflowEntities 之后（依赖顺序）。
+  const drawerRelatedWorkflowEntities = computed<
+    Array<{ entityType: 'PLAN' | 'PLAN_REPORT'; entityId: number }>
+  >(() => {
+    const family = departmentPlanFamilyWorkflowEntities.value
+    const reportEntity = collegeScopeReportWorkflowEntity.value
+    if (!isCollegePlanContextActive.value || !reportEntity) {
+      return family
+    }
+    return [reportEntity, ...family]
+  })
 
   // 审批后刷新
   const handleApprovalRefresh = async () => {
@@ -6982,8 +8347,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const handleWithdrawMutationBatch = async () => {
     // 按批次归组（与取消异动的 groupReturnedMutationChains 同款口径）：
     // 每批传任一实例 ID，后端按 batch_id 整批退回并校验发起人
+    // 2026-11-14（学院子指标异动撤回入口修复）：与 canWithdrawMutationInFlight 同款
+    // 合并口径——学院新增行发起的异动只落在链下学院追回清单，不合并则这里
+    // batchGroups 恒为空，点击只弹「未找到进行中的异动审批实例」。
     const batchGroups = new Map<string, { instanceId: number; count: number }>()
-    for (const entry of departmentMutationPendingApprovals.value) {
+    for (const entry of [
+      ...departmentMutationPendingApprovals.value,
+      ...departmentChainMutationPendingApprovals.value
+    ]) {
       const instanceId = Number(entry.instanceId)
       if (!Number.isFinite(instanceId) || instanceId <= 0) {
         continue
@@ -7179,6 +8550,15 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   // 删除单个指标
   const handleDeleteIndicator = (row: StrategicIndicator) => {
+    // 2026-11-14（新增行不落库）：内存草稿行（学院页签新增、尚未落库）——
+    // 行内删除 = 直接从内存移除，不进确认框后的任何后端删除路径
+    // （草稿行没有数据库 id，store.deleteIndicator 会打到不存在的实体上）。
+    if (isPendingCreateDraftRow(row)) {
+      removePendingCreateDraftRow(row)
+      ElMessage.info('已撤销本次新增的草稿行')
+      return
+    }
+
     if (!canDeleteIndicator(row)) {
       ElMessage.warning(
         hasDistributedIndicators.value
@@ -7402,6 +8782,15 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     _toggleViewMode,
     addNewRow,
     addRowFormRef,
+    // 2026-11-13（学院口径锚定）：审批中心抽屉的学院口径绑定（学院页签两选齐时
+    // 换锚 FUNC_TO_COLLEGE 子计划，职能页签回落 currentPlan / 现行 primary 解析）
+    approvalDrawerPlan,
+    approvalDrawerPlanName,
+    approvalDrawerDepartmentName,
+    approvalDrawerWorkflowEntityType,
+    approvalDrawerWorkflowEntityId,
+    approvalDrawerSecondaryWorkflowEntityType,
+    approvalDrawerSecondaryWorkflowEntityId,
     approvalEntryButtonText,
     approvalEntryButtonTextWithMutation,
     approvalEntryCanHandle,
@@ -7431,6 +8820,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     canDistribute,
     canEdit,
     canEditIndicators,
+    canWriteStrategicTask,
+    isStrategicDeptLogin,
+    // 2026-11-05（issue #96 · 1.3）：学院下发操作区需要下发方（战略发展部）的 id 与名称
+    strategicDeptOrgId,
+    strategicDeptName,
     canWithdrawPlan,
     cancelAdd,
     cancelEdit,
@@ -7503,14 +8897,35 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     selectedCollege,
     selectCollege,
     collegeTableIndicators,
+    // 2026-11-09（用户要求）：学院页签右侧的「职能部门」下拉筛选器
+    collegeDispatchDeptFilter,
+    collegeDispatchDeptEffective,
+    collegeDeptDispatchOptions,
+    collegeDeptDropdownItems,
+    collegeDeptCurrent,
+    // 2026-11-09（页签分流）：二级学院页签的「基础性权重合计」（学院口径，分母 100）
+    collegeBasicWeightTotal,
     collegeDepartmentsScoped,
     indicatorById,
-    collegeSpanMethod,
     collegeFillStatusScope,
     refreshCurrentPlanFillApprovalSummary,
     isReportApprovalInFlight,
     isMutationApprovalInFlight,
+    // 2026-11-12（C3-D1）：学院页签退回链补拉 + 学院口径在审异动判定（新增行互斥）
+    loadCollegeReturnedMutationChains,
+    isCollegeMutationApprovalInFlight,
+    // 2026-11-11（学院页签按钮体系修正）：学院页签按钮按子计划相位分流所需——
+    // 生效计划上下文（学院页签 → FUNC_TO_COLLEGE 子计划）与异动在审可撤判定/执行体
+    effectivePlanContext,
+    canWithdrawMutationInFlight,
+    handleWithdrawMutationBatch,
     mutationSubmitBlocked,
+    // 2026-11-14（B4）：学院页签子计划未下发时锁写入口（新增行/导入）——发起异动走
+    // mutationSubmitBlocked 合并判定，视图侧不再单独消费本值也可
+    collegeTabPlanNotDistributed,
+    // 2026-11-14（D1 首次下发死锁解锁）：「尚无计划」组合识别（子计划未解析）透传——
+    // 视图的发起下发审批按钮 v-if 兜底（fallback 到战略部 org）与导入入口 gating 消费
+    collegeSubPlanUnresolved,
     mutationSubmitBlockedReason,
     mutationDraftCount,
     reportMonth,
@@ -7551,6 +8966,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     // （角标走模型闭包内的 isEntityMutationInFlight 不受影响，造成「角标亮、卡片无」）。
     departmentMutationPendingApprovals,
     departmentPlanFamilyWorkflowEntities,
+    // 2026-11-13（学院口径上报审批可见）：「学院×部门」报告实体 + 抽屉 related 合并
+    // （学院页签 = 报告实体在前、部门计划族在后；职能页签 = 原部门计划族，零回归）
+    collegeScopeReportWorkflowEntity,
+    drawerRelatedWorkflowEntities,
     loadDepartmentPlanFamilyWorkflowEntities,
     handleApprovalStatusPopoverShow,
     handleApproveCurrentIndicatorWorkflow,
@@ -7565,6 +8984,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     mutationDrafts,
     taskNameDrafts,
     pendingCreatedIndicatorIds,
+    // 2026-11-14（新增行不落库）：内存草稿行识别/集合透传（视图按行屏蔽异动历史徽章等
+    // 需要真实数据库 id 的渲染，避免对 draft-* 临时 id 发起无意义请求）
+    pendingCreateDrafts,
+    isPendingCreateDraftRow,
     submitMutationDraft,
     cancelMutationDraft,
     // 2026-10-30（取消闭环）：取消异动按退回链状态分流 + 被驳回可感知提示
@@ -7618,6 +9041,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     newRow,
     collegeAddMode,
     collegeParentIndicatorOptions,
+    // 2026-11-13（对齐 main 原版）：学院新增行「关联指标」下拉按任务分组的分组数据源
+    collegeParentIndicatorGroups,
     normalizeDepartmentName,
     normalizeEditableText,
     normalizePreviewCandidateDisplayName,
@@ -7636,6 +9061,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     planStore,
     planUiPhase,
     preloadApprovalWorkflowDetail,
+    // 2026-11-05（issue #96 · 1.3）：学院下发操作区需要「本学院的下发计划 id」；
+    // 2026-11-13（方案甲恢复）：导入模板预填改用 collegeImportParentIndicators
+    // （右侧下拉所选部门已接收的已下发核心指标 seeds，id 升序）。
+    selectedCollegeDispatchPlanId,
+    collegeImportParentIndicators,
     preloadedPlanWorkflowDetail,
     preservePrefilledTaskBindingOnce,
     primaryApprovalWorkflowEntityId,

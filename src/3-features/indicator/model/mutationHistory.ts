@@ -4,8 +4,8 @@ import { mutationApi, type MutationHistoryItem } from '@/features/indicator/api/
 /**
  * 异动历史共享缓存（2026-10-30 用户定案：徽标按被改字段落位）。
  *
- * 同一指标在表格里同时出现在「核心指标 / 权重 / 下发备注」三列，每列各挂一个
- * 徽标。若每个徽标各自请求历史，一行会发三次请求；这里按实体 id 缓存首次结果，
+ * 同一指标在表格里同时出现在「核心指标 / 权重」两列，每列各挂一个
+ * 徽标。若每个徽标各自请求历史，一行会发多次请求；这里按实体 id 缓存首次结果，
  * 后续徽标直接复用，跨组件共享同一份数据。
  */
 
@@ -26,8 +26,6 @@ export type MutationHistoryScope = 'indicator' | 'task'
 export const MUTATION_FIELDS_INDICATOR_NAME = ['indicator_desc', '__delete__']
 /** 徽标要统计的字段：权重 */
 export const MUTATION_FIELDS_WEIGHT = ['weight_percent']
-/** 徽标要统计的字段：下发备注 */
-export const MUTATION_FIELDS_REMARK = ['remark']
 /** 徽标要统计的字段：战略任务名 */
 export const MUTATION_FIELDS_TASK_NAME = ['name']
 
@@ -54,6 +52,14 @@ export async function loadMutationHistory(
 ): Promise<void> {
   const key = cacheKey(scope, id)
   if (cache.has(key)) {
+    return
+  }
+  // 2026-11-14（新增行不落库）：前端内存草稿行的 draft-* 临时 id 没有后端实体、
+  // 也没有任何异动历史，直接按空历史缓存，不发请求（避免对临时 id 打 404 噪音）。
+  // 真实实体 id 恒为正数（后端 SEQUENCE 主键）。
+  const numericId = Number(id)
+  if (!Number.isFinite(numericId) || numericId <= 0) {
+    cache.set(key, [])
     return
   }
   const inflight = pending.get(key)

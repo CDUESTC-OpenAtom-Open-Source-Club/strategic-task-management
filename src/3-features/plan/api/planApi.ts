@@ -37,6 +37,8 @@ import {
   getWorkflowInstanceDetail,
   getWorkflowInstanceDetailByBusiness
 } from '@/features/workflow/api'
+// 2026-11-13（学院上报按归口部门分批提交）：报告-归口兼容匹配（旧后端无字段时退回聚合）
+import { reportMatchesFunctionalOrg } from '@/features/indicator/lib/functionalDeptScope'
 import { useAuthStore } from '@/features/auth/model/store'
 
 /**
@@ -329,6 +331,12 @@ function convertBackendPlanToPlan(
     ...('cycleId' in raw ? { cycleId: raw.cycleId } : {}),
     ...(inferredYear != null ? { year: inferredYear } : {}),
     ...('planLevel' in raw ? { planLevel: raw.planLevel } : {}),
+    // 2026-11-13：归口职能部门（后端 PlanResponse.functionalOrgId，V104 已回填存量）。
+    // FUNC_TO_COLLEGE 计划 created_by 恒为战略发展部，「归口部门」只能从本字段读；
+    // 分发页/任务页的学院计划锚定与部门状态徽标依赖它，缺失时回退 createdByOrgId 口径。
+    ...(raw.functionalOrgId != null
+      ? { functionalOrgId: Number(raw.functionalOrgId) || undefined }
+      : {}),
     // 2026-10-27：下发月（月度填报的起算月）——白名单必须显式放行，
     // 否则后端返回的 dispatchMonth 会在字段重建时丢失，导致前端仍从 1 月起算。
     ...(typeof raw.dispatchMonth === 'string' && /^\d{6}$/.test(raw.dispatchMonth.trim())
@@ -726,6 +734,12 @@ interface PlanReportSimpleResponse {
   reportMonth?: string
   reportOrgId?: number
   reportOrgType?: 'FUNC_DEPT' | 'COLLEGE'
+  /**
+   * 2026-11-13（学院上报按归口部门分批提交）：报告归口职能部门 ID（后端
+   * PlanReportSimpleResponse.functionalOrgId，可空）。历史遗留报告为 null；
+   * 旧后端响应无此字段（undefined）——读侧兼容见 reportMatchesFunctionalOrg。
+   */
+  functionalOrgId?: number | null
   auditInstanceId?: number | null
   title?: string | null
   content?: string | null
@@ -773,6 +787,10 @@ interface IndicatorReportContext {
   reportOrgId: number
   reportOrgType: 'FUNC_DEPT' | 'COLLEGE'
   reportMonth: string
+  /** 2026-11-12（D-4）：标准上报名用——提交方（上报组织）名称 */
+  sourceOrgName?: string
+  /** 2026-11-12（D-4）：标准上报名用——审批方（上级组织）名称 */
+  targetOrgName?: string
   indicatorName: string
 }
 
@@ -916,6 +934,30 @@ function getCurrentReportMonth(): string {
   return formatLocalMonthTag()
 }
 
+/**
+ * 2026-11-12（D-4）：填报保存的 report.title 改用标准上报名——
+ * 「{year}年度 {month}月上报（{提交方} -> {审批方}）」，与后端
+ * plan_report.planName（如「2026年度 11月上报（计算机学院 -> 战略发展部）」）同口径，
+ * 不再把单条指标名写进 title（后端首条上报通知会把指标描述当业务名群发）。
+ * 组织名缺一侧只写已有的一侧，全缺时不带组织后缀，绝不同退到指标名。
+ */
+function buildIndicatorReportTitle(reportMonth: string, context: IndicatorReportContext): string {
+  const match = /^(\d{4})-?(\d{2})$/.exec(String(reportMonth || '').trim())
+  const year = match?.[1] ?? ''
+  const month = match ? String(Number(match[2])) : ''
+  const base = year && month ? `${year}年度 ${month}月上报` : '指标月度上报'
+
+  const sourceOrgName = String(context.sourceOrgName ?? '').trim()
+  const targetOrgName = String(context.targetOrgName ?? '').trim()
+  const route =
+    sourceOrgName && targetOrgName
+      ? `（${sourceOrgName} -> ${targetOrgName}）`
+      : sourceOrgName || targetOrgName
+        ? `（${sourceOrgName || targetOrgName}）`
+        : ''
+  return `${base}${route}`
+}
+
 function getNormalizedReportStatus(status?: string | null): string {
   return String(status || '')
     .trim()
@@ -939,7 +981,13 @@ function isLockedPlanReportStatus(status?: string | null): boolean {
 
 async function resolveIndicatorFillSaveContext(
   indicatorId: number | string,
-  targetMonth?: string
+  targetMonth?: string,
+  /**
+   * 2026-11-13（学院上报按归口部门分批提交）：可选归口部门 ID。
+   * 选中部门填报时传入——草稿查找/「审批中禁保存」判定只看该部门的报告，
+   * 新建草稿也会带上归口（同月同部门复用同一草稿，跨部门互不串报告）。
+   */
+  functionalOrgId?: number | string | null
 ): Promise<{
   context: IndicatorReportContext
   currentMonthReports: PlanReportSimpleResponse[]
@@ -947,14 +995,16 @@ async function resolveIndicatorFillSaveContext(
   editableExistingReport?: PlanReportSimpleResponse
 }> {
   const context = await resolveIndicatorReportContext(indicatorId)
-  const reports = await loadPlanReportsByPlanId(context.planId)
+  const reports = await loadPlanReportsByPlanId(context.planId, functionalOrgId)
   // 「审批中不可重复保存」检查按目标填报月判断（显式传月优先，当前月仅兜底），
   // 否则当前月报告进入审批后会连带锁死下一个月的填报（月度上报链断裂）。
   const effectiveMonth = String(targetMonth || '').trim() || context.reportMonth
   const currentMonthReports = reports
     .filter(
       report =>
-        Number(report.reportOrgId) === context.reportOrgId && report.reportMonth === effectiveMonth
+        Number(report.reportOrgId) === context.reportOrgId &&
+        report.reportMonth === effectiveMonth &&
+        reportMatchesFunctionalOrg(report, functionalOrgId)
     )
     // 轮次时间排序（2026-10-19）：与 resolveCurrentMonthPlanReportSummaries 同口径，
     // 防旧轮次因 updatedAt 被刷新而误触发「审批中禁止保存」锁定。
@@ -1162,6 +1212,19 @@ async function resolveIndicatorReportContext(
     reportOrgId,
     reportOrgType: mapRoleToReportOrgType(inferredRole, targetDepartmentName),
     reportMonth: getCurrentReportMonth(),
+    // 2026-11-12（D-4）：标准上报名组织名——提交方（source）=填报组织
+    // （指标接收方，targetDepartmentName），审批方（target）=指标归属方
+    // （ownerOrg：优先 ownerOrgName 字段，回退 orgStore 按 id 反查，
+    // orgStore 已在上方加载，反查成本为零）
+    sourceOrgName: String(targetDepartmentName || '').trim(),
+    targetOrgName:
+      String(indicatorData.ownerOrgName ?? '').trim() ||
+      (Number.isFinite(sourceOrgId)
+        ? String(
+            orgStore.departments.find(department => Number(department.id) === sourceOrgId)?.name ??
+              ''
+          ).trim()
+        : ''),
     indicatorName: String(
       indicatorData.indicatorName ?? indicatorData.name ?? indicatorData.indicatorDesc ?? '指标填报'
     )
@@ -1187,7 +1250,17 @@ function invalidatePlanReportsCache(planId?: number | string): void {
   planReportsByPlanIdInFlight.clear()
 }
 
-async function loadPlanReportsByPlanId(planId: number): Promise<PlanReportSimpleResponse[]> {
+/**
+ * 加载计划下报告列表。
+ *
+ * 2026-11-13（学院上报按归口部门分批提交）：可选 functionalOrgId 透传后端新契约
+ * `GET /reports/plan/{planId}?functionalOrgId=`（传了=只看该部门的报告；不传=聚合）。
+ * 缓存键按 functionalOrgId 区分（选中部门与聚合视图互不污染），TTL/在途去重行为不变。
+ */
+async function loadPlanReportsByPlanId(
+  planId: number,
+  functionalOrgId?: number | string | null
+): Promise<PlanReportSimpleResponse[]> {
   const normalizedPlanId = Number(planId)
   if (!Number.isFinite(normalizedPlanId) || normalizedPlanId <= 0) {
     return []
@@ -1195,7 +1268,12 @@ async function loadPlanReportsByPlanId(planId: number): Promise<PlanReportSimple
 
   cleanupExpiredPlanReportCacheEntries()
 
-  const cacheKey = String(normalizedPlanId)
+  const normalizedFunctionalOrgId = Number(functionalOrgId ?? NaN)
+  const hasFunctionalOrgFilter =
+    Number.isFinite(normalizedFunctionalOrgId) && normalizedFunctionalOrgId > 0
+  const cacheKey = hasFunctionalOrgFilter
+    ? `${normalizedPlanId}:fno:${normalizedFunctionalOrgId}`
+    : String(normalizedPlanId)
   const cachedAt = planReportsByPlanIdCacheTime.get(cacheKey) ?? 0
   const cachedReports = planReportsByPlanIdCache.get(cacheKey)
   const now = Date.now()
@@ -1207,7 +1285,9 @@ async function loadPlanReportsByPlanId(planId: number): Promise<PlanReportSimple
 
   const requestPromise = (async () => {
     const response = await apiClient.get<ApiResponse<PlanReportSimpleResponse[]>>(
-      `/reports/plan/${normalizedPlanId}`
+      hasFunctionalOrgFilter
+        ? `/reports/plan/${normalizedPlanId}?functionalOrgId=${normalizedFunctionalOrgId}`
+        : `/reports/plan/${normalizedPlanId}`
     )
     if (!hasApiData(response)) {
       throw new Error(
@@ -1298,7 +1378,11 @@ function resolveCurrentMonthPlanReportSummaries(
   reports: PlanReportSimpleResponse[],
   reportOrgId: number,
   reportMonth: string,
-  options: { fallbackToLatestMonth?: boolean } = {}
+  options: {
+    fallbackToLatestMonth?: boolean
+    /** 2026-11-13：可选归口部门过滤（与后端 functionalOrgId 查询参数同语义，读侧兜底） */
+    functionalOrgId?: number | string | null
+  } = {}
 ): {
   currentReport: PlanReportSimpleResponse | null
   latestReport: PlanReportSimpleResponse | null
@@ -1317,13 +1401,19 @@ function resolveCurrentMonthPlanReportSummaries(
   let currentMonthReports = reports
     .filter(
       report =>
-        Number(report.reportOrgId) === Number(reportOrgId) && report.reportMonth === reportMonth
+        Number(report.reportOrgId) === Number(reportOrgId) &&
+        report.reportMonth === reportMonth &&
+        reportMatchesFunctionalOrg(report, options.functionalOrgId)
     )
     .sort(byEditableFirst)
 
   if (currentMonthReports.length === 0 && options.fallbackToLatestMonth) {
     const latestMonth = reports
-      .filter(report => Number(report.reportOrgId) === Number(reportOrgId))
+      .filter(
+        report =>
+          Number(report.reportOrgId) === Number(reportOrgId) &&
+          reportMatchesFunctionalOrg(report, options.functionalOrgId)
+      )
       .map(report => String(report.reportMonth || ''))
       .filter(Boolean)
       .sort()
@@ -2454,7 +2544,8 @@ export const indicatorFillApi = {
 
     const { context, editableExistingReport } = await resolveIndicatorFillSaveContext(
       form.indicator_id,
-      form.reportMonth
+      form.reportMonth,
+      form.functionalOrgId
     )
 
     // 本次填报目标月（单一数据源）：弹窗按「指标级最早未填报月」算出的显式月份优先；
@@ -2504,6 +2595,7 @@ export const indicatorFillApi = {
         return editableExistingReport
       }
 
+      const normalizedFunctionalOrgId = Number(form.functionalOrgId ?? NaN)
       const createResponse = await apiClient.post<ApiResponse<PlanReportSimpleResponse>>(
         '/reports',
         {
@@ -2511,6 +2603,12 @@ export const indicatorFillApi = {
           reportOrgId: context.reportOrgId,
           reportOrgType: context.reportOrgType,
           planId: context.planId,
+          // 2026-11-13（学院上报按归口部门分批提交）：选中部门后开草稿带归口，
+          // 后端按 (plan, report_org, month, functional_org_id) 隔离同月多部门草稿；
+          // 未选部门不传字段（旧行为）。
+          ...(Number.isFinite(normalizedFunctionalOrgId) && normalizedFunctionalOrgId > 0
+            ? { functionalOrgId: normalizedFunctionalOrgId }
+            : {}),
           createdBy: operatorUserId
         }
       )
@@ -2524,7 +2622,10 @@ export const indicatorFillApi = {
     const updateResponse = await apiClient.put<ApiResponse<PlanReportSimpleResponse>>(
       `/reports/${reportDraft.id}`,
       {
-        title: context.indicatorName,
+        // 2026-11-12（D-4）：title 写标准上报名「{year}年度 {month}月上报（提交方 -> 审批方）」，
+        // 不再把单条指标名写进 title（后端首条上报通知会把指标描述当业务名群发）；
+        // 组织名取不到时按 buildIndicatorReportTitle 略写，绝不同退到指标名
+        title: buildIndicatorReportTitle(targetReportMonth, context),
         indicatorId: context.indicatorId,
         content: form.content,
         summary: form.content,
@@ -2681,46 +2782,66 @@ export const indicatorFillApi = {
   async getCurrentMonthPlanReport(
     planId: number | string,
     reportOrgId: number,
-    reportMonth?: string
+    reportMonth?: string,
+    /** 2026-11-13：可选归口部门 ID（选中部门后只看该部门的报告） */
+    functionalOrgId?: number | string | null
   ): Promise<PlanReportSimpleResponse | null> {
-    const reports = await loadPlanReportsByPlanId(Number(planId))
+    const reports = await loadPlanReportsByPlanId(Number(planId), functionalOrgId)
     return resolveCurrentMonthPlanReportSummaries(
       reports,
       reportOrgId,
       reportMonth ?? getCurrentReportMonth(),
-      { fallbackToLatestMonth: reportMonth === undefined }
+      { fallbackToLatestMonth: reportMonth === undefined, functionalOrgId }
     ).currentReport
   },
 
   async getLatestCurrentMonthPlanReport(
     planId: number | string,
     reportOrgId: number,
-    reportMonth?: string
+    reportMonth?: string,
+    /** 2026-11-13：可选归口部门 ID（选中部门后只看该部门的报告） */
+    functionalOrgId?: number | string | null
   ): Promise<PlanReportSimpleResponse | null> {
-    const reports = await loadPlanReportsByPlanId(Number(planId))
+    const reports = await loadPlanReportsByPlanId(Number(planId), functionalOrgId)
     return resolveCurrentMonthPlanReportSummaries(
       reports,
       reportOrgId,
       reportMonth ?? getCurrentReportMonth(),
-      { fallbackToLatestMonth: reportMonth === undefined }
+      { fallbackToLatestMonth: reportMonth === undefined, functionalOrgId }
     ).latestReport
   },
 
   async getCurrentMonthPlanReportSummaries(
     planId: number | string,
     reportOrgId: number,
-    reportMonth?: string
+    reportMonth?: string,
+    /** 2026-11-13：可选归口部门 ID（选中部门后只看该部门的报告） */
+    functionalOrgId?: number | string | null
   ): Promise<{
     currentReport: PlanReportSimpleResponse | null
     latestReport: PlanReportSimpleResponse | null
   }> {
-    const reports = await loadPlanReportsByPlanId(Number(planId))
+    const reports = await loadPlanReportsByPlanId(Number(planId), functionalOrgId)
     return resolveCurrentMonthPlanReportSummaries(
       reports,
       reportOrgId,
       reportMonth ?? getCurrentReportMonth(),
-      { fallbackToLatestMonth: reportMonth === undefined }
+      { fallbackToLatestMonth: reportMonth === undefined, functionalOrgId }
     )
+  },
+
+  /**
+   * 2026-11-13（学院下拉单一状态徽标）：该计划下**全部报告**列表（聚合口径，
+   * 不按 functionalOrgId 过滤）。
+   *
+   * <p>学院页签「职能部门」下拉需要每个部门各自的最新上报状态：对每个部门的
+   * 获胜计划各调一次本方法（{@code GET /reports/plan/{planId}} 全量），前端按
+   * report.functionalOrgId 分组归属（buildCollegeDeptReportStatusByDept）——
+   * 旧共享计划一次拉全即覆盖多部门，避免逐部门发请求。复用
+   * loadPlanReportsByPlanId 的 TTL 缓存与在途去重。</p>
+   */
+  async getPlanReportList(planId: number | string): Promise<PlanReportSimpleResponse[]> {
+    return loadPlanReportsByPlanId(Number(planId))
   },
 
   /**
@@ -2734,12 +2855,17 @@ export const indicatorFillApi = {
    */
   async getReportApprovalSummary(
     planId: number | string,
-    reportOrgId: number
+    reportOrgId: number,
+    /** 2026-11-13：可选归口部门 ID（审批状态章按所选部门的报告判定） */
+    functionalOrgId?: number | string | null
   ): Promise<{ status: string | null; approved: boolean }> {
     try {
-      const reports = await loadPlanReportsByPlanId(Number(planId))
+      const reports = await loadPlanReportsByPlanId(Number(planId), functionalOrgId)
       const orgReports = reports.filter(
-        report => Number(report.reportOrgId) === Number(reportOrgId) && report.isDeleted !== true
+        report =>
+          Number(report.reportOrgId) === Number(reportOrgId) &&
+          report.isDeleted !== true &&
+          reportMatchesFunctionalOrg(report, functionalOrgId)
       )
       if (orgReports.length === 0) {
         return { status: null, approved: false }
@@ -2821,9 +2947,11 @@ export const indicatorFillApi = {
    */
   async getOpenDraftReportMonth(
     planId: number | string,
-    reportOrgId: number
+    reportOrgId: number,
+    /** 2026-11-13：可选归口部门 ID（草稿按部门隔离后，找「该部门」的未提交草稿） */
+    functionalOrgId?: number | string | null
   ): Promise<string | null> {
-    const draft = await this.getOpenDraftReport(planId, reportOrgId)
+    const draft = await this.getOpenDraftReport(planId, reportOrgId, functionalOrgId)
     return draft ? String(draft.reportMonth) : null
   },
 
@@ -2831,18 +2959,22 @@ export const indicatorFillApi = {
    * 获取该组织「未提交草稿报告」完整内容（含 indicatorDetails 明细与自评进度）。
    * 用于填报列表的等级/说明回显（补签月份的草稿不落在当月摘要里）。
    * 无 DRAFT 时返回 null。
+   * 2026-11-13：可选 functionalOrgId——草稿按 (月, 归口部门) 隔离后，
+   * 摘要/一键提交链路必须按所选部门找草稿，避免串到其他部门的草稿。
    */
   async getOpenDraftReport(
     planId: number | string,
-    reportOrgId: number
+    reportOrgId: number,
+    functionalOrgId?: number | string | null
   ): Promise<PlanReportSimpleResponse | null> {
     try {
-      const reports = await loadPlanReportsByPlanId(Number(planId))
+      const reports = await loadPlanReportsByPlanId(Number(planId), functionalOrgId)
       const draft = reports
         .filter(
           report =>
             Number(report.reportOrgId) === Number(reportOrgId) &&
             getNormalizedReportStatus(report.status) === 'DRAFT' &&
+            reportMatchesFunctionalOrg(report, functionalOrgId) &&
             report.reportMonth
         )
         .sort((a, b) => String(a.reportMonth).localeCompare(String(b.reportMonth)))[0]
@@ -2871,13 +3003,19 @@ export const indicatorFillApi = {
 
   async getExistingReportMonths(
     planId: number | string,
-    reportOrgId: number
+    reportOrgId: number,
+    /** 2026-11-13：可选归口部门 ID（已填报月份按部门隔离计数） */
+    functionalOrgId?: number | string | null
   ): Promise<string[] | null> {
     try {
-      const reports = await loadPlanReportsByPlanId(Number(planId))
+      const reports = await loadPlanReportsByPlanId(Number(planId), functionalOrgId)
       const months = new Set<string>()
       reports.forEach(report => {
-        if (Number(report.reportOrgId) !== Number(reportOrgId) || !report.reportMonth) {
+        if (
+          Number(report.reportOrgId) !== Number(reportOrgId) ||
+          !reportMatchesFunctionalOrg(report, functionalOrgId) ||
+          !report.reportMonth
+        ) {
           return
         }
         months.add(String(report.reportMonth))
@@ -2900,14 +3038,20 @@ export const indicatorFillApi = {
   async getExistingReportMonthsForIndicator(
     planId: number | string,
     reportOrgId: number,
-    indicatorId: number | string
+    indicatorId: number | string,
+    /** 2026-11-13：可选归口部门 ID（指标级已填报月份按部门隔离计数） */
+    functionalOrgId?: number | string | null
   ): Promise<string[] | null> {
     try {
-      const reports = await loadPlanReportsByPlanId(Number(planId))
+      const reports = await loadPlanReportsByPlanId(Number(planId), functionalOrgId)
       const numericIndicatorId = Number(indicatorId)
       const months = new Set<string>()
       reports.forEach(report => {
-        if (Number(report.reportOrgId) !== Number(reportOrgId) || !report.reportMonth) {
+        if (
+          Number(report.reportOrgId) !== Number(reportOrgId) ||
+          !reportMatchesFunctionalOrg(report, functionalOrgId) ||
+          !report.reportMonth
+        ) {
           return
         }
         const hasIndicatorRecord = (report.indicatorDetails || []).some(
@@ -2930,10 +3074,19 @@ export const indicatorFillApi = {
     reportMonth: string = getCurrentReportMonth(),
     // 2026-10-31（P4 重报说明透传）：一键提交弹窗强制收集的提交备注/重报说明
     // 随本参数透传给后端；空说明不传字段，保持原有行为。
-    comment?: string
+    comment?: string,
+    // 2026-11-13（学院上报按归口部门分批提交）：可选归口部门 ID——
+    // 摘要定位/草稿查找只看该部门的报告；提交 API 本身 reportId 锚定，
+    // 权威归口由后端按报告明细指标反查落列（前端保证上下文报告只含该部门指标）。
+    functionalOrgId?: number | string | null
   ): Promise<PlanReportSimpleResponse> {
     invalidatePlanReportsCache(planId)
-    const currentReport = await this.getCurrentMonthPlanReport(planId, reportOrgId, reportMonth)
+    const currentReport = await this.getCurrentMonthPlanReport(
+      planId,
+      reportOrgId,
+      reportMonth,
+      functionalOrgId
+    )
     if (!currentReport?.id) {
       throw new Error('当前计划下还没有可提交的上报草稿，请先完成指标填报')
     }
@@ -3047,10 +3200,17 @@ export const indicatorFillApi = {
   async withdrawCurrentMonthPlanReport(
     planId: number | string,
     reportOrgId: number,
-    reportMonth: string = getCurrentReportMonth()
+    reportMonth: string = getCurrentReportMonth(),
+    /** 2026-11-13：可选归口部门 ID（撤回的是所选部门的报告） */
+    functionalOrgId?: number | string | null
   ): Promise<PlanReportSimpleResponse> {
     invalidatePlanReportsCache(planId)
-    const currentReport = await this.getCurrentMonthPlanReport(planId, reportOrgId, reportMonth)
+    const currentReport = await this.getCurrentMonthPlanReport(
+      planId,
+      reportOrgId,
+      reportMonth,
+      functionalOrgId
+    )
     if (!currentReport?.id) {
       throw new Error('当前没有可撤回的上报记录')
     }

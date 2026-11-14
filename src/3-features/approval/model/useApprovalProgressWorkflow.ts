@@ -6,7 +6,10 @@ import { decideTask } from '@/features/workflow/api/mutations'
 import { indicatorFillApi } from '@/features/plan/api/planApi'
 import { tryGetUserById } from '@/features/user/api/query'
 import { APPROVAL_STATE_REFRESH_EVENT, notifyApprovalStateRefresh } from '@/features/approval/lib'
-import { buildPlanReferenceLabel } from '@/features/approval/lib/approval-utils'
+import {
+  buildPlanReferenceLabel,
+  resolvePlanInstanceReferenceLabel
+} from '@/features/approval/lib/approval-utils'
 // 2026-10-31（P-04）：「未完成审核」拦截通知抽成共享 lib，与审批中心宿主
 // useApprovalProgressDrawer 共用同一出口（本文件只保留宿主上下文装配）
 import { showUnfinishedAppraisalBlockNotice as showSharedUnfinishedAppraisalBlockNotice } from '@/features/approval/lib/unfinishedAppraisalBlockNotice'
@@ -82,22 +85,28 @@ export function useApprovalProgressWorkflow({
   // 「{年份}年度 计划（{source} -> {target}）」指代计划，不透传 props.plan?.name
   // ——「Plan 404457」式占位计划名不再亮给用户（线上复测观察项 3）。
   // 与 useApprovalProgressState / useApprovalProgressDrawer 同口径。
-  // 2026-10-31（P-09 方向铁律 + 年份兜底）：传 flowCode 让上报链在 lib 内部
-  // 按「提交方 -> 接收方」（target -> source）展示；planRecord 无年份时
-  // 依次兜底 cycleId → 实例详情上的周期字段（后端可能附带未入 type 的字段）。
+  // 2026-11-12（D-3 统一口径 + 年份兜底）：后端已按上报方向返回 source/target，
+  // 直接 source -> target 展示；planRecord 无年份时依次兜底 cycleId →
+  // 实例详情上的周期字段（后端可能附带未入 type 的字段）。
+  // 2026-11-12（弹窗用实例业务名）：业务名优先——实例 planName
+  // （plan_report.planName，如「2026年度 11月上报（计算机学院 -> 战略发展部）」）
+  // → props.planName；占位名（「Plan 404457」/裸数字）或缺失时才回退拼参考标签。
   function resolvePlanReferenceLabel(): string {
     const planRecord = props.plan as
       (Plan & { year?: number | string; cycleId?: number | string }) | null | undefined
     const detail = state.planWorkflowDetail.value
-    return buildPlanReferenceLabel({
-      year:
-        planRecord?.year ??
-        timeContext.resolveCycleYear(planRecord?.cycleId) ??
-        timeContext.resolveCycleYear((detail as { cycleId?: unknown } | null)?.cycleId),
-      sourceOrgName: detail?.sourceOrgName || planRecord?.createdByOrgName,
-      targetOrgName: detail?.targetOrgName || planRecord?.targetOrgName || planRecord?.orgName,
-      flowCode: detail?.flowCode,
-      fallback: '当前计划'
+    return resolvePlanInstanceReferenceLabel({
+      instancePlanName: detail?.planName,
+      fallbackPlanName: props.planName,
+      referenceLabel: buildPlanReferenceLabel({
+        year:
+          planRecord?.year ??
+          timeContext.resolveCycleYear(planRecord?.cycleId) ??
+          timeContext.resolveCycleYear((detail as { cycleId?: unknown } | null)?.cycleId),
+        sourceOrgName: detail?.sourceOrgName || planRecord?.createdByOrgName,
+        targetOrgName: detail?.targetOrgName || planRecord?.targetOrgName || planRecord?.orgName,
+        fallback: '当前计划'
+      })
     })
   }
 
@@ -592,7 +601,7 @@ export function useApprovalProgressWorkflow({
     await Promise.all([...userIds].map(userId => ensureWorkflowUserAvatarLoaded(userId)))
   }
 
-  async function loadPlanWorkflowHistoryCards() {
+  async function loadPlanWorkflowHistoryCards(options: { force?: boolean } = {}) {
     if (!props.showPlanApprovals || !props.plan) {
       state.planWorkflowHistoryCards.value = []
       return
@@ -606,7 +615,9 @@ export function useApprovalProgressWorkflow({
     try {
       const results = await Promise.all(
         state.historyTargets.value.map(target =>
-          getWorkflowInstanceHistoryByBusiness(target.entityType, target.entityId)
+          getWorkflowInstanceHistoryByBusiness(target.entityType, target.entityId, {
+            force: options.force === true
+          })
         )
       )
 
@@ -1342,13 +1353,13 @@ export function useApprovalProgressWorkflow({
   }
 
   async function refreshPlanWorkflowContext(
-    options: { retryActive?: boolean } = {}
+    options: { retryActive?: boolean; force?: boolean } = {}
   ): Promise<void> {
     await loadRelatedPlanReportSummary()
     await loadPlanWorkflowDetail({ retryActive: options.retryActive })
     await loadWorkflowDefinitionPreview()
     await ensureWorkflowRelatedAvatarsLoaded()
-    await loadPlanWorkflowHistoryCards()
+    await loadPlanWorkflowHistoryCards({ force: options.force === true })
   }
 
   // 2026-10-26：部门计划族实体（relatedWorkflowEntities）由页面异步构造，
@@ -1431,7 +1442,11 @@ export function useApprovalProgressWorkflow({
           void ensureSubmitterNameLoaded(props.plan?.submittedBy, props.plan?.createdByName)
         }
         void loadPendingPlanApprovals()
-        await refreshPlanWorkflowContext()
+        // 2026-11-12（一键下发后审批历史空白）：打开抽屉必须穿透历史缓存。
+        // historyByBusiness 走 SWR 条目，过期时先返回旧数据且后台刷新不回写
+        // 已赋值的 ref——一键下发后立刻查看会拿到挂载时缓存的空历史。
+        // force 让每次打开抽屉都真正回源（其余调用点保持默认非 force）。
+        await refreshPlanWorkflowContext({ force: true })
       } else {
         state.selectedHistoryInstanceId.value = null
         state.selectedHistoryInstanceDetail.value = null

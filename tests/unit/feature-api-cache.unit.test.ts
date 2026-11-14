@@ -5,6 +5,7 @@ import { queryIndicators } from '@/features/indicator/api/query'
 import { getAllPlans, getPlanById } from '@/features/plan/api/query'
 import { updatePlan } from '@/features/plan/api/mutations'
 import { getTasksByOrg } from '@/features/task/api/query'
+import { getWorkflowInstanceHistoryByBusiness } from '@/features/workflow/api/queries'
 import { orgApi } from '@/features/organization/api/org'
 import { useTimeContextStore } from '@/shared/lib/timeContext'
 
@@ -192,6 +193,39 @@ describe('feature API cache integration', () => {
     expect(cacheManager.get(buildQueryKey('org', 'departments', { version: 'v2' }))?.scope).toBe(
       'session'
     )
+  })
+
+  it('refetches workflow history from source when force is passed to a fresh SWR entry', async () => {
+    apiClientMock.get
+      .mockResolvedValueOnce({
+        success: true,
+        code: 200,
+        message: 'ok',
+        data: [{ instanceId: 1 }],
+        timestamp: Date.now()
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        code: 200,
+        message: 'ok',
+        data: [{ instanceId: 1 }, { instanceId: 2 }],
+        timestamp: Date.now()
+      })
+
+    // 首次回源并写入 historyByBusiness 缓存（SWR 条目，30s 内视为新鲜）
+    const initial = await getWorkflowInstanceHistoryByBusiness('PLAN', 9)
+    expect(initial.success).toBe(true)
+    expect(initial.data).toEqual([{ instanceId: 1 }])
+
+    // 新鲜条目：默认调用走缓存，不回源
+    const cached = await getWorkflowInstanceHistoryByBusiness('PLAN', 9)
+    expect(cached.data).toEqual([{ instanceId: 1 }])
+
+    // force（抽屉打开路径）：绕过缓存与 pending 去重，真正回源拿最新历史——
+    // 一键下发后立即查看审批历史必须看到新实例的依赖行为
+    const forced = await getWorkflowInstanceHistoryByBusiness('PLAN', 9, { force: true })
+    expect(forced.data).toEqual([{ instanceId: 1 }, { instanceId: 2 }])
+    expect(apiClientMock.get).toHaveBeenCalledTimes(2)
   })
 
   it('persists cycle list cache for time context initialization', async () => {

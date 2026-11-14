@@ -6,7 +6,6 @@
     "DirectiveBinding": true,
     "EffectScope": true,
     "ElLoading": true,
-    "ElNotification": true,
     "ExtractDefaultPropTypes": true,
     "ExtractPropTypes": true,
     "ExtractPublicPropTypes": true,

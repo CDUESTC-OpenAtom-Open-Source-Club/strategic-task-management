@@ -49,14 +49,34 @@ describe('appraisal gate (2026-10-31 定稿)', () => {
 
   it('后端原因①细分文案（未启动/已结束/已重置）→ NOT_IN_REPORTING_PERIOD', () => {
     for (const lockHint of [
-      '上报审批尚未启动，暂不能调整审核进度',
-      '本轮上报审批已结束（当前状态：APPROVED），暂不能调整审核进度',
-      '上报尚未提交或已重置，暂不能调整审核进度'
+      '上报审批尚未启动，暂不能评定审核进度',
+      '本轮上报审批已结束（当前状态：已归档），暂不能评定审核进度；如需调整请联系管理员',
+      '上报尚未提交或已重置，暂不能评定审核进度'
     ]) {
       expect(resolveAppraisalGateReason({ canAppraise: false, lockHint })).toBe(
         'NOT_IN_REPORTING_PERIOD'
       )
     }
+  })
+
+  it('后端 NO_REPORT_RECORD 文案（尚未发起上报/无上报记录）→ NO_REPORT_RECORD', () => {
+    for (const lockHint of [
+      '该指标尚未发起上报，暂不能评定审核进度',
+      '未找到该指标的上报记录（历史遗留文案兼容）'
+    ]) {
+      expect(resolveAppraisalGateReason({ canAppraise: false, lockHint })).toBe('NO_REPORT_RECORD')
+    }
+    // 2026-11-14 提示语统一：后端对无上报记录的指标也会给出权威 hint，
+    // 前端优先透出后端原文，兜底句与后端文案同语义
+    expect(
+      getAppraisalGateMessage({
+        canAppraise: false,
+        lockHint: '该指标尚未发起上报，暂不能评定审核进度'
+      })
+    ).toBe('该指标尚未发起上报，暂不能评定审核进度')
+    expect(APPRAISAL_GATE_FALLBACK_MESSAGES.NO_REPORT_RECORD).toBe(
+      '该指标尚未发起上报，暂不能评定审核进度'
+    )
   })
 
   it('lockHint 缺失时按原因退到统一兜底句', () => {

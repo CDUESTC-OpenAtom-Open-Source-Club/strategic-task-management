@@ -52,13 +52,15 @@ describe('resolvePlanReportEntryLock（填报入口锁定，报告批准后按�
     }
   })
 
-  it('locks when the target month report is approved', () => {
+  // 2026-11-13 用户定案（推翻 10-27「本月批准后锁定」）：已批准归档月放开编辑——
+  // 填报是本地草稿（保存可开新一轮），只拦提交（一键提交显隐 + 未来月 + 后端兜底）。
+  it('target month report APPROVED → 不再锁定（已归档月放开编辑开新轮）', () => {
     expect(
       resolvePlanReportEntryLock({
         usePlanReportFlow: true,
         lockState: { earliestUnfilledMonth: '202609', targetMonthReportStatus: 'APPROVED' }
       })
-    ).toBe(true)
+    ).toBe(false)
   })
 
   it('locks when every month of the year already has a report (nothing left to fill)', () => {
@@ -83,11 +85,11 @@ describe('resolvePlanReportEntryLock（填报入口锁定，报告批准后按�
 })
 
 describe('isLockingPlanReportStatus（降级口径：当前月报告状态）', () => {
-  it('treats in-approval and approved statuses as locking', () => {
+  it('treats in-approval statuses as locking; APPROVED 已放开（2026-11-13 口径）', () => {
     expect(isLockingPlanReportStatus('SUBMITTED')).toBe(true)
     expect(isLockingPlanReportStatus('in_review')).toBe(true)
     expect(isLockingPlanReportStatus('pending')).toBe(true)
-    expect(isLockingPlanReportStatus('APPROVED')).toBe(true)
+    expect(isLockingPlanReportStatus('APPROVED')).toBe(false)
   })
 
   it('treats draft-like statuses as non-locking', () => {

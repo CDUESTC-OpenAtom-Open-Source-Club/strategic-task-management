@@ -75,11 +75,10 @@ export const getApprovalDepartmentDisplay = (message: ApprovalMessageLike): stri
   return targetOrgName || sourceOrgName
 }
 
-// 2026-10-30 用户拍板：审批流向与审批中心抽屉卡片标题同口径——后端 metadata 的
-// source/target 存的是「下发方向」（下发方=source，见 ExecutionWorkflowBusinessContextAdapter），
-// 上报链（PLAN_REPORT）真实流向相反，须翻转为 target -> source
-// （同 DistributionApprovalProgressDrawer 月报卡「上报审批 · 接收方 -> 下发方」口径）；
-// 下发/异动链维持 source -> target 不变。
+// 2026-11-12（D-3 统一口径）：后端 API 已按上报方向返回 source/target
+// （source=提交方，target=审批方），上报链不再翻转为 target -> source——
+// 此前按旧口径多翻一次导致审批消息流向显示反向。
+// 上报/下发/异动统一直接 source -> target 展示。
 export const getApprovalRouteDisplay = (message: ApprovalMessageLike): string => {
   const sourceOrgName = sanitizeDepartmentName(getMetadataText(message, 'sourceOrgName'))
   const targetOrgName = sanitizeDepartmentName(
@@ -87,13 +86,7 @@ export const getApprovalRouteDisplay = (message: ApprovalMessageLike): string =>
   )
 
   if (sourceOrgName && targetOrgName) {
-    const isPlanReport =
-      String(message.entityType || '')
-        .trim()
-        .toUpperCase() === 'PLAN_REPORT'
-    return isPlanReport
-      ? `${targetOrgName} -> ${sourceOrgName}`
-      : `${sourceOrgName} -> ${targetOrgName}`
+    return `${sourceOrgName} -> ${targetOrgName}`
   }
 
   return sourceOrgName || targetOrgName

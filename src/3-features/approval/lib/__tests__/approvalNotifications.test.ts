@@ -1,8 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import { resolveApprovalRoute } from '../approvalNotifications'
 
+/**
+ * 2026-11-05（战略部直发学院指标）：审批通知跳转口径随下发链路改造调整。
+ *
+ * 关键事实：学院上报链 PLAN_APPROVAL_COLLEGE 未停用，其「分管职能部门」席位 scope
+ * 取自 plan.createdByOrgId；存量计划 createdBy=职能部门 → 待办仍会派给职能部门。
+ * 而只有 /distribution 的审批抽屉能加载 PLAN_APPROVAL_COLLEGE / PLAN_DISPATCH_FUNCDEPT
+ * 实例（/indicators 的白名单不含这两个流程码，落过去抽屉是空的），且「撤回」也在该页。
+ *
+ * - 职能部门的学院上报类（PLAN_REPORT，存在上报方向）仍落 /distribution。
+ * - 职能部门自己的计划审批（PLAN）仍落 /distribution。
+ * - 指标下发审批（INDICATOR_DISTRIBUTION）保持落 /distribution。
+ * - 学院（secondary_college）落 /indicators；战略部落 /strategic-tasks，口径不变。
+ */
 describe('approvalNotifications', () => {
-  it('routes functional department PLAN_REPORT approvals to indicators', () => {
+  it('routes functional department report approvals to the distribution workbench', () => {
     expect(
       resolveApprovalRoute({
         entityType: 'PLAN_REPORT',
@@ -19,7 +32,7 @@ describe('approvalNotifications', () => {
     )
   })
 
-  it('routes college-to-functional PLAN_REPORT approvals to distribution', () => {
+  it('routes functional department college report approvals to the distribution workbench', () => {
     expect(
       resolveApprovalRoute({
         entityType: 'PLAN_REPORT',
@@ -49,7 +62,7 @@ describe('approvalNotifications', () => {
     )
   })
 
-  it('keeps PLAN approvals on distribution for functional departments', () => {
+  it('keeps PLAN approvals of functional departments on the distribution workbench', () => {
     expect(
       resolveApprovalRoute({
         entityType: 'PLAN',
@@ -59,6 +72,19 @@ describe('approvalNotifications', () => {
       })
     ).toBe(
       '/distribution?openApproval=1&approvalEntityType=PLAN&approvalEntityId=77&approvalDepartment=%E7%BB%A7%E7%BB%AD%E6%95%99%E8%82%B2%E9%83%A8'
+    )
+  })
+
+  it('keeps indicator distribution approvals on the distribution workbench', () => {
+    expect(
+      resolveApprovalRoute({
+        entityType: 'INDICATOR_DISTRIBUTION',
+        entityId: 55,
+        viewerRole: 'strategic_dept',
+        departmentName: '计算机学院'
+      })
+    ).toBe(
+      '/distribution?openApproval=1&approvalEntityType=INDICATOR_DISTRIBUTION&approvalEntityId=55&approvalDepartment=%E8%AE%A1%E7%AE%97%E6%9C%BA%E5%AD%A6%E9%99%A2'
     )
   })
 

@@ -44,6 +44,8 @@ import {
 } from '@/features/indicator/model/indicatorAttachmentSummary'
 import { DistributionApprovalProgressDrawer } from '@/features/approval'
 import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
+// 2026-11-12 防漂移：导出列头与导入模板共用同一权重文案（后端按表头全等匹配，改文案需同步后端别名表）
+import { WEIGHT_COLUMN_HEADER } from '@/features/import/lib/importTemplate'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
 import { MUTATION_FIELDS_INDICATOR_NAME } from '@/features/indicator/model/mutationHistory'
 import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
@@ -209,12 +211,17 @@ const {
   isCurrentUserReporter,
   isDeletingChild,
   isFunctionalDept,
+  isFunctionalDeptLogin,
   isInteractingWithCollegeSelect,
   isQualitativeIndicator,
   isSameDepartment,
   isSavingChildCell,
   isSavingIndicator,
   isStrategicDept,
+  isStrategicDeptLogin,
+  canOperateDistribution,
+  canWriteDistribution,
+  canWithdrawDistribution,
   lastEditTime,
   latestCollegePlanReportSummary,
   loadCurrentCollegePlanReportSummary,
@@ -450,10 +457,9 @@ const buildDistributionExportColumns = (
       align: 'center',
       getValue: row => getDistributionChildTypeText(row.child)
     },
-    { header: '下发备注', width: 24, getValue: row => row.child.remark || '-' },
-    // 2026-10-20 用户定案：表头标出权重可接受写法
+    // 2026-11-11 用户拍板：权重全局统一纯数字口径，导出与导入模板同口径
     {
-      header: '权重（可填 10 / 10% / 0.1）',
+      header: WEIGHT_COLUMN_HEADER,
       width: 16,
       align: 'center',
       getValue: row => Number(row.child.weight || 0)
@@ -808,14 +814,21 @@ const handleDistributionImportCommitted = async () => {
 <template>
   <div class="distribution-view page-fade-enter">
     <!-- 只读提示 -->
+    <!-- 2026-11-05：提示按**登录角色**分文案（不再按视角角色）：
+         - 战略部：可操作，不显示只读提示；
+         - 职能部门：本页只读，但保留撤回。
+         2026-11-09（用户要求）：文案去掉「下发」，只保留审批口径 —— 学院指标的下发权
+         已统一归战略发展部，本页对职能部门只剩审批相关用途。
+         2026-11-11（用户要求）：11-10 归口可见性修复后本页重新承载审核进度鉴定与上报
+         审批职责，「仅可查看历史数据」以偏概全，文案同步为现行职责描述。 -->
     <el-alert
-      v-if="isStrategicDept"
+      v-if="isFunctionalDeptLogin"
       type="info"
       :closable="false"
       show-icon
       style="margin-bottom: 16px"
     >
-      当前以战略发展部身份查看，数据为只读状态
+      学院指标由战略发展部统一下发；本部门负责归口指标的审核进度鉴定与上报审批，并可查看历史数据。
     </el-alert>
     <el-alert
       v-else-if="timeContext.isReadOnly"
@@ -830,7 +843,7 @@ const handleDistributionImportCommitted = async () => {
     <div class="distribution-export-bar">
       <el-button
         v-if="
-          isFunctionalDept &&
+          canWriteDistribution &&
           !timeContext.isReadOnly &&
           canEditChild &&
           selectedCollege &&
@@ -982,9 +995,10 @@ const handleDistributionImportCommitted = async () => {
                 <el-icon><Download /></el-icon>
                 导出
               </el-button>
-              <!-- 导入入口已恢复启用（distributionImportEnabled = true，2026-09-17 定案） -->
+              <!-- 导入入口已恢复启用（distributionImportEnabled = true，2026-09-17 定案）；
+                   2026-11-05：改造后下发起源统一为战略发展部，职能部门在本页只读 → 导入入口仅战略部可见 -->
               <el-button
-                v-if="distributionImportEnabled"
+                v-if="distributionImportEnabled && canWriteDistribution"
                 :icon="Upload"
                 @click="openDistributionImportDialog"
               >
@@ -996,7 +1010,13 @@ const handleDistributionImportCommitted = async () => {
                 - 有指标时 → 审批入口始终可见
                 - 编辑/下发按钮仅在草稿态显示
               -->
-              <template v-if="isFunctionalDept && !timeContext.isReadOnly">
+              <!--
+                2026-11-05（战略部直发学院指标）：闸门由视角角色改为**登录角色**——
+                - 战略部：可新增/编辑/发起下发审批（写操作由 canEditChild 把关）；
+                - 职能部门：本页只读（canEditChild 恒 false → 新增/下发按钮不出现），
+                  但「撤回」保留——职能部门历史上发起的在审计划要能撤回。
+              -->
+              <template v-if="canOperateDistribution && !timeContext.isReadOnly">
                 <template v-if="collegeOverallStatus.label === '暂无指标' && canEditChild">
                   <el-button type="primary" @click="openAddIndicatorForm">
                     <el-icon><Plus /></el-icon>
@@ -1044,7 +1064,7 @@ const handleDistributionImportCommitted = async () => {
                       {{ distributionSubmitButtonText }}
                     </el-button>
                   </template>
-                  <template v-else-if="withdrawButtonVisible">
+                  <template v-else-if="canWithdrawDistribution && withdrawButtonVisible">
                     <el-button
                       :type="withdrawButtonType"
                       :loading="isBatchDistributing"
@@ -1296,70 +1316,6 @@ const handleDistributionImportCommitted = async () => {
                   </template>
                 </el-table-column>
 
-                <!-- 备注列（2026-10-13 用户定案：备注移到操作列前） -->
-                <el-table-column label="下发备注" width="98">
-                  <template #default="{ row }">
-                    <template v-if="row.type === 'indicator-only'">
-                      <span class="remark-text">-</span>
-                    </template>
-                    <template v-else-if="row.type === 'child'">
-                      <div
-                        class="child-remark-cell"
-                        @dblclick="handleChildDblClick(row.child, 'remark')"
-                      >
-                        <el-input
-                          v-if="
-                            editingChildId === row.child?.id?.toString() &&
-                            editingChildField === 'remark'
-                          "
-                          v-model="editingChildValue"
-                          type="textarea"
-                          :rows="1"
-                          autosize
-                          class="editing-field textarea-cell"
-                          @blur="saveChildEdit(row.child, 'remark')"
-                        />
-                        <span
-                          v-else-if="isSavingChildCell(row.child, 'remark')"
-                          class="cell-saving-text"
-                        >
-                          保存中...
-                        </span>
-                        <el-tooltip
-                          v-else
-                          :content="row.child?.remark || ''"
-                          :disabled="(row.child?.remark || '').length <= 50"
-                          placement="top"
-                        >
-                          <span class="remark-text">{{ row.child?.remark || '-' }}</span>
-                        </el-tooltip>
-                      </div>
-                    </template>
-                    <template v-else-if="row.type === 'new-child'">
-                      <div
-                        class="new-child-cell"
-                        @click="handleNewChildRowClick(row.child.id, row.parentIndicatorId)"
-                      >
-                        <el-input
-                          v-if="editingNewChildId === row.child.id"
-                          v-model="row.child.remark"
-                          type="textarea"
-                          :rows="1"
-                          autosize
-                          placeholder="输入备注（选填）"
-                          class="new-child-editing textarea-cell"
-                        />
-                        <span
-                          v-else
-                          class="remark-text new-child-text"
-                          :class="{ 'placeholder-text': !row.child.remark }"
-                          >{{ row.child.remark || '-' }}</span
-                        >
-                      </div>
-                    </template>
-                  </template>
-                </el-table-column>
-
                 <!-- 操作列 - 学院模式：仅查看和删除（删除需先撤销） -->
                 <el-table-column label="操作" width="120" align="center">
                   <template #default="{ row }">
@@ -1510,18 +1466,6 @@ const handleDistributionImportCommitted = async () => {
                       </el-form-item>
                     </el-col>
                   </el-row>
-                  <el-row :gutter="16">
-                    <el-col :span="24">
-                      <el-form-item label="下发备注">
-                        <el-input
-                          v-model="newIndicatorForm.remark"
-                          type="textarea"
-                          :autosize="{ minRows: 2, maxRows: 10 }"
-                          placeholder="输入备注内容（选填）"
-                        />
-                      </el-form-item>
-                    </el-col>
-                  </el-row>
                 </el-form>
               </div>
               <div class="add-form-actions">
@@ -1636,9 +1580,6 @@ const handleDistributionImportCommitted = async () => {
           <el-descriptions-item label="进度说明" :span="2">{{
             latestFillNote || '—'
           }}</el-descriptions-item>
-          <el-descriptions-item label="下发备注" :span="2">
-            {{ currentDetailIndicator.remark || '暂无备注' }}
-          </el-descriptions-item>
         </el-descriptions>
       </div>
 
@@ -1697,8 +1638,8 @@ const handleDistributionImportCommitted = async () => {
       type="distribution"
       :target-org-id="currentDistributionImportOrgId"
       :target-org-name="selectedCollege"
-      :source-org-id="currentDepartmentOrgId"
-      :source-org-name="currentDept"
+      :source-org-id="dispatchOwnerOrgId"
+      :source-org-name="dispatchOwnerDept"
       :cycle-id="currentDistributionImportCycleId"
       :parent-indicators="availableParentIndicators"
       @committed="handleDistributionImportCommitted"
@@ -1875,12 +1816,6 @@ const handleDistributionImportCommitted = async () => {
                   />
                 </div>
               </div>
-            </template>
-          </el-table-column>
-          <!-- 备注列 -->
-          <el-table-column label="下发备注" width="150">
-            <template #default="{ row }">
-              <span class="indicator-remark">{{ row.indicator.remark || '-' }}</span>
             </template>
           </el-table-column>
           <!-- 操作列 -->

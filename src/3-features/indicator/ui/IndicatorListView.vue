@@ -373,7 +373,6 @@ const buildIndicatorListExportColumns = (
     { header: '核心指标', width: 32, getValue: row => row.name || '-' },
     { header: '指标类型', width: 12, align: 'center', getValue: row => row.type1 || '-' },
     { header: '任务类别', width: 12, align: 'center', getValue: row => row.type2 || '-' },
-    { header: '下发备注', width: 24, getValue: row => row.remark || '-' },
     { header: '权重', width: 10, align: 'center', getValue: row => Number(row.weight || 0) },
     {
       header: '审核进度',
@@ -731,12 +730,18 @@ const handleExportIndicatorList = async () => {
                 <el-option label="基础性" value="基础性" />
               </el-select>
             </el-form-item>
-            <!-- 来源部门筛选（仅学院可见） -->
+            <!-- 归属部门筛选（仅学院可见；2026-11-13 口径变更：原「来源部门」退役——
+                 选项=当前行集按父级核心指标反查出的归口职能部门，一键提交/撤回必须先选） -->
             <el-form-item
               v-if="isSecondaryCollege && availableOwnerDepts.length > 0"
-              label="来源部门"
+              label="归属部门"
             >
-              <el-select v-model="filterOwnerDept" placeholder="选择来源部门" style="width: 200px">
+              <el-select
+                v-model="filterOwnerDept"
+                placeholder="请选择归属部门"
+                clearable
+                style="width: 200px"
+              >
                 <el-option
                   v-for="dept in availableOwnerDepts"
                   :key="dept"
@@ -839,11 +844,12 @@ const handleExportIndicatorList = async () => {
 
             <!-- 职能部门/二级学院的批量操作按钮 -->
             <template v-if="showPlanBatchActions">
-              <!-- 一键提交按钮（草稿态且未锁定时显示；2026-10-31「灰而可点」定案：
-                   异动锁并入置灰判定，不再用原生 disabled（会吞点击事件），
-                   改 is-disabled 样式类 + aria-disabled + 悬停 title（与下发页同款写法）；
-                   点击统一进 handleSubmitAllGate——有锁定原因当场 toast 第一条命中原因，
-                   无原因走 handleSubmitAll 原流程（内部守卫保留作双保险） -->
+              <!-- 一键提交按钮（草稿态且未锁定时显示；2026-11-13 用户拍板：学院未选归属部门
+                   时整颗按钮不渲染（showSubmitAllButton 内含学院上下文条件，非学院不受影响）；
+                   2026-10-31「灰而可点」定案：异动锁并入置灰判定，不再用原生 disabled
+                   （会吞点击事件），改 is-disabled 样式类 + aria-disabled + 悬停 title
+                   （与下发页同款写法）；点击统一进 handleSubmitAllGate——有锁定原因当场
+                   toast 第一条命中原因，无原因走 handleSubmitAll 原流程（内部守卫保留作双保险） -->
               <el-button
                 v-if="showSubmitAllButton"
                 type="primary"
@@ -1156,24 +1162,6 @@ const handleExportIndicatorList = async () => {
                   </el-tooltip>
                 </template>
               </el-table-column>
-              <el-table-column
-                prop="remark"
-                label="下发备注"
-                :width="TASK_TABLE_COLUMN_WIDTH.remark"
-              >
-                <template #default="{ row }">
-                  <!-- 2026-10-24 用户定案：下发备注同样只读（不能双击编辑） -->
-                  <div class="indicator-name-cell">
-                    <el-tooltip
-                      :content="row.remark || ''"
-                      :disabled="(row.remark || '').length <= 50"
-                      placement="top"
-                    >
-                      <span class="remark-text">{{ row.remark || '' }}</span>
-                    </el-tooltip>
-                  </div>
-                </template>
-              </el-table-column>
               <el-table-column label="操作" :width="TASK_TABLE_COLUMN_WIDTH.actions" align="center">
                 <template #default="{ row }">
                   <div class="action-cell">
@@ -1299,9 +1287,6 @@ const handleExportIndicatorList = async () => {
         <el-form-item label="权重">
           <el-input v-model="newRow.weight" placeholder="请输入权重" type="number" />
         </el-form-item>
-        <el-form-item label="下发备注">
-          <el-input v-model="newRow.remark" type="textarea" :rows="3" placeholder="请输入备注" />
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="cancelAdd">取消</el-button>
@@ -1379,9 +1364,6 @@ const handleExportIndicatorList = async () => {
           <el-descriptions-item label="进度说明" :span="2">{{
             latestFillNote || '—'
           }}</el-descriptions-item>
-          <el-descriptions-item label="下发备注" :span="2">{{
-            currentDetail.remark || '暂无备注'
-          }}</el-descriptions-item>
         </el-descriptions>
 
         <div v-if="currentDetailAttachmentItems.length > 0" class="detail-attachments">
@@ -1438,7 +1420,9 @@ const handleExportIndicatorList = async () => {
         <!-- 2026-10-19 用户定案：归属月份属整体计划上报口径（列表层展示），
              单个指标的填报弹窗不再重复展示月份横幅。 -->
         <!-- 填报表单 -->
-        <el-form label-width="100px" class="report-form">
+        <!-- 2026-11-14（用户反馈）：label-width 100px 放不下「上报资料（可选）」——
+             8 个全角字符 ×14px = 112px 压线，加 padding 必折行。加宽到 124px 留余量 -->
+        <el-form label-width="124px" class="report-form">
           <el-form-item label="自评进度" required>
             <el-select
               v-model="reportForm.selfRating"

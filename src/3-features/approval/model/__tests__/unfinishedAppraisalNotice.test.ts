@@ -55,6 +55,9 @@ describe('resolveUnfinishedAppraisalJumpRoute', () => {
 
   it('reuses the approval-card route resolution for report todo cards (college -> functional dept)', () => {
     // 上报待办卡原样记录：source/target 是「下发方向」，提交方（填报部门）= targetOrg
+    // 2026-11-05：学院上报链未停用，其「分管职能部门」席位 scope 取自 plan.createdByOrgId，
+    // 存量计划 createdBy=职能部门 → 待办仍会派给职能部门；且只有 /distribution 的审批抽屉
+    // 能加载该流程实例、撤回也在该页 → 职能部门仍落 /distribution（与审批卡片同口径）。
     const route = resolveUnfinishedAppraisalJumpRoute(
       {
         entityType: 'PLAN_REPORT',

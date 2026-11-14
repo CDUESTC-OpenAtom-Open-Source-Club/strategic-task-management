@@ -9,9 +9,12 @@
  * - 锁定原因与后端 lockHint 文案一一对应，前端仅做兜底与分类。
  */
 
-/** 后端 lockHint 的三分原因（与 IndicatorAppraisalApplicationService.resolvePermission 对应） */
+/** 后端 lockHint 的禁用原因族（与 IndicatorAppraisalApplicationService.resolvePermission 对应） */
 export type IndicatorAppraisalGateReason =
-  'NOT_IN_REPORTING_PERIOD' | 'NO_APPROVAL_SEAT_ROLE' | 'NOT_CURRENT_STEP_APPROVER'
+  | 'NOT_IN_REPORTING_PERIOD'
+  | 'NO_REPORT_RECORD'
+  | 'NO_APPROVAL_SEAT_ROLE'
+  | 'NOT_CURRENT_STEP_APPROVER'
 
 /** 可选等级——评定选择器专用；「未评定」是初始空白显示态，不在其中 */
 export const APPRAISAL_LEVEL_OPTIONS: Array<{
@@ -27,6 +30,7 @@ export const APPRAISAL_LEVEL_OPTIONS: Array<{
 /** 各原因的前端兜底文案（后端 lockHint 缺失/为空时使用） */
 export const APPRAISAL_GATE_FALLBACK_MESSAGES: Record<IndicatorAppraisalGateReason, string> = {
   NOT_IN_REPORTING_PERIOD: '非上报审批期间，无法评定审核进度',
+  NO_REPORT_RECORD: '该指标尚未发起上报，暂不能评定审核进度',
   NO_APPROVAL_SEAT_ROLE: '当前角色无评定权限，无法评定审核进度',
   NOT_CURRENT_STEP_APPROVER: '您不是当前审批环节的评定人，无法评定'
 }
@@ -50,6 +54,8 @@ const APPRAISAL_EMPTY_DISPLAY: AppraisalLevelDisplay = { label: '未评定', typ
  * 按后端 lockHint 文案对不可评定原因分类（文案由本仓库后端固定，子串判定是确定性的）：
  * - 含「评定人」→ 原因③（非当前环节，后端文案：您不是当前审批环节（X）的评定人，无法评定）；
  * - 含「无评定权限」→ 原因②（当前角色无评定权限，无法评定审核进度）；
+ * - 含「尚未发起上报」/「上报记录」→ NO_REPORT_RECORD（指标从未上报，2026-11-14 提示语统一新增，
+ *   后端文案：该指标尚未发起上报，暂不能评定审核进度）；
  * - 其余（含 context 缺失）→ 原因①（非上报期间/流程异常）。
  */
 export function resolveAppraisalGateReason(
@@ -64,6 +70,9 @@ export function resolveAppraisalGateReason(
   }
   if (lockHint.includes('无评定权限')) {
     return 'NO_APPROVAL_SEAT_ROLE'
+  }
+  if (lockHint.includes('尚未发起上报') || lockHint.includes('上报记录')) {
+    return 'NO_REPORT_RECORD'
   }
   return 'NOT_IN_REPORTING_PERIOD'
 }

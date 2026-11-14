@@ -77,7 +77,11 @@ function resolveCurrentViewerRole(): UserRole | null {
   try {
     if (getActivePinia()) {
       const authStore = useAuthStore()
-      return normalizeViewerRole(authStore.effectiveRole || authStore.userRole)
+      // 2026-11-05（战略部直发学院指标）：「点通知去哪处理」属于操作判定，必须按**真实登录角色**。
+      // 原实现 effectiveRole 优先，导致战略部用部门切换器切到职能部门/学院视角后，
+      // 自己的终审待办被路由到 /indicators（职能/学院填报页）而非 /strategic-tasks，
+      // 点开是空白。视角角色只用于数据归属，不决定落点。
+      return normalizeViewerRole(authStore.userRole || authStore.effectiveRole)
     }
   } catch {
     // ignore store lookup failures and fall back to persisted user data
@@ -172,6 +176,15 @@ function resolveApprovalWorkbenchRoute(payload: ApprovalRoutePayload): string | 
       // 上报反方向——提交方=targetOrg。targetOrg 与 sourceOrg 不同 → 学院向职能部门
       // 上报 → 职能部门落 /distribution（学院看板所在页）；相同 → 本部门自报 → /indicators。
       // 不再依赖 currentDepartmentName 参与方向猜测（通知 payload 里此前根本没传）。
+      //
+      // 2026-11-05（战略部直发学院指标）修正：**落点仍保持 /distribution**。
+      // 依据后端事实：学院上报链 PLAN_APPROVAL_COLLEGE 未停用，其「分管职能部门负责人/
+      // 校领导」席位的 scope 取自 plan.createdByOrgId（ApproverResolver.resolveFunctionalDeptOrgId）；
+      // 存量计划 createdBy=职能部门 → 席位仍回到该职能部门，职能部门**仍会收到**上报待办。
+      // 而 /indicators 的审批抽屉工作流白名单不含 PLAN_APPROVAL_COLLEGE 与
+      // PLAN_DISPATCH_FUNCDEPT，落过去会取不到实例（抽屉空白），且不消费
+      // approvalDepartment/SourceOrg/TargetOrg，无法自动选中提交学院。
+      // /distribution 已按登录角色只读化，不影响其审批抽屉能力。
       const sourceOrg = normalizeDepartmentName(payload.sourceOrgName)
       const targetOrg = normalizeDepartmentName(payload.targetOrgName)
       const originType = resolvePlanReportOriginType(payload)
@@ -194,6 +207,9 @@ function resolveApprovalWorkbenchRoute(payload: ApprovalRoutePayload): string | 
       return '/strategic-tasks'
     }
     case 'PLAN':
+      // 2026-11-05（战略部直发学院指标）：职能部门的计划类审批仍落 /distribution。
+      // 学院上报链与存量下发链（PLAN_DISPATCH_FUNCDEPT）的在审实例只有该页的审批抽屉
+      // 能加载（见上）；该页对职能部门已只读，且「撤回」也在此页，落过去才能完成撤回。
       if (viewerRole === 'functional_dept') {
         return '/distribution'
       }

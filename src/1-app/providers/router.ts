@@ -94,7 +94,12 @@ const routes: RouteRecordRaw[] = [
         path: 'strategic-tasks',
         name: 'StrategicTasks',
         component: () => import('@/features/task/ui/StrategicTaskView.vue'),
-        meta: { roles: ['strategic_dept'], title: '战略任务 - 战略指标管理系统' }
+        // 2026-11-05：职能部门对战略任务页只读（页内按登录角色禁用写操作），
+        // 但必须能进得来——否则「只读」无意义。学院角色仍不可见。
+        meta: {
+          roles: ['strategic_dept', 'functional_dept'],
+          title: '战略任务 - 战略指标管理系统'
+        }
       },
       {
         path: 'indicators',
@@ -106,7 +111,15 @@ const routes: RouteRecordRaw[] = [
         path: 'distribution',
         name: 'Distribution',
         component: () => import('@/features/indicator/ui/IndicatorDistributeView.vue'),
-        meta: { roles: ['functional_dept'], title: '指标分配 - 战略指标管理系统' }
+        // 2026-11-05（issue #96 · 1.2/N1）：战略发展部不再有本页入口，路由层面同样收紧 ——
+        // 直接输 URL 也进不去（roles 不匹配会走统一的未授权重定向到首页）。
+        // 路由本身保留：职能部门的审批深链仍指向它（铃铛/待办跳转），删了深链会失效。
+        meta: {
+          roles: ['functional_dept'],
+          // 按登录角色关闭：战略部即使把视角切到职能部门也进不来（见 routeAccess 注释）
+          deniedLoginRoles: ['strategic_dept'],
+          title: '指标下发 - 战略指标管理系统'
+        }
       },
       {
         path: 'messages',
@@ -247,6 +260,9 @@ router.beforeEach(async (to, _from, next) => {
     userRole: authStore.userRole,
     effectiveRole: authStore.effectiveRole,
     allowedRoles: Array.isArray(to.meta['roles']) ? (to.meta['roles'] as string[]) : undefined,
+    deniedLoginRoles: Array.isArray(to.meta['deniedLoginRoles'])
+      ? (to.meta['deniedLoginRoles'] as string[])
+      : undefined,
     path: to.path
   })
 

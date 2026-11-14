@@ -70,16 +70,32 @@ export const mutationApi = {
    * 整批一次提交；后端先全部应用再统一做权重合计校验，任一失败整批不生效。
    * item：{ id, create?: true 表示新增指标, indicator_desc?/weight_percent?/remark?: 变更值 }
    * 任务改名条目：{ id: 任务ID, entity_type: 'TASK', name: 新任务名 }
+   *
+   * 2026-11-14（新增行不落库）create 条目新契约——前端内存草稿行整行提交：
+   * { create: true, indicatorDesc, weightPercent, indicatorType, parentIndicatorId,
+   *   taskId?, remark?, targetOrgId? }，**不带 id**（后端按新建同事务落库 + 打异动标记 +
+   * 批次闭合权重校验）；键名与后端 IndicatorMutationService.hasCreateDraftFields 识别口径
+   * 严格一致。旧格式 {id, create:true}（职能页签已下发计划新增，行已落库）继续兼容。
+   *
+   * 2026-11-14（P1 修复：新增行落错学院）：create 条目带 **targetOrgId**（UI 所选学院的
+   * 组织 ID）。后端 resolveNewIndicatorTargetOrgId 优先采信显式目标：与父级现有子指标的
+   * 目标学院不一致 → 直接 400 拒绝（不再按父级下游计划静默落到别的学院）。
    */
   async initiateBatch(
     items: Array<{
-      id: number | string
+      id?: number | string
       create?: boolean
       entity_type?: 'INDICATOR' | 'TASK'
       name?: string
       indicator_desc?: string
       weight_percent?: number
       remark?: string
+      indicatorDesc?: string
+      indicatorType?: string
+      parentIndicatorId?: number
+      taskId?: number
+      /** 新增学院子指标的显式目标学院（orgId）；后端据此校验一致性，不一致直接拒绝 */
+      targetOrgId?: number
     }>
   ): Promise<ApiResponse<string[]>> {
     // 后端接收裸数组（List<Map>）；早期版本发 {items} 会 400
