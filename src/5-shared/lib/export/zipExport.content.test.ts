@@ -73,7 +73,10 @@ const readSheetName = async (xlsxBytes: Uint8Array): Promise<string> => {
   return match?.[1] ?? ''
 }
 
-const md5 = (bytes: Uint8Array): string => crypto.createHash('md5').update(bytes).digest('hex')
+// 内容指纹仅用于比对 zip 条目字节是否全同（2026-11-13：md5→sha256，消除安全扫描弱加密高危，
+// 指纹用途无安全性要求，等价替换）
+const sha256 = (bytes: Uint8Array): string =>
+  crypto.createHash('sha256').update(bytes).digest('hex')
 
 describe('exportDepartmentsAsZip 按部门独立生成（2026-11-12 缺陷回归锁定）', () => {
   const payloads = [
@@ -98,10 +101,10 @@ describe('exportDepartmentsAsZip 按部门独立生成（2026-11-12 缺陷回归
     )
     expect(entries).toHaveLength(payloads.length)
 
-    const md5ByEntry = new Map<string, string>()
+    const hashByEntry = new Map<string, string>()
     for (const entry of entries) {
       const bytes = await entry.async('uint8array')
-      md5ByEntry.set(entry.name, md5(bytes))
+      hashByEntry.set(entry.name, sha256(bytes))
 
       const folder = entry.name.split('/')[0]
       const ownPayload = payloads.find(payload => payload.department === folder)
@@ -128,14 +131,17 @@ describe('exportDepartmentsAsZip 按部门独立生成（2026-11-12 缺陷回归
       expect(await readSheetName(bytes)).toBe(folder)
     }
 
-    // 多部门多文件：md5 两两互不相同（缺陷报告里「全部相同」即在此被拦下）
-    const uniqueMd5 = new Set(md5ByEntry.values())
-    expect(uniqueMd5.size).toBe(payloads.length)
+    // 多部门多文件：内容指纹两两互不相同（缺陷报告里「全部相同」即在此被拦下）
+    const uniqueHashes = new Set(hashByEntry.values())
+    expect(uniqueHashes.size).toBe(payloads.length)
   })
 
   it('单部门且无附件时保持直接下载 xlsx 的既有口径', async () => {
     mockSaveBlobAsFile.mockClear()
-    await exportDepartmentsAsZip([buildPayload('国际合作与交流处', ['国际交流核心指标一'])], 'x.zip')
+    await exportDepartmentsAsZip(
+      [buildPayload('国际合作与交流处', ['国际交流核心指标一'])],
+      'x.zip'
+    )
 
     const [, fileName] = mockSaveBlobAsFile.mock.calls[0]
     expect(fileName).toMatch(/\.xlsx$/)

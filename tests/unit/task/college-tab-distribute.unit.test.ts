@@ -12,7 +12,8 @@ import {
   resolveCollegeReportApprovalStatusMeta,
   resolveCollegeReturnedChainOwnerOrgId,
   resolveCollegeTabDistributeAction,
-  resolveMutationGateWeightTotal
+  resolveMutationGateWeightTotal,
+  resolveWithdrawControlVisible
 } from '@/features/task/lib/collegeTabDistribute'
 
 /**
@@ -97,6 +98,143 @@ describe('task/lib/collegeTabDistribute · resolveCollegeTabDistributeAction（�
         })
       ).toEqual({ action: 'submit-dispatch', text: '发起审批', buttonType: 'success' })
     }
+  })
+})
+
+/**
+ * 2026-11-13（撤回入口席位显隐）显隐矩阵：工具栏「下发/撤回」多态合并按钮
+ * 只允许「当前生效计划归属部门的填报人席位」显示；负责人/审核人/校领导与
+ * 跨部门查看者一律 false（v-if 隐藏，不是置灰）。
+ *
+ * 场景锚定用户实测反例：zlb_final1（战略发展部负责人1，org 35，roles 无 ROLE_REPORTER）
+ * 在二级学院页签看到「工学院子计划审批中」的亮橙撤回——工学院子计划 createdByOrgId=35
+ * （战略部直发 FUNC_TO_COLLEGE），与 zlb_final1 同 org，所以席位判定必须先于 org 比对。
+ */
+describe('task/lib/collegeTabDistribute · resolveWithdrawControlVisible（撤回入口席位显隐）', () => {
+  it('负责人席位×学院页签×子计划审批中（org 同为 35）→ false（zlb_final1 实测反例：席位判定先于 org 比对）', () => {
+    expect(
+      resolveWithdrawControlVisible({
+        canWithdrawMutationInFlight: false,
+        isCurrentUserReporter: false,
+        currentUserOrgId: 35,
+        effectivePlanCreatedByOrgId: 35
+      })
+    ).toBe(false)
+  })
+
+  it('负责人席位×职能页签 → false（自身计划同 org 也拦，显隐只认席位）', () => {
+    expect(
+      resolveWithdrawControlVisible({
+        canWithdrawMutationInFlight: false,
+        isCurrentUserReporter: false,
+        currentUserOrgId: 35,
+        effectivePlanCreatedByOrgId: 35
+      })
+    ).toBe(false)
+  })
+
+  it('校领导席位（无 ROLE_REPORTER）→ false', () => {
+    expect(
+      resolveWithdrawControlVisible({
+        canWithdrawMutationInFlight: false,
+        isCurrentUserReporter: false,
+        currentUserOrgId: 35,
+        effectivePlanCreatedByOrgId: 35
+      })
+    ).toBe(false)
+  })
+
+  it('填报人席位×本部门生效计划（org 一致）→ true（zlb_admin 正确形态，不能弄丢）', () => {
+    expect(
+      resolveWithdrawControlVisible({
+        canWithdrawMutationInFlight: false,
+        isCurrentUserReporter: true,
+        currentUserOrgId: 35,
+        effectivePlanCreatedByOrgId: 35
+      })
+    ).toBe(true)
+  })
+
+  it('填报人席位×跨部门生效计划 → false（org 不同即隐藏）', () => {
+    expect(
+      resolveWithdrawControlVisible({
+        canWithdrawMutationInFlight: false,
+        isCurrentUserReporter: true,
+        currentUserOrgId: 36,
+        effectivePlanCreatedByOrgId: 35
+      })
+    ).toBe(false)
+  })
+
+  it('异动发起人（model canWithdrawMutationInFlight 已含 submitter_name 比对与撤回窗口）→ true，席位/org 不再拦', () => {
+    expect(
+      resolveWithdrawControlVisible({
+        canWithdrawMutationInFlight: true,
+        isCurrentUserReporter: true,
+        currentUserOrgId: 35,
+        effectivePlanCreatedByOrgId: null
+      })
+    ).toBe(true)
+    // 发起入口历史上只对填报人开放；若出现非填报人发起人，按「任一页签发起人可见」放行
+    expect(
+      resolveWithdrawControlVisible({
+        canWithdrawMutationInFlight: true,
+        isCurrentUserReporter: false,
+        currentUserOrgId: null,
+        effectivePlanCreatedByOrgId: 35
+      })
+    ).toBe(true)
+  })
+
+  it('未登录 / roles 缺失 / org 解析失败 → false（宁可隐藏，不误显示）', () => {
+    expect(
+      resolveWithdrawControlVisible({
+        canWithdrawMutationInFlight: false,
+        isCurrentUserReporter: false,
+        currentUserOrgId: null,
+        effectivePlanCreatedByOrgId: 35
+      })
+    ).toBe(false)
+    expect(
+      resolveWithdrawControlVisible({
+        canWithdrawMutationInFlight: false,
+        isCurrentUserReporter: true,
+        currentUserOrgId: null,
+        effectivePlanCreatedByOrgId: 35
+      })
+    ).toBe(false)
+    expect(
+      resolveWithdrawControlVisible({
+        canWithdrawMutationInFlight: false,
+        isCurrentUserReporter: true,
+        currentUserOrgId: 0,
+        effectivePlanCreatedByOrgId: 35
+      })
+    ).toBe(false)
+  })
+
+  it('生效计划缺失 / createdByOrgId 非法（null/0/负数/非数值串）→ false', () => {
+    for (const planOrgId of [null, undefined, 0, -1, 'not-a-number']) {
+      expect(
+        resolveWithdrawControlVisible({
+          canWithdrawMutationInFlight: false,
+          isCurrentUserReporter: true,
+          currentUserOrgId: 35,
+          effectivePlanCreatedByOrgId: planOrgId
+        })
+      ).toBe(false)
+    }
+  })
+
+  it('org id 数字字符串归一（后端 createdByOrgId 可能回字符串）→ true', () => {
+    expect(
+      resolveWithdrawControlVisible({
+        canWithdrawMutationInFlight: false,
+        isCurrentUserReporter: true,
+        currentUserOrgId: 35,
+        effectivePlanCreatedByOrgId: '35'
+      })
+    ).toBe(true)
   })
 })
 
@@ -403,6 +541,11 @@ const collegeTabReady = (extra: Record<string, unknown> = {}) => ({
   collegeDepartmentsScoped: ref(['航空学院']),
   canWithdrawMutationInFlight: ref(false),
   isMutationApprovalInFlight: ref(false),
+  // 2026-11-13（撤回入口席位显隐）：基础席位=战略部填报人（org 35，与既有「战略部登录、
+  // 可写」意图一致）。缺省时 withdrawControlVisible（v-if）恒 false → 按钮整体隐藏，
+  // 按钮分流类用例全挂；非填报人/跨部门场景按需覆写（见下方两枚接线锁用例）
+  isCurrentUserReporter: ref(true),
+  currentUserOrgId: ref(35),
   effectivePlanContext: ref({ source: 'college', plan: null }),
   selectedCollegeDispatchPlanId: ref(705493),
   refreshCurrentDepartmentView: vi.fn(),
@@ -422,7 +565,11 @@ describe('学院页签按钮分流与互斥守卫（2026-11-11 组件接线）',
     const refreshCurrentDepartmentView = vi.fn()
     const wrapper = mountView(
       collegeTabReady({
-        effectivePlanContext: ref({ source: 'college', plan: { status: 'PENDING', id: 705493 } }),
+        // createdByOrgId=35 与基础席位 currentUserOrgId=35 同部门 → 按钮可见（v-if 通过）
+        effectivePlanContext: ref({
+          source: 'college',
+          plan: { status: 'PENDING', id: 705493, createdByOrgId: 35 }
+        }),
         refreshCurrentDepartmentView
       })
     )
@@ -475,7 +622,11 @@ describe('学院页签按钮分流与互斥守卫（2026-11-11 组件接线）',
     elMessageBoxConfirm.mockRejectedValue(new Error('cancelled'))
     const wrapper = mountView(
       collegeTabReady({
-        effectivePlanContext: ref({ source: 'college', plan: { status: 'DRAFT', id: 705493 } })
+        // createdByOrgId=35 与基础席位 currentUserOrgId=35 同部门 → 按钮可见（v-if 通过）
+        effectivePlanContext: ref({
+          source: 'college',
+          plan: { status: 'DRAFT', id: 705493, createdByOrgId: 35 }
+        })
       })
     )
     await switchToCollegeTab(wrapper)
@@ -491,6 +642,49 @@ describe('学院页签按钮分流与互斥守卫（2026-11-11 组件接线）',
     expect(String(elMessageBoxConfirm.mock.calls[0][1])).toBe('发起下发审批')
     expect(submitPlanForApproval).not.toHaveBeenCalled()
     expect(withdrawPlan).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  // 2026-11-13（撤回入口席位显隐）两枚组件级接线锁（f568bef 教训：lib 纯函数对了、
+  // 模板没接线照样漏——必须直接锁 v-if 本体，断言按钮「不存在」而非「置灰」）：
+  // 用户铁律：非「当前生效计划归属部门的填报人席位」按钮一律 v-if 隐藏；
+  // 场景锚定 zlb_final1 实测反例（战略发展部负责人1，org 35，roles 无 ROLE_REPORTER，
+  // 曾在学院页签看到工学院子计划审批中的亮橙撤回——计划 createdByOrgId 同为 35）。
+  it('席位显隐接线锁：非填报人席位（负责人/审核人/校领导）×同 org 审批中 → 「下发/撤回」整颗隐藏', async () => {
+    const wrapper = mountView(
+      collegeTabReady({
+        isCurrentUserReporter: ref(false),
+        currentUserOrgId: ref(35),
+        effectivePlanContext: ref({
+          source: 'college',
+          plan: { status: 'PENDING', id: 705493, createdByOrgId: 35 }
+        })
+      })
+    )
+    await switchToCollegeTab(wrapper)
+
+    // 席位判定先于 org 比对：同 org 也拦（纯 org 比对拦不住 zlb_final1 反例）
+    expect(findButtonByText(wrapper, '撤回')).toBeUndefined()
+    expect(findButtonByText(wrapper, '发起审批')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('席位显隐接线锁：填报人×跨部门生效计划（org 不一致）→ 「下发/撤回」整颗隐藏', async () => {
+    const wrapper = mountView(
+      collegeTabReady({
+        isCurrentUserReporter: ref(true),
+        currentUserOrgId: ref(36),
+        effectivePlanContext: ref({
+          source: 'college',
+          plan: { status: 'PENDING', id: 705493, createdByOrgId: 35 }
+        })
+      })
+    )
+    await switchToCollegeTab(wrapper)
+
+    // 席位过、org 不过：36 ≠ 35 → 隐藏（跨部门查看者不得见下发/撤回入口）
+    expect(findButtonByText(wrapper, '撤回')).toBeUndefined()
+    expect(findButtonByText(wrapper, '发起审批')).toBeUndefined()
     wrapper.unmount()
   })
 
@@ -584,7 +778,9 @@ describe('学院页签按钮分流与互斥守卫（2026-11-11 组件接线）',
       collegeTabReady({
         effectivePlanContext: ref({
           source: 'college',
-          plan: { status: 'DISTRIBUTED', id: 705493 }
+          // 2026-11-13（撤回入口席位显隐）：学院子计划创建方 = 战略部（org 35），
+          // 与填报人席位 org 35 一致 → 席位判定通过、按钮渲染，才轮得到相位置灰断言
+          plan: { status: 'DISTRIBUTED', id: 705493, createdByOrgId: 35 }
         })
       })
     )
@@ -668,9 +864,13 @@ describe('useStrategicTaskView 学院口径接线契约（③④）', () => {
       resolve(process.cwd(), 'src/3-features/task/ui/StrategicTaskView.vue'),
       'utf8'
     )
+    // 2026-11-13（撤回入口席位显隐）：该 import 已扩为多行双符号
+    // （resolveCollegeTabDistributeAction + resolveWithdrawControlVisible），
+    // 旧单行模式会撞车 → 改容忍多行，并把显隐新符号一并纳入契约锁
     expect(vueSource).toMatch(
-      /import\s*\{\s*resolveCollegeTabDistributeAction\s*\}\s*from\s*'@\/features\/task\/lib\/collegeTabDistribute'/
+      /import\s*\{[^}]*resolveCollegeTabDistributeAction[^}]*\}\s*from\s*'@\/features\/task\/lib\/collegeTabDistribute'/
     )
+    expect(vueSource).toContain('resolveWithdrawControlVisible')
     expect(vueSource).toContain('handleWithdrawCollegeDispatch')
     expect(vueSource).toMatch(/planApi\.withdrawPlan\(planId\)/)
     expect(vueSource).toMatch(/await handleWithdrawMutationBatch\(\)/)

@@ -75,6 +75,62 @@ export const resolveCollegeTabDistributeAction = (
   return { action: 'submit-dispatch', text: '发起审批', buttonType: 'success' }
 }
 
+/** 「下发/撤回」多态合并按钮**席位级显隐**判定的输入（2026-11-13 用户铁律） */
+export interface WithdrawControlVisibilityInput {
+  /**
+   * 异动审批在审且当前用户为该批发起人（未过撤回窗口）——model 的 canWithdrawMutationInFlight。
+   * 已核实该 computed 内含「发起人（submitter_name 与当前登录人姓名比对）+ 撤回窗口
+   * （当前节点不含终审/分管校领导）」限定，此处直接采信，不再重复比对发起人。
+   */
+  canWithdrawMutationInFlight: boolean
+  /** 登录账号 authStore.user.roles 是否含 ROLE_REPORTER 席位码（model 的 isCurrentUserReporter） */
+  isCurrentUserReporter: boolean
+  /** 当前登录用户组织 id（解析失败为 null） */
+  currentUserOrgId: number | null
+  /**
+   * 当前生效计划的创建方组织 id。口径随页签：职能页签 = currentPlan.createdByOrgId，
+   * 学院页签 = effectivePlanContext 解析的 FUNC_TO_COLLEGE 子计划.createdByOrgId
+   * （组件侧经 effectivePlanContext 一处取数，两页签天然同源）。
+   */
+  effectivePlanCreatedByOrgId: number | string | null | undefined
+}
+
+/**
+ * 「下发/撤回」多态合并按钮（撤回下发审批 / 撤回上报 / 撤回异动）的**席位级显隐**。
+ *
+ * <p>用户铁律（2026-11-13）：按钮只允许「当前生效计划归属部门的**填报人席位**」显示；
+ * 其他席位（负责人/审核人/校领导）与跨部门查看者一律不显示（v-if 隐藏，不是置灰）。
+ * 显隐靠席位、置灰靠相位，两层并存——填报人自己看到时，既有相位置灰逻辑与
+ * tooltip 原样保留。判定式：</p>
+ * <ol>
+ *   <li>异动在审分支：canWithdrawMutationInFlight（已含发起人比对与撤回窗口）→
+ *       任一页签该批发起人可见；</li>
+ *   <li>普通下发/撤回分支：isCurrentUserReporter && 当前生效计划 createdByOrgId ===
+ *       currentUserOrgId。席位判定必须先于 org 比对——学院子计划 createdByOrgId=战略部，
+ *       战略部负责人与计划同 org，纯 org 比对拦不住（zlb_final1 实测反例）。</li>
+ * </ol>
+ * <p>页签上下文不单列输入：两页签差异已完全落在 effectivePlanCreatedByOrgId 的取数口径里
+ * （学院页签取生效子计划、职能页签取自身计划），判定式本身与页签无关（异动发起人
+ * 「任一页签」可见）。未登录 / roles 缺失（isCurrentUserReporter=false、orgId 取不到）/
+ * 生效计划缺失或 createdByOrgId 非法 → 一律 false（宁可隐藏，不误显示）。</p>
+ */
+export const resolveWithdrawControlVisible = (input: WithdrawControlVisibilityInput): boolean => {
+  // 分支①异动在审：发起人（含撤回窗口）限定已由 model 的 canWithdrawMutationInFlight 保证
+  if (input.canWithdrawMutationInFlight === true) {
+    return true
+  }
+  // 分支②普通下发/撤回：先席位（ROLE_REPORTER），再「当前生效计划归属部门」
+  if (input.isCurrentUserReporter !== true) {
+    return false
+  }
+  const reporterOrgId = Number(input.currentUserOrgId)
+  if (!Number.isFinite(reporterOrgId) || reporterOrgId <= 0) {
+    return false
+  }
+  const planOrgId = Number(input.effectivePlanCreatedByOrgId)
+  return Number.isFinite(planOrgId) && planOrgId > 0 && planOrgId === reporterOrgId
+}
+
 /** 上报审批「在途」状态集（P-24 互斥口径：含退回态 RETURNED，审批结束态不在内） */
 export const REPORT_APPROVAL_IN_FLIGHT_STATUSES: readonly string[] = [
   'PENDING',
