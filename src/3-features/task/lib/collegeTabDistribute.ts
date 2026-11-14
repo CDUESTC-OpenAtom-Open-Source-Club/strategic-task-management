@@ -361,3 +361,80 @@ export const hasCollegeMutationApprovalInFlight = (
   }
   return entries.some(entry => Number(entry.targetOrgId) === orgId)
 }
+
+/** 学院页签「导入」入口 gating 的输入（2026-11-14 D1 首次下发死锁解锁） */
+export interface CollegeTabImportGateInput {
+  /**
+   * 学院 × 归口组合是否解析到 FUNC_TO_COLLEGE 子计划。false = 该组合**尚无计划**
+   * （effectivePlanContext.plan 为空）—— 导入本来就是「创建计划并下发」的入口，
+   * 必须放行（后端 BusinessImportApplicationService.findOrCreatePlan 兜底建计划）。
+   */
+  collegeSubPlanResolved: boolean
+  /** 学院子计划原始状态（与 resolveCollegeTabDistributeAction 同源取数：plan.status） */
+  collegePlanStatus: unknown
+  /**
+   * 该组合的表格行集是否非空（collegeTableIndicators 行数 > 0，含内存草稿行）——
+   * 「空壳计划」（存在但没有任何指标行）放行导入：导入就是往空计划里建行。
+   */
+  collegePlanHasRows: boolean
+}
+
+/** 学院下发审批「在途」状态集（与 resolveCollegeTabDistributeAction 审批中分支同口径） */
+const COLLEGE_PLAN_APPROVAL_IN_FLIGHT_STATUSES: readonly string[] = [
+  'PENDING',
+  'IN_REVIEW',
+  'PENDING_REVIEW',
+  'PENDING_APPROVAL',
+  'SUBMITTED'
+]
+
+/** 学院下发「已下发」状态集（与 resolveCollegeTabDistributeAction 下发分支同口径） */
+const COLLEGE_PLAN_DISTRIBUTED_STATUSES: readonly string[] = [
+  'DISTRIBUTED',
+  'APPROVED',
+  'PUBLISHED',
+  'ACTIVE'
+]
+
+/**
+ * 学院页签「导入」入口的置灰口径（返回置灰原因文案，空串 = 放行）。
+ *
+ * <p>2026-11-14（D1 首次下发死锁解锁，PR#115 回归修复）：旧 gating
+ * 「计划非 DISTRIBUTED 一律拦」（collegeTabPlanNotDistributed）把**尚无计划**的
+ * 学院 × 部门组合也拦死——而导入本来就是「创建计划并下发」的入口（后端
+ * findOrCreatePlan 建计划），「发起下发审批」按钮又因计划缺失被 v-if 藏掉 →
+ * 新组合的首次下发无路可走（存量已下发组合不受影响，所以只点现成组合的
+ * 回归发现不了）。新口径：</p>
+ * <ul>
+ *   <li>尚无计划（子计划未解析）→ 放行（导入 = 创建计划并下发）；</li>
+ *   <li>已有 DISTRIBUTED 计划 → 放行（既有口径：已下发组合导入走异动审批链）；</li>
+ *   <li>空壳计划（存在但没有任何指标行）→ 放行（导入 = 往空计划建行）；</li>
+ *   <li>计划在审/审批中（PENDING/IN_REVIEW 等）→ 拦（互斥：审批中的计划不能加行）；</li>
+ *   <li>已存在、非 DISTRIBUTED 且非空壳（草稿/退回且已有行）→ 拦（B4 原始缺陷
+ *       口径保留：未下发计划的存量行集不能再用导入改，先发起下发审批）。</li>
+ * </ul>
+ * <p>「新增行 / 发起异动」不适用本口径——它们仍按 collegeTabPlanNotDistributed
+ * 全量拦（异动前提是计划已下发），见 useStrategicTaskView 的 B4 注释。</p>
+ */
+export const resolveCollegeTabImportGate = (input: CollegeTabImportGateInput): string => {
+  // 尚无计划：导入就是创建计划的入口（后端 findOrCreatePlan 兜底），放行
+  if (!input.collegeSubPlanResolved) {
+    return ''
+  }
+  const status = String(input.collegePlanStatus ?? '')
+    .trim()
+    .toUpperCase()
+  // 计划在审/审批中：互斥（下发审批走完前不能通过导入加行/改行）
+  if (COLLEGE_PLAN_APPROVAL_IN_FLIGHT_STATUSES.includes(status)) {
+    return '该学院×部门的计划审批进行中，暂不能导入：等下发审批结束或先撤回'
+  }
+  // 已下发：放行（既有口径，已下发组合导入走异动审批链）
+  if (COLLEGE_PLAN_DISTRIBUTED_STATUSES.includes(status)) {
+    return ''
+  }
+  // 草稿/退回/未知：空壳放行（导入=建行）；已有行拦（未下发计划的存量行集不能导入改）
+  if (input.collegePlanHasRows) {
+    return '该学院×部门的计划未下发且已有指标行，暂不能导入：请先发起下发审批，下发后再调整'
+  }
+  return ''
+}

@@ -6966,6 +6966,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     if (
       departmentMutationPendingApprovals.value.some(
         item => item.entityType === entityType && Number(item.entityId) === id
+      ) ||
+      // 2026-11-14（低危 D2）：学院子指标异动实例（source=战略发展部、target=学院）
+      // 只落在链下学院追回清单——主清单按职能部门 orgId 查询不命中，角标在审态不亮。
+      // 并入链下清单（与 isCollegeMutationApprovalInFlight /
+      // canWithdrawMutationInFlight 的合并口径同款），主清单口径不变。
+      departmentChainMutationPendingApprovals.value.some(
+        item => item.entityType === entityType && Number(item.entityId) === id
       )
     ) {
       return true
@@ -8916,6 +8923,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     // 2026-11-14（B4）：学院页签子计划未下发时锁写入口（新增行/导入）——发起异动走
     // mutationSubmitBlocked 合并判定，视图侧不再单独消费本值也可
     collegeTabPlanNotDistributed,
+    // 2026-11-14（D1 首次下发死锁解锁）：「尚无计划」组合识别（子计划未解析）透传——
+    // 视图的发起下发审批按钮 v-if 兜底（fallback 到战略部 org）与导入入口 gating 消费
+    collegeSubPlanUnresolved,
     mutationSubmitBlockedReason,
     mutationDraftCount,
     reportMonth,
