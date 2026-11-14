@@ -320,18 +320,41 @@ describe('学院页签部门下拉下发资格（2026-11-10 用户拍板）', ()
     expect(viewSource).toMatch(/@command="handleCollegeDeptFilterChange"/)
   })
 
-  it('无资格部门灰色 #c0c4cc + 「未下发」标记，有资格部门按上报状态着色（模板契约）', () => {
+  it('部门下拉单一状态徽标：无条件单 el-tag（phaseBadge 恒非空），不再有并存上报 tag（2026-11-13 模板契约）', () => {
     const viewSource = readSource('src/3-features/task/ui/StrategicTaskView.vue')
     // 灰色口径换成 eligible（存在「已下发」核心指标），不再是 count
     expect(viewSource).toMatch(/!item\.eligible\s*\?\s*'(#c0c4cc)'/)
-    // 「未下发」小标签挂在 !item.eligible 上（warning 风格，与现有 el-tag 一致）
+    // 2026-11-13（用户拍板「只能显示一个状态」）：下发 + 上报双 tag 合并为单一
+    // phaseBadge（业务流转当前阶段：草稿/审批中/已下发/已上报/已回退，lib
+    // resolveCollegeDeptPhaseBadge 判定）；无计划 → lib COLLEGE_DEPT_NOT_DISPATCHED_
+    // BADGE（「未下发」warning）兜底，徽标恒非空。用户口径：不允许空白、不允许双 tag。
     // 注意：模板闭合标签写作 `</el-tag` + 换行 + `>`，所以用 <\/el-tag\s*>
     expect(viewSource).toMatch(
-      /v-if="!item\.eligible"[\s\S]{0,120}type="warning"[\s\S]{0,120}>未下发<\/el-tag\s*>/
+      /<el-tag\s+:type="item\.phaseBadge\.tagType"\s+size="small"\s+class="college-dept-filter-tag"\s+:disable-transitions="true"\s*>\{\{ item\.phaseBadge\.label \}\}<\/el-tag\s*>/
     )
-    // 有资格部门仍保留 绿（已上报）/橙（审批中）着色
-    expect(viewSource).toMatch(/item\.reportStatus === 'reported'\s*\?\s*'(#67c23a)'/)
-    expect(viewSource).toMatch(/'(#e6a23c)'/)
+    // 双 tag 缺陷契约（工学院×纪委办实测「已上报+未下发」并存）：禁止改回
+    // 「v-if 徽标 + v-else 兜底」分支写法——菜单隐藏期间换分支时 el-tag 内置
+    // el-zoom-in-center 过渡的 leave 动画收不到 transitionend，新旧双 tag 滞留 DOM。
+    // 徽标区域必须是**无条件单一 el-tag**（组件实例永不卸载）。
+    expect(viewSource).not.toMatch(/v-if="item\.phaseBadge"/)
+    expect(viewSource).not.toMatch(
+      /v-else[\s\S]{0,120}type="warning"[\s\S]{0,120}>未下发<\/el-tag\s*>/
+    )
+    // 无计划兜底收口在 lib 词表常量（模型消费），模板不再写死兜底文案
+    const libSource = readSource('src/3-features/task/lib/collegeDispatchEligibility.ts')
+    expect(libSource).toMatch(
+      /COLLEGE_DEPT_NOT_DISPATCHED_BADGE[^}]*label: '未下发'[^}]*tagType: 'warning'/s
+    )
+    const modelSource = readSource('src/3-features/task/model/useStrategicTaskView.ts')
+    expect(modelSource).toMatch(/\?\?\s*COLLEGE_DEPT_NOT_DISPATCHED_BADGE/)
+    // 旧「计划状态 + 上报维度」双 tag 并存结构不得回归
+    expect(viewSource).not.toMatch(/item\.planStatusBadge/)
+    expect(viewSource).not.toMatch(/item\.reportStatus === 'report(ing|ed)'/)
+    expect(viewSource).not.toContain('>上报中</el-tag')
+    expect(viewSource).not.toContain('>已上报</el-tag')
+    // 行内着色与 phaseBadge 同源：绿（success=已下发/已上报）/橙（warning=审批中）
+    expect(viewSource).toMatch(/item\.phaseBadge\?\.tagType === 'success'\s*\?\s*'(#67c23a)'/)
+    expect(viewSource).toMatch(/item\.phaseBadge\?\.tagType === 'warning'\s*\?\s*'(#e6a23c)'/)
   })
 
   it('无资格部门点击被拦截并提示用户拍板文案；有资格部门正常落选（接线契约）', () => {

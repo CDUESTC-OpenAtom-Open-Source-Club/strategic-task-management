@@ -128,6 +128,15 @@ const {
   _toggleViewMode,
   addNewRow,
   addRowFormRef,
+  // 2026-11-13（学院口径锚定）：审批中心抽屉的学院口径绑定（学院页签两选齐时
+  // 换锚 FUNC_TO_COLLEGE 子计划，职能页签回落 currentPlan / 现行 primary 解析）
+  approvalDrawerPlan,
+  approvalDrawerPlanName,
+  approvalDrawerDepartmentName,
+  approvalDrawerWorkflowEntityType,
+  approvalDrawerWorkflowEntityId,
+  approvalDrawerSecondaryWorkflowEntityType,
+  approvalDrawerSecondaryWorkflowEntityId,
   approvalEntryButtonText,
   approvalEntryButtonTextWithMutation,
   approvalEntryCanHandle,
@@ -252,6 +261,8 @@ const {
   collegeDepartmentsScoped,
   collegeAddMode,
   collegeParentIndicatorOptions,
+  // 2026-11-13（对齐 main 原版）：学院新增行「关联指标」下拉按任务分组的数据源
+  collegeParentIndicatorGroups,
   // 2026-11-08（单层下发）：学院页签「导入 / 导出 / 发起下发审批」所需的 model 数据
   // 2026-11-13（方案甲恢复）：学院页签「导入」模板父级预填 seeds（右侧下拉所选部门
   // 已接收的已下发核心指标，id 升序）
@@ -289,6 +300,9 @@ const {
   departmentMutationWorkflowEntities,
   loadDepartmentMutationWorkflowEntities,
   departmentPlanFamilyWorkflowEntities,
+  // 2026-11-13（学院口径上报审批可见）：抽屉 related 合并实体（学院页签 =
+  // 「学院×部门」报告实体在前 + 部门计划族在后；职能页签 = 原部门计划族，零回归）
+  drawerRelatedWorkflowEntities,
   loadDepartmentPlanFamilyWorkflowEntities,
   handleApprovalStatusPopoverShow,
   handleApproveCurrentIndicatorWorkflow,
@@ -618,6 +632,16 @@ const collegeTabDistributeButton = computed(() => {
 })
 
 /**
+ * 2026-11-13（用户反馈对齐职能部门页签）：学院子计划已下发 → 按钮置灰不可点，
+ * 与职能页签 planUiPhase==='distributed' → '当前状态不可操作' 的口径一致。
+ * 之前学院页签的 disabled 只判权限/只读/前置条件，不判相位 → 已下发仍可点，
+ * 点击还弹「可在审批中心查看审批记录」的误导提示。
+ */
+const collegeTabDistributePhaseDisabled = computed(
+  () => collegeTabDistributeButton.value.action === 'distributed-locked'
+)
+
+/**
  * 2026-11-08（单层下发）：工具栏「下发/撤回」按钮的点击分流。
  *
  * <p>职能部门页签 → 原样交给 model 的 handleDistributeOrWithdraw（行为零变化）；
@@ -696,10 +720,10 @@ const handleDistributeOrWithdrawClick = async () => {
     await handleWithdrawCollegeDispatch()
     return
   }
-  // 已下发相位：无可撤动作（与职能页签「当前状态不可操作」置灰口径一致），
-  // 引导去审批中心查看记录，不再弹发起确认。
+  // 已下发相位：无可撤动作（与职能页签「当前状态不可操作」置灰口径一致）。
+  // 2026-11-13（用户反馈对齐职能部门页签）：已下发 → 按钮已置灰不可点，
+  // 此处仅兜底防御（单测直调 handler 时 disabled 拦不住调用），静默返回、不弹任何提示。
   if (collegeTabDistributeButton.value.action === 'distributed-locked') {
-    ElMessage.info('当前学院计划已下发，可在审批中心查看审批记录')
     return
   }
   const planId = selectedCollegeDispatchPlanId.value
@@ -844,6 +868,58 @@ const handleCollegeParentIndicatorChange = (value: string) => {
   newRow.value.type1 = parent.type1 === '定性' ? '定性' : '定量'
   newRow.value.type2 = getIndicatorCategoryLabel(parent)
   newRow.value.taskContent = String(parent.taskContent || '')
+}
+
+/* 2026-11-13（对齐 main 原版）：以下两个 helper 照抄自「指标下发与审批」页
+   useIndicatorDistributeView（main 版 normalizeIndicatorTypeLabel /
+   getIndicatorTypeLabel / _getTaskTypeColor 原实现），供学院新增行「关联指标」
+   分组下拉的选项行双 tag（定量/定性 + 基础性/发展性）渲染使用。 */
+
+function normalizeIndicatorTypeLabel(value?: unknown): '定性' | '定量' | '' {
+  const normalized = String(value || '')
+    .trim()
+    .toUpperCase()
+  if (!normalized) {
+    return ''
+  }
+  if (normalized === '定性' || normalized === 'QUALITATIVE') {
+    return '定性'
+  }
+  if (normalized === '定量' || normalized === 'QUANTITATIVE') {
+    return '定量'
+  }
+  return ''
+}
+
+function getIndicatorTypeLabel(
+  indicator?:
+    | (Partial<{
+        type1?: unknown
+        indicatorType1?: unknown
+        indicatorType?: unknown
+        type?: unknown
+        isQualitative?: unknown
+      }> &
+        Record<string, unknown>)
+    | null
+): '定性' | '定量' {
+  if (!indicator) {
+    return '定量'
+  }
+
+  return (
+    normalizeIndicatorTypeLabel(indicator.type1) ||
+    normalizeIndicatorTypeLabel(indicator.indicatorType1) ||
+    normalizeIndicatorTypeLabel(indicator.indicatorType) ||
+    normalizeIndicatorTypeLabel(indicator.type) ||
+    (indicator.isQualitative === true ? '定性' : '') ||
+    '定量'
+  )
+}
+
+// 获取任务类型对应的颜色（基于任务的type2：发展性/基础性）——main 原版同款配色
+const _getTaskTypeColor = (type2: string) => {
+  return type2 === '发展性' ? '#409EFF' : '#67C23A'
 }
 
 // 2026-10-19 修复：切 tab 时按对应链路重新拉取上报摘要——
@@ -1814,12 +1890,15 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             :loading="activeTaskTabName === 'college' ? collegeDispatchSubmitting : undefined"
             :disabled="
               activeTaskTabName === 'college'
-                ? Boolean(collegeTabDistributeDisabledReason) || collegeDispatchSubmitting
+                ? Boolean(collegeTabDistributeDisabledReason) ||
+                  collegeDispatchSubmitting ||
+                  collegeTabDistributePhaseDisabled
                 : distributeButtonDisabled
             "
             :title="
               activeTaskTabName === 'college'
-                ? collegeTabDistributeDisabledReason
+                ? collegeTabDistributeDisabledReason ||
+                  (collegeTabDistributePhaseDisabled ? '当前状态不可操作' : '')
                 : distributeButtonDisabledReason
             "
             @click.stop="handleDistributeOrWithdrawClick"
@@ -2789,7 +2868,15 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                  点击弹提示「当前职能部门未有已下发的任务」且不选中。
                **强制显示单个部门**：没有「全部部门」这一态。
                2026-11-09（用户拍板：两步显式选择）：不再自动默认选第一个部门 ——
-               未选时箭头右侧显示灰色占位「请选择职能部门」，引导完成第二步选择。 -->
+               未选时箭头右侧显示灰色占位「请选择职能部门」，引导完成第二步选择。
+               2026-11-13（状态徽标修正，用户口径「不允许空白」）：状态标记基准改为
+               「战略发展部 → 该学院×该部门的 FUNC_TO_COLLEGE 计划状态」——
+               DISTRIBUTED/APPROVED → 「已下发」、PENDING/IN_REVIEW → 「审批中」、
+               DRAFT/WITHDRAWN → 「草稿」（词表复用 planStatus.ts）、无计划 → 「未下发」。
+               2026-11-13（用户拍板「只能显示一个状态」）：下发维度与上报维度**合并为
+               单一 tag**（phaseBadge）——下发阶段显示下发侧状态（草稿/审批中/已下发）；
+               已下发之后显示该学院×部门上报侧最新状态（在审=审批中 / 退回=已回退 /
+               归档=已上报 / 无上报=已下发），判定链见 lib resolveCollegeDeptPhaseBadge。 -->
           <template #label>
             <span class="college-tab-label">
               二级学院战略任务管理
@@ -2823,46 +2910,33 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                       :style="{
                         color: !item.eligible
                           ? '#c0c4cc'
-                          : item.reportStatus === 'reported'
+                          : item.phaseBadge?.tagType === 'success'
                             ? '#67c23a'
-                            : item.dispatchStatus === 'dispatching' ||
-                                item.reportStatus === 'reporting'
+                            : item.phaseBadge?.tagType === 'warning'
                               ? '#e6a23c'
                               : undefined
                       }"
                     >
                       <span class="college-dept-filter-name">{{ item.dept }}</span>
-                      <!-- 2026-11-10（用户拍板）：无「已下发」核心指标的部门 → 「未下发」标记，
-                           全部项可点击（点击拦截在 handleCollegeDeptFilterChange 里弹提示）。 -->
+                      <!-- 2026-11-13（用户拍板「只能显示一个状态」）：单一 tag = 业务流转
+                           当前阶段（lib resolveCollegeDeptPhaseBadge 合并判定）——
+                           下发阶段：草稿(info)/审批中(warning)/已下发(success)；
+                           已下发后按该学院×部门上报侧最新状态：在审=审批中(warning)/
+                           退回=已回退(danger)/归档=已上报(success)/无上报=已下发(success)；
+                           无计划=未下发(warning，lib COLLEGE_DEPT_NOT_DISPATCHED_BADGE 兜底，
+                           徽标恒非空)。词表全部为既有文案，零新增。
+                           2026-11-13（双 tag 缺陷修复）：必须用**无条件单一 el-tag**（label/
+                           type 全绑定）——禁止改回「v-if 徽标 + v-else 兜底」分支写法：菜单
+                           隐藏期间换分支时 el-tag 内置 el-zoom-in-center 过渡的 leave 动画
+                           收不到 transitionend，新旧双 tag 滞留 DOM（工学院×纪委办实测
+                           「已上报+未下发」并存）。单实例绑定 = 组件永不卸载，从根上消除。
+                           行内着色与徽标同源（绿=success/橙=warning）。 -->
                       <el-tag
-                        v-if="!item.eligible"
-                        type="warning"
+                        :type="item.phaseBadge.tagType"
                         size="small"
                         class="college-dept-filter-tag"
-                        >未下发</el-tag
-                      >
-                      <!-- 下发维度（战略部 → 该学院）：进行中才标记；已下发按用户要求正常显示、不标记 -->
-                      <el-tag
-                        v-if="item.eligible && item.dispatchStatus === 'dispatching'"
-                        type="warning"
-                        size="small"
-                        class="college-dept-filter-tag"
-                        >下发中</el-tag
-                      >
-                      <!-- 上报维度（该学院 → 审批）：进行中=橙、已完成=绿 -->
-                      <el-tag
-                        v-if="item.eligible && item.reportStatus === 'reporting'"
-                        type="warning"
-                        size="small"
-                        class="college-dept-filter-tag"
-                        >上报中</el-tag
-                      >
-                      <el-tag
-                        v-else-if="item.eligible && item.reportStatus === 'reported'"
-                        type="success"
-                        size="small"
-                        class="college-dept-filter-tag"
-                        >已上报</el-tag
+                        :disable-transitions="true"
+                        >{{ item.phaseBadge.label }}</el-tag
                       >
                     </el-dropdown-item>
                   </el-dropdown-menu>
@@ -3127,9 +3201,6 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   </el-table-column>
                 </el-table>
               </div>
-              <div class="excel-status-bar">
-                <div class="status-left">共 {{ collegeTableIndicators.length }} 条记录</div>
-              </div>
 
               <!-- 2026-10-23：学院 tab 的新增子指标表单（与职能部门面板同构，仅保留子指标字段）。
                    此前表单只挂在职能部门面板内，学院 tab 点「新增行」时用户看不到表单。 -->
@@ -3153,25 +3224,63 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                           <template #label
                             ><span class="required-asterisk">*</span>关联指标</template
                           >
+                          <!-- 2026-11-13（对齐 main 原版）：「关联指标」下拉改为按任务分组——
+                               与「指标下发与审批」页新增行完全同款（el-option-group 组头 =
+                               任务长文案 + popper 样式的灰色「任务」标记；选项行 = 核心指标名 +
+                               定量/定性、基础性/发展性双 tag）。逻辑绑定保持学院侧原样：
+                               v-model/@change/:teleported/filterable、value 仍为字符串 id。 -->
                           <el-select
                             v-model="newRow.parentIndicatorId"
                             filterable
-                            placeholder="选择要挂靠的核心指标"
+                            placeholder="选择关联的核心指标"
                             style="width: 100%"
-                            :teleported="false"
+                            popper-class="parent-indicator-select-popper"
                             @change="handleCollegeParentIndicatorChange"
                           >
-                            <el-option
-                              v-for="opt in collegeParentIndicatorOptions"
-                              :key="opt.id"
-                              :label="opt.name"
-                              :value="opt.id"
+                            <el-option-group
+                              v-for="task in collegeParentIndicatorGroups"
+                              :key="task.taskContent"
+                              :label="task.taskContent"
                             >
-                              <span>{{ opt.name }}</span>
-                              <span class="parent-indicator-option__task">{{
-                                opt.taskContent
-                              }}</span>
-                            </el-option>
+                              <el-option
+                                v-for="indicator in task.indicators"
+                                :key="indicator.id"
+                                :label="indicator.name"
+                                :value="indicator.id"
+                              >
+                                <div class="parent-indicator-option">
+                                  <span class="parent-indicator-option__name">{{
+                                    indicator.name
+                                  }}</span>
+                                  <div class="parent-indicator-option__tags">
+                                    <el-tag
+                                      size="small"
+                                      :type="
+                                        getIndicatorTypeLabel(indicator) === '定量'
+                                          ? 'primary'
+                                          : 'warning'
+                                      "
+                                    >
+                                      {{ getIndicatorTypeLabel(indicator) }}
+                                    </el-tag>
+                                    <el-tag
+                                      size="small"
+                                      effect="plain"
+                                      :style="{
+                                        color: _getTaskTypeColor(task.type2),
+                                        borderColor: _getTaskTypeColor(task.type2),
+                                        backgroundColor:
+                                          task.type2 === '发展性'
+                                            ? 'rgba(64, 158, 255, 0.08)'
+                                            : 'rgba(103, 194, 58, 0.08)'
+                                      }"
+                                    >
+                                      {{ task.type2 }}
+                                    </el-tag>
+                                  </div>
+                                </div>
+                              </el-option>
+                            </el-option-group>
                           </el-select>
                           <div v-if="collegeParentIndicatorOptions.length === 0" class="form-hint">
                             当前所选职能部门（{{
@@ -3235,10 +3344,19 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
         </el-tab-pane>
       </el-tabs>
 
-      <!-- Excel状态栏 -->
+      <!-- Excel状态栏（2026-11-13：行数随页签分流——学院页签读 collegeTableIndicators，
+           职能部门页签维持 indicators 口径；「最后编辑」保持全局 lastEditTime） -->
       <div class="excel-status-bar">
         <div class="status-left">
-          {{ isInitialDataLoading ? '正在加载数据...' : `共 ${indicators.length} 条记录` }}
+          {{
+            isInitialDataLoading
+              ? '正在加载数据...'
+              : `共 ${
+                  activeTaskTabName === 'college'
+                    ? collegeTableIndicators.length
+                    : indicators.length
+                } 条记录`
+          }}
         </div>
         <div class="status-right">
           {{ isInitialDataLoading ? '最后编辑: --' : `最后编辑: ${lastEditTime}` }}
@@ -3610,24 +3728,27 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
     <!-- 2026-10-30 用户定案：退回待重报活链在流程终结前不得在审批中心消失——
          退回链清单透传给抽屉，计划审批 tab 渲染「退回待重报」状态卡、
          审批流程 tab 选择栏可选中查看该链 -->
+    <!-- 2026-11-13（学院口径上报审批可见）：学院页签两选齐时 related 前部拼接
+         「学院×部门」报告实体（上报 flow4 审批历史），下发 flow6（主锚子计划）不丢；
+         职能页签仍为部门计划族实体（零回归） -->
     <DistributionApprovalProgressDrawer
       v-model="taskApprovalVisible"
       :indicators="approvalIndicators"
-      :plan="currentPlan"
+      :plan="approvalDrawerPlan"
       :initial-plan-workflow-detail="preloadedPlanWorkflowDetail"
-      :department-name="selectedDepartment"
-      :plan-name="currentPlan?.taskName || currentPlan?.name || selectedDepartment"
+      :department-name="approvalDrawerDepartmentName"
+      :plan-name="approvalDrawerPlanName"
       :show-plan-approvals="true"
       :show-approval-section="true"
       :workflow-code="PLAN_APPROVAL_HISTORY_WORKFLOW_CODES"
-      :workflow-entity-type="primaryApprovalWorkflowEntityType"
-      :workflow-entity-id="primaryApprovalWorkflowEntityId"
-      :secondary-workflow-entity-type="secondaryApprovalWorkflowEntityType"
-      :secondary-workflow-entity-id="secondaryApprovalWorkflowEntityId"
+      :workflow-entity-type="approvalDrawerWorkflowEntityType"
+      :workflow-entity-id="approvalDrawerWorkflowEntityId"
+      :secondary-workflow-entity-type="approvalDrawerSecondaryWorkflowEntityType"
+      :secondary-workflow-entity-id="approvalDrawerSecondaryWorkflowEntityId"
       :mutation-workflow-entities="departmentMutationWorkflowEntities"
       :mutation-pending-approvals="allDepartmentMutationPendingApprovals"
       :returned-mutation-approvals="returnedMutationChains"
-      :related-workflow-entities="departmentPlanFamilyWorkflowEntities"
+      :related-workflow-entities="drawerRelatedWorkflowEntities"
       approval-type="submission"
       @close="taskApprovalVisible = false"
       @refresh="handleApprovalRefresh"
@@ -3759,13 +3880,70 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
 }
 
 /* 说明：下拉菜单被 Element Plus teleport 到 body，scoped 样式选不到它，
-   所以「已上报 / 审批中 / 未下发」三种颜色一律用模板上的内联 style 实现，
-   这里不再留对应 class（留着会误导后来者以为改样式能生效）。 */
+   所以状态徽标的行内着色（绿=已下发/已上报、橙=审批中、灰=无资格）一律用
+   模板上的内联 style 实现，这里不再留对应 class（留着会误导后来者以为改样式能
+   生效）。2026-11-13 徽标合并后着色与 phaseBadge.tagType 同源。 */
 
 /* 2026-11-13（用户反馈）：学院新增行表单的字段名不得折行。
    「子指标内容」5 字在 80px label 宽下会断成两行，放宽到 110px 后仍加
    nowrap 兜底（长字段名/窄窗口下也不折行）。 */
 .college-add-row-form :deep(.el-form-item__label) {
   white-space: nowrap;
+}
+</style>
+
+<!-- 2026-11-13（对齐 main 原版）：学院新增行「关联指标」分组下拉的 popper 全局样式——
+     照抄自「指标下发与审批」页 IndicatorDistributeView.global.css（main 版同名段）。
+     组头（el-select-group__title）由 Element Plus 组件内部模板渲染、不带本组件的
+     scoped 属性，且学院侧 select 虽为 :teleported="false"，选项组标题仍非本模板
+     节点——必须放全局（非 scoped）才能命中；类名 parent-indicator-select-popper
+     专用于此下拉，全局作用域安全。 -->
+<style>
+/* 下拉本体限宽：超长任务文案/指标名会被省略号截断，不限宽时 popper 被撑到视口外，
+   右侧的「任务」标记与双 tag 都看不见（main 原版同款限宽） */
+.parent-indicator-select-popper {
+  max-width: min(860px, calc(100vw - 360px));
+  /* 2026-11-13（用户反馈弹层溢出）：长任务文案/指标名会把内部 el-scrollbar view
+     与 li 撑到超过 popper 上限（li 实测 838 > 740），「任务」标记与双 tag 被挤出
+     弹层右缘——横向裁剪 + 内层级 max-width:100% 逐层约束，超宽内容按各自行内
+     ellipsis 截断，tags 固定在弹层右缘内。 */
+  overflow: hidden auto;
+}
+
+.parent-indicator-select-popper .el-select-dropdown,
+.parent-indicator-select-popper .el-select-dropdown__list,
+.parent-indicator-select-popper .el-select-group,
+.parent-indicator-select-popper .el-select-group__wrap,
+.parent-indicator-select-popper li.el-select-dropdown__item {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+/* 关键：EP 会在 dropdown 上设 inline min-width = 触发器全宽（本表单 ~838px），
+   非 !important 的 max-width 压不过它——正是弹层溢出的根因 */
+.parent-indicator-select-popper .el-select-dropdown {
+  min-width: 0 !important;
+}
+
+/* 分组标题 = 战略任务行：名称居左（超宽硬截断），灰色「任务」小标记钉在右缘 */
+.parent-indicator-select-popper .el-select-group__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.parent-indicator-select-popper .el-select-group__title::after {
+  content: '任务';
+  flex-shrink: 0;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #909399;
+  background: #f4f4f5;
+  border: 1px solid #e9e9eb;
 }
 </style>

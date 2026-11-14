@@ -64,7 +64,9 @@ export const resolveCollegeTabDistributeAction = (
   const status = String(input.collegePlanStatus ?? '')
     .trim()
     .toUpperCase()
-  if (['PENDING', 'IN_REVIEW', 'PENDING_REVIEW', 'PENDING_APPROVAL', 'SUBMITTED'].includes(status)) {
+  if (
+    ['PENDING', 'IN_REVIEW', 'PENDING_REVIEW', 'PENDING_APPROVAL', 'SUBMITTED'].includes(status)
+  ) {
     return { action: 'withdraw-dispatch', text: '撤回', buttonType: 'warning' }
   }
   if (['DISTRIBUTED', 'APPROVED', 'PUBLISHED', 'ACTIVE'].includes(status)) {
@@ -177,6 +179,80 @@ export const mergeReturnedMutationChains = <T extends ReturnedMutationChainLike>
 export interface CollegeMutationApprovalEntryLike {
   targetOrgId?: number | string | null
   [key: string]: unknown
+}
+
+/** 学院×部门上报摘要的最小结构（collegeScopePlanReportSummary，字段与后端对齐） */
+export interface CollegeReportSummaryLike {
+  id?: number | string | null
+  workflowStatus?: string | null
+  status?: string | null
+  [key: string]: unknown
+}
+
+export interface CollegeReportApprovalStatusMetaInput {
+  /** 学院×部门上报摘要（null = 该学院×部门还没有报告记录） */
+  reportSummary: CollegeReportSummaryLike | null
+}
+
+export interface CollegeReportApprovalStatusMeta {
+  label: string
+  tagType: 'info' | 'warning' | 'danger' | 'success'
+  description: string
+}
+
+/**
+ * 学院页签「审批状况」签的部门口径映射（2026-11-13 上报进度按归口部门收口）。
+ *
+ * <p>背景：学院页签两选齐后，该签此前读 collegeTableIndicators 行级 fills 聚合
+ * （getIndicatorFillHistory 恒不带 functionalOrgId = 全院报告聚合），选了职能部门
+ * 也显示全院口径。改为按任务1收口后的 collegeScopePlanReportSummary（学院×部门
+ * 独立报告的 workflowStatus）映射。文案全部复用 approvalFlowStatusMeta 既有映射
+ * （未填报 / 审批中 / 已回退 / 已上报 / 上报已撤回），零新文案。</p>
+ *
+ * <p>映射口径：摘要缺失 → 未填报；DRAFT（上报中填写）→ 未填报；
+ * PENDING / IN_REVIEW / SUBMITTED → 审批中；WITHDRAWN → 上报已撤回（待重新上报）；
+ * REJECTED / RETURNED / CANCELLED → 已回退；APPROVED → 已上报。</p>
+ */
+export const resolveCollegeReportApprovalStatusMeta = (
+  input: CollegeReportApprovalStatusMetaInput
+): CollegeReportApprovalStatusMeta => {
+  const summary = input.reportSummary
+  if (!summary) {
+    return { label: '未填报', tagType: 'info', description: '当前学院还没有填报记录。' }
+  }
+  const status = String(summary.workflowStatus ?? summary.status ?? '')
+    .trim()
+    .toUpperCase()
+  if (['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(status)) {
+    return {
+      label: '审批中',
+      tagType: 'warning',
+      description: '当前计划有指标的填报正在审批中。'
+    }
+  }
+  if (status === 'WITHDRAWN') {
+    return {
+      label: '上报已撤回（待重新上报）',
+      tagType: 'warning',
+      description: '本轮上报已被撤回，等待重新上报。'
+    }
+  }
+  if (['REJECTED', 'RETURNED', 'CANCELLED'].includes(status)) {
+    return {
+      label: '已回退',
+      tagType: 'danger',
+      description: '当前计划有指标的填报被回退，等待重新上报。'
+    }
+  }
+  if (status === 'APPROVED') {
+    return {
+      label: '已上报',
+      tagType: 'success',
+      description: '当前计划的指标填报均已上报。'
+    }
+  }
+  // DRAFT / 未知状态：报告轮次已存在但尚未提交上报 → 未填报（上报中填写）
+  return { label: '未填报', tagType: 'info', description: '当前计划有指标尚未填报。' }
 }
 
 /**

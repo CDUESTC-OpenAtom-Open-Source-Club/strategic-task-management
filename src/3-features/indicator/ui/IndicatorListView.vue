@@ -730,12 +730,18 @@ const handleExportIndicatorList = async () => {
                 <el-option label="基础性" value="基础性" />
               </el-select>
             </el-form-item>
-            <!-- 来源部门筛选（仅学院可见） -->
+            <!-- 归属部门筛选（仅学院可见；2026-11-13 口径变更：原「来源部门」退役——
+                 选项=当前行集按父级核心指标反查出的归口职能部门，一键提交/撤回必须先选） -->
             <el-form-item
               v-if="isSecondaryCollege && availableOwnerDepts.length > 0"
-              label="来源部门"
+              label="归属部门"
             >
-              <el-select v-model="filterOwnerDept" placeholder="选择来源部门" style="width: 200px">
+              <el-select
+                v-model="filterOwnerDept"
+                placeholder="请选择归属部门"
+                clearable
+                style="width: 200px"
+              >
                 <el-option
                   v-for="dept in availableOwnerDepts"
                   :key="dept"
@@ -838,11 +844,12 @@ const handleExportIndicatorList = async () => {
 
             <!-- 职能部门/二级学院的批量操作按钮 -->
             <template v-if="showPlanBatchActions">
-              <!-- 一键提交按钮（草稿态且未锁定时显示；2026-10-31「灰而可点」定案：
-                   异动锁并入置灰判定，不再用原生 disabled（会吞点击事件），
-                   改 is-disabled 样式类 + aria-disabled + 悬停 title（与下发页同款写法）；
-                   点击统一进 handleSubmitAllGate——有锁定原因当场 toast 第一条命中原因，
-                   无原因走 handleSubmitAll 原流程（内部守卫保留作双保险） -->
+              <!-- 一键提交按钮（草稿态且未锁定时显示；2026-11-13 用户拍板：学院未选归属部门
+                   时整颗按钮不渲染（showSubmitAllButton 内含学院上下文条件，非学院不受影响）；
+                   2026-10-31「灰而可点」定案：异动锁并入置灰判定，不再用原生 disabled
+                   （会吞点击事件），改 is-disabled 样式类 + aria-disabled + 悬停 title
+                   （与下发页同款写法）；点击统一进 handleSubmitAllGate——有锁定原因当场
+                   toast 第一条命中原因，无原因走 handleSubmitAll 原流程（内部守卫保留作双保险） -->
               <el-button
                 v-if="showSubmitAllButton"
                 type="primary"

@@ -12,10 +12,13 @@
  * 其中 <b>ACTIVE 是旧数据的「已下发」等价状态</b>（与 task/lib/planStatus.ts 的
  * ACTIVE→DISTRIBUTED 归一同口径）。子指标（有 parentIndicatorId）不算资格依据
  * ——子指标是学院在核心指标下拆分的，不代表「该部门下发过」。</p>
+ * ——子指标是学院在核心指标下拆分的，不代表「该部门下发过」。</p>
  *
  * <p>「该考核周期」无需在本模块额外过滤：学院页签消费的指标列表
  * （store.indicators）本身已按当前考核周期拉取。</p>
  */
+
+import { normalizePlanStatus } from './planStatus'
 
 /** 学院页签下拉项（collegeDeptDropdownItems 的最小形状） */
 export interface CollegeDeptDispatchOptionLike {
@@ -225,4 +228,367 @@ export const buildCollegeParentAnchorIndicators = (
       return targetDeptName === ownerDept || targetDeptName.includes(ownerDept)
     })
     .sort((left, right) => Number(left.id ?? 0) - Number(right.id ?? 0))
+}
+
+/**
+ * 学院页签下拉「部门 × 所选学院」的下发计划状态表（2026-11-13 状态徽标修正，
+ * 纯函数，实现与单测共用）。
+ *
+ * <p>缺陷（用户实测）：工学院 × 教务处已有 DISTRIBUTED 下发计划 705488，但下拉里
+ * 「教务处」右侧空白——旧判定 basis 是「学院行聚合」（target=学院 的指标行按
+ * ownerDept 分组取 indicator.status），教务处在该学院名下没有 owner=教务处 的行
+ * （改造后子指标 owner=战略发展部），dispatchStatus 落 'none'；而 eligible 又因
+ * 「已下发核心指标 target=教务处」为 true → 「未下发」tag 不显示、其它 tag 也不
+ * 命中 → 空白。用户口径：已下发 → 「已下发」，没下发 → 「未下发」，不允许空白。</p>
+ *
+ * <p>新口径：判定基准改为「战略发展部 → 该学院 × 该部门的 FUNC_TO_COLLEGE 计划
+ * （created_by=35，V104 起归口部门在 plan.functional_org_id）的计划状态」：</p>
+ * <ul>
+ *   <li>DISTRIBUTED / APPROVED → 「已下发」；</li>
+ *   <li>PENDING / IN_REVIEW / SUBMITTED → 「审批中」；</li>
+ *   <li>DRAFT / WITHDRAWN / 其余 → 「草稿」；</li>
+ *   <li>无计划 → 「未下发」（沿用既有 tag，模板按 statusMap 缺失回退）。</li>
+ *   文案复用 planStatus.ts 既有词表（getPlanStatusDisplay），零新文案。</li>
+ * </ul>
+ *
+ * <p>匹配口径（与 /distribution 分发页归口锚定同族）：</p>
+ * <ul>
+ *   <li>planLevel = FUNC_TO_COLLEGE、target = 所选学院（orgId 或归一化名）、
+ *       年份精确等于当前年；</li>
+ *   <li>部门归属：<b>归口优先</b>（plan.functional_org_id = 部门 orgId）；
+ *       缺失时回退 legacy（plan.created_by_org_id = 部门 orgId）且计划必须有
+ *       <b>存活指标</b>——legacy 空壳计划（0 任务，如 404456）不参与状态展示，
+ *       否则工学院下拉全员变「草稿」，验收口径「其余部门=未下发」被破坏；</li>
+ *   <li>同部门多份计划：归口桶优先 → 已下发优先 → id 倒序。</li>
+ * </ul>
+ */
+export interface CollegeDeptPlanStatusPlanLike {
+  id?: number | string | null
+  status?: unknown
+  planLevel?: unknown
+  targetOrgId?: unknown
+  orgId?: unknown
+  org_id?: unknown
+  targetOrgName?: unknown
+  orgName?: unknown
+  createdByOrgId?: unknown
+  created_by_org_id?: unknown
+  functionalOrgId?: unknown
+  functional_org_id?: unknown
+  totalIndicators?: unknown
+  indicators?: unknown
+  [key: string]: unknown
+}
+
+export interface CollegeDeptPlanStatusContext {
+  /** 所选学院组织 ID（解析不出为 null，退归一化名匹配） */
+  collegeOrgId: number | null
+  /** 所选学院归一化名 */
+  collegeName: string
+  currentYear: number
+  /** 计划年份解析（调用方注入既有 resolvePlanYear） */
+  resolvePlanYear: (plan: CollegeDeptPlanStatusPlanLike) => number | null
+  /** 部门名 → 组织 ID（调用方注入 resolveDepartmentIdByName） */
+  resolveDeptOrgId: (deptName: string) => number | null
+  /** 部门/学院名归一化（调用方注入 normalizeDepartmentName） */
+  normalize: (value?: string | null) => string
+}
+
+const toFiniteNumber = (value: unknown): number => {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : Number.NaN
+}
+
+/** 计划是否带存活指标（totalIndicators>0 或详情 indicators 非空；legacy 空壳=false） */
+const hasLivingIndicators = (plan: CollegeDeptPlanStatusPlanLike): boolean => {
+  const total = toFiniteNumber(plan.totalIndicators)
+  if (Number.isFinite(total) && total > 0) {
+    return true
+  }
+  return Array.isArray(plan.indicators) && plan.indicators.length > 0
+}
+
+export interface CollegeDeptPlanWinner {
+  /** 获胜计划的 id（Number 归一；解析不出为 null——仅状态可用） */
+  planId: number | null
+  /** 获胜计划的原始状态串（trim 后；映射到词表由消费方/resolveCollegeDeptPhaseBadge 做） */
+  status: string
+}
+
+export const buildCollegeDeptPlanWinnerByDept = (
+  plans: readonly CollegeDeptPlanStatusPlanLike[],
+  depts: readonly string[],
+  context: CollegeDeptPlanStatusContext
+): Map<string, CollegeDeptPlanWinner> => {
+  const winnerByDept = new Map<string, CollegeDeptPlanWinner>()
+
+  // 学院公共匹配先算一次（与部门无关）
+  const collegePlans = plans.filter(plan => {
+    if (context.resolvePlanYear(plan) !== context.currentYear) {
+      return false
+    }
+    const planLevel = String(plan.planLevel ?? '')
+      .trim()
+      .toUpperCase()
+    if (planLevel && planLevel !== 'FUNC_TO_COLLEGE') {
+      return false
+    }
+    const targetOrgId = toFiniteNumber(plan.targetOrgId ?? plan.org_id ?? plan.orgId)
+    const matchesOrgId =
+      context.collegeOrgId != null &&
+      Number.isFinite(targetOrgId) &&
+      targetOrgId === context.collegeOrgId
+    if (matchesOrgId) {
+      return true
+    }
+    const targetName = context.normalize(String(plan.targetOrgName ?? plan.orgName ?? '').trim())
+    return Boolean(context.collegeName) && targetName === context.collegeName
+  })
+
+  const statusRank = (plan: CollegeDeptPlanStatusPlanLike): number =>
+    String(plan.status ?? '')
+      .trim()
+      .toUpperCase() === 'DISTRIBUTED'
+      ? 1
+      : 0
+
+  for (const dept of depts) {
+    const deptName = context.normalize(dept)
+    if (!deptName || winnerByDept.has(deptName)) {
+      continue
+    }
+    const deptOrgId = context.resolveDeptOrgId(dept)
+    if (deptOrgId == null || !Number.isFinite(deptOrgId)) {
+      continue
+    }
+
+    const candidates = collegePlans.filter(plan => {
+      const planFunctionalOrgId = toFiniteNumber(plan.functionalOrgId ?? plan.functional_org_id)
+      if (Number.isFinite(planFunctionalOrgId)) {
+        // 归口桶：functional_org_id 命中即为真数据源（不看 created_by）
+        return planFunctionalOrgId === deptOrgId
+      }
+      // legacy 回退桶：created_by 命中且必须有存活指标（空壳不算）
+      const planCreatedByOrgId = toFiniteNumber(plan.createdByOrgId ?? plan.created_by_org_id)
+      return (
+        Number.isFinite(planCreatedByOrgId) &&
+        planCreatedByOrgId === deptOrgId &&
+        hasLivingIndicators(plan)
+      )
+    })
+    if (candidates.length === 0) {
+      continue
+    }
+
+    const functionalBucket = candidates.filter(plan => {
+      const planFunctionalOrgId = toFiniteNumber(plan.functionalOrgId ?? plan.functional_org_id)
+      return Number.isFinite(planFunctionalOrgId) && planFunctionalOrgId === deptOrgId
+    })
+    const bucket = functionalBucket.length > 0 ? functionalBucket : candidates
+    const winner = [...bucket].sort(
+      (left, right) =>
+        statusRank(right) - statusRank(left) ||
+        toFiniteNumber(right.id ?? 0) - toFiniteNumber(left.id ?? 0)
+    )[0]
+    if (winner) {
+      const winnerPlanId = toFiniteNumber(winner.id)
+      winnerByDept.set(deptName, {
+        planId: Number.isFinite(winnerPlanId) ? winnerPlanId : null,
+        status: String(winner.status ?? '').trim()
+      })
+    }
+  }
+
+  return winnerByDept
+}
+
+/**
+ * 学院页签下拉「部门 × 所选学院」的下发计划状态表（2026-11-13 状态徽标修正，
+ * 纯函数，实现与单测共用）。
+ *
+ * <p>{@link buildCollegeDeptPlanWinnerByDept} 的状态视图（Map&lt;部门名, 计划原始状态&gt;），
+ * 既有消费方（单测/模板契约）沿用该签名；需要获胜计划 id（上报状态按 plan 拉取分组）
+ * 的消费方改用 winner 版本。</p>
+ */
+export const buildCollegeDeptPlanStatusByDept = (
+  plans: readonly CollegeDeptPlanStatusPlanLike[],
+  depts: readonly string[],
+  context: CollegeDeptPlanStatusContext
+): Map<string, string> => {
+  const statusByDept = new Map<string, string>()
+  for (const [dept, winner] of buildCollegeDeptPlanWinnerByDept(plans, depts, context)) {
+    statusByDept.set(dept, winner.status)
+  }
+  return statusByDept
+}
+
+/**
+ * PLAN_REPORT 行的最小形状（宽松兼容 PlanReportSimpleResponse / 前端归一化行）。
+ */
+export interface CollegeDeptPlanReportLike {
+  id?: number | string | null
+  /** 报告归口职能部门 ID（后端 2026-11-13 新契约；历史遗留报告为 null，旧后端无此字段） */
+  functionalOrgId?: number | string | null
+  status?: unknown
+  /** 工作流状态（enrichPlanReportWorkflow 合并写入；优先于 status 取用） */
+  workflowStatus?: unknown
+  submittedAt?: string | null
+  createdAt?: string | null
+  isDeleted?: boolean | null
+  [key: string]: unknown
+}
+
+/**
+ * 「部门 × 所选学院」的上报状态表（2026-11-13 徽标合并：上报维度并入单一 tag，
+ * 纯函数，实现与单测共用）。
+ *
+ * <p>数据源方案（避免每部门单独发请求）：对每个部门的**获胜计划**各拉一次
+ * {@code GET /reports/plan/{planId}} 全量报告列表（planApi 缓存 + 在途去重），
+ * 前端按 report.functionalOrgId 分组归属到部门——旧共享计划（一份计划装多部门
+ * 报告）一次拉全即覆盖全部部门；V104 起每部门独立计划时每计划一次请求（已是
+ * 后端能提供的最小粒度）。调用方把多份列表按 planId 装进 reportsByPlanId 传入。</p>
+ *
+ * <ul>
+ *   <li>过滤 isDeleted === true 的行；</li>
+ *   <li>归口匹配：report.functionalOrgId 为数字 → 精确等于部门 orgId 才归属；
+ *       null（历史遗留）/ undefined（旧后端）→ 无法按部门隔离，归属到**该部门的
+ *       获胜计划**名下（报告挂在该部门自己的计划上，保守归该部门）；</li>
+ *   <li>同部门多份报告取「最新一轮」：submittedAt（提交固定时刻）→ createdAt → id
+ *       降序（与 planApi 轮次排序同口径，updatedAt 语义是"任何修改"不可用）；</li>
+ *   <li>状态取 workflowStatus ?? status 归一（trim + 大写）；无状态不入表。</li>
+ * </ul>
+ */
+export const buildCollegeDeptReportStatusByDept = (params: {
+  winnerByDept: ReadonlyMap<string, CollegeDeptPlanWinner>
+  reportsByPlanId: ReadonlyMap<number | string, readonly CollegeDeptPlanReportLike[]>
+  resolveDeptOrgId: (deptName: string) => number | null
+}): Map<string, string> => {
+  const reportStatusByDept = new Map<string, string>()
+
+  const reportRecencyRank = (report: CollegeDeptPlanReportLike): number => {
+    const submittedAt = Date.parse(String(report.submittedAt ?? ''))
+    if (Number.isFinite(submittedAt)) {
+      return submittedAt
+    }
+    const createdAt = Date.parse(String(report.createdAt ?? ''))
+    if (Number.isFinite(createdAt)) {
+      return createdAt
+    }
+    return toFiniteNumber(report.id ?? 0) || 0
+  }
+
+  for (const [dept, winner] of params.winnerByDept) {
+    if (winner.planId == null) {
+      continue
+    }
+    const reports =
+      params.reportsByPlanId.get(winner.planId) ??
+      params.reportsByPlanId.get(String(winner.planId)) ??
+      []
+    const deptOrgId = params.resolveDeptOrgId(dept)
+    if (deptOrgId == null || !Number.isFinite(deptOrgId)) {
+      continue
+    }
+    const deptReports = reports.filter(report => {
+      if (report.isDeleted === true) {
+        return false
+      }
+      if (report.functionalOrgId === undefined || report.functionalOrgId === null) {
+        return true
+      }
+      return Number(report.functionalOrgId) === deptOrgId
+    })
+    if (deptReports.length === 0) {
+      continue
+    }
+    const latest = [...deptReports].sort(
+      (left, right) => reportRecencyRank(right) - reportRecencyRank(left)
+    )[0]
+    const status = String(latest?.workflowStatus ?? latest?.status ?? '')
+      .trim()
+      .toUpperCase()
+    if (status) {
+      reportStatusByDept.set(dept, status)
+    }
+  }
+
+  return reportStatusByDept
+}
+
+/** 下拉单一状态徽标（label = 既有词表文案；tagType 供 el-tag :type 与内联着色） */
+export interface CollegeDeptPhaseBadge {
+  label: string
+  tagType: 'success' | 'warning' | 'info' | 'danger'
+}
+
+/**
+ * 「无 FUNC_TO_COLLEGE 计划」的徽标兜底（模板既有「未下发」warning tag 收口进词表常量）。
+ *
+ * <p>2026-11-13 徽标合并后模板改为**单一无条件 el-tag**（label/type 全绑定）：
+ * 消费方对 resolveCollegeDeptPhaseBadge 的 null（无计划）套用本常量。此前
+ * 「v-if 徽标 + v-else 兜底」的分支写法在菜单隐藏（popper display:none）期间
+ * 换分支时，el-tag 内置 el-zoom-in-center 过渡的 leave 动画收不到 transitionend、
+ * 新旧两个 tag 同时滞留 DOM（工学院×纪委办实测「已上报+未下发」并存）——
+ * 单实例绑定让 el-tag 永不卸载，从根上消除双 tag。</p>
+ */
+export const COLLEGE_DEPT_NOT_DISPATCHED_BADGE: CollegeDeptPhaseBadge = {
+  label: '未下发',
+  tagType: 'warning'
+}
+
+/**
+ * 单一状态徽标判定（2026-11-13 用户拍板「只能显示一个状态」，纯函数，实现与单测共用）。
+ *
+ * <p>合并口径（业务流转当前阶段，阶段优先取最新）：</p>
+ * <ul>
+ *   <li>无 FUNC_TO_COLLEGE 计划（planStatus 归一不出）→ null（模板回退「未下发」，
+ *       该词为模板既有文案）；</li>
+ *   <li>计划 DRAFT / WITHDRAWN / 其余（REJECTED 等回退态按 planStatus 归一表落
+ *       DRAFT）→ 「草稿」（planStatus.ts 既有词表）；</li>
+ *   <li>计划下发审批中（PENDING，归一表含 IN_REVIEW / SUBMITTED）→ 「审批中」；</li>
+ *   <li>计划已下发（DISTRIBUTED，归一表含 APPROVED / ACTIVE 等）——此后以该学院×
+ *       部门的<b>上报侧最新状态</b>为主：</li>
+ * </ul>
+ *
+ * <p>上报侧映射（词全部为代码库既有文案，零新增）：</p>
+ * <ul>
+ *   <li>PENDING / IN_REVIEW / SUBMITTED（上报在审）→ 「审批中」（与下发在审同词，
+ *       用户明确接受「两个审批中共用同一个词」）；</li>
+ *   <li>REJECTED / RETURNED / CANCELLED（上报被退回）→ 「已回退」（既有文案，
+ *       见 approvalFlowStatusMeta / resolveCollegeReportApprovalStatusMeta）；
+ *       WITHDRAWN（上报自撤回）按同族「退回待重报」语义并入「已回退」——其专属
+ *       文案「上报已撤回（待重新上报）」对本下拉属新增词，词表零新增约束下保守
+ *       复用「已回退」；</li>
+ *   <li>APPROVED（上报归档）→ 「已上报」；</li>
+ *   <li>尚无上报 / 上报草稿 / 未知 → 「已下发」（上报未开始，停留已下发阶段）。</li>
+ * </ul>
+ */
+export const resolveCollegeDeptPhaseBadge = (params: {
+  planStatus?: string | null
+  reportStatus?: string | null
+}): CollegeDeptPhaseBadge | null => {
+  const canonical = normalizePlanStatus(params.planStatus)
+  if (!canonical) {
+    return null
+  }
+  if (canonical === 'PENDING') {
+    return { label: '审批中', tagType: 'warning' }
+  }
+  if (canonical === 'DRAFT') {
+    return { label: '草稿', tagType: 'info' }
+  }
+  // canonical === 'DISTRIBUTED'：下发已完成，展示上报侧最新状态
+  const reportStatus = String(params.reportStatus ?? '')
+    .trim()
+    .toUpperCase()
+  if (['PENDING', 'IN_REVIEW', 'SUBMITTED'].includes(reportStatus)) {
+    return { label: '审批中', tagType: 'warning' }
+  }
+  if (['REJECTED', 'RETURNED', 'CANCELLED', 'WITHDRAWN'].includes(reportStatus)) {
+    return { label: '已回退', tagType: 'danger' }
+  }
+  if (reportStatus === 'APPROVED') {
+    return { label: '已上报', tagType: 'success' }
+  }
+  return { label: '已下发', tagType: 'success' }
 }

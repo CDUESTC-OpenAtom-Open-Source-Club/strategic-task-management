@@ -21,7 +21,12 @@ const modelSource = readSource('src/3-features/task/model/useStrategicTaskView.t
  * 2. 选中父级后自动带出父级的「指标类型 / 任务类型」（与导入锚点一致：
  *    父级名与类型须完全一致），提交请求体必带 parentIndicatorId 且
  *    indicatorType 与父级一致；
- * 3. 职能页签表单里的 collegeAddMode 死代码（条件标题 + 永不渲染的父级选择器）清理。
+ * 3. 职能页签表单里的 collegeAddMode 死代码（条件标题 + 永不渲染的父级选择器）清理；
+ * 4. 2026-11-13（对齐 main 原版）：「关联指标」下拉改为按任务分组——结构、
+ *    placeholder、双 tag、popper 分组样式全部照抄「指标下发与审批」页新增行
+ *    （main 版 IndicatorDistributeView + useIndicatorDistributeView 的
+ *    plansWithIndicators / getIndicatorTypeLabel / _getTaskTypeColor 同款），
+ *    逻辑绑定（v-model/@change/必填校验/payload）保持学院侧原口径不变。
  *
  * 纯逻辑锚点过滤用 task/lib/collegeDispatchEligibility 的
  * buildCollegeParentAnchorIndicators 锁（实现与测试共用同一份函数）；
@@ -110,7 +115,9 @@ describe('学院「新增行」父级锚点接线（方案甲 2026-11-13 源码�
   const findCollegeForm = (): string => {
     const start = viewSource.search(/isAddingOrEditing && activeTaskTabName === 'college'/)
     expect(start).toBeGreaterThan(0)
-    return viewSource.slice(start, start + 4500)
+    // 2026-11-13：分组下拉（el-option-group + 双 tag）比旧单层选项长约 50 行，
+    // 截窗 4500 → 6500 保证覆盖到表单尾部的空选项提示与「指标类型」选择器
+    return viewSource.slice(start, start + 6500)
   }
 
   it('学院页签表单渲染必填「关联指标」下拉：绑定 newRow.parentIndicatorId + 锚点选项 + 带出类型', () => {
@@ -118,7 +125,21 @@ describe('学院「新增行」父级锚点接线（方案甲 2026-11-13 源码�
 
     expect(collegeForm).toContain('关联指标')
     expect(collegeForm).toContain('v-model="newRow.parentIndicatorId"')
-    expect(collegeForm).toContain('collegeParentIndicatorOptions')
+    // 2026-11-13（对齐 main 原版）：下拉改为按任务分组——与「指标下发与审批」页
+    // 新增行完全同款结构：el-option-group 组头 = 任务完整长文案（label），
+    // popper-class 挂分组样式（组头右侧灰色「任务」标记），选项行 = 核心指标名
+    // + 定量/定性、基础性/发展性双 tag；placeholder 同步对齐 main 原版文案。
+    expect(collegeForm).toContain('v-for="task in collegeParentIndicatorGroups"')
+    expect(collegeForm).toContain(':label="task.taskContent"')
+    expect(collegeForm).toContain('popper-class="parent-indicator-select-popper"')
+    expect(collegeForm).toContain('parent-indicator-option__name')
+    expect(collegeForm).toContain('parent-indicator-option__tags')
+    expect(collegeForm).toContain('getIndicatorTypeLabel(indicator)')
+    expect(collegeForm).toContain('_getTaskTypeColor(task.type2)')
+    expect(collegeForm).toContain('placeholder="选择关联的核心指标"')
+    expect(collegeForm).not.toContain('选择要挂靠的核心指标')
+    // 空选项引导沿用 collegeParentIndicatorOptions 判空（右侧下拉所选职能部门无已下发核心指标时）
+    expect(collegeForm).toContain('collegeParentIndicatorOptions.length === 0')
     expect(collegeForm).toContain('@change="handleCollegeParentIndicatorChange"')
     // 空选项引导（右侧下拉所选职能部门无已下发核心指标时）
     expect(collegeForm).toContain('暂无已下发的核心指标')
@@ -189,6 +210,21 @@ describe('学院「新增行」父级锚点接线（方案甲 2026-11-13 源码�
     expect(modelSource).toMatch(/ownerDept: collegeDispatchDeptEffective\.value/)
     // 选项带出父级自身类型（选中后锁定子指标指标类型）
     expect(modelSource).toMatch(/type1: String\(typed\.type1 \|\| ''\)/)
+  })
+
+  // 2026-11-13（对齐 main 原版）：分组数据源与「指标下发与审批」页
+  // plansWithIndicators 同构——taskContent 相同归一组，组 type2 = 组内首个锚点的
+  // 任务类型标签（getIndicatorCategoryLabel，与导入 seeds 同款取法），兜底「发展性」
+  it('model 分组数据源：collegeParentIndicatorGroups 按 taskContent 分组 + 组 type2 任务类型标签', () => {
+    expect(modelSource).toMatch(/const collegeParentIndicatorGroups = computed\(\(\) =>/)
+    // 从 collegeParentIndicatorOptions（锚点 id 升序）派生，组间顺序 = 插入序
+    expect(modelSource).toMatch(
+      /const collegeParentIndicatorGroups = computed\(\(\) => \{[\s\S]*?collegeParentIndicatorOptions\.value\.forEach/
+    )
+    // 选项行带任务类型标签（基础性/发展性），取法与导入 seeds 同款
+    expect(modelSource).toMatch(/type2: getIndicatorCategoryLabel\(item\)/)
+    // 组 type2 兜底「发展性」（main `indicators[0]?.type2 || '发展性'` 同款）
+    expect(modelSource).toMatch(/type2: option\.type2 \|\| '发展性'/)
   })
 })
 

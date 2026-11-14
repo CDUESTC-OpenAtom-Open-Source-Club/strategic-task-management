@@ -56,11 +56,15 @@ export function findEarliestUnfilledReportMonth(
 }
 
 /**
- * 报告处于这些状态时，该报告所在月不可再填报：
- * 审批中（SUBMITTED / IN_REVIEW / PENDING）或已批准（APPROVED）。
+ * 报告处于这些状态时，该报告所在月不可再填报：审批中（SUBMITTED / IN_REVIEW / PENDING）。
+ *
+ * 2026-11-13 用户定案（推翻 10-27「本月批准后锁定」）：已批准（APPROVED 归档）不再
+ * 锁填报入口——填报是本地草稿（保存可开新一轮），只拦提交（一键提交显隐 + 未来月 +
+ * 后端同口径校验兜底）。
  */
 export function isLockingPlanReportStatus(status?: string | null): boolean {
-  return ['SUBMITTED', 'IN_REVIEW', 'PENDING', 'APPROVED'].includes(
+  // CACHE-TEST-20261113: 标记行，验证 vite/浏览器缓存链路后可删
+  return ['SUBMITTED', 'IN_REVIEW', 'PENDING'].includes(
     String(status || '')
       .trim()
       .toUpperCase()
