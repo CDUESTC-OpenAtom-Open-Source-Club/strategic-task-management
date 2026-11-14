@@ -7046,7 +7046,16 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const reportHistoryOpen = ref<string[]>([])
 
   // 专门用于审批抽屉的指标列表（显示当前选中部门的所有指标，一个部门的所有指标状态应该统一）
+  // 2026-11-13 用户反馈修复（学院页签审批详情卡降级「指标 #ID / -- / --」）：
+  // 学院页签两选齐时，上报快照明细挂的是**学院子指标**（二级），旧过滤
+  // `isStrategic===true` 只留核心指标 + responsibleDept=选中职能部门（子指标是
+  // 计算机学院）——两条全不命中 → props.indicators 无子指标行，快照按 ID 匹配
+  // 全失败。学院上下文改传 collegeTableIndicators（两选收口的行集，含子指标）；
+  // 职能页签口径原样保留（零回归）。
   const approvalIndicators = computed(() => {
+    if (isCollegePlanContextActive.value) {
+      return collegeTableIndicators.value
+    }
     if (!selectedDepartment.value) {
       return []
     }

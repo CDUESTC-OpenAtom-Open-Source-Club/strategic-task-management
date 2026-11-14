@@ -37,7 +37,8 @@ import {
 import { resolveDistributionSubmitLockReason } from '@/features/indicator/lib/distributionSubmitGate'
 import {
   filterDispatchOwnedCollegeIndicators,
-  groupDispatchCollegeChildIndicators
+  groupDispatchCollegeChildIndicators,
+  resolveDispatchRowOwningDept
 } from '@/features/indicator/lib/distributeRowOwnership'
 import {
   matchesCollegePlanAnchor,
@@ -465,17 +466,27 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   const currentCollegeWorkflowDetail = ref<WorkflowInstanceDetailResponse | null>(null)
   const approvalStatusPopoverLoading = ref(false)
 
-  // 专门用于审批抽屉的指标列表（当前选中学院的所有子指标，只显示当前部门下发的）
+  // 专门用于审批抽屉的指标列表（当前选中学院的所有子指标，只显示归口为当前部门的）
+  // 2026-11-13 用户反馈修复：旧过滤按 ownerDept=当前部门——战略部直发改造后学院子指标
+  // owner 恒为战略发展部，全被滤空 → 审批详情卡快照匹配失败，降级「指标 #ID / 责任部门
+  // -- / 权重 --」。归口口径改为父级核心指标的目标部门（resolveDispatchRowOwningDept，
+  // 与本页表格归口可见性同源）；存量 owner=职能部门的行 ownerDept 原样兼容。
   const approvalIndicators = computed(() => {
     if (!selectedCollege.value) {
       return []
     }
-    // 只返回当前部门下发给该学院的指标
+    // 归口为当前部门的指标（含当前部门存量下发 + 战略部直发挂本部门归口的）
     return strategicStore.indicators.filter(i => {
       if (i.isStrategic) {
         return false
       }
-      if (!isSameDepartment(i.ownerDept, currentDept.value)) {
+      const owningDept = resolveDispatchRowOwningDept({
+        row: i,
+        indicators: strategicStore.indicators,
+        strategicDeptName: '战略发展部',
+        normalizeDepartmentName
+      })
+      if (!isSameDepartment(owningDept, currentDept.value)) {
         return false
       }
       return matchesDepartment(i.responsibleDept, selectedCollege.value!)
@@ -577,17 +588,13 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
   const resolveCurrentCycleId = (): number | undefined => {
     const selectedPlan = currentSelectedCollegePlan.value as
-      | (Plan & { cycleId?: number | string; cycle_id?: number | string })
-      | null
+      (Plan & { cycleId?: number | string; cycle_id?: number | string }) | null
     const selectedPlanDetails = currentSelectedCollegePlanDetails.value as
-      | (Plan & { cycleId?: number | string; cycle_id?: number | string })
-      | null
+      (Plan & { cycleId?: number | string; cycle_id?: number | string }) | null
     const departmentPlan = currentDepartmentPlan.value as
-      | (Plan & { cycleId?: number | string; cycle_id?: number | string })
-      | null
+      (Plan & { cycleId?: number | string; cycle_id?: number | string }) | null
     const departmentPlanDetails = currentDepartmentPlanDetails.value as
-      | (Plan & { cycleId?: number | string; cycle_id?: number | string })
-      | null
+      (Plan & { cycleId?: number | string; cycle_id?: number | string }) | null
 
     const directCycleId =
       selectedPlanDetails?.cycleId ??
@@ -604,8 +611,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     }
 
     const cycle = timeContext.cycles.find(item => Number(item.year) === timeContext.currentYear) as
-      | { cycleId?: number | string; id?: number | string }
-      | undefined
+      { cycleId?: number | string; id?: number | string } | undefined
     const numericCycleId = Number(cycle?.cycleId ?? cycle?.id)
     return Number.isFinite(numericCycleId) && numericCycleId > 0 ? numericCycleId : undefined
   }
@@ -2552,8 +2558,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   // 获取选中学院的所有子指标（按父指标分组，只显示当前部门下发的）
   const currentDepartmentPlanIndicators = computed<StrategicIndicator[]>(() => {
     const plan = currentSelectedCollegePlanDetails.value as
-      | (Plan & { indicators?: unknown[] })
-      | null
+      (Plan & { indicators?: unknown[] }) | null
     if (!plan || !Array.isArray(plan.indicators)) {
       return []
     }
@@ -3713,8 +3718,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       if (editingEl) {
         // 处理不同类型的输入元素
         const input = editingEl.querySelector('input, textarea') as
-          | HTMLInputElement
-          | HTMLTextAreaElement
+          HTMLInputElement | HTMLTextAreaElement
         if (input) {
           input.focus()
           // 如果是文本输入框，选中所有文本
