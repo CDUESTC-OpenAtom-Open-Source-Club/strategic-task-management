@@ -568,8 +568,25 @@ describe('D1 组件接线 · 计划在审/审批中（互斥拦导入）', () =>
   })
 })
 
-describe('D3 组件接线 · 学院链下异动在审 → 导入置灰（互斥并集，后续提交补齐）', () => {
-  it('主清单口径（isMutationApprovalInFlight）不回归：异动在审导入置灰（既有 E-1 守卫）', async () => {
+describe('D3 组件接线 · 学院链下异动在审 → 导入置灰（互斥并集）', () => {
+  it('isCollegeMutationApprovalInFlight=true（链下清单口径）→ 导入置灰 + 异动互斥 tooltip', async () => {
+    const wrapper = mountView({
+      collegeSubPlanUnresolved: ref(true),
+      effectivePlanContext: ref({ source: 'college', plan: null }),
+      isCollegeMutationApprovalInFlight: ref(true)
+    })
+    await switchToCollegeTab(wrapper)
+
+    const importBtn = findButtonByText(wrapper, '导入')
+    expect(importBtn).toBeDefined()
+    expect(importBtn!.attributes('disabled')).toBeDefined()
+    expect(importBtn!.attributes('title')).toBe(
+      '异动审批进行中，暂不能导入：等审批结束或先撤回/取消本次异动'
+    )
+    wrapper.unmount()
+  })
+
+  it('主清单口径（isMutationApprovalInFlight）不回归：同样置灰（既有 E-1 守卫）', async () => {
     const wrapper = mountView({
       collegeSubPlanUnresolved: ref(true),
       effectivePlanContext: ref({ source: 'college', plan: null }),
@@ -587,13 +604,24 @@ describe('D3 组件接线 · 学院链下异动在审 → 导入置灰（互斥�
 // ==================== 源码契约锁（接线防回归） ====================
 
 describe('D1/D2/D3 源码契约锁', () => {
-  it('D1：openStrategicImportDialog 点击兜底与按钮同口径（collegeTabImportDisabledReason 单一来源）', () => {
+  it('D2：isEntityMutationInFlight 角标并入学院链下清单（主清单口径不变）', () => {
+    const start = modelSource.indexOf('const isEntityMutationInFlight = (')
+    expect(start).toBeGreaterThan(0)
+    const body = modelSource.slice(start, start + 1600)
+    // 主清单 + 链下清单并集（与 isCollegeMutationApprovalInFlight 合并口径同款）
+    expect(body).toContain('departmentMutationPendingApprovals.value.some')
+    expect(body).toContain('departmentChainMutationPendingApprovals.value.some')
+    // 退回活链口径保留（链活着角标就亮）
+    expect(body).toContain('returnedMutationChains.value.some')
+  })
+
+  it('D3：openStrategicImportDialog 点击兜底与按钮同口径（collegeTabImportDisabledReason 单一来源）', () => {
     const start = viewSource.indexOf('const openStrategicImportDialog = () =>')
     expect(start).toBeGreaterThan(0)
     const body = viewSource.slice(start, start + 2400)
     expect(body).toContain('collegeTabImportDisabledReason.value')
     expect(body).toContain('importBlockedReason')
-    // 不再内联只读主清单（入口口径收敛单一来源）
+    // 不再只读主清单（D3 根因消除）
     expect(body).not.toContain('isMutationApprovalInFlight?.value === true')
   })
 

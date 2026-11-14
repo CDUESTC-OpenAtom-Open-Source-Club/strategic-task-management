@@ -6966,6 +6966,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     if (
       departmentMutationPendingApprovals.value.some(
         item => item.entityType === entityType && Number(item.entityId) === id
+      ) ||
+      // 2026-11-14（低危 D2）：学院子指标异动实例（source=战略发展部、target=学院）
+      // 只落在链下学院追回清单——主清单按职能部门 orgId 查询不命中，角标在审态不亮。
+      // 并入链下清单（与 isCollegeMutationApprovalInFlight /
+      // canWithdrawMutationInFlight 的合并口径同款），主清单口径不变。
+      departmentChainMutationPendingApprovals.value.some(
+        item => item.entityType === entityType && Number(item.entityId) === id
       )
     ) {
       return true
