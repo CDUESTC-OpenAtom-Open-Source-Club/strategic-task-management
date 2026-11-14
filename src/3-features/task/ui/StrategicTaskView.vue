@@ -99,6 +99,8 @@ import { planApi } from '@/features/plan/api/planApi'
 // 2026-11-13（撤回入口席位显隐）：显隐判定同源下沉 lib（resolveWithdrawControlVisible）
 import {
   resolveCollegeTabDistributeAction,
+  // 2026-11-14（D1 首次下发死锁解锁）：学院页签「导入」入口的计划相位口径（与单测共用）
+  resolveCollegeTabImportGate,
   resolveWithdrawControlVisible
 } from '@/features/task/lib/collegeTabDistribute'
 
@@ -261,6 +263,9 @@ const {
   // 2026-11-14（B4）：学院页签子计划未下发时锁写入口（新增行/导入；发起异动走
   // mutationSubmitBlocked 的合并判定）
   collegeTabPlanNotDistributed,
+  // 2026-11-14（D1 首次下发死锁解锁）：「尚无计划」组合识别——发起下发审批按钮
+  // v-if 兜底（fallback 战略部 org）与导入入口 gating 消费
+  collegeSubPlanUnresolved,
   // 2026-11-11（学院页签按钮体系修正）：生效计划上下文（学院页签 → FUNC_TO_COLLEGE
   // 子计划）+ 异动在审可撤判定/执行体（「撤回异动」真撤回入口）
   effectivePlanContext,
@@ -580,6 +585,48 @@ const collegeTabDistributeDisabledReason = computed(() => {
 })
 
 /**
+ * 2026-11-14（D1 首次下发死锁解锁 + D3 互斥并集）：学院页签「导入」入口的置灰口径。
+ *
+ * <p>取代模板里 collegeTabPlanNotDistributed 的整段并入（PR#115 回归：旧口径
+ * 「计划非 DISTRIBUTED 一律拦」把**尚无计划**的组合也拦死——而导入本来就是
+ * 「创建计划并下发」的入口，后端 findOrCreatePlan 会建计划；「发起下发审批」按钮
+ * 又因计划缺失被 v-if 藏掉 → 新组合首次下发死锁）。计划相位口径见
+ * resolveCollegeTabImportGate（lib 纯函数，与单测共用同一份逻辑）：</p>
+ * <ul>
+ *   <li>尚无计划 → 放行（导入 = 创建计划并下发）；</li>
+ *   <li>已有 DISTRIBUTED 计划 → 放行（既有口径）；</li>
+ *   <li>空壳计划（无任何指标行）→ 放行（导入 = 往空计划建行）；</li>
+ *   <li>计划在审/审批中 → 拦（互斥）；</li>
+ *   <li>草稿/退回且已有行 → 拦（B4 原始缺陷口径保留）。</li>
+ * </ul>
+ * <p>互斥守卫（D3）与「新增行」同口径：异动在审时导入置灰；学院链下清单
+ * （isCollegeMutationApprovalInFlight）的并入在后续提交补齐（角标/导入互斥同根因）。</p>
+ * <p>两选前置（未选学院 / 未选职能部门）与既有口径一致，排在最前。仅学院页签生效；
+ * 职能页签导入行为零变化（模板分支保留原状）。</p>
+ */
+const collegeTabImportDisabledReason = computed(() => {
+  if (activeTaskTabName.value !== 'college') {
+    return ''
+  }
+  if (!selectedCollege?.value) {
+    return '请先在左侧选择学院'
+  }
+  if (!collegeDispatchDeptFilter?.value) {
+    return '请先选择职能部门'
+  }
+  // D3：异动在审互斥（与「新增行」同口径；后续提交并入学院链下清单 isCollegeMutationApprovalInFlight）
+  if (isMutationApprovalInFlight?.value === true) {
+    return '异动审批进行中，暂不能导入：等审批结束或先撤回/取消本次异动'
+  }
+  // D1：计划相位 gating（尚无计划/空壳放行，在审+草稿有行拦）
+  return resolveCollegeTabImportGate({
+    collegeSubPlanResolved: collegeSubPlanUnresolved?.value !== true,
+    collegePlanStatus: collegeTabSubPlanStatus.value,
+    collegePlanHasRows: collegeTableIndicators.value.length > 0
+  })
+})
+
+/**
  * 2026-11-09（用户拍板：两步显式选择）：学院页签「选学院 + 选职能部门」两选是否已齐。
  *
  * <p>职能部门页签恒为 true —— 本口径只作用于学院页签，职能部门页签行为零变化。
@@ -738,16 +785,26 @@ const collegeTabWithdrawLocked = computed(
  * 纯 org 比对拦不住，席位判定必须先行（纯函数内已按此排序）。防御兜底另见
  * collegeTabDistributeDisabledReason 首段席位分支（v-if 被回归掉时只会置灰不亮橙）。</p>
  */
-const withdrawControlVisible = computed(() =>
-  resolveWithdrawControlVisible({
+const withdrawControlVisible = computed(() => {
+  const planContext = effectivePlanContext?.value as
+    { plan?: Record<string, unknown> | null } | undefined
+  // 2026-11-14（D1 首次下发死锁解锁）：学院页签**尚无计划**的组合（子计划未解析，
+  // effectivePlanContext.plan 为空 → createdByOrgId 取不到 → 旧口径恒 false）此前把
+  // 「发起下发审批」整颗 v-if 藏死——而导入只是创建计划的入口，按钮藏掉后连
+  // 「还没有计划」的引导都看不到，首次下发死锁。以「将会创建该计划的组织」兜底
+  // （新口径学院计划 FUNC_TO_COLLEGE 创建方固定 = 战略发展部，B7）：
+  // 填报人席位在尚无计划组合上仍能看到按钮（点击走下方「先导入」引导 toast）。
+  // 职能页签（collegeSubPlanUnresolved 恒 false）与已解析到子计划的场景逐字不变。
+  const effectivePlanCreatedByOrgId = collegeSubPlanUnresolved?.value
+    ? (strategicDeptOrgId?.value ?? null)
+    : planContext?.plan?.createdByOrgId
+  return resolveWithdrawControlVisible({
     canWithdrawMutationInFlight: canWithdrawMutationInFlight?.value === true,
     isCurrentUserReporter: isCurrentUserReporter?.value === true,
     currentUserOrgId: currentUserOrgId?.value ?? null,
-    effectivePlanCreatedByOrgId: (
-      effectivePlanContext?.value as { plan?: Record<string, unknown> | null } | undefined
-    )?.plan?.createdByOrgId
+    effectivePlanCreatedByOrgId
   })
-)
+})
 
 /**
  * 2026-11-08（单层下发）：工具栏「下发/撤回」按钮的点击分流。
@@ -843,7 +900,12 @@ const handleDistributeOrWithdrawClick = async () => {
   }
   const planId = selectedCollegeDispatchPlanId.value
   if (!planId) {
-    ElMessage.warning('当前学院还没有可提交审批的下发计划')
+    // 2026-11-14（D1 首次下发死锁解锁）：按钮对「尚无计划」组合已可见可点（v-if 兜底
+    // 见 withdrawControlVisible），点击不再是无声死端——引导到「导入」入口（后端
+    // findOrCreatePlan 建计划；勾选自动审批时导入即完成首次下发全链）。
+    ElMessage.warning(
+      `「${selectedCollege.value || '当前学院'}」还没有可提交审批的下发计划：请先通过工具栏「导入」创建计划并下发`
+    )
     return
   }
   // 发起审批会推进计划状态并生成待办，必须让用户确认一次（文案沿用上一版学院下发操作区）
@@ -1753,10 +1815,13 @@ const openStrategicImportDialog = () => {
       ElMessage.warning('请先选择职能部门')
       return
     }
-    // 2026-11-11（E-1 互斥守卫）：异动审批在审时导入与「新增行」同口径拦截
-    // （按钮已置灰，这里兜底键盘/编程式调用），避免在审计划被导入绕过置灰加行。
-    if (isMutationApprovalInFlight?.value === true) {
-      ElMessage.warning('异动审批进行中，暂不能导入：等审批结束或先撤回/取消本次异动')
+    // 2026-11-11（E-1 互斥守卫）→ 2026-11-14（D1/D3）收敛：导入的剩余拦截统一读
+    // collegeTabImportDisabledReason（异动在审互斥 = 主清单 + 学院链下清单并集（D3，
+    // 与「新增行」同口径）；计划相位 gating = 尚无计划/空壳放行、在审+草稿有行拦（D1））。
+    // 按钮置灰与点击兜底单一口径，防键盘/编程式调用绕过置灰往在审/未下发计划加行。
+    const importBlockedReason = collegeTabImportDisabledReason.value
+    if (importBlockedReason) {
+      ElMessage.warning(importBlockedReason)
       return
     }
     strategicImportDialogVisible.value = true
@@ -2089,28 +2154,28 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <!-- 2026-11-11（E-1 互斥守卫）：异动审批在审时学院页签「导入」与「新增行」同口径
                置灰（口径与后端 isOrgLockedByMutation 一致，只认异动在审；上报在审不锁导入，
                与新增行一致）。仅作用于学院页签 —— 职能部门页签行为逐字不变（零回归红线）。
-               在审期间导入会绕过「新增行置灰」直接往在审计划里加行，必须一并拦下 -->
+               在审期间导入会绕过「新增行置灰」直接往在审计划里加行，必须一并拦下
+               2026-11-14（D1 首次下发死锁解锁 + D3 互斥并集）：学院页签分支整段收敛为
+               collegeTabImportDisabledReason 单一口径——
+               ① D1：旧 collegeTabPlanNotDistributed「非 DISTRIBUTED 一律拦」把尚无计划的
+               组合也拦死，而导入本来就是「创建计划并下发」的入口（后端 findOrCreatePlan
+               建计划）→ 新口径：尚无计划放行 / 已下发放行 / 空壳计划放行；仅
+               「在审审批中」与「草稿且已有行」（B4 原始缺陷）拦；
+               ② D3：异动在审互斥收敛进同一 computed（学院链下清单的并入在后续提交补齐）。
+               职能部门页签 disabled/title 逐字不变。 -->
           <el-button
             size="small"
             :icon="Upload"
             :disabled="
               !canWriteStrategicTask ||
-              (activeTaskTabName === 'college' && isMutationApprovalInFlight === true) ||
-              (activeTaskTabName === 'college' && collegeTabPlanNotDistributed) ||
-              (activeTaskTabName === 'college' && (!selectedCollege || !collegeDispatchDeptFilter))
+              (activeTaskTabName === 'college' && collegeTabImportDisabledReason !== '')
             "
             :title="
               !canWriteStrategicTask
                 ? '当前角色仅可查看，不能导入指标'
-                : activeTaskTabName === 'college' && isMutationApprovalInFlight
-                  ? '异动审批进行中，暂不能导入：等审批结束或先撤回/取消本次异动'
-                  : activeTaskTabName === 'college' && collegeTabPlanNotDistributed
-                    ? '该学院×部门的计划未下发，暂不能导入：异动的前提是计划已下发（DISTRIBUTED）'
-                    : activeTaskTabName === 'college' && !selectedCollege
-                      ? '请先在左侧选择学院'
-                      : activeTaskTabName === 'college' && !collegeDispatchDeptFilter
-                        ? '请先选择职能部门'
-                        : ''
+                : activeTaskTabName === 'college' && collegeTabImportDisabledReason
+                  ? collegeTabImportDisabledReason
+                  : ''
             "
             @click="openStrategicImportDialog"
           >

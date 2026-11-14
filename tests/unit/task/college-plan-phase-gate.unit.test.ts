@@ -13,8 +13,15 @@ import { resolve } from 'node:path'
  *
  * <p>修法（最小）：model 新增 collegeTabPlanNotDistributed（数据源与页头「计划状态」
  * 签同源：effectivePlanStatus ← effectivePlanContext ← resolveSelectedCollegeReportScope，
- * gate 与显示永不打架）；视图「新增行 / 导入」disabled 条件并入该值，「发起异动」
+ * gate 与显示永不打架）；视图「新增行」disabled 条件并入该值，「发起异动」
  * 并入 mutationSubmitBlocked 合并判定。职能页签不 gating（零回归）。</p>
+ *
+ * <p>2026-11-14（D1 回归修订）：「导入」入口从 collegeTabPlanNotDistributed 整段并入
+ * 改为 collegeTabImportDisabledReason 单一口径——导入是「创建计划并下发」的入口，
+ * 「非 DISTRIBUTED 一律拦」会把尚无计划的组合拦成首次下发死锁（详见
+ * college-first-dispatch-gate.unit.test.ts 的显隐矩阵）。本文件只锁 B4 语义本体：
+ * 「新增行 / 发起异动」仍按 collegeTabPlanNotDistributed 全量拦（尚无计划/DRAFT/审批中
+ * 一律不可写），导入的细分矩阵不在此重复。</p>
  */
 
 const readSource = (relative: string): string =>
@@ -54,11 +61,16 @@ describe('B4 契约：未下发计划上下文的学院页签写入口按计划�
     expect(before).toContain('该学院×部门的计划未下发，暂不能新增')
   })
 
-  it('视图：导入按钮同样并入计划相位 gating（防绕过新增行置灰往未下发计划加行）', () => {
+  it('视图：导入按钮改读 collegeTabImportDisabledReason 单一口径（D1 解锁首次下发，B4 草稿有行仍拦）', () => {
     const start = viewSource.indexOf('@click="openStrategicImportDialog"')
-    const before = viewSource.slice(Math.max(0, start - 1200), start)
-    expect(before).toContain("(activeTaskTabName === 'college' && collegeTabPlanNotDistributed)")
-    expect(before).toContain('该学院×部门的计划未下发，暂不能导入')
+    const before = viewSource.slice(Math.max(0, start - 1600), start)
+    expect(before).toContain(
+      "(activeTaskTabName === 'college' && collegeTabImportDisabledReason !== '')"
+    )
+    // 不再整段并入 collegeTabPlanNotDistributed（那会把「尚无计划」也拦死——D1 回归根因）
+    expect(before).not.toContain(
+      "(activeTaskTabName === 'college' && collegeTabPlanNotDistributed)"
+    )
   })
 
   it('视图：发起异动按钮经 mutationSubmitBlocked 置灰（tooltip 内容来自 reason）', () => {
