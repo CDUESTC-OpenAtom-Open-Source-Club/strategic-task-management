@@ -403,8 +403,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       const parent = normalizedIndicators.value.find(
         candidate => Number(candidate.id ?? NaN) === parentId
       ) as
-        | { responsibleDept?: string; targetDepartment?: string; targetOrgName?: string }
-        | undefined
+        { responsibleDept?: string; targetDepartment?: string; targetOrgName?: string } | undefined
       parentTarget = normalizeDepartmentName(
         String(parent?.responsibleDept ?? parent?.targetDepartment ?? parent?.targetOrgName ?? '')
       )
@@ -1535,9 +1534,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       options.collegeScope === true
         ? Number(collegeScope?.orgId ?? NaN)
         : Number(currentDepartmentOrgId.value ?? NaN)
-    if (
-      !(Number.isFinite(planId) && planId > 0 && Number.isFinite(reportOrgId) && reportOrgId > 0)
-    ) {
+    if (!(
+      Number.isFinite(planId) &&
+      planId > 0 &&
+      Number.isFinite(reportOrgId) &&
+      reportOrgId > 0
+    )) {
       currentPlanReportSummary.value = null
       latestPlanReportSummary.value = null
       // 2026-11-11（D-02）：collegeScope 查询目标解析失败（未选学院 / 子计划未匹配）
@@ -2418,9 +2420,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         return
       }
       retainedRouteApprovalEntityType.value = routeApprovalEntityType.value as
-        | 'PLAN'
-        | 'PLAN_REPORT'
-        | undefined
+        'PLAN' | 'PLAN_REPORT' | undefined
       retainedRouteApprovalEntityId.value = routeApprovalEntityId.value
       try {
         await syncSelectedDepartmentFromRoute()
@@ -3908,7 +3908,16 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     })
   )
 
-  /** 二级学院 tab 新增子指标：校验 → 调后端 createIndicator → 进待发起异动列表 */
+  /**
+   * 2026-11-14（用户定案：新增行不落库）二级学院 tab 新增子指标：校验 →
+   * **写入内存草稿**（不调 createIndicator、不落库、无后端请求）。
+   *
+   * <p>草稿行即刻通过 {@link collegeTableIndicators} 并入表格与权重合计；
+   * 点「发起异动」时按完整创建字段整行提交后端（POST /indicators/mutations/batch
+   * 的 create 条目新契约，键名见 {@link submitMutationDraft}）；刷新页面草稿即丢
+   * （纯内存，无 sessionStorage 持久化——刷新即还原是产品语义）；行内删除 = 直接
+   * 从内存移除（不调后端）。</p>
+   */
   const saveCollegeChildIndicator = async (weight: number) => {
     if (!selectedCollege.value) {
       ElMessage.warning('请先在左侧选择学院')
@@ -3959,52 +3968,53 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         ? parentRow.type1
         : newRow.value.type1
 
-    const loading = ElLoading.service({
-      lock: true,
-      text: '正在保存子指标...',
-      background: 'rgba(0, 0, 0, 0.7)'
-    })
-    try {
-      const createResp = await indicatorApi.createIndicator({
-        taskId,
-        indicatorDesc: String(newRow.value.name || '').trim(),
-        ownerOrgId,
-        targetOrgId,
-        weightPercent: weight,
-        sortOrder: 0,
-        remark: newRow.value.remark || '',
-        progress: 0,
-        year: timeContext.currentYear,
-        canWithdraw: false,
-        // 方案甲：父级必填，必传（后端 createIndicator 按 parent 落 parent_indicator_id）
-        parentIndicatorId,
-        type: childIndicatorType
-      })
-      if (!createResp.success || !createResp.data) {
-        throw new Error(createResp.message || '创建子指标失败')
-      }
-      const createdId = Number(createResp.data.id)
-      if (!Number.isFinite(createdId) || createdId <= 0) {
-        throw new Error('后端返回的子指标缺少有效 ID')
-      }
-      pendingCreatedIndicatorIds.value = [...pendingCreatedIndicatorIds.value, createdId]
-      ElMessage.info('子指标已新增；请确认学院指标权重合计为 100 后点顶部「发起异动」提交审批')
-      logger.info('[StrategicTaskView] 学院 tab 新增子指标:', {
-        createdId,
-        parentIndicatorId,
-        ownerOrgId,
-        targetOrgId,
-        taskContent: parentOption?.taskContent
-      })
-      await refreshTaskPageAfterIndicatorMutation()
-      cancelAdd()
-      updateEditTime()
-    } catch (error) {
-      logger.error('[StrategicTaskView] 学院 tab 新增子指标失败:', error)
-      ElMessage.error((error as { message?: string })?.message || '新增子指标失败')
-    } finally {
-      loading.close()
+    // 草稿行 id = 前端临时 id（draft- 前缀，仅前端识别用；提交时后端按新建处理、不需要 id）
+    const draftTempId = `draft-${Date.now()}-${++pendingCreateDraftSeq}`
+    const draftRow: PendingCreateDraft = {
+      id: draftTempId,
+      tempId: draftTempId,
+      name: String(newRow.value.name || '').trim(),
+      isQualitative: childIndicatorType === '定性',
+      type1: childIndicatorType,
+      type2: getIndicatorCategoryLabel(parentRow as StrategicIndicator),
+      progress: 0,
+      createTime: new Date().toLocaleDateString('zh-CN'),
+      weight,
+      targetValue: 100,
+      unit: '%',
+      responsibleDept: normalizeDepartmentName(selectedCollege.value),
+      responsiblePerson: authStore.userName || '未分配',
+      status: 'DRAFT',
+      isStrategic: false,
+      year: timeContext.currentYear,
+      statusAudit: [],
+      sortOrder: 0,
+      parentIndicatorId,
+      ownerDept: normalizeDepartmentName(
+        isStrategicDeptLogin.value ? strategicDeptName.value : selectedDepartment.value || ''
+      ),
+      targetOrgName: selectedCollege.value,
+      targetDepartment: selectedCollege.value,
+      taskId,
+      taskContent: String(parentRow?.taskContent || parentOption?.taskContent || ''),
+      remark: newRow.value.remark || '',
+      ownerOrgId,
+      targetOrgId,
+      canWithdraw: false
     }
+    pendingCreateDrafts.value = [...pendingCreateDrafts.value, draftRow]
+    ElMessage.info(
+      '子指标已暂存为草稿（尚未落库）；请确认学院指标权重合计为 100 后点顶部「发起异动」提交审批'
+    )
+    logger.info('[StrategicTaskView] 学院 tab 新增子指标（内存草稿，未落库）:', {
+      tempId: draftTempId,
+      parentIndicatorId,
+      ownerOrgId,
+      targetOrgId,
+      taskContent: draftRow.taskContent
+    })
+    cancelAdd()
+    updateEditTime()
   }
 
   // 任务下发相关状态
@@ -4099,8 +4109,47 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const mutationApiLoading = ref(false)
 
   /**
+   * 2026-11-14（用户定案：新增行不落库）学院页签「新增行」的内存草稿行。
+   *
+   * <p>形状 = 完整 StrategicIndicator（能直接过 {@link collegeTableIndicators} 的
+   * 过滤/排序/渲染）+ 提交/识别所需的扩展字段：</p>
+   * <ul>
+   *   <li>tempId = id = 'draft-时间戳-序号'（仅前端识别用；提交载荷不带 id）；</li>
+   *   <li>taskId/parentIndicatorId/ownerOrgId/targetOrgId：发起异动时整行提交后端；</li>
+   *   <li>ownerDept/targetOrgName/targetDepartment/responsibleDept：表格按归属部门
+   *       与学院名收口（resolveRowOwnerDept / collegeTableIndicators 过滤）用。</li>
+   * </ul>
+   *
+   * <p>生命周期：保存 → push 本集合（纯内存，无后端请求、无 sessionStorage——
+   * 刷新即丢是产品语义）；双击编辑 → 原地更新草稿字段（不进 mutationDrafts，
+   * 临时 id 进攒改提交会炸载荷）；行内删除/取消异动 → 直接从集合移除（不调后端）；
+   * 发起异动 → 按 create 条目新契约整行提交，成功后清空集合。</p>
+   */
+  interface PendingCreateDraft extends StrategicIndicator {
+    tempId: string
+    taskId: number
+    parentIndicatorId: number
+    ownerOrgId: number
+    targetOrgId: number
+    ownerDept: string
+    targetOrgName: string
+    targetDepartment: string
+    taskContent: string
+    remark: string
+    canWithdraw: boolean
+  }
+
+  const pendingCreateDrafts = ref<PendingCreateDraft[]>([])
+  let pendingCreateDraftSeq = 0
+
+  /**
    * 2026-10-20 用户定案：已下发计划新增的指标先落库但不立即发起异动，
    * 记在这里；点「发起异动」时与字段攒改一起统一上报、统一做权重合计校验。
+   *
+   * <p>2026-11-14（新增行不落库改造）口径收窄：本集合只剩**职能页签** DISTRIBUTED
+   * 分支在用（saveNewRow 已下发计划新增——该链路的新增行仍先落库再随异动提交，
+   * 旧格式 {id, create:true} 后端继续兼容）。学院页签新增行已改为纯内存草稿
+   * （pendingCreateDrafts，不落库），不再进本集合。</p>
    */
   const pendingCreatedIndicatorIds = ref<Array<string | number>>([])
 
@@ -4110,6 +4159,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
    * 「发起异动」按钮随之消失，指标既提交不了、又计入权重合计把后续异动卡死。
    * 现在把标记随每次变更同步持久化到 sessionStorage，页面重载后按
    * 「指标仍存在且仍为草稿」回填；提交/取消/删除等链路照常清空。
+   *
+   * <p>2026-11-14（新增行不落库改造）：该机制只剩职能页签 DISTRIBUTED 分支依赖
+   * （其新增行仍落库）；学院页签内存草稿行不落库、无孤儿问题，不走本持久化。</p>
    */
   const PENDING_CREATE_STORAGE_KEY = 'sism.mutation.pending-created-indicators'
 
@@ -4174,9 +4226,35 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     return (
       hasRealMutationDraft ||
       taskNameDrafts.value.length > 0 ||
-      pendingCreatedIndicatorIds.value.length > 0
+      pendingCreatedIndicatorIds.value.length > 0 ||
+      // 2026-11-14（新增行不落库）：学院页签内存草稿行同样点亮「发起异动」
+      pendingCreateDrafts.value.length > 0
     )
   })
+
+  /** 2026-11-14（新增行不落库）：一行是否为学院页签的内存草稿新增行（draft-* 临时 id）。 */
+  const isPendingCreateDraftRow = (row: unknown): boolean => {
+    const rowId = (row as { id?: unknown } | null)?.id
+    return (
+      rowId !== null &&
+      rowId !== undefined &&
+      rowId !== '' &&
+      pendingCreateDrafts.value.some(draft => String(draft.id) === String(rowId))
+    )
+  }
+
+  /**
+   * 2026-11-14（新增行不落库）：撤销/移除一条内存草稿行——直接从集合剔除，
+   * **不调后端**（草稿没落库，无后端数据可删）。
+   */
+  const removePendingCreateDraftRow = (row: unknown): boolean => {
+    const rowId = (row as { id?: unknown } | null)?.id
+    const before = pendingCreateDrafts.value.length
+    pendingCreateDrafts.value = pendingCreateDrafts.value.filter(
+      draft => String(draft.id) !== String(rowId)
+    )
+    return pendingCreateDrafts.value.length < before
+  }
 
   const MUTATION_FIELD_MAP: Record<
     string,
@@ -4197,6 +4275,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     const indicatorId = row?.id
     if (indicatorId === null || indicatorId === undefined || indicatorId === '') {
       ElMessage.warning('当前行不是可删除的指标数据')
+      return
+    }
+
+    // 2026-11-14（新增行不落库）：内存草稿行（学院页签新增、尚未落库）——
+    // 直接从内存移除即可，**不调后端**（后端没有这条数据可撤）。
+    if (isPendingCreateDraftRow(row)) {
+      removePendingCreateDraftRow(row)
+      ElMessage.info('已撤销本次新增的草稿行')
       return
     }
 
@@ -4431,12 +4517,16 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
    * 所以取消必须把它真的删掉，否则会出现两类事故：
    *   a) 按钮不消失（集合非空），下次点「发起异动」把用户以为已取消的指标一起提交；
    *   b) 残留的 DRAFT 指标继续计入权重合计，把整个部门的异动全部卡死（实测 110/100）。
+   *
+   * 2026-11-14（新增行不落库）：学院页签内存草稿行（pendingCreateDrafts）一并清空——
+   * 草稿没落库，直接丢弃即可，不走下面的后端删除循环。
    */
   const cancelMutationDraft = async () => {
     const createdIds = [...pendingCreatedIndicatorIds.value]
     mutationDrafts.value = []
     taskNameDrafts.value = []
     pendingCreatedIndicatorIds.value = []
+    pendingCreateDrafts.value = []
 
     const failedIds: string[] = []
     for (const id of createdIds) {
@@ -4603,7 +4693,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     const drafts = mutationDrafts.value
     const taskDrafts = taskNameDrafts.value
     const pendingCreates = pendingCreatedIndicatorIds.value
-    if (drafts.length === 0 && taskDrafts.length === 0 && pendingCreates.length === 0) {
+    const createDrafts = pendingCreateDrafts.value
+    if (
+      drafts.length === 0 &&
+      taskDrafts.length === 0 &&
+      pendingCreates.length === 0 &&
+      createDrafts.length === 0
+    ) {
       // 2026-10-31 用户定案：无草稿 = 原样重发退回的异动批次（按钮只在
       // 「有草稿或有退回链」时出现；两者皆无时兜底给出反馈）
       await resubmitReturnedMutationBatches()
@@ -4631,7 +4727,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       logger.warn('[StrategicTaskView] 发起异动跳过无实际变更的草稿:', skippedIds)
       ElMessage.info(`已跳过 ${skippedIds.length} 条无实际变更的指标（${skippedIds.join('、')}）`)
     }
-    if (effectiveDrafts.length === 0 && taskDrafts.length === 0 && pendingCreates.length === 0) {
+    if (
+      effectiveDrafts.length === 0 &&
+      taskDrafts.length === 0 &&
+      pendingCreates.length === 0 &&
+      createDrafts.length === 0
+    ) {
       ElMessage.warning('本次没有可提交的异动内容')
       return
     }
@@ -4674,9 +4775,22 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       const { mutationApi } = await import('@/features/indicator/api/mutationApi')
 
       // 一起上报：新增指标、字段攒改、删除与任务改名整批一次提交，
-      // 后端统一做权重合计校验，任一失败整批不生效
+      // 后端统一做权重合计校验，任一失败整批不生效。
+      // 2026-11-14（新增行不落库）：内存草稿行（学院页签新增）按新契约整行提交——
+      // create 条目带完整创建字段、不带 id（后端同事务落库 + 打异动标记 +
+      // 批次闭合权重校验，任一失败整批 400 回滚）；键名与后端
+      // IndicatorMutationService.hasCreateDraftFields 识别口径严格一致。
       const items = [
-        ...pendingCreates.map(id => ({ id, create: true })),
+        ...createDrafts.map(draft => ({
+          create: true,
+          indicatorDesc: draft.name,
+          weightPercent: draft.weight,
+          indicatorType: draft.type1,
+          parentIndicatorId: draft.parentIndicatorId,
+          taskId: draft.taskId,
+          remark: draft.remark
+        })),
+        ...pendingCreates.map(id => ({ id, create: true as const })),
         ...effectiveDrafts.map(draft =>
           draft.deleteRequested
             ? { id: draft.indicatorId, delete: true }
@@ -4696,6 +4810,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       mutationDrafts.value = []
       taskNameDrafts.value = []
       pendingCreatedIndicatorIds.value = []
+      // 2026-11-14（新增行不落库）：提交成功 = 草稿行已在后端落库并进入审批链，
+      // 内存集合清空，表格行随刷新链从服务端数据重建
+      pendingCreateDrafts.value = []
       ElMessage.success('异动已提交审批；审批期间其他模块不受影响')
       void refreshTaskPageAfterIndicatorMutation()
       // 2026-10-30 修复：提交成功立即重拉异动审批实例——「发起异动」按钮的互斥置灰
@@ -4797,6 +4914,38 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       progress: 'progress',
       remark: 'remark',
       sortOrder: 'sortOrder'
+    }
+
+    // 2026-11-14（新增行不落库）：内存草稿行的双击编辑 = **原地更新草稿**——
+    // 不能进 mutationDrafts（草稿行是 draft-* 临时 id，进攒改提交会把无效 id
+    // 发给后端炸整批），发起异动时 create 载荷直接取草稿行最新字段。
+    if (isPendingCreateDraftRow(row) && MUTATION_FIELD_MAP[field]) {
+      const value = editingIndicatorValue.value
+      const originalValue = editingIndicatorOriginal.value
+      cancelIndicatorEdit()
+      const changed =
+        field === 'weight'
+          ? Number(value) !== Number(originalValue)
+          : normalizeEditableText(String(value ?? '')) !==
+            normalizeEditableText(String(originalValue ?? ''))
+      if (!changed) {
+        return
+      }
+      pendingCreateDrafts.value = pendingCreateDrafts.value.map(draft => {
+        if (String(draft.id) !== String(row.id)) {
+          return draft
+        }
+        if (field === 'weight') {
+          return { ...draft, weight: Number(value) }
+        }
+        if (field === 'name') {
+          return { ...draft, name: normalizeEditableText(String(value ?? '')) || draft.name }
+        }
+        return { ...draft, remark: String(value ?? '') }
+      })
+      ElMessage.info('新增行草稿已更新；点顶部「发起异动」后随批提交')
+      updateEditTime()
+      return
     }
 
     // 2026-10-14 用户定案：已下发指标的就地编辑只攒入异动草稿（内存态，不落库），
@@ -5412,6 +5561,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   // 删除指标
   const _deleteIndicator = (indicator: StrategicIndicator) => {
+    // 2026-11-14（新增行不落库）：内存草稿行不得进直删（后端无此数据）——内存移除
+    if (isPendingCreateDraftRow(indicator)) {
+      removePendingCreateDraftRow(indicator)
+      ElMessage.info('已撤销本次新增的草稿行')
+      return
+    }
+
     const indicatorId = indicator?.id
     if (indicatorId === null || indicatorId === undefined || indicatorId === '') {
       ElMessage.warning('当前行不是可删除的指标数据')
@@ -6045,6 +6201,67 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
   )
 
+  /**
+   * 2026-11-14（新增行不落库）：学院页签表格行排序（原 collegeTableIndicators 内联
+   * 比较器抽出，供「库存行 + 内存草稿行」合并后的整表重排复用）。
+   *
+   * <p>2026-10-28 用户定案：跨页面同一顺序——核心指标按（sortOrder, id）排，
+   * 同核心指标下的子指标按（sortOrder, id）排。末位 id 平局判定对 draft-* 临时 id
+   * NaN 安全（草稿行排在同序位真实行之后，不破坏既有行序）。</p>
+   */
+  const compareCollegeTableRows = (a: StrategicIndicator, b: StrategicIndicator): number => {
+    const pidA = String(a.parentIndicatorId ?? '')
+    const pidB = String(b.parentIndicatorId ?? '')
+    if (pidA !== pidB) {
+      const soA = Number(indicatorById.value.get(pidA)?.sortOrder ?? 0) || 0
+      const soB = Number(indicatorById.value.get(pidB)?.sortOrder ?? 0) || 0
+      if (soA !== soB) {
+        return soA - soB
+      }
+      return (Number(pidA) || 0) - (Number(pidB) || 0)
+    }
+    const orderA = Number(a.sortOrder ?? 0) || 0
+    const orderB = Number(b.sortOrder ?? 0) || 0
+    if (orderA !== orderB) {
+      return orderA - orderB
+    }
+    const idA = Number(a.id)
+    const idB = Number(b.id)
+    return (
+      (Number.isFinite(idA) ? idA : Number.MAX_SAFE_INTEGER) -
+      (Number.isFinite(idB) ? idB : Number.MAX_SAFE_INTEGER)
+    )
+  }
+
+  /**
+   * 2026-11-14（新增行不落库）：学院页签的内存草稿新增行（待发起异动的本地行）。
+   *
+   * <p>按 collegeTableIndicators 同一过滤口径收口（右侧下拉所选部门 + 学院名），
+   * 使草稿行与真实行在表格里同组显示、同序参与排序。</p>
+   */
+  const collegeCreateDraftRows = computed(() => {
+    if (pendingCreateDrafts.value.length === 0 || !selectedCollege.value) {
+      return []
+    }
+    const target = normalizeDepartmentName(selectedCollege.value)
+    const ownerDept = collegeDispatchDeptEffective.value
+    if (!ownerDept) {
+      return []
+    }
+    return pendingCreateDrafts.value
+      .filter(draft => {
+        const rowOwnerDept = resolveRowOwnerDept(draft as unknown as StrategicIndicator)
+        if (rowOwnerDept !== ownerDept) {
+          return false
+        }
+        const deptName = normalizeDepartmentName(
+          String(draft.targetDepartment ?? draft.targetOrgName ?? draft.responsibleDept ?? '')
+        )
+        return deptName === target || deptName.includes(target)
+      })
+      .map(draft => ({ ...draft }) as StrategicIndicator)
+  })
+
   const collegeTableIndicators = computed(() => {
     if (!selectedCollege.value) {
       return []
@@ -6057,7 +6274,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     if (!ownerDept) {
       return []
     }
-    return normalizedIndicators.value
+    const storeRows = normalizedIndicators.value
       .map(item => applyReportDetailOverlayToRow(item))
       .filter(item => {
         // 2026-11-05（codex P2-5）：可见性放宽、作用域按归属部门收紧（见 resolveRowOwnerDept）
@@ -6090,27 +6307,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         )
         return deptName === target || deptName.includes(target)
       })
-      .sort((a, b) => {
-        // 2026-10-28 用户定案：跨页面同一顺序——核心指标按（sortOrder, id）排，
-        // 同核心指标下的子指标按（sortOrder, id）排；与指标填报页/下发审批页逐行一致。
-        // （此前按父指标名称拼音排序，与下发页/填报页的下发顺序不一致）
-        const pidA = String(a.parentIndicatorId ?? '')
-        const pidB = String(b.parentIndicatorId ?? '')
-        if (pidA !== pidB) {
-          const soA = Number(indicatorById.value.get(pidA)?.sortOrder ?? 0) || 0
-          const soB = Number(indicatorById.value.get(pidB)?.sortOrder ?? 0) || 0
-          if (soA !== soB) {
-            return soA - soB
-          }
-          return (Number(pidA) || 0) - (Number(pidB) || 0)
-        }
-        const orderA = Number(a.sortOrder ?? 0) || 0
-        const orderB = Number(b.sortOrder ?? 0) || 0
-        if (orderA !== orderB) {
-          return orderA - orderB
-        }
-        return Number(a.id) - Number(b.id)
-      })
+    // 2026-11-14（新增行不落库）：内存草稿行并入行集——表格立即显示该行、
+    // 权重合计（collegeBasicWeightTotal 读本行集）实时计入
+    return [...storeRows, ...collegeCreateDraftRows.value].sort(compareCollegeTableRows)
   })
 
   /**
@@ -6919,13 +7118,15 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   })
 
   // 2026-10-28 迭代计划 M6：草稿丢失可感知——顶部横幅计数 + 离开/刷新前确认。
+  // 2026-11-14（新增行不落库）：学院页签内存草稿行一并计入。
   const mutationDraftCount = computed(
     () =>
       mutationDrafts.value.filter(
         draft => draft.deleteRequested || Object.keys(draft.changes || {}).length > 0
       ).length +
       taskNameDrafts.value.length +
-      pendingCreatedIndicatorIds.value.length
+      pendingCreatedIndicatorIds.value.length +
+      pendingCreateDrafts.value.length
   )
 
   const currentPlanFillApprovalSummary = ref<{
@@ -6945,8 +7146,13 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   let fillApprovalSummaryRequestId = 0
 
   async function refreshCurrentPlanFillApprovalSummary(): Promise<void> {
-    // 只在学院页签聚合：职能部门页签没有逐指标状态列，不存在该矛盾，保持原有计划级语义
-    const rows = collegeFillStatusScope.value ? collegeTableIndicators.value : []
+    // 只在学院页签聚合：职能部门页签没有逐指标状态列，不存在该矛盾，保持原有计划级语义。
+    // 2026-11-14（新增行不落库）：内存草稿行没有数据库 id（draft-*），不能进聚合——
+    // 它们还没有落库、不该出现在上报完成度/「有未填报」口径里，也会对临时 id 发起
+    // 无意义的后端查询
+    const rows = collegeFillStatusScope.value
+      ? collegeTableIndicators.value.filter(row => !isPendingCreateDraftRow(row))
+      : []
     const requestId = ++fillApprovalSummaryRequestId
 
     if (rows.length === 0) {
@@ -8285,6 +8491,15 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
 
   // 删除单个指标
   const handleDeleteIndicator = (row: StrategicIndicator) => {
+    // 2026-11-14（新增行不落库）：内存草稿行（学院页签新增、尚未落库）——
+    // 行内删除 = 直接从内存移除，不进确认框后的任何后端删除路径
+    // （草稿行没有数据库 id，store.deleteIndicator 会打到不存在的实体上）。
+    if (isPendingCreateDraftRow(row)) {
+      removePendingCreateDraftRow(row)
+      ElMessage.info('已撤销本次新增的草稿行')
+      return
+    }
+
     if (!canDeleteIndicator(row)) {
       ElMessage.warning(
         hasDistributedIndicators.value
@@ -8704,6 +8919,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     mutationDrafts,
     taskNameDrafts,
     pendingCreatedIndicatorIds,
+    // 2026-11-14（新增行不落库）：内存草稿行识别/集合透传（视图按行屏蔽异动历史徽章等
+    // 需要真实数据库 id 的渲染，避免对 draft-* 临时 id 发起无意义请求）
+    pendingCreateDrafts,
+    isPendingCreateDraftRow,
     submitMutationDraft,
     cancelMutationDraft,
     // 2026-10-30（取消闭环）：取消异动按退回链状态分流 + 被驳回可感知提示

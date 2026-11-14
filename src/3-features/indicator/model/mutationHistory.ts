@@ -54,6 +54,14 @@ export async function loadMutationHistory(
   if (cache.has(key)) {
     return
   }
+  // 2026-11-14（新增行不落库）：前端内存草稿行的 draft-* 临时 id 没有后端实体、
+  // 也没有任何异动历史，直接按空历史缓存，不发请求（避免对临时 id 打 404 噪音）。
+  // 真实实体 id 恒为正数（后端 SEQUENCE 主键）。
+  const numericId = Number(id)
+  if (!Number.isFinite(numericId) || numericId <= 0) {
+    cache.set(key, [])
+    return
+  }
   const inflight = pending.get(key)
   if (inflight) {
     return inflight
