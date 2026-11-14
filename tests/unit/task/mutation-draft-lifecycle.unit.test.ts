@@ -59,6 +59,10 @@ function buildBatchItems(drafts: Draft[], createdIds: string[]) {
  * 2026-11-14（新增行不落库）：内存草稿行按新契约整行提交——
  * create 条目带完整创建字段、不带 id（后端同事务落库 + 打异动标记 + 批次闭合权重校验）；
  * 旧格式 {id, create:true}（职能页签已下发计划新增，行已落库）继续兼容。
+ *
+ * 2026-11-14（P1 修复：新增行落错学院）：create 条目额外带 **targetOrgId**
+ * （UI 所选学院的组织 ID）——后端据此校验「与父级现有子指标的目标学院一致」，
+ * 不一致直接 400 拒绝（不再按父级下游计划静默落进别的学院）。
  */
 function buildBatchItemsWithCreateDrafts(
   drafts: Draft[],
@@ -69,6 +73,7 @@ function buildBatchItemsWithCreateDrafts(
     type1: string
     parentIndicatorId: number
     taskId: number
+    targetOrgId: number
     remark?: string
   }>
 ) {
@@ -80,7 +85,8 @@ function buildBatchItemsWithCreateDrafts(
       indicatorType: draft.type1,
       parentIndicatorId: draft.parentIndicatorId,
       taskId: draft.taskId,
-      remark: draft.remark
+      remark: draft.remark,
+      targetOrgId: draft.targetOrgId
     })),
     ...createdIds.map(id => ({ id, create: true })),
     ...drafts.map(draft =>
@@ -300,6 +306,7 @@ describe('submitting with a stale empty draft entry', () => {
           type1: '定量',
           parentIndicatorId: 2001,
           taskId: 3001,
+          targetOrgId: 57,
           remark: ''
         }
       ]
@@ -312,11 +319,14 @@ describe('submitting with a stale empty draft entry', () => {
       indicatorType: '定量',
       parentIndicatorId: 2001,
       taskId: 3001,
-      remark: ''
+      remark: '',
+      // P1 修复：显式目标学院（57=计算机学院）——后端与父级现有子指标不一致即 400
+      targetOrgId: 57
     })
     expect(items[0]).not.toHaveProperty('id')
-    // 职能页签落库行：旧格式 {id, create:true} 后端继续兼容
+    // 职能页签落库行：旧格式 {id, create:true} 后端继续兼容（不带 targetOrgId 语义）
     expect(items[1]).toEqual({ id: 2064, create: true })
+    expect(items[1]).not.toHaveProperty('targetOrgId')
     // 攒改条目不变
     expect(items[2]).toEqual({ id: 2052, remark: '新备注' })
   })
