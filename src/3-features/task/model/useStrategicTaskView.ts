@@ -78,6 +78,11 @@ import {
   resolveCollegeReturnedChainOwnerOrgId,
   resolveMutationGateWeightTotal
 } from '@/features/task/lib/collegeTabDistribute'
+import {
+  resolveCollegeReportPlanScope,
+  type CollegeReportScopeIndicatorLike,
+  type CollegeReportScopePlanLike
+} from '@/features/task/lib/collegeReportScope'
 import { ApprovalProgressDrawer } from '@/features/approval'
 import { notifyApprovalStateRefresh } from '@/features/approval/lib'
 import { useApprovalRouteAutopen } from '@/features/approval/lib'
@@ -398,8 +403,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       const parent = normalizedIndicators.value.find(
         candidate => Number(candidate.id ?? NaN) === parentId
       ) as
-        | { responsibleDept?: string; targetDepartment?: string; targetOrgName?: string }
-        | undefined
+        { responsibleDept?: string; targetDepartment?: string; targetOrgName?: string } | undefined
       parentTarget = normalizeDepartmentName(
         String(parent?.responsibleDept ?? parent?.targetDepartment ?? parent?.targetOrgName ?? '')
       )
@@ -1530,9 +1534,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       options.collegeScope === true
         ? Number(collegeScope?.orgId ?? NaN)
         : Number(currentDepartmentOrgId.value ?? NaN)
-    if (
-      !(Number.isFinite(planId) && planId > 0 && Number.isFinite(reportOrgId) && reportOrgId > 0)
-    ) {
+    if (!(
+      Number.isFinite(planId) &&
+      planId > 0 &&
+      Number.isFinite(reportOrgId) &&
+      reportOrgId > 0
+    )) {
       currentPlanReportSummary.value = null
       latestPlanReportSummary.value = null
       // 2026-11-11（D-02）：collegeScope 查询目标解析失败（未选学院 / 子计划未匹配）
@@ -2408,9 +2415,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         return
       }
       retainedRouteApprovalEntityType.value = routeApprovalEntityType.value as
-        | 'PLAN'
-        | 'PLAN_REPORT'
-        | undefined
+        'PLAN' | 'PLAN_REPORT' | undefined
       retainedRouteApprovalEntityId.value = routeApprovalEntityId.value
       try {
         await syncSelectedDepartmentFromRoute()
@@ -3327,6 +3332,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 2026-11-05（战略部直发学院指标）：FUNC_TO_COLLEGE 计划的创建方口径按登录角色分流——
   // 战略部登录 → 创建方是战略发展部（org 35）；职能部门登录 → 仍是当前选中职能部门（零变化）。
   // 仍然是**严格等值**匹配（不放开为「任意 createdByOrgId」），宁可空，不串数据。
+  // 2026-11-13（状态签归口收口 · 用户实测缺陷）：战略部登录时，匹配条件此前只看
+  // 「学院 + 创建方=战略部」，**完全不看归口部门**——同一学院下多个归口部门的计划创建方
+  // 相同（恒为 35），于是计算机学院名下唯一符合的 FUNC_TO_COLLEGE 计划（705489，归口=
+  // 纪委办 37）在右侧下拉选「教务处」时也被命中 → 右上角「计划状态」误显「已下发」，
+  // 而表格/权重/审批状况读的是部门收口数据源（No Data / 0/100 / 未填报）→ 三签矛盾。
+  // 新口径（战略部登录）：创建方 = 战略发展部 **且** 归口部门 = 学院页签右侧下拉所选部门
+  // （归口优先 plan.functionalOrgId；归口字段为空的存量空壳计划不参与匹配，详见
+  // lib/collegeReportScope.ts）。职能部门登录：创建方口径零变化，不启用归口收口。
   const resolveSelectedCollegeReportScope = (): { planId: number; orgId: number } | null => {
     const collegeOrgId = resolveDepartmentIdByName(selectedCollege.value)
     const funcOrgId = resolveDepartmentIdByName(selectedDepartment.value)
@@ -3334,33 +3347,29 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       return null
     }
     const creatorOrgId = isStrategicDeptLogin.value ? strategicDeptOrgId.value : funcOrgId
-    const planCombination = plan => {
-      const planAny = plan as Record<string, unknown>
-      const level = String(planAny.planLevel ?? planAny.plan_level ?? '')
-        .trim()
-        .toUpperCase()
-      return {
-        match:
-          level === 'FUNC_TO_COLLEGE' &&
-          Number(planAny.targetOrgId ?? planAny.orgId ?? NaN) === collegeOrgId &&
-          Number(planAny.createdByOrgId ?? planAny.created_by_org_id ?? NaN) === creatorOrgId,
-        year: resolvePlanYear(planAny)
+    // 学院页签右侧下拉所选归属部门（collegeDispatchDeptEffective 声明在本文件更后位置，
+    // computed 惰性求值 + 函数体运行期取值，无 TDZ——同 line 1554 的既有取数口径）。
+    const selectedDeptName = collegeDispatchDeptEffective.value
+    const scope = resolveCollegeReportPlanScope(
+      planStore.plans as CollegeReportScopePlanLike[],
+      normalizedIndicators.value as CollegeReportScopeIndicatorLike[],
+      {
+        collegeOrgId,
+        collegeName: normalizeDepartmentName(selectedCollege.value || ''),
+        creatorOrgId,
+        // 职能部门登录（零变化红线）：不按归口收口——职能部门的历史学院计划
+        // created_by=本部门、归口字段普遍为空，按归口收口会把它们全部排除（回归）。
+        scopeByFunctionalOrg: isStrategicDeptLogin.value,
+        selectedDeptOrgId: isStrategicDeptLogin.value
+          ? resolveDepartmentIdByName(selectedDeptName)
+          : null,
+        selectedDeptName,
+        currentYear: timeContext.currentYear,
+        resolvePlanYear: planAny => resolvePlanYear(planAny),
+        normalize: normalizeDepartmentName
       }
-    }
-    // 跨年度同组合计划并存（如 403757/503757），必须优先命中年份精确等于当年的；
-    // 年度不可判定的（resolvePlanYear 返回 null，如 cycleId 不在已知映射内）仅作兜底，
-    // 否则会把其他年度的空计划当成当前查询目标，明细恒为空。
-    const combinationPlans = planStore.plans
-      .map(plan => ({ plan, ...planCombination(plan) }))
-      .filter(candidate => candidate.match)
-    const matchedPlan =
-      combinationPlans.find(candidate => candidate.year === timeContext.currentYear)?.plan ||
-      combinationPlans.find(candidate => candidate.year === null)?.plan ||
-      null
-    if (!matchedPlan?.id) {
-      return null
-    }
-    return { planId: Number(matchedPlan.id), orgId: collegeOrgId }
+    )
+    return scope
   }
 
   /**
