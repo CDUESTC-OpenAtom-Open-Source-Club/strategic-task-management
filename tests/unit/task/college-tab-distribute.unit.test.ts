@@ -102,6 +102,85 @@ describe('task/lib/collegeTabDistribute · resolveCollegeTabDistributeAction（�
 })
 
 /**
+ * 2026-11-14（撤回相位缺陷）：学院子计划审批中但后端 canWithdraw=false 时的分流矩阵。
+ *
+ * 缺陷口径（用户实测）：flow6 三步链走到第 3 级（分管校领导待审）时按钮仍亮橙可点，
+ * 点击被后端 400「当前计划状态不支持撤回」拒掉 —— 后端语义：上一步是「提交」步骤才可撤
+ * （step2 待审时上一步=填报人提交 → 可撤；step3 待审时上一步=审批节点 → 不可撤）。
+ * 修法：预载工作流详情的 canWithdraw（子计划口径）喂给分流函数，不可撤 → pending-locked
+ * 置灰（对齐职能页签 pending_locked：info 灰调 + tooltip「当前审批进度不支持撤回」）。
+ */
+describe('task/lib/collegeTabDistribute · resolveCollegeTabDistributeAction · canWithdrawDispatch（2026-11-14 撤回相位）', () => {
+  it('状态=IN_REVIEW + canWithdrawDispatch=true → withdraw-dispatch 可点（后端判定可撤的 step2 不误锁）', () => {
+    expect(
+      resolveCollegeTabDistributeAction({
+        canWithdrawMutationInFlight: false,
+        collegePlanStatus: 'IN_REVIEW',
+        canWithdrawDispatch: true
+      })
+    ).toEqual({ action: 'withdraw-dispatch', text: '撤回', buttonType: 'warning' })
+  })
+
+  it('状态=审批中 + canWithdrawDispatch=false → pending-locked（info 置灰：首个审批人动手后不可撤）', () => {
+    for (const status of [
+      'PENDING',
+      'IN_REVIEW',
+      'SUBMITTED',
+      'PENDING_REVIEW',
+      'PENDING_APPROVAL'
+    ]) {
+      expect(
+        resolveCollegeTabDistributeAction({
+          canWithdrawMutationInFlight: false,
+          collegePlanStatus: status,
+          canWithdrawDispatch: false
+        })
+      ).toEqual({ action: 'pending-locked', text: '撤回', buttonType: 'info' })
+    }
+  })
+
+  it('canWithdrawDispatch=undefined → 旧行为 withdraw-dispatch（向后兼容：非学院上下文 / 详情未预载数据缺失零改动）', () => {
+    expect(
+      resolveCollegeTabDistributeAction({
+        canWithdrawMutationInFlight: false,
+        collegePlanStatus: 'IN_REVIEW'
+      })
+    ).toEqual({ action: 'withdraw-dispatch', text: '撤回', buttonType: 'warning' })
+    expect(
+      resolveCollegeTabDistributeAction({
+        canWithdrawMutationInFlight: false,
+        collegePlanStatus: 'IN_REVIEW',
+        canWithdrawDispatch: undefined
+      })
+    ).toEqual({ action: 'withdraw-dispatch', text: '撤回', buttonType: 'warning' })
+  })
+
+  it('锁定只作用于审批中分支：DRAFT + false 仍「发起审批」、DISTRIBUTED + false 仍 distributed-locked、异动在审优先级不被 false 压掉', () => {
+    expect(
+      resolveCollegeTabDistributeAction({
+        canWithdrawMutationInFlight: false,
+        collegePlanStatus: 'DRAFT',
+        canWithdrawDispatch: false
+      })
+    ).toEqual({ action: 'submit-dispatch', text: '发起审批', buttonType: 'success' })
+    expect(
+      resolveCollegeTabDistributeAction({
+        canWithdrawMutationInFlight: false,
+        collegePlanStatus: 'DISTRIBUTED',
+        canWithdrawDispatch: false
+      })
+    ).toEqual({ action: 'distributed-locked', text: '撤回', buttonType: 'info' })
+    expect(
+      resolveCollegeTabDistributeAction({
+        canWithdrawMutationInFlight: true,
+        collegePlanStatus: 'IN_REVIEW',
+        canWithdrawDispatch: false
+      })
+    ).toEqual({ action: 'withdraw-mutation', text: '撤回异动', buttonType: 'warning' })
+  })
+})
+
+/**
  * 2026-11-13（撤回入口席位显隐）显隐矩阵：工具栏「下发/撤回」多态合并按钮
  * 只允许「当前生效计划归属部门的填报人席位」显示；负责人/审核人/校领导与
  * 跨部门查看者一律 false（v-if 隐藏，不是置灰）。
@@ -810,6 +889,96 @@ describe('学院页签按钮分流与互斥守卫（2026-11-11 组件接线）',
     expect(withdrawPlan).not.toHaveBeenCalled()
     expect(submitPlanForApproval).not.toHaveBeenCalled()
     expect(elMessageBoxConfirm).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  /**
+   * 2026-11-14（撤回相位缺陷）：子计划审批进行中但预载工作流详情 canWithdraw=false
+   * （flow6 step3 分管校领导待审，首个审批人已动手）→ 按钮渲染但**置灰不可点**，
+   * hover 提示「当前审批进度不支持撤回」（对齐职能页签 pending_locked 相位），
+   * 点击不调 withdrawPlan —— 不再亮橙可点然后吃后端 400。
+   *
+   * <p>既断言 disabled/title，也直调点击处理体锁组件侧静默兜底（同 ⑥ 模式）。</p>
+   */
+  it('⑦（2026-11-14 撤回相位缺陷）审批中 canWithdraw=false：按钮渲染但置灰 + title「当前审批进度不支持撤回」+ 点击不调 withdrawPlan', async () => {
+    elMessageInfo.mockClear()
+    elMessageWarning.mockClear()
+    elMessageSuccess.mockClear()
+    elMessageError.mockClear()
+
+    const wrapper = mountView(
+      collegeTabReady({
+        effectivePlanContext: ref({
+          source: 'college',
+          // 与基础席位 currentUserOrgId=35 同部门 → 席位判定通过、按钮渲染，才轮得到相位置灰断言
+          plan: { status: 'IN_REVIEW', id: 705488, createdByOrgId: 35 }
+        }),
+        // 预载工作流详情（学院分支 getWorkflowInstanceDetailByBusiness 产出）：后端真值不可撤
+        preloadedPlanWorkflowDetail: ref({
+          instanceId: '99001',
+          status: 'IN_REVIEW',
+          canWithdraw: false
+        })
+      })
+    )
+    await switchToCollegeTab(wrapper)
+
+    const locked = findButtonByText(wrapper, '撤回')
+    expect(locked).toBeDefined()
+    expect(findButtonByText(wrapper, '发起审批')).toBeUndefined()
+    expect(locked!.attributes('disabled')).toBeDefined()
+    expect(locked!.attributes('title')).toBe('当前审批进度不支持撤回')
+
+    // 真实点击路径：disabled 按钮点不动（VTU 对 disabled 元素不派发 click）
+    await locked!.trigger('click')
+    await flushPromises()
+
+    // 直调点击处理体：disabled 拦不住 handler 调用 → 组件侧必须静默 return
+    const vm = wrapper.vm as unknown as {
+      handleDistributeOrWithdrawClick?: () => Promise<void>
+    }
+    expect(typeof vm.handleDistributeOrWithdrawClick).toBe('function')
+    await vm.handleDistributeOrWithdrawClick!()
+    await flushPromises()
+
+    expect(elMessageInfo).not.toHaveBeenCalled()
+    expect(elMessageWarning).not.toHaveBeenCalled()
+    expect(elMessageSuccess).not.toHaveBeenCalled()
+    expect(elMessageError).not.toHaveBeenCalled()
+    expect(withdrawPlan).not.toHaveBeenCalled()
+    expect(submitPlanForApproval).not.toHaveBeenCalled()
+    expect(elMessageBoxConfirm).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('⑦（零回归）审批中 canWithdraw=true：按钮亮橙可点，点击弹撤回确认并调 withdrawPlan（置灰数据源接通但不误锁 step2）', async () => {
+    elMessageBoxConfirm.mockResolvedValue('confirm')
+    withdrawPlan.mockResolvedValue({ code: 200, data: {}, message: 'ok' })
+    const wrapper = mountView(
+      collegeTabReady({
+        effectivePlanContext: ref({
+          source: 'college',
+          plan: { status: 'IN_REVIEW', id: 705488, createdByOrgId: 35 }
+        }),
+        // 预载工作流详情：后端真值可撤（step2 待审，上一步=填报人提交）
+        preloadedPlanWorkflowDetail: ref({
+          instanceId: '99001',
+          status: 'IN_REVIEW',
+          canWithdraw: true
+        })
+      })
+    )
+    await switchToCollegeTab(wrapper)
+
+    const withdraw = findButtonByText(wrapper, '撤回')
+    expect(withdraw).toBeDefined()
+    expect(withdraw!.attributes('disabled')).toBeUndefined()
+
+    await withdraw!.trigger('click')
+    await flushPromises()
+
+    expect(elMessageBoxConfirm).toHaveBeenCalledTimes(1)
+    expect(withdrawPlan).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })
 })

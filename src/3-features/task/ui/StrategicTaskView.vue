@@ -609,11 +609,50 @@ const collegeTabTwoStepGuideTip = computed(() => {
  */
 const collegeTabSubPlanStatus = computed(() => {
   const context = effectivePlanContext?.value as
-    { source?: string; plan?: Record<string, unknown> | null } | undefined
+    | { source?: string; plan?: Record<string, unknown> | null }
+    | undefined
   if (!context || context.source !== 'college') {
     return null
   }
   return context.plan?.status
+})
+
+/**
+ * 2026-11-14（学院页签撤回相位缺陷）：学院子计划口径的 canWithdraw（按钮置灰数据源）。
+ *
+ * <p>用户实测：学院下发审批（flow6 三步链）走到第 3 级（分管校领导待审）时，学院页签
+ * 「撤回」仍亮橙可点，点击被后端 400「当前计划状态不支持撤回」拒掉 —— 后端语义
+ * （AuditInstance.canRequesterWithdraw，PlanWorkflowSnapshotQueryService 同口径）：
+ * IN_REVIEW + 有 pending 步骤 + **上一步是「提交」步骤**（step2 待审时上一步=填报人提交
+ * → 可撤；step3 待审时上一步=战略发展部负责人审批节点 → 不可撤，第一个审批人动手后
+ * 就不能撤了）。后端 400 是对的，错在前端只看子计划状态（IN_REVIEW 恒可点），
+ * 不知道 canWithdraw 的真实值。</p>
+ *
+ * <p>数据源：学院页签两选齐时 preloadApprovalWorkflowDetail 的学院分支
+ * （getWorkflowInstanceDetailByBusiness('PLAN', 子计划 id, force)）写入的
+ * preloadedPlanWorkflowDetail，其 canWithdraw 字段即后端真值（WorkflowInstanceDetailResponse
+ * 契约字段）。发起/撤回/审批动作后经既有刷新链（refreshCurrentDepartmentView →
+ * preload force 重查）更新，审批推进后按钮相位随之切换（step2 通过 → false → 置灰）。</p>
+ *
+ * <p>判定口径（喂给 resolveCollegeTabDistributeAction 的 canWithdrawDispatch 入参）：</p>
+ * <ul>
+ *   <li>非学院上下文 → undefined（纯函数缺省=可撤：职能页签零改动）；</li>
+ *   <li>学院上下文但详情未预载（预载失败 / 尚未回包 / 子计划未解析）→ undefined
+ *       —— 数据缺失零改动，宁可放行由后端兜底 400，也不误锁真实可撤的 step2；</li>
+ *   <li>详情已预载 → canWithdraw === true（后端仅在可撤时回 true；工作流状态非
+ *       IN_REVIEW / 无 pending 步骤 / 上一步非提交，一律 false）。</li>
+ * </ul>
+ */
+const collegeSubPlanCanWithdraw = computed<boolean | undefined>(() => {
+  const context = effectivePlanContext?.value as { source?: string } | undefined
+  if (!context || context.source !== 'college') {
+    return undefined
+  }
+  const detail = preloadedPlanWorkflowDetail?.value
+  if (!detail) {
+    return undefined
+  }
+  return detail.canWithdraw === true
 })
 
 /**
@@ -634,7 +673,11 @@ const collegeTabSubPlanStatus = computed(() => {
 const collegeTabDistributeButton = computed(() => {
   const decision = resolveCollegeTabDistributeAction({
     canWithdrawMutationInFlight: canWithdrawMutationInFlight?.value === true,
-    collegePlanStatus: collegeTabSubPlanStatus.value
+    collegePlanStatus: collegeTabSubPlanStatus.value,
+    // 2026-11-14（学院页签撤回相位缺陷）：子计划口径 canWithdraw —— 预载工作流详情产出
+    // （collegeSubPlanCanWithdraw）。后端判定不可撤（首个审批人已动手）时按钮改判
+    // pending-locked 置灰，不再亮橙可点然后吃 400；undefined（非学院/数据缺失）走缺省旧行为
+    canWithdrawDispatch: collegeSubPlanCanWithdraw.value
   })
   return {
     ...decision,
@@ -653,6 +696,21 @@ const collegeTabDistributeButton = computed(() => {
  */
 const collegeTabDistributePhaseDisabled = computed(
   () => collegeTabDistributeButton.value.action === 'distributed-locked'
+)
+
+/**
+ * 2026-11-14（学院页签撤回相位缺陷）：子计划审批进行中但后端判定不可撤（canWithdraw=false，
+ * 首个审批人——战略发展部负责人——已动手，step3 分管校领导待审）→ 按钮置灰不可点，
+ * hover 提示「当前审批进度不支持撤回」，与职能页签 pending_locked 相位（info 灰调 +
+ * 同款 tooltip）对齐。此前按钮亮橙可点，点击被后端 400「当前状态不支持撤回」拒掉。
+ *
+ * <p>与 collegeTabDistributePhaseDisabled（已下发置灰）同款机制：独立 computed +
+ * 模板 disabled/title 绑定，点击体对应分支静默 return 兜底。与「撤回入口席位显隐」
+ * （withdrawControlVisible，v-if）是两层并存：席位层决定看不看得见，相位层决定
+ * 看得见时能不能点 —— 先席位显隐、再相位置灰，互不替代。</p>
+ */
+const collegeTabWithdrawLocked = computed(
+  () => collegeTabDistributeButton.value.action === 'pending-locked'
 )
 
 /**
@@ -765,6 +823,13 @@ const handleDistributeOrWithdrawClick = async () => {
   // 高②：学院下发审批中 → 真「撤回」（计划回草稿、审批实例撤回）
   if (collegeTabDistributeButton.value.action === 'withdraw-dispatch') {
     await handleWithdrawCollegeDispatch()
+    return
+  }
+  // 2026-11-14（学院页签撤回相位缺陷）：审批进行中但后端 canWithdraw=false（首个审批人
+  // 已动手，step3 分管校领导待审）→ 按钮已置灰不可点（collegeTabWithdrawLocked），
+  // 此处仅兜底防御（单测直调 handler 时 disabled 拦不住调用）：静默返回、不弹任何提示、
+  // 不调 withdrawPlan —— 不再让用户点了之后吃后端 400「当前计划状态不支持撤回」。
+  if (collegeTabDistributeButton.value.action === 'pending-locked') {
     return
   }
   // 已下发相位：无可撤动作（与职能页签「当前状态不可操作」置灰口径一致）。
@@ -1660,7 +1725,8 @@ const currentStrategicImportCycleId = computed(() => {
   }
 
   const cycle = timeContext.cycles.find(item => Number(item.year) === timeContext.currentYear) as
-    { cycleId?: number | string; id?: number | string } | undefined
+    | { cycleId?: number | string; id?: number | string }
+    | undefined
   const numericCycleId = Number(cycle?.cycleId ?? cycle?.id)
   return Number.isFinite(numericCycleId) && numericCycleId > 0 ? numericCycleId : null
 })
@@ -1929,7 +1995,10 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                2026-11-13（撤回入口席位显隐）：整颗按钮加 v-if 席位门——只允许「当前生效
                计划归属部门的填报人席位」（withdrawControlVisible，判定式见该 computed 注释）
                显示；负责人/审核人/校领导与跨部门查看者隐藏（不是置灰）。填报人看到的
-               置灰/tooltip 口径一字不动。 -->
+               置灰/tooltip 口径一字不动。
+               2026-11-14（撤回相位缺陷）：学院页签 disabled/title 再并入 collegeTabWithdrawLocked
+               ——子计划审批中但后端 canWithdraw=false（首个审批人已动手，step3 待审）时
+               置灰 + tooltip「当前审批进度不支持撤回」，不再亮橙可点然后吃后端 400。 -->
           <el-button
             v-if="withdrawControlVisible"
             :type="
@@ -1943,13 +2012,15 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
               activeTaskTabName === 'college'
                 ? Boolean(collegeTabDistributeDisabledReason) ||
                   collegeDispatchSubmitting ||
-                  collegeTabDistributePhaseDisabled
+                  collegeTabDistributePhaseDisabled ||
+                  collegeTabWithdrawLocked
                 : distributeButtonDisabled
             "
             :title="
               activeTaskTabName === 'college'
                 ? collegeTabDistributeDisabledReason ||
-                  (collegeTabDistributePhaseDisabled ? '当前状态不可操作' : '')
+                  (collegeTabDistributePhaseDisabled ? '当前状态不可操作' : '') ||
+                  (collegeTabWithdrawLocked ? '当前审批进度不支持撤回' : '')
                 : distributeButtonDisabledReason
             "
             @click.stop="handleDistributeOrWithdrawClick"
