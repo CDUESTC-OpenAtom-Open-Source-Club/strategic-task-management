@@ -7045,8 +7045,20 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 仅发起人（submitter_name 与当前登录人姓名比对）且未过撤回窗口（当前节点不含
   // 终审/分管校领导）才可撤；后端 cancelInstance 仍会二次校验 requester 与窗口。
   // 一次异动提交的一批实例同一发起人，故在途清单按 every 判定。
+  //
+  // 2026-11-14（P1 配套缺口修复：学院子指标异动的撤回入口）：学院新增行发起的异动
+  // （source=战略发展部、target=学院）只落在链下学院追回清单
+  // （departmentChainMutationPendingApprovals，主清单按职能部门 orgId 查不到）——
+  // 旧口径只读主清单 → 「撤回异动」按钮对这类批次恒置灰（title「当前状态不可操作」），
+  // 发起人没有任何 UI 入口可撤回。改为主清单 + 追回清单**合并判定**（与
+  // isCollegeMutationApprovalInFlight 的合并口径同款），两份清单条目形状一致
+  // （都带 submitterName / currentStepName）。职能页签既有批次（主清单）判定不变。
   const canWithdrawMutationInFlight = computed(() => {
-    if (!isMutationApprovalInFlight.value) {
+    const pendingApprovals = [
+      ...departmentMutationPendingApprovals.value,
+      ...departmentChainMutationPendingApprovals.value
+    ]
+    if (pendingApprovals.length === 0) {
       return false
     }
     const currentUserName = String(
@@ -7055,7 +7067,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     if (!currentUserName) {
       return false
     }
-    return departmentMutationPendingApprovals.value.every(entry => {
+    return pendingApprovals.every(entry => {
       const submitterName = String(entry.submitterName || '').trim()
       if (!submitterName || submitterName !== currentUserName) {
         return false
@@ -8305,8 +8317,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const handleWithdrawMutationBatch = async () => {
     // 按批次归组（与取消异动的 groupReturnedMutationChains 同款口径）：
     // 每批传任一实例 ID，后端按 batch_id 整批退回并校验发起人
+    // 2026-11-14（学院子指标异动撤回入口修复）：与 canWithdrawMutationInFlight 同款
+    // 合并口径——学院新增行发起的异动只落在链下学院追回清单，不合并则这里
+    // batchGroups 恒为空，点击只弹「未找到进行中的异动审批实例」。
     const batchGroups = new Map<string, { instanceId: number; count: number }>()
-    for (const entry of departmentMutationPendingApprovals.value) {
+    for (const entry of [
+      ...departmentMutationPendingApprovals.value,
+      ...departmentChainMutationPendingApprovals.value
+    ]) {
       const instanceId = Number(entry.instanceId)
       if (!Number.isFinite(instanceId) || instanceId <= 0) {
         continue
