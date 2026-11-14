@@ -1420,7 +1420,9 @@ const handleExportIndicatorList = async () => {
         <!-- 2026-10-19 用户定案：归属月份属整体计划上报口径（列表层展示），
              单个指标的填报弹窗不再重复展示月份横幅。 -->
         <!-- 填报表单 -->
-        <el-form label-width="100px" class="report-form">
+        <!-- 2026-11-14（用户反馈）：label-width 100px 放不下「上报资料（可选）」——
+             8 个全角字符 ×14px = 112px 压线，加 padding 必折行。加宽到 124px 留余量 -->
+        <el-form label-width="124px" class="report-form">
           <el-form-item label="自评进度" required>
             <el-select
               v-model="reportForm.selfRating"
