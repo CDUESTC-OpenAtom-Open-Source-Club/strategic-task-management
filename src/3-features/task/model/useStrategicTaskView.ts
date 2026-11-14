@@ -7045,8 +7045,20 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 仅发起人（submitter_name 与当前登录人姓名比对）且未过撤回窗口（当前节点不含
   // 终审/分管校领导）才可撤；后端 cancelInstance 仍会二次校验 requester 与窗口。
   // 一次异动提交的一批实例同一发起人，故在途清单按 every 判定。
+  //
+  // 2026-11-14（P1 配套缺口修复：学院子指标异动的撤回入口）：学院新增行发起的异动
+  // （source=战略发展部、target=学院）只落在链下学院追回清单
+  // （departmentChainMutationPendingApprovals，主清单按职能部门 orgId 查不到）——
+  // 旧口径只读主清单 → 「撤回异动」按钮对这类批次恒置灰（title「当前状态不可操作」），
+  // 发起人没有任何 UI 入口可撤回。改为主清单 + 追回清单**合并判定**（与
+  // isCollegeMutationApprovalInFlight 的合并口径同款），两份清单条目形状一致
+  // （都带 submitterName / currentStepName）。职能页签既有批次（主清单）判定不变。
   const canWithdrawMutationInFlight = computed(() => {
-    if (!isMutationApprovalInFlight.value) {
+    const pendingApprovals = [
+      ...departmentMutationPendingApprovals.value,
+      ...departmentChainMutationPendingApprovals.value
+    ]
+    if (pendingApprovals.length === 0) {
       return false
     }
     const currentUserName = String(
@@ -7055,7 +7067,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     if (!currentUserName) {
       return false
     }
-    return departmentMutationPendingApprovals.value.every(entry => {
+    return pendingApprovals.every(entry => {
       const submitterName = String(entry.submitterName || '').trim()
       if (!submitterName || submitterName !== currentUserName) {
         return false
@@ -7071,8 +7083,28 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 2026-10-31 用户定案修订（退回填报人节点两按钮常驻）：「发起异动」与「取消异动」
   // 并排常驻；发起异动可不修改原样重发（无草稿 = 按上次提交内容重发，见
   // resubmitReturnedMutationBatches），置灰仅保留在审互斥口径（上报在审/异动在审）。
+  // 2026-11-14（B4 用户实测：未下发计划上下文入口露出）：学院页签「新增行 / 发起异动 /
+  // 导入」按当前解析出的学院子计划相位 gating——异动的前提是计划已下发（DISTRIBUTED）。
+  // 学院 × 归口部门组合解析出的子计划未下发（effectivePlanStatus 非 DISTRIBUTED，
+  // 含「未下发 / 草稿 / 审批中」，含子计划解析不到 collegeSubPlanUnresolved——该组合
+  // 本来就没有已下发计划）→ 写入口一律置灰 + tooltip。此前只有后端守卫兜底
+  // （assertPlanDistributedForIndicator / 无法确定目标学院 400），界面上「没下发的
+  // 计划也能新增/发起」全部露出。职能页签不 gating（行为零变化）。
+  // 判定数据源与页头「计划状态」签同源（effectivePlanStatus ← effectivePlanContext
+  // ← resolveSelectedCollegeReportScope），gate 与显示永不打架。
+  const collegeTabPlanNotDistributed = computed(() => {
+    if (!isCollegePlanContextActive.value) {
+      return false
+    }
+    return effectivePlanStatus.value !== 'DISTRIBUTED'
+  })
+
   const mutationSubmitBlocked = computed(
-    () => isReportApprovalInFlight.value || isMutationApprovalInFlight.value
+    () =>
+      isReportApprovalInFlight.value ||
+      isMutationApprovalInFlight.value ||
+      // 2026-11-14（B4）：学院页签子计划未下发时不允许发起异动（仅学院页签生效）
+      (isCollegePlanContextActive.value && collegeTabPlanNotDistributed.value)
   )
   const mutationSubmitBlockedReason = computed(() => {
     if (isReportApprovalInFlight.value) {
@@ -7080,6 +7112,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
     if (isMutationApprovalInFlight.value) {
       return '当前部门存在进行中的异动审批，暂不能重复发起；请先在审批中心处理完'
+    }
+    if (isCollegePlanContextActive.value && collegeTabPlanNotDistributed.value) {
+      return '该学院×部门的计划未下发，暂不能发起异动：异动的前提是计划已下发（DISTRIBUTED）'
     }
     return ''
   })
@@ -8305,8 +8340,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   const handleWithdrawMutationBatch = async () => {
     // 按批次归组（与取消异动的 groupReturnedMutationChains 同款口径）：
     // 每批传任一实例 ID，后端按 batch_id 整批退回并校验发起人
+    // 2026-11-14（学院子指标异动撤回入口修复）：与 canWithdrawMutationInFlight 同款
+    // 合并口径——学院新增行发起的异动只落在链下学院追回清单，不合并则这里
+    // batchGroups 恒为空，点击只弹「未找到进行中的异动审批实例」。
     const batchGroups = new Map<string, { instanceId: number; count: number }>()
-    for (const entry of departmentMutationPendingApprovals.value) {
+    for (const entry of [
+      ...departmentMutationPendingApprovals.value,
+      ...departmentChainMutationPendingApprovals.value
+    ]) {
       const instanceId = Number(entry.instanceId)
       if (!Number.isFinite(instanceId) || instanceId <= 0) {
         continue
@@ -8872,6 +8913,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     canWithdrawMutationInFlight,
     handleWithdrawMutationBatch,
     mutationSubmitBlocked,
+    // 2026-11-14（B4）：学院页签子计划未下发时锁写入口（新增行/导入）——发起异动走
+    // mutationSubmitBlocked 合并判定，视图侧不再单独消费本值也可
+    collegeTabPlanNotDistributed,
     mutationSubmitBlockedReason,
     mutationDraftCount,
     reportMonth,

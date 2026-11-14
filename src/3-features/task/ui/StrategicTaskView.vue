@@ -258,6 +258,9 @@ const {
   // 2026-11-12（C3-D1）：学院页签退回链补拉 + 学院口径在审异动判定（新增行互斥）
   loadCollegeReturnedMutationChains,
   isCollegeMutationApprovalInFlight,
+  // 2026-11-14（B4）：学院页签子计划未下发时锁写入口（新增行/导入；发起异动走
+  // mutationSubmitBlocked 的合并判定）
+  collegeTabPlanNotDistributed,
   // 2026-11-11（学院页签按钮体系修正）：生效计划上下文（学院页签 → FUNC_TO_COLLEGE
   // 子计划）+ 异动在审可撤判定/执行体（「撤回异动」真撤回入口）
   effectivePlanContext,
@@ -1956,6 +1959,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
               isCurrentPlanUnderApproval ||
               isMutationApprovalInFlight ||
               (activeTaskTabName === 'college' && isCollegeMutationApprovalInFlight) ||
+              (activeTaskTabName === 'college' && collegeTabPlanNotDistributed) ||
               (activeTaskTabName === 'college' && (!selectedCollege || !collegeDispatchDeptFilter))
             "
             :title="
@@ -1967,11 +1971,13 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     ? '异动审批进行中，暂不能新增：等审批结束或先撤回/取消本次异动'
                     : activeTaskTabName === 'college' && isCollegeMutationApprovalInFlight
                       ? '异动审批进行中，暂不能新增：等审批结束或先撤回/取消本次异动'
-                      : activeTaskTabName === 'college' && !selectedCollege
-                        ? '请先在左侧选择学院'
-                        : activeTaskTabName === 'college' && !collegeDispatchDeptFilter
-                          ? '请先选择职能部门'
-                          : ''
+                      : activeTaskTabName === 'college' && collegeTabPlanNotDistributed
+                        ? '该学院×部门的计划未下发，暂不能新增：异动的前提是计划已下发（DISTRIBUTED）'
+                        : activeTaskTabName === 'college' && !selectedCollege
+                          ? '请先在左侧选择学院'
+                          : activeTaskTabName === 'college' && !collegeDispatchDeptFilter
+                            ? '请先选择职能部门'
+                            : ''
             "
             @click.stop="handleAddNewRow"
           >
@@ -2090,6 +2096,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             :disabled="
               !canWriteStrategicTask ||
               (activeTaskTabName === 'college' && isMutationApprovalInFlight === true) ||
+              (activeTaskTabName === 'college' && collegeTabPlanNotDistributed) ||
               (activeTaskTabName === 'college' && (!selectedCollege || !collegeDispatchDeptFilter))
             "
             :title="
@@ -2097,11 +2104,13 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                 ? '当前角色仅可查看，不能导入指标'
                 : activeTaskTabName === 'college' && isMutationApprovalInFlight
                   ? '异动审批进行中，暂不能导入：等审批结束或先撤回/取消本次异动'
-                  : activeTaskTabName === 'college' && !selectedCollege
-                    ? '请先在左侧选择学院'
-                    : activeTaskTabName === 'college' && !collegeDispatchDeptFilter
-                      ? '请先选择职能部门'
-                      : ''
+                  : activeTaskTabName === 'college' && collegeTabPlanNotDistributed
+                    ? '该学院×部门的计划未下发，暂不能导入：异动的前提是计划已下发（DISTRIBUTED）'
+                    : activeTaskTabName === 'college' && !selectedCollege
+                      ? '请先在左侧选择学院'
+                      : activeTaskTabName === 'college' && !collegeDispatchDeptFilter
+                        ? '请先选择职能部门'
+                        : ''
             "
             @click="openStrategicImportDialog"
           >
