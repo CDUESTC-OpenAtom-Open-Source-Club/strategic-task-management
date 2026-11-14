@@ -19,18 +19,38 @@
 export type CollegeTabDistributeAction =
   /** 学院子计划草稿/未解析 → 发起下发审批（既有流程） */
   | 'submit-dispatch'
-  /** 学院下发审批在审 → 真撤回（撤回后计划回草稿、审批实例撤回） */
+  /** 学院子计划审批中 → 真撤回（撤回后计划回草稿、审批实例撤回） */
   | 'withdraw-dispatch'
   /** 异动审批在审且当前用户可撤 → 撤回异动（整批退回填报人节点） */
   | 'withdraw-mutation'
   /** 学院计划已下发 → 无可撤回动作（引导查看审批） */
   | 'distributed-locked'
+  /**
+   * 2026-11-14（撤回相位缺陷）：子计划审批中但后端 canWithdraw=false → 渲染置灰「撤回」。
+   * 用户实测（2026-11-13）：flow6 三步链走到第 3 级（分管校领导待审）时按钮仍亮橙可点，
+   * 点击被后端 400「当前计划状态不支持撤回」拒掉 —— 首个审批人（战略发展部负责人）动手后
+   * 就不能撤了（上一步不再是「提交」步骤）。对齐职能页签 pending_locked 相位：info 灰调 +
+   * tooltip「当前审批进度不支持撤回」，不再把可不可撤交给后端报错。
+   */
+  | 'pending-locked'
 
 export interface CollegeTabDistributeButtonInput {
   /** 异动审批在审且当前用户为发起人（未过撤回窗口）——model 的 canWithdrawMutationInFlight */
   canWithdrawMutationInFlight: boolean
   /** 学院子计划原始状态（IN_REVIEW / PENDING / DRAFT / DISTRIBUTED / 未知 / null） */
   collegePlanStatus: unknown
+  /**
+   * 2026-11-14（撤回相位缺陷）：学院子计划口径的 canWithdraw —— 预载工作流详情
+   * （WorkflowInstanceDetailResponse.canWithdraw，后端 PlanWorkflowSnapshotQueryService /
+   * AuditInstance.canRequesterWithdraw 产出：IN_REVIEW + 有 pending 步骤 + 上一步是
+   * 「提交」步骤或驳回退回）。判定口径：
+   * <ul>
+   *   <li>false → 命中审批中分支时改判 pending-locked（置灰，不可点）；</li>
+   *   <li>true / undefined（缺省）→ 旧行为 withdraw-dispatch —— 非学院上下文（undefined）
+   *       与工作流详情未预载（数据缺失）都走缺省，向后兼容零改动。</li>
+   * </ul>
+   */
+  canWithdrawDispatch?: boolean
 }
 
 export interface CollegeTabDistributeButtonDecision {
@@ -47,7 +67,9 @@ export interface CollegeTabDistributeButtonDecision {
  *   <li>异动在审且可撤 → 「撤回异动」（warning）——与职能页签 P-05 多态撤回同口径，
  *       优先于一切计划相位（高①的根因就是文案读这条、点击却落发起分支）；</li>
  *   <li>学院子计划审批中（PENDING/IN_REVIEW/SUBMITTED/PENDING_REVIEW）→ 「撤回」（warning）
- *       —— 真撤回下发审批（高②：此前恒显示发起类文案，撤回不可达）；</li>
+ *       —— 真撤回下发审批（高②：此前恒显示发起类文案，撤回不可达）；
+ *       2026-11-14 起若 canWithdrawDispatch === false（首个审批人已动手，后端判定不可撤）
+ *       → 改判 pending-locked「撤回」（info，置灰不可点），不让用户点了再吃 400；</li>
  *   <li>学院子计划已下发（DISTRIBUTED/APPROVED/PUBLISHED/ACTIVE）→ 「撤回」（info）
  *       —— 无可撤动作，点击引导查看审批（与职能页签 distributed 相位的置灰口径一致）；</li>
  *   <li>其余（DRAFT / 未知 / 子计划未解析）→ 「发起审批」（success）
@@ -67,6 +89,12 @@ export const resolveCollegeTabDistributeAction = (
   if (
     ['PENDING', 'IN_REVIEW', 'PENDING_REVIEW', 'PENDING_APPROVAL', 'SUBMITTED'].includes(status)
   ) {
+    // 2026-11-14（撤回相位缺陷）：预载工作流详情明确 canWithdraw=false → 审批已推进到
+    // 审批节点（step3 分管校领导待审），后端必拒撤回 → 置灰。仅显式 false 锁；
+    // true / undefined（非学院上下文、详情未预载）一律走旧行为（缺省=可撤，零回归）。
+    if (input.canWithdrawDispatch === false) {
+      return { action: 'pending-locked', text: '撤回', buttonType: 'info' }
+    }
     return { action: 'withdraw-dispatch', text: '撤回', buttonType: 'warning' }
   }
   if (['DISTRIBUTED', 'APPROVED', 'PUBLISHED', 'ACTIVE'].includes(status)) {

@@ -403,7 +403,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       const parent = normalizedIndicators.value.find(
         candidate => Number(candidate.id ?? NaN) === parentId
       ) as
-        { responsibleDept?: string; targetDepartment?: string; targetOrgName?: string } | undefined
+        | { responsibleDept?: string; targetDepartment?: string; targetOrgName?: string }
+        | undefined
       parentTarget = normalizeDepartmentName(
         String(parent?.responsibleDept ?? parent?.targetDepartment ?? parent?.targetOrgName ?? '')
       )
@@ -1534,12 +1535,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       options.collegeScope === true
         ? Number(collegeScope?.orgId ?? NaN)
         : Number(currentDepartmentOrgId.value ?? NaN)
-    if (!(
-      Number.isFinite(planId) &&
-      planId > 0 &&
-      Number.isFinite(reportOrgId) &&
-      reportOrgId > 0
-    )) {
+    if (
+      !(Number.isFinite(planId) && planId > 0 && Number.isFinite(reportOrgId) && reportOrgId > 0)
+    ) {
       currentPlanReportSummary.value = null
       latestPlanReportSummary.value = null
       // 2026-11-11（D-02）：collegeScope 查询目标解析失败（未选学院 / 子计划未匹配）
@@ -1691,6 +1689,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         void refreshCollegeDeptPhaseReportStatuses({ force: true })
       }
       if (
+        // 2026-11-14（学院页签撤回相位缺陷）：学院上下文激活时也必须预载工作流详情
+        // —— 学院分支按子计划（selectedCollegeDispatchPlanId）强查 canWithdraw，
+        // 是 collegeSubPlanCanWithdraw（按钮置灰数据源）的供给链。此前门禁只认
+        // 职能部门自身计划状态，战略部自身计划恒 DRAFT 时学院页签拿不到详情。
+        isCollegePlanContextActive.value ||
         currentPlanStatus.value === 'PENDING' ||
         currentPlanStatus.value === 'DISTRIBUTED' ||
         hasApprovalWorkflowReportBinding.value
@@ -2415,7 +2418,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         return
       }
       retainedRouteApprovalEntityType.value = routeApprovalEntityType.value as
-        'PLAN' | 'PLAN_REPORT' | undefined
+        | 'PLAN'
+        | 'PLAN_REPORT'
+        | undefined
       retainedRouteApprovalEntityId.value = routeApprovalEntityId.value
       try {
         await syncSelectedDepartmentFromRoute()
@@ -3119,6 +3124,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         void refreshCurrentPlanFillApprovalSummary()
 
         if (
+          // 2026-11-14（学院页签撤回相位缺陷）：学院上下文激活时同样重载子计划
+          // 工作流详情（学院分支强查 canWithdraw），审批流转推送后按钮相位随 step 推进切换
+          isCollegePlanContextActive.value ||
           currentPlanStatus.value === 'PENDING' ||
           currentPlanStatus.value === 'DISTRIBUTED' ||
           hasApprovalWorkflowReportBinding.value
@@ -3137,7 +3145,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         // PR#83 轻量刷新同样重算填报审批态聚合，避免陈旧的 hasSubmitted/hasRejected
         // 覆盖刚刷新出来的终态工作流
         void refreshCurrentPlanFillApprovalSummary()
-        if (currentPlanStatus.value === 'PENDING' || currentPlanStatus.value === 'DISTRIBUTED') {
+        if (
+          // 2026-11-14（学院页签撤回相位缺陷）：同上，学院上下文激活时重载子计划详情
+          isCollegePlanContextActive.value ||
+          currentPlanStatus.value === 'PENDING' ||
+          currentPlanStatus.value === 'DISTRIBUTED'
+        ) {
           await preloadApprovalWorkflowDetail()
         }
       }
@@ -6199,6 +6212,23 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       void refreshCollegeDeptPhaseReportStatuses({ force: true })
     }
   )
+
+  // 2026-11-14（学院页签撤回相位缺陷）：学院上下文激活 / 子计划 id 解析变化即预载
+  // 子计划工作流详情（preloadApprovalWorkflowDetail 学院分支按 selectedCollegeDispatchPlanId
+  // 强查 canWithdraw）—— collegeSubPlanCanWithdraw（按钮置灰数据源）的供给链。
+  // 此前预载门禁只认职能部门自身计划状态（zlb_admin 自身计划恒 DRAFT 且无上报绑定 →
+  // 恒不触发），学院页签永远拿不到 canWithdraw 真值，置灰判定空转。
+  // 另在 refreshCurrentDepartmentView 与全局刷新链（审批驱动/轻量）的门禁处补了
+  // isCollegePlanContextActive 分支：发起/撤回/审批动作后的刷新也会重载子计划详情。
+  // preloadApprovalWorkflowDetail 声明在本文件后部，watch 回调运行期取值，无 TDZ
+  // （同上方 watch 的 syncCurrentPlanReportSummaries 前向引用模式）。
+  watch([isCollegePlanContextActive, selectedCollegeDispatchPlanId], ([active, planId]) => {
+    const numericPlanId = Number(planId)
+    if (!active || !Number.isFinite(numericPlanId) || numericPlanId <= 0) {
+      return
+    }
+    void preloadApprovalWorkflowDetail()
+  })
 
   const effectivePlanContext = computed<{
     source: 'college' | 'functional'
