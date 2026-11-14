@@ -7083,8 +7083,28 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 2026-10-31 用户定案修订（退回填报人节点两按钮常驻）：「发起异动」与「取消异动」
   // 并排常驻；发起异动可不修改原样重发（无草稿 = 按上次提交内容重发，见
   // resubmitReturnedMutationBatches），置灰仅保留在审互斥口径（上报在审/异动在审）。
+  // 2026-11-14（B4 用户实测：未下发计划上下文入口露出）：学院页签「新增行 / 发起异动 /
+  // 导入」按当前解析出的学院子计划相位 gating——异动的前提是计划已下发（DISTRIBUTED）。
+  // 学院 × 归口部门组合解析出的子计划未下发（effectivePlanStatus 非 DISTRIBUTED，
+  // 含「未下发 / 草稿 / 审批中」，含子计划解析不到 collegeSubPlanUnresolved——该组合
+  // 本来就没有已下发计划）→ 写入口一律置灰 + tooltip。此前只有后端守卫兜底
+  // （assertPlanDistributedForIndicator / 无法确定目标学院 400），界面上「没下发的
+  // 计划也能新增/发起」全部露出。职能页签不 gating（行为零变化）。
+  // 判定数据源与页头「计划状态」签同源（effectivePlanStatus ← effectivePlanContext
+  // ← resolveSelectedCollegeReportScope），gate 与显示永不打架。
+  const collegeTabPlanNotDistributed = computed(() => {
+    if (!isCollegePlanContextActive.value) {
+      return false
+    }
+    return effectivePlanStatus.value !== 'DISTRIBUTED'
+  })
+
   const mutationSubmitBlocked = computed(
-    () => isReportApprovalInFlight.value || isMutationApprovalInFlight.value
+    () =>
+      isReportApprovalInFlight.value ||
+      isMutationApprovalInFlight.value ||
+      // 2026-11-14（B4）：学院页签子计划未下发时不允许发起异动（仅学院页签生效）
+      (isCollegePlanContextActive.value && collegeTabPlanNotDistributed.value)
   )
   const mutationSubmitBlockedReason = computed(() => {
     if (isReportApprovalInFlight.value) {
@@ -7092,6 +7112,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
     if (isMutationApprovalInFlight.value) {
       return '当前部门存在进行中的异动审批，暂不能重复发起；请先在审批中心处理完'
+    }
+    if (isCollegePlanContextActive.value && collegeTabPlanNotDistributed.value) {
+      return '该学院×部门的计划未下发，暂不能发起异动：异动的前提是计划已下发（DISTRIBUTED）'
     }
     return ''
   })
@@ -8890,6 +8913,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     canWithdrawMutationInFlight,
     handleWithdrawMutationBatch,
     mutationSubmitBlocked,
+    // 2026-11-14（B4）：学院页签子计划未下发时锁写入口（新增行/导入）——发起异动走
+    // mutationSubmitBlocked 合并判定，视图侧不再单独消费本值也可
+    collegeTabPlanNotDistributed,
     mutationSubmitBlockedReason,
     mutationDraftCount,
     reportMonth,
