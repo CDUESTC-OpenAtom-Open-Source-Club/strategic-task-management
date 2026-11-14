@@ -778,7 +778,9 @@ describe('学院页签按钮分流与互斥守卫（2026-11-11 组件接线）',
       collegeTabReady({
         effectivePlanContext: ref({
           source: 'college',
-          plan: { status: 'DISTRIBUTED', id: 705493 }
+          // 2026-11-13（撤回入口席位显隐）：学院子计划创建方 = 战略部（org 35），
+          // 与填报人席位 org 35 一致 → 席位判定通过、按钮渲染，才轮得到相位置灰断言
+          plan: { status: 'DISTRIBUTED', id: 705493, createdByOrgId: 35 }
         })
       })
     )
