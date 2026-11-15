@@ -51,7 +51,6 @@ import {
   resolveSavedSelfRating
 } from '@/features/indicator/lib/reportBatch'
 import {
-  resolveReportSubmitAllButtonVisible,
   resolveReportSubmitLockReason,
   isReportReturnedToSubmitter
 } from '@/features/indicator/lib/reportSubmitGate'
@@ -2099,10 +2098,10 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   /**
    * 2026-11-13（未来月放填报、拦提交）：一键提交目标月的响应式预取。
    *
-   * <p>showSubmitAllButton 是同步 computed，而提交目标月（最早未提交草稿月）要
-   * 异步调 getOpenDraftReportMonth 才知道——这里按与 handleSubmitAll 完全同参
-   * （planId + reportOrgId + functionalOrgId）预取存 ref，供
-   * isSubmitTargetMonthInFuture 判「目标月晚于当前真实月份 → 按钮不渲染」。
+   * <p>提交目标月（最早未提交草稿月）要异步调 getOpenDraftReportMonth 才知道——
+   * 这里按与 handleSubmitAll 完全同参（planId + reportOrgId + functionalOrgId）
+   * 预取存 ref，供 isSubmitTargetMonthInFuture 判「目标月晚于当前真实月份 →
+   * 一键提交置灰（2026-11-15 改造：原 v-if 不渲染并入置灰引导）」。
    * 取不到（无草稿月/请求失败）→ 空串 = 不判未来月（保守放行，后端兜底拦截）。</p>
    */
   const submitTargetMonth = ref('')
@@ -3567,28 +3566,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     )
   })
 
-  const showSubmitAllButton = computed(() => {
-    // 2026-10-30 用户定案（门禁前移，自评口径）：不再以「全部指标填报完整」为可见前提——
-    // 行内有未填自评的行时按钮保持可见但置灰（title 说明原因），让填报人看得见入口卡在哪。
-    // 完整性缺口仍由 handleSubmitAll 的前置校验 + 后端提交门禁兜底。
-    // 2026-11-13（学院上报按归口部门分批提交）用户拍板：一键提交的前提是已选归属部门——
-    // 学院未选部门时按钮**不渲染**（提交按 (月, 归口部门) 隔离，未选无提交上下文）；
-    // 非学院链路无归属部门概念（functionalDeptSelected=undefined 恒通过），渲染逻辑保持原样。
-    // 2026-11-13（未来月放填报、拦提交）用户拍板：提交目标月晚于当前真实月份 → 按钮**不渲染**
-    // （填报存草稿不受影响；后端提交端点有同口径校验兜底）。目标月=一键提交实际提交的
-    // 「最早未提交草稿月」（getOpenDraftReportMonth 链），取不到时不判未来月（保守放行旧行为）。
-    // 纯逻辑收敛在 lib/reportSubmitGate.resolveReportSubmitAllButtonVisible（单测覆盖显隐矩阵）。
-    return resolveReportSubmitAllButtonVisible({
-      showBatchActions: showPlanBatchActions.value,
-      isReportLocked: isCurrentPlanReportLocked.value,
-      usePlanReportFlow: usePlanReportFlow.value,
-      isPlanReportDraftState: currentPlanReportActionState.value === 'draft',
-      functionalDeptSelected:
-        !isSecondaryCollege.value || Boolean(selectedFunctionalDeptOption.value),
-      isFutureMonth: isSubmitTargetMonthInFuture.value
-    })
-  })
-
   const showWithdrawAllButton = computed(() => {
     return (
       showPlanBatchActions.value &&
@@ -4445,8 +4422,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     // 2026-10-20 修复：自评进度保存后重开弹窗显示为空——回显取刚刷新的草稿明细等级，
     // 无草稿明细时依次退回列表行（覆盖层已算）与服务端快照的已存等级
     const draftDetail = reportDetailOverlay.value[String(row.id)] as
-      | { selfRating?: string | null }
-      | undefined
+      { selfRating?: string | null } | undefined
     reportForm.value = {
       newProgress: Math.max(actualProgress, Number(preferredProgress) || 0),
       remark: row.pendingRemark ?? persistedDraft?.remark ?? '',
@@ -5537,10 +5513,13 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
   // 2026-10-31「灰而可点」重构（用户拍板：异动锁并入置灰判定；点击弹原因的既有行为保留，
   // 同今天落地的下发页 distributionSubmitGate 范式）：置灰原因收敛到共享纯函数
-  // resolveReportSubmitLockReason（lib/reportSubmitGate.ts），置灰判定 / 悬停 title /
-  // 点击 gate toast 三处共用同一份条件与优先级。
+  // resolveReportSubmitLockReason（lib/reportSubmitGate.ts），置灰判定 / 悬停
+  // el-tooltip / 点击 gate toast 三处共用同一份条件与优先级。
   // 条件清单与优先级（第一条命中即用）：只读 → 空列表 → 未选归属部门（2026-11-13）→
-  // 本部门异动锁 → 自评缺口。
+  // 未来月（2026-11-15）→ 非草稿态（2026-11-15）→ 本部门异动锁 → 自评缺口。
+  // 2026-11-15（用户拍板「提交按钮隐藏改主动引导」）：原三条件（草稿态/归属部门/未来月）
+  // 的 v-if 不渲染并入本原因链——按钮在批量操作区内始终渲染，不满足时原生 disabled +
+  // el-tooltip 说明缺什么（与一键撤回同款结构）；文案优先级 部门 > 未来月 > 草稿。
   // 注意：本 computed 体内读取 mutationInFlightForCurrentDept（声明在上方），依赖
   // computed 惰性求值，与既有 TDZ 收口口径一致——不得把本 computed 的求值提前到
   // 该 const 声明之前（如用作 watch 的 source）。
@@ -5552,6 +5531,12 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       // 非学院页签恒视为已选（undefined），门禁不生效
       functionalDeptSelected:
         !isSecondaryCollege.value || Boolean(selectedFunctionalDeptOption.value),
+      // 2026-11-15（原显隐三条件并入置灰引导）：未来月 / 非草稿态——
+      // 目标月=一键提交实际提交的「最早未提交草稿月」（getOpenDraftReportMonth 链），
+      // 取不到时不判未来月（保守放行旧行为）；服务端提交门禁照旧兜底
+      usePlanReportFlow: usePlanReportFlow.value,
+      isPlanReportDraftState: currentPlanReportActionState.value === 'draft',
+      isFutureMonth: isSubmitTargetMonthInFuture.value,
       mutationInFlight: mutationInFlightForCurrentDept.value,
       missingSelfRatingCount: missingSelfRatingCount.value
     })
@@ -5563,7 +5548,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   // 2026-11-13 用户定案（编辑/发起两级校验语义 + 「已上报月份放开行级编辑」）：
   // 填报入口**不再锁定**——填报是本地草稿，随时可编辑/保存（含已上报归档月份，
   // 保存可开新一轮）；右上角权重合计只做实时展示；真正的限制拦截在提交侧：
-  // 一键提交显隐（草稿态 + 未来月 + 归属部门）与后端同口径校验。
+  // 一键提交置灰门禁（草稿态 + 未来月 + 归属部门，2026-11-15 起按钮始终渲染）
+  // 与后端同口径校验。
   // 历史快照只读仍由 timeContext.isReadOnly 独立把关（与本锁无关）。
   // 旧「报告在审/已批准锁定填报入口」口径整体废弃（原 10-26/10-27/10-31 定案），
   // 含「全年已填 → 锁」分支（本地草稿删除后应可随时重填，不再因已填月份集合判锁）。
@@ -5720,8 +5706,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           }
 
           let updatedReportSummary:
-            | (typeof currentPlanReportSummary.value extends infer T ? T : never)
-            | null = null
+            (typeof currentPlanReportSummary.value extends infer T ? T : never) | null = null
           if (usePlanReportFlow.value) {
             const reportOrgId = Number(currentViewingOrgId.value ?? NaN)
             if (!Number.isFinite(reportOrgId) || reportOrgId <= 0) {
@@ -5848,8 +5833,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           }
 
           let updatedReportSummary:
-            | (typeof currentPlanReportSummary.value extends infer T ? T : never)
-            | null = null
+            (typeof currentPlanReportSummary.value extends infer T ? T : never) | null = null
           if (usePlanReportFlow.value) {
             const reportOrgId = Number(currentViewingOrgId.value ?? NaN)
             if (!Number.isFinite(reportOrgId) || reportOrgId <= 0) {
@@ -6159,7 +6143,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     showStrategicTaskColumn,
     parentIndicatorMap,
     resolveParentIndicator,
-    showSubmitAllButton,
     showWithdrawAllButton,
     strategicStore,
     submitAllButtonDisabledReason,

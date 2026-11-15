@@ -294,7 +294,6 @@ const {
   showOwnerDeptDetail,
   showPlanBatchActions,
   showStrategicTaskColumn,
-  showSubmitAllButton,
   showWithdrawAllButton,
   strategicStore,
   submitAllButtonDisabledReason,
@@ -731,14 +730,17 @@ const handleExportIndicatorList = async () => {
               </el-select>
             </el-form-item>
             <!-- 归属部门筛选（仅学院可见；2026-11-13 口径变更：原「来源部门」退役——
-                 选项=当前行集按父级核心指标反查出的归口职能部门，一键提交/撤回必须先选） -->
+                 选项=当前行集按父级核心指标反查出的归口职能部门，一键提交/撤回必须先选）。
+                 2026-11-15 用户拍板（提交按钮隐藏改主动引导①）：未选时选择器琥珀色描边 +
+                 placeholder 点明「提交上报前必选」；选中后恢复默认。填报/存草稿不受影响 -->
             <el-form-item
               v-if="isSecondaryCollege && availableOwnerDepts.length > 0"
               label="归属部门"
             >
               <el-select
                 v-model="filterOwnerDept"
-                placeholder="请选择归属部门"
+                :class="{ 'owner-dept-guide': !filterOwnerDept }"
+                placeholder="请先选择归属部门（提交上报前必选）"
                 clearable
                 style="width: 200px"
               >
@@ -844,24 +846,31 @@ const handleExportIndicatorList = async () => {
 
             <!-- 职能部门/二级学院的批量操作按钮 -->
             <template v-if="showPlanBatchActions">
-              <!-- 一键提交按钮（草稿态且未锁定时显示；2026-11-13 用户拍板：学院未选归属部门
-                   时整颗按钮不渲染（showSubmitAllButton 内含学院上下文条件，非学院不受影响）；
-                   2026-10-31「灰而可点」定案：异动锁并入置灰判定，不再用原生 disabled
-                   （会吞点击事件），改 is-disabled 样式类 + aria-disabled + 悬停 title
-                   （与下发页同款写法）；点击统一进 handleSubmitAllGate——有锁定原因当场
-                   toast 第一条命中原因，无原因走 handleSubmitAll 原流程（内部守卫保留作双保险） -->
-              <el-button
-                v-if="showSubmitAllButton"
-                type="primary"
-                size="small"
-                :class="{ 'is-disabled': Boolean(submitAllButtonDisabledReason) }"
-                :aria-disabled="Boolean(submitAllButtonDisabledReason)"
-                :title="submitAllDisabledTitle"
-                @click="handleSubmitAllGate"
+              <!-- 一键提交按钮（2026-11-15 用户拍板「隐藏改主动引导」②：批量操作区内
+                   **始终渲染**，草稿态/归属部门/未来月三条件从 v-if 不渲染改为原生
+                   disabled + el-tooltip 说明缺什么（与一键撤回同款结构，PR#110 模式），
+                   tooltip 文案 = submitAllButtonDisabledReason（单一事实源，优先级
+                   部门 > 未来月 > 草稿，见 lib/reportSubmitGate.ts）；条件满足即恢复
+                   可点，点击链路不变（handleSubmitAllGate → handleSubmitAll，内部守卫
+                   保留作双保险）；服务端提交门禁照旧兜底（409 不变） -->
+              <el-tooltip
+                :content="submitAllDisabledTitle"
+                :disabled="!submitAllButtonDisabledReason"
+                effect="dark"
+                placement="top"
               >
-                <el-icon><Upload /></el-icon>
-                一键提交
-              </el-button>
+                <span style="display: inline-block">
+                  <el-button
+                    type="primary"
+                    size="small"
+                    :disabled="Boolean(submitAllButtonDisabledReason)"
+                    @click="handleSubmitAllGate"
+                  >
+                    <el-icon><Upload /></el-icon>
+                    一键提交
+                  </el-button>
+                </span>
+              </el-tooltip>
               <!-- 一键撤回按钮（有任何待审批指标时显示） -->
               <el-tooltip
                 v-if="showWithdrawAllButton"
@@ -1173,7 +1182,7 @@ const handleExportIndicatorList = async () => {
                            此前只判 !isStrategicDept，导致职能部门/学院的审核人也能看到并进入填报。 -->
                       <!-- 2026-10-26 用户定案：提交审批后填报内容仍可实时编辑保存
                            （updateReport 实时更新，审批详情同步可见）；锁定的只是
-                           「发起审批」（一键提交按钮 draft 态才显示 + 后端 409 兜底）。
+                           「发起审批」（一键提交按钮非 draft 态置灰 + 后端 409 兜底）。
                            故填报按钮不再按 report-lock 锁死，仅保留角色与只读期限制。 -->
                       <el-button
                         v-if="!isStrategicDept && isCurrentUserReporter"

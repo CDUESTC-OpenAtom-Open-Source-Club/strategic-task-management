@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   isReportReturnedToSubmitter,
-  resolveReportSubmitAllButtonVisible,
   resolveReportSubmitLockReason
 } from '@/features/indicator/lib/reportSubmitGate'
 
@@ -44,28 +43,34 @@ describe('reportSubmitGate · isReportReturnedToSubmitter（B-1 驳回退回待�
     expect(isReportReturnedToSubmitter('UNKNOWN', '填报人提交')).toBe(false)
   })
 
-  it('B-1 联动：退回待重报成立时一键提交可见（isPlanReportDraftState=true）', () => {
+  // 2026-11-15（提交按钮隐藏改主动引导）：一键提交始终渲染，草稿态门禁改由
+  // 置灰原因链表达——退回待重报（等同草稿）→ 无锁定原因可点；正常审批中 → 置灰。
+  it('B-1 联动：退回待重报成立时（draft 态）一键提交无锁定原因（可点）', () => {
     expect(
-      resolveReportSubmitAllButtonVisible({
-        showBatchActions: true,
-        isReportLocked: false,
+      resolveReportSubmitLockReason({
+        isReadOnly: false,
+        hasIndicators: true,
+        mutationInFlight: false,
+        missingSelfRatingCount: 0,
+        functionalDeptSelected: true,
         usePlanReportFlow: true,
-        isPlanReportDraftState: true,
-        functionalDeptSelected: true
+        isPlanReportDraftState: true
       })
-    ).toBe(true)
+    ).toBe('')
   })
 
-  it('B-1 反例：正常审批中（非草稿态）一键提交仍不渲染', () => {
+  it('B-1 反例：正常审批中（非草稿态）一键提交置灰并提示暂无可提交内容', () => {
     expect(
-      resolveReportSubmitAllButtonVisible({
-        showBatchActions: true,
-        isReportLocked: false,
+      resolveReportSubmitLockReason({
+        isReadOnly: false,
+        hasIndicators: true,
+        mutationInFlight: false,
+        missingSelfRatingCount: 0,
+        functionalDeptSelected: true,
         usePlanReportFlow: true,
-        isPlanReportDraftState: false,
-        functionalDeptSelected: true
+        isPlanReportDraftState: false
       })
-    ).toBe(false)
+    ).toBe('暂无可提交的填报内容')
   })
 
   it('锁门禁文案不受本次改动影响（回归）', () => {
