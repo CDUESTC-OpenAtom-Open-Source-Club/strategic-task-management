@@ -741,12 +741,24 @@ npm run format:check
 ### TypeScript
 
 ```bash
-# 类型检查
+# 类型检查（vue-tsc -b --force + 存量错误基线比对）
 npm run type-check
+
+# 只看原始类型检查输出（不做基线比对；当前存量错误未清零时会 exit 1）
+npm run type-check:strict
+
+# 修掉存量错误后刷新基线
+npm run type-check:baseline
 
 # 构建检查
 npm run build:check
 ```
+
+> 2026-11-15 起，`npm run type-check` 改为真正执行 `vue-tsc -b --force`
+> （旧命令 `vue-tsc --noEmit` 命中的是 solution-style 根 tsconfig，对全仓零覆盖）。
+> 由于仓库当前存在一批**存量类型错误**（基线见 `scripts/typecheck-baseline.json`），
+> 该命令按「不新增错误」的口径判定：出现新文件错误或某文件错误数变多即失败，
+> 错误数作为可见指标输出。存量错误的清理是独立的后续工作。
 
 ### Husky Git Hooks
 

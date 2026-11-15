@@ -28,6 +28,7 @@ import App from './App.vue'
 import { autoHealthCheck } from '@/shared/lib/utils/apiHealth'
 import { performanceMonitor } from '@/shared/lib/utils/performance'
 import { registerSharedDirectives } from '@/shared/lib/directives'
+import { APP_COMMIT_HASH, APP_VERSION } from '@/shared/config/app-version'
 
 /**
  * Create Vue application instance
@@ -62,8 +63,8 @@ app.mount('#app')
 /**
  * Print application version information
  */
-const version = import.meta.env['VITE_APP_VERSION'] || '1.3.0'
-const commitHash = import.meta.env['VITE_APP_COMMIT_HASH'] || 'unknown'
+const version = APP_VERSION
+const commitHash = APP_COMMIT_HASH
 const buildTime = new Date().toISOString()
 if (import.meta.env.DEV || import.meta.env.PROD) {
   // eslint-disable-next-line no-console

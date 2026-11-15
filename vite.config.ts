@@ -4,6 +4,7 @@ import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import { fileURLToPath, URL } from 'node:url'
+import { resolveAppVersion } from './scripts/resolve-app-version.mjs'
 import { mockApiPlugin } from './src/5-shared/api/mocks/mockApiPlugin'
 
 const prebundleEntries = [
@@ -28,6 +29,13 @@ export default defineConfig(({ mode }) => {
   // Set third parameter to '' to load all env variables including those without VITE_ prefix
   const env = loadEnv(mode, process.cwd(), '')
 
+  // 应用版本号：构建期按「显式注入 > CI tag 引用 > git tag > dev」自动解析。
+  // .env 不再需要（也不应该）手工维护 VITE_APP_VERSION。
+  const appVersion = resolveAppVersion()
+  // Vite 的 loadEnv 里 process.env 优先级高于 .env 文件，这里显式回写，
+  // 保证 .env 里残留的历史版本号不会盖掉真实构建版本。
+  process.env.VITE_APP_VERSION = appVersion
+
   // 检查是否启用Mock模式
   const useMock = env.VITE_USE_MOCK === 'true'
   const apiTarget = env.VITE_API_TARGET || 'http://localhost:8080'
@@ -42,7 +50,8 @@ export default defineConfig(({ mode }) => {
     useMock,
     viteUseMock: env.VITE_USE_MOCK,
     apiTarget,
-    wsTarget
+    wsTarget,
+    appVersion
   })
 
   if (!useMock) {
