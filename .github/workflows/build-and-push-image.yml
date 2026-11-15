@@ -54,6 +54,11 @@ jobs:
         run: npm run arch:check
 
       - name: Run type check
+        # 2026-11-15：旧命令 `vue-tsc --noEmit` 命中的是 solution-style 根 tsconfig，
+        # 对全仓零覆盖（写入类型错误仍 exit 0），类型检查形同虚设。
+        # 现在改为真正跑 `vue-tsc -b --force` 并与存量错误基线比对：
+        # 只要没有新增类型错误即通过，存量错误数会作为可见指标输出。
+        # 基线：scripts/typecheck-baseline.json（npm run type-check:baseline 可刷新）。
         run: npm run type-check
 
       - name: Run unit tests
