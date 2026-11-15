@@ -76,7 +76,8 @@ import {
   mergeReturnedMutationChains,
   resolveCollegeReportApprovalStatusMeta,
   resolveCollegeReturnedChainOwnerOrgId,
-  resolveMutationGateWeightTotal
+  resolveMutationGateWeightTotal,
+  resolveViewScopedMutationPendingApprovals
 } from '@/features/task/lib/collegeTabDistribute'
 import {
   resolveCollegeReportPlanScope,
@@ -7060,11 +7061,22 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   // 发起人没有任何 UI 入口可撤回。改为主清单 + 追回清单**合并判定**（与
   // isCollegeMutationApprovalInFlight 的合并口径同款），两份清单条目形状一致
   // （都带 submitterName / currentStepName）。职能页签既有批次（主清单）判定不变。
+  //
+  // 2026-11-15（撤回异动按钮全局显示回归修复，线上实测）：上式两份清单**无条件合并**
+  // 有视角漏洞——链下追回清单聚合的是下发链上全部学院的在审批次（loader 逐学院查询，
+  // 与当前视角无关），发起人对任一学院的在审批次都会把标志在所有部门/学院视角点亮，
+  // 「撤回异动」按钮全局显示（无任何异动的部门也显示）。改为按当前视角收口：
+  // 职能页签只读主清单（a7f4173 之前口径，后端已按选中部门查询）；学院页签两份清单
+  // 按选中学院 targetOrgId 收口（与 hasCollegeMutationApprovalInFlight 同口径）。
+  // 纯函数 resolveViewScopedMutationPendingApprovals 与单测共用；every() 的发起人
+  // 比对与撤回窗口逐条不变。
   const canWithdrawMutationInFlight = computed(() => {
-    const pendingApprovals = [
-      ...departmentMutationPendingApprovals.value,
-      ...departmentChainMutationPendingApprovals.value
-    ]
+    const pendingApprovals = resolveViewScopedMutationPendingApprovals({
+      isCollegeScopeActive: isCollegePlanContextActive.value,
+      collegeOrgId: resolveDepartmentIdByName(selectedCollege.value),
+      mainEntries: departmentMutationPendingApprovals.value,
+      chainEntries: departmentChainMutationPendingApprovals.value
+    })
     if (pendingApprovals.length === 0) {
       return false
     }
@@ -8350,11 +8362,17 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     // 2026-11-14（学院子指标异动撤回入口修复）：与 canWithdrawMutationInFlight 同款
     // 合并口径——学院新增行发起的异动只落在链下学院追回清单，不合并则这里
     // batchGroups 恒为空，点击只弹「未找到进行中的异动审批实例」。
+    // 2026-11-15（撤回异动按钮全局显示回归修复）：归组清单与按钮判定同源，改走
+    // resolveViewScopedMutationPendingApprovals 按当前视角收口——学院页签只归组
+    // 选中学院的批次、职能页签只归组主清单，杜绝「点一次撤回把全部学院的批次
+    // 一并退回」的越权放大（确认框文案里的「本次异动共 N 项」同口径收窄）。
     const batchGroups = new Map<string, { instanceId: number; count: number }>()
-    for (const entry of [
-      ...departmentMutationPendingApprovals.value,
-      ...departmentChainMutationPendingApprovals.value
-    ]) {
+    for (const entry of resolveViewScopedMutationPendingApprovals({
+      isCollegeScopeActive: isCollegePlanContextActive.value,
+      collegeOrgId: resolveDepartmentIdByName(selectedCollege.value),
+      mainEntries: departmentMutationPendingApprovals.value,
+      chainEntries: departmentChainMutationPendingApprovals.value
+    })) {
       const instanceId = Number(entry.instanceId)
       if (!Number.isFinite(instanceId) || instanceId <= 0) {
         continue

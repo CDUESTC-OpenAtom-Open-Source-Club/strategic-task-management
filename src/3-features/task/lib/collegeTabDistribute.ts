@@ -265,6 +265,59 @@ export interface CollegeMutationApprovalEntryLike {
   [key: string]: unknown
 }
 
+/** 「撤回异动」判定/批次归组的视角收口清单输入（2026-11-15 全局显示回归修复） */
+export interface ViewScopedMutationPendingInput {
+  /** 学院上下文激活（学院页签 + 已选学院）——model 的 isCollegePlanContextActive */
+  isCollegeScopeActive: boolean
+  /** 学院上下文时的选中学院组织 id（resolveDepartmentIdByName(selectedCollege)，解析失败为 null） */
+  collegeOrgId: number | null
+  /**
+   * 主清单（departmentMutationPendingApprovals）——后端按选中职能部门
+   * owner/target=orgId 过滤查询，天然视角隔离。
+   */
+  mainEntries: CollegeMutationApprovalEntryLike[]
+  /**
+   * 链下学院追回清单（departmentChainMutationPendingApprovals）——loader 对下发链上
+   * **全部学院**逐个查询的聚合，与当前视角无关，并入前必须收口。
+   */
+  chainEntries: CollegeMutationApprovalEntryLike[]
+}
+
+/**
+ * 「撤回异动」判定与批次归组的**视角收口清单**（2026-11-15 全局显示回归修复）。
+ *
+ * <p>缺陷（线上实测）：a7f4173 把两份清单**无条件合并**进 canWithdrawMutationInFlight /
+ * handleWithdrawMutationBatch——链下追回清单聚合的是下发链上**全部学院**的在审批次
+ * （loader 对每个学院 org 逐个查询，与当前视角无关），战略部发起人对其中任一学院的
+ * 在审批次都会让标志在**所有部门/学院视角**点亮 →「撤回异动」按钮全局显示
+ * （无任何异动的部门/学院也显示）。收口口径：</p>
+ * <ul>
+ *   <li>职能页签：只读主清单（后端已按选中部门查询，天然视角隔离，与 a7f4173 之前
+ *       职能页签口径一致）；链清单是全学院聚合，并入只会跨视角串台；</li>
+ *   <li>学院页签：两份清单合并后按 targetOrgId = 选中学院收口（与
+ *       hasCollegeMutationApprovalInFlight 完全同口径）——只保留**该学院**的批次，
+ *       其他学院/部门的批次不得点亮当前视角；</li>
+ *   <li>学院上下文但学院 org 解析失败 → 空清单（宁可隐藏，不误显示）。</li>
+ * </ul>
+ * <p>a7f4173 的修复目标（学院子指标异动发起人在学院页签有撤回入口）不受影响：
+ * 学院页签选中该学院时，主清单 owner 侧命中与链清单条目都带 targetOrgId=该学院，
+ * 收口后保留。every() 的发起人比对与撤回窗口在消费方逐条不变。</p>
+ */
+export const resolveViewScopedMutationPendingApprovals = (
+  input: ViewScopedMutationPendingInput
+): CollegeMutationApprovalEntryLike[] => {
+  if (!input.isCollegeScopeActive) {
+    return input.mainEntries
+  }
+  const orgId = Number(input.collegeOrgId)
+  if (!Number.isFinite(orgId) || orgId <= 0) {
+    return []
+  }
+  return [...input.mainEntries, ...input.chainEntries].filter(
+    entry => Number(entry.targetOrgId) === orgId
+  )
+}
+
 /** 学院×部门上报摘要的最小结构（collegeScopePlanReportSummary，字段与后端对齐） */
 export interface CollegeReportSummaryLike {
   id?: number | string | null
