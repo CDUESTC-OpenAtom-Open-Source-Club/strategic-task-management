@@ -27,6 +27,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # 需要完整 tag 历史：构建版本号由 scripts/resolve-app-version.mjs 从 git tag 推导
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -72,6 +75,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # 需要完整 tag 历史：构建版本号由 scripts/resolve-app-version.mjs 从 git tag 推导
+          fetch-depth: 0
 
       - name: Normalize image name
         id: image
@@ -91,7 +97,8 @@ jobs:
 
       - name: Read app version
         id: appver
-        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+        # 版本号跟随发布标签自动推导：显式注入 > CI tag 引用 > git tag > dev
+        run: echo "version=$(node scripts/resolve-app-version.mjs)" >> "$GITHUB_OUTPUT"
 
       - name: Build image on GitHub runner
         uses: docker/build-push-action@v6
