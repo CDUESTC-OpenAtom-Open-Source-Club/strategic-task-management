@@ -105,89 +105,120 @@ describe('reportSubmitGate 未选归属部门门禁（2026-11-13 口径变更）
   })
 })
 
-/** 按钮可见基线：批量操作区可见、报告未锁、PlanReport 流 draft 态 */
-const visibleInput = {
-  showBatchActions: true,
-  isReportLocked: false,
+/** 置灰门禁基线（2026-11-15 新契约）：PlanReport 流 draft 态、非未来月 */
+const gateInput = {
   usePlanReportFlow: true,
-  isPlanReportDraftState: true
+  isPlanReportDraftState: true,
+  isFutureMonth: false
 }
 
-// 2026-11-13 用户拍板（缺陷1）：一键提交的前提是已选归属部门——学院未选时按钮
-// **不渲染**（不是置灰）；非学院链路无归属部门概念，渲染逻辑保持原样
-describe('resolveReportSubmitAllButtonVisible（学院未选归属部门不渲染）', () => {
-  it('学院上下文：未选归属部门 → 按钮不渲染（false）；选中 → 渲染（true）', () => {
-    expect(
-      resolveReportSubmitAllButtonVisible({ ...visibleInput, functionalDeptSelected: false })
-    ).toBe(false)
-
-    expect(
-      resolveReportSubmitAllButtonVisible({ ...visibleInput, functionalDeptSelected: true })
-    ).toBe(true)
+// 2026-11-15 用户拍板（提交按钮隐藏改主动引导）：按钮**始终渲染**（不再 v-if），
+// 原「非草稿态 / 未选归属部门 / 未来月」三显隐条件并入 resolveReportSubmitLockReason
+// 原因链——不满足时原生 disabled + el-tooltip 说明缺什么，多条件同缺按
+// 优先级取第一条：部门 > 未来月 > 草稿。
+describe('reportSubmitGate 置灰门禁并入原因链（2026-11-15 契约：始终渲染 + tooltip 文案映射）', () => {
+  it('未来月（isFutureMonth=true）→ 置灰并提示「未来周期暂不能提交」', () => {
+    expect(resolveReportSubmitLockReason({ ...passInput, ...gateInput, isFutureMonth: true })).toBe(
+      '未来周期暂不能提交'
+    )
   })
 
-  it('非学院回归：functionalDeptSelected 缺省（undefined）恒渲染，不受新 v-if 影响', () => {
-    expect(resolveReportSubmitAllButtonVisible(visibleInput)).toBe(true)
-
-    // 传统职能部门链（usePlanReportFlow=false）同样只看既有条件
+  it('非草稿态（在审/已批等）→ 置灰并提示「暂无可提交的填报内容」', () => {
     expect(
-      resolveReportSubmitAllButtonVisible({
-        ...visibleInput,
+      resolveReportSubmitLockReason({
+        ...passInput,
+        usePlanReportFlow: true,
+        isPlanReportDraftState: false
+      })
+    ).toBe('暂无可提交的填报内容')
+  })
+
+  it('草稿态 / 缺省字段 → 无锁定原因（按钮可点；undefined 缺省向后兼容非学院链路）', () => {
+    expect(resolveReportSubmitLockReason({ ...passInput, ...gateInput })).toBe('')
+    expect(
+      resolveReportSubmitLockReason({
+        ...passInput,
+        usePlanReportFlow: undefined,
+        isPlanReportDraftState: undefined,
+        isFutureMonth: undefined
+      })
+    ).toBe('')
+  })
+
+  it('传统链（usePlanReportFlow=false）：草稿态判定不适用（旧显隐函数同口径）', () => {
+    expect(
+      resolveReportSubmitLockReason({
+        ...passInput,
         usePlanReportFlow: false,
         isPlanReportDraftState: false
       })
-    ).toBe(true)
+    ).toBe('')
   })
 
-  it('既有条件保持：批量操作区不可见 / 报告锁定 / 非 draft 态 → 不渲染', () => {
-    expect(resolveReportSubmitAllButtonVisible({ ...visibleInput, showBatchActions: false })).toBe(
-      false
-    )
-    expect(resolveReportSubmitAllButtonVisible({ ...visibleInput, isReportLocked: true })).toBe(
-      false
-    )
+  it('文案优先级：未选归属部门 > 未来月 > 非草稿态（多条件同缺取第一条）', () => {
+    // 部门 > 未来月
     expect(
-      resolveReportSubmitAllButtonVisible({ ...visibleInput, isPlanReportDraftState: false })
-    ).toBe(false)
-  })
-
-  it('学院未选部门时其它条件再满足也不渲染（未选是前置前提）', () => {
-    expect(
-      resolveReportSubmitAllButtonVisible({
-        ...visibleInput,
-        isReportLocked: false,
-        isPlanReportDraftState: true,
-        functionalDeptSelected: false
+      resolveReportSubmitLockReason({
+        ...passInput,
+        functionalDeptSelected: false,
+        isFutureMonth: true
       })
-    ).toBe(false)
-  })
+    ).toBe('请先选择归属部门')
 
-  // 2026-11-13 用户拍板（未来月放填报、拦提交）：提交目标月晚于当前真实月份时
-  // 一键提交**不渲染**（填报存草稿不受影响；后端提交端点同口径校验兜底）。
-  // 调用方折算 isFutureMonth 传入，undefined 恒通过（取不到月份的调用方零改动）。
-  it('未来月（isFutureMonth=true）→ 其它条件再满足也不渲染', () => {
-    expect(resolveReportSubmitAllButtonVisible({ ...visibleInput, isFutureMonth: true })).toBe(
-      false
-    )
-  })
-
-  it('当前月/历史月（isFutureMonth=false）→ 正常渲染', () => {
-    expect(resolveReportSubmitAllButtonVisible({ ...visibleInput, isFutureMonth: false })).toBe(
-      true
-    )
-  })
-
-  it('缺省（undefined，取不到月份的调用方）→ 恒通过（旧行为）', () => {
-    expect(resolveReportSubmitAllButtonVisible({ ...visibleInput })).toBe(true)
-  })
-
-  it('未来月 + 未选归属部门 → 同样不渲染（门禁叠加不冲突）', () => {
+    // 未来月 > 草稿
     expect(
-      resolveReportSubmitAllButtonVisible({
-        ...visibleInput,
+      resolveReportSubmitLockReason({
+        ...passInput,
         isFutureMonth: true,
-        functionalDeptSelected: false
+        isPlanReportDraftState: false
       })
-    ).toBe(false)
+    ).toBe('未来周期暂不能提交')
+
+    // 三门同缺
+    expect(
+      resolveReportSubmitLockReason({
+        ...passInput,
+        functionalDeptSelected: false,
+        isFutureMonth: true,
+        isPlanReportDraftState: false
+      })
+    ).toBe('请先选择归属部门')
+  })
+
+  it('三门紧随既有状态门之后：只读/空列表仍最高；异动锁/自评缺口仍在新三门之后', () => {
+    expect(
+      resolveReportSubmitLockReason({
+        ...passInput,
+        isReadOnly: true,
+        isFutureMonth: true,
+        isPlanReportDraftState: false
+      })
+    ).toBe('历史快照为只读状态，暂不能提交上报')
+
+    expect(
+      resolveReportSubmitLockReason({
+        ...passInput,
+        hasIndicators: false,
+        isFutureMonth: true,
+        isPlanReportDraftState: false
+      })
+    ).toBe('没有可提交的指标')
+
+    expect(
+      resolveReportSubmitLockReason({
+        ...passInput,
+        isPlanReportDraftState: false,
+        mutationInFlight: true,
+        missingSelfRatingCount: 2
+      })
+    ).toBe('暂无可提交的填报内容')
+
+    expect(
+      resolveReportSubmitLockReason({
+        ...passInput,
+        mutationInFlight: true,
+        missingSelfRatingCount: 2
+      })
+    ).toBe('当前部门存在进行中的异动审批，暂不能提交上报；请等异动审批结束或撤回后再操作')
   })
 })

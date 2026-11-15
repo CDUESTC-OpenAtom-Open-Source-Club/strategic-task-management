@@ -82,6 +82,26 @@
 }
 
 /* ========================================
+   归属部门未选高亮引导（2026-11-15 用户拍板「提交按钮隐藏改主动引导」①）
+   学院页签未选归属部门时：选择器琥珀色描边 + 轻微外发光；选中后 class
+   随 v-bind 切换移除，恢复 Element Plus 默认边框。填报/存草稿不受影响。
+   注：Element Plus 2.x select 的「边框」是 .el-select__wrapper 的 inset
+   box-shadow，需连 is-hovering / is-focused 态一起覆盖才能压过默认变色。
+   ======================================== */
+.owner-dept-guide :deep(.el-select__wrapper) {
+  box-shadow:
+    0 0 0 1px #e6a23c inset,
+    0 0 3px rgba(230, 162, 60, 0.35);
+}
+
+.owner-dept-guide :deep(.el-select__wrapper.is-hovering:not(.is-focused)),
+.owner-dept-guide :deep(.el-select__wrapper.is-focused) {
+  box-shadow:
+    0 0 0 1px #e6a23c inset,
+    0 0 3px rgba(230, 162, 60, 0.35);
+}
+
+/* ========================================
    表格卡片 - 统一卡片和表格样式
    Requirements: 2.1, 2.2, 4.1, 4.2, 4.3
    ======================================== */
