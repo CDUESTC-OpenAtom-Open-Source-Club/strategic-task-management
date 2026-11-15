@@ -86,7 +86,7 @@ const {
   ensureWorkflowRelatedAvatarsLoaded,
   ensureWorkflowUserAvatarLoaded,
   expectedWorkflowCodes,
-  canCurrentUserHandleReportTodo,
+  canHandleReportTodoItem,
   externalWorkflowTodoItems,
   planApprovalTodoCards,
   hasApprovalContextEntity,
@@ -497,15 +497,18 @@ const displayedCurrentPlanApprovalName = computed(() => {
                 </div>
                 <div class="card-actions">
                   <ElButton @click="openPlanApprovalDetails">查看详情</ElButton>
+                  <!-- 2026-11-15（审批按钮候选人显隐）：逐卡按当前节点审批人判定——
+                       非候选人隐藏（与撤回按钮铁律同口径：隐藏不置灰），候选人正常；
+                       旧全局标志 + 审批角色兜底会让非候选人看到按钮、点击吃 403 -->
                   <ElButton
-                    v-if="canCurrentUserHandleReportTodo"
+                    v-if="canHandleReportTodoItem(item)"
                     type="success"
                     @click="handleApprovePlanBatch"
                   >
                     审批通过
                   </ElButton>
                   <ElButton
-                    v-if="canCurrentUserHandleReportTodo"
+                    v-if="canHandleReportTodoItem(item)"
                     type="danger"
                     @click="handleRejectPlanBatch"
                   >

@@ -119,7 +119,10 @@ import {
   getWorkflowInstanceHistoryByBusiness
 } from '@/features/workflow/api/queries'
 import { decideTask, rejectTask } from '@/features/workflow/api'
-import { canCurrentUserHandleWorkflowApproval } from '@/features/approval/lib'
+import {
+  canCurrentUserHandleTodoEntry,
+  canCurrentUserHandleWorkflowApproval
+} from '@/features/approval/lib'
 import { apiClient } from '@/shared/api'
 import type {
   ApproverCandidateResponse,
@@ -3559,6 +3562,13 @@ export function useApprovalProgressDrawer(
     }
 
     planApprovalsLoading.value = true
+    // 2026-11-15（审批按钮候选人显隐）：待办实例详情缓存随每次清单重拉失效——
+    // 详情里的 currentApproverId 是「轮到我」判定的权威字段（当前活动节点审批人），
+    // 审批推进/退回后必须重取，否则旧窗口的已办人仍按旧详情点亮/隐藏按钮。
+    // 自增纪元强制详情 watch 重拉（卡集合不变时 watch 源不变、不会自动触发）。
+    // 清单刷新链（抽屉打开/审批动作/审批驱动刷新）都会经过本函数。
+    reportTodoDetailMap.value = {}
+    reportTodoDetailEpoch.value += 1
     // 2026-10-26：先拉 store 待办（/workflows/my-tasks，字段最全），
     // 保证「上报待办」这类独立业务实例一定有卡可渲染；随后再并入接口结果。
     void loadStorePendingApprovals()
@@ -3599,27 +3609,29 @@ export function useApprovalProgressDrawer(
 
   /**
    * 2026-10-26：上报待办（PLAN_REPORT）是否可由当前用户审批——
-   * 判定依据是「待办的指派人 = 当前用户」（最直接的证据），
-   * 或当前用户具备审批类角色。学院审核人没有「当前计划工作流」上下文，
-   * 不能沿用 canCurrentUserHandlePlanApproval。
+   * 判定依据是「待办的指派人 = 当前用户」（最直接的证据）。
+   * 学院审核人没有「当前计划工作流」上下文，不能沿用 canCurrentUserHandlePlanApproval。
+   *
+   * 2026-11-15（审批通过/驳回按钮候选人显隐，线上实测缺陷）：旧口径在「名下无任何
+   * 待办」时兜底放行 hasAnyPlanApprovalRole（持有任一审批角色即点亮），导致学院上报
+   * 五级链走到「分管职能部门校领导审批」时，学院/归口部门账号（持有 ROLE_APPROVER）
+   * 打开抽屉——操作位正确显示「审批流已锁定」，但待办卡上的「审批通过/审批驳回」
+   * 按钮仍然渲染，点击才吃后端 403。且旧判定是**全局标志**：名下有任意一条待办就
+   * 整页点亮所有卡的按钮，与「这张卡是不是我的节点」无关。新口径：逐条按
+   * assigneeId/currentApproverId === 当前登录人判定（后端每步解析唯一审批人，
+   * ApproverResolver findFirst，无或签多任务形态；两字段即后端 decision 授权的
+   * 镜像）。纯函数 canCurrentUserHandleTodoEntry 与单测共用；模板逐卡用
+   * canHandleReportTodoItem。角色兜底删除——按钮显隐不再看角色，后端 403 兜底不变。
    */
-  const canCurrentUserHandleReportTodo = computed(() => {
-    const items = externalWorkflowTodoItems.value
-    if (items.length === 0) {
-      return false
-    }
-    const userId = currentUserId.value
-    if (userId > 0) {
-      const assigned = items.some(item => {
-        const assigneeId = toPositiveNumber(item.assigneeId ?? item.currentApproverId)
-        return assigneeId > 0 && assigneeId === userId
-      })
-      if (assigned) {
-        return true
-      }
-    }
-    return hasAnyPlanApprovalRole.value
-  })
+  const canCurrentUserHandleReportTodo = computed(() =>
+    externalWorkflowTodoItems.value.some(item =>
+      canCurrentUserHandleTodoEntry(item, currentUserId.value)
+    )
+  )
+
+  /** 逐卡判定（模板 v-if 用）：这张待办卡的当前节点是否轮到当前登录人 */
+  const canHandleReportTodoItem = (item: Record<string, any>): boolean =>
+    canCurrentUserHandleTodoEntry(item, currentUserId.value)
 
   // 2026-10-26：上报待办到达后，若当前停在其它页签则切到「计划审批」——
   // 否则用户打开抽屉只看到历史/流程页签，以为没有待办。
@@ -4744,17 +4756,22 @@ export function useApprovalProgressDrawer(
    * 相同的完整字段渲染；加载失败回退精简展示，保证可用。
    */
   const reportTodoDetailMap = ref<Record<string, Record<string, any> | null>>({})
+  // 2026-11-15（审批按钮候选人显隐）：清单重拉纪元——loadPendingPlanApprovals 清缓存
+  // 时自增，即使卡集合不变也强制 watch 重新拉详情（否则旧窗口里 currentApproverId
+  // 停留在审批推进前的旧节点，「轮到我」判定失真）。
+  const reportTodoDetailEpoch = ref(0)
   watch(
     () =>
-      planApprovalTodoCards.value
+      `${reportTodoDetailEpoch.value}|${planApprovalTodoCards.value
         .map(item => String(item.instanceId || item.taskId || ''))
         .filter(Boolean)
-        .join(','),
+        .join(',')}`,
     async joinedIds => {
-      if (!joinedIds) {
+      const ids = joinedIds.split('|')[1] || ''
+      if (!ids) {
         return
       }
-      for (const id of joinedIds.split(',')) {
+      for (const id of ids.split(',')) {
         if (reportTodoDetailMap.value[id] !== undefined) {
           continue
         }
@@ -4785,7 +4802,16 @@ export function useApprovalProgressDrawer(
         submitterName:
           normalizeDisplayName(detail.starterName) || item.submitterName || item.assigneeName,
         createdAt: detail.startedAt || item.createdAt,
-        currentStepName: detail.currentStepName || item.currentStepName
+        currentStepName: detail.currentStepName || item.currentStepName,
+        // 2026-11-15（审批按钮候选人显隐）：用实例**当前活动节点**的审批人覆盖列表
+        // 条目的 assigneeId/currentApproverId——列表条目可能是「已办完的旧任务」指派
+        // （归口审核人批完第 3 级后旧窗口/未刷新清单里 assigneeId 还是自己），
+        // 不能作为「轮到我」的证据；详情的 currentApproverId 由后端取当前 PENDING 步
+        // 的 approverId（WorkflowReadModelMapper），与 decision 授权同源。审批推进
+        // 后（loadPendingPlanApprovals 清缓存重拉详情）按钮随之对已办人隐藏、
+        // 驳回退回后对当前节点审批人恢复。
+        assigneeId: detail.currentApproverId ?? item.assigneeId,
+        currentApproverId: detail.currentApproverId ?? item.currentApproverId
       }
     })
   )
@@ -5150,6 +5176,7 @@ export function useApprovalProgressDrawer(
     filteredPlanApprovalItems,
     reportTodoItems,
     canCurrentUserHandleReportTodo,
+    canHandleReportTodoItem,
     resolveExternalTodoSubmitterName,
     formatAppraisalLevel,
     formatInstanceNo,
