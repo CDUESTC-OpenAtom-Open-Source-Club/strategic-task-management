@@ -14,6 +14,9 @@
  *   - 错误数不增（含修掉了一批） → exit 0，并把当前错误数作为可见指标输出；
  *   - 存量错误被修掉后，可用 `npm run type-check:baseline` 刷新基线。
  *
+ * 注意：类型错误依赖 @types/* 与 vue-tsc 的**具体版本**，基线与 package-lock.json
+ * 绑定。依赖升级后需要用 `npm ci` 对齐依赖再重新生成基线，否则错误数会整体漂移。
+ *
  * 用法：
  *   node scripts/type-check.mjs                  # 比对基线（CI / 本地默认）
  *   node scripts/type-check.mjs --update-baseline  # 刷新基线
@@ -184,6 +187,13 @@ function main() {
       console.error(`  - ${item.file}: ${item.baseline} -> ${item.current}`)
     }
     console.error('[type-check] 如确认是基线过期，请执行 npm run type-check:baseline 刷新基线')
+    if (Math.abs(totalErrors - baseline.totalErrors) > 20) {
+      console.error(
+        '[type-check] 提示：错误总数与基线相差较大，通常是依赖版本不一致导致' +
+          '（类型错误依赖 @types/* 与 vue-tsc 的具体版本）。' +
+          '请用 package-lock.json 对齐依赖后重试：npm ci'
+      )
+    }
     return 1
   }
 
