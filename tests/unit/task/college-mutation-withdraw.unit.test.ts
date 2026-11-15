@@ -29,8 +29,10 @@ describe('P1 配套：学院子指标异动的撤回入口合并判定', () => {
       modelSource.indexOf('const canWithdrawMutationInFlight = computed'),
       modelSource.indexOf('const canWithdrawMutationInFlight = computed') + 2400
     )
-    expect(body).toContain('...departmentMutationPendingApprovals.value')
-    expect(body).toContain('...departmentChainMutationPendingApprovals.value')
+    // 2026-11-15（全局显示回归修复）：合并集合改走视角收口纯函数（两份清单仍都传入）
+    expect(body).toContain('resolveViewScopedMutationPendingApprovals')
+    expect(body).toContain('departmentMutationPendingApprovals.value')
+    expect(body).toContain('departmentChainMutationPendingApprovals.value')
     expect(body).toContain('if (pendingApprovals.length === 0)')
     // 发起人比对与撤回窗口逐条不变
     expect(body).toContain('submitterName !== currentUserName')
@@ -50,8 +52,10 @@ describe('P1 配套：学院子指标异动的撤回入口合并判定', () => {
       modelSource.indexOf('const handleWithdrawMutationBatch = async'),
       modelSource.indexOf('const handleWithdrawMutationBatch = async') + 1600
     )
-    expect(body).toContain('...departmentMutationPendingApprovals.value')
-    expect(body).toContain('...departmentChainMutationPendingApprovals.value')
+    // 2026-11-15：归组与按钮判定同源（同一视角收口纯函数），不再无条件全量归组
+    expect(body).toContain('resolveViewScopedMutationPendingApprovals')
+    expect(body).toContain('departmentMutationPendingApprovals.value')
+    expect(body).toContain('departmentChainMutationPendingApprovals.value')
     expect(body).toContain('batchGroups')
   })
 
