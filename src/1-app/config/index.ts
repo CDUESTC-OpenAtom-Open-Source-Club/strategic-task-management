@@ -1,4 +1,5 @@
 import { API_BASE_URL, API_TIMEOUT } from '@/shared/config/api'
+import { APP_COMMIT_HASH, APP_VERSION } from '@/shared/config/app-version'
 
 /**
  * Application Configuration
@@ -10,8 +11,10 @@ import { API_BASE_URL, API_TIMEOUT } from '@/shared/config/api'
 
 /**
  * Application version
+ *
+ * 构建期由 scripts/resolve-app-version.mjs 注入，禁止在 .env 手工维护。
  */
-export const APP_VERSION = import.meta.env['VITE_APP_VERSION'] || '1.3.0'
+export { APP_VERSION }
 
 /**
  * Application name
@@ -45,7 +48,7 @@ export const API_CONFIG = {
  */
 export const BUILD_INFO = {
   version: APP_VERSION,
-  commitHash: import.meta.env['VITE_APP_COMMIT_HASH'] || 'unknown',
+  commitHash: APP_COMMIT_HASH,
   time: new Date().toISOString(),
   mode: ENV.mode
 }
