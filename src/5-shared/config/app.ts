@@ -5,14 +5,16 @@
  */
 
 /**
+ * Application version
+ *
+ * 构建期由 scripts/resolve-app-version.mjs 注入，禁止在 .env 手工维护。
+ */
+export { APP_VERSION } from './app-version'
+
+/**
  * Application name
  */
 export const APP_NAME = '战略任务管理系统'
-
-/**
- * Application version
- */
-export const APP_VERSION = import.meta.env['VITE_APP_VERSION'] || '1.3.0'
 
 /**
  * Default page size for pagination
