@@ -3597,13 +3597,12 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return { rowspan: 1, colspan: 1 }
     }
 
-    // 只有第 0 列需要合并：职能部门=战略任务列（按任务名分组）；
-    // 2026-10-28 用户定案：学院端第 0 列是核心指标列（按所属核心指标分组）
+    // 只有第 0 列需要合并：按任务名分组（第 0 列=「战略任务」列）。
+    // 2026-11-17（领导二-1）：学院端第 0 列改回「战略任务」列后，学院与非学院同构——
+    // 不再按 parentIndicatorId（父级核心指标）分组，分组上下文统一由任务列承担，
+    // 学院视角不出现职能部门原指标（父级核心指标）的任何内容。
     if (columnIndex === 0) {
-      const groupKeyOf = (item: any) =>
-        isSecondaryCollege.value
-          ? String(item?.parentIndicatorId ?? '') || '未关联核心指标'
-          : item?.taskContent || '未关联任务'
+      const groupKeyOf = (item: any) => item?.taskContent || '未关联任务'
       const currentTask = groupKeyOf(row)
 
       // 计算当前任务在列表中的起始位置
@@ -4422,7 +4421,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     // 2026-10-20 修复：自评进度保存后重开弹窗显示为空——回显取刚刷新的草稿明细等级，
     // 无草稿明细时依次退回列表行（覆盖层已算）与服务端快照的已存等级
     const draftDetail = reportDetailOverlay.value[String(row.id)] as
-      { selfRating?: string | null } | undefined
+      | { selfRating?: string | null }
+      | undefined
     reportForm.value = {
       newProgress: Math.max(actualProgress, Number(preferredProgress) || 0),
       remark: row.pendingRemark ?? persistedDraft?.remark ?? '',
@@ -5706,7 +5706,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           }
 
           let updatedReportSummary:
-            (typeof currentPlanReportSummary.value extends infer T ? T : never) | null = null
+            | (typeof currentPlanReportSummary.value extends infer T ? T : never)
+            | null = null
           if (usePlanReportFlow.value) {
             const reportOrgId = Number(currentViewingOrgId.value ?? NaN)
             if (!Number.isFinite(reportOrgId) || reportOrgId <= 0) {
@@ -5833,7 +5834,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           }
 
           let updatedReportSummary:
-            (typeof currentPlanReportSummary.value extends infer T ? T : never) | null = null
+            | (typeof currentPlanReportSummary.value extends infer T ? T : never)
+            | null = null
           if (usePlanReportFlow.value) {
             const reportOrgId = Number(currentViewingOrgId.value ?? NaN)
             if (!Number.isFinite(reportOrgId) || reportOrgId <= 0) {

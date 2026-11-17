@@ -588,13 +588,17 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
   const resolveCurrentCycleId = (): number | undefined => {
     const selectedPlan = currentSelectedCollegePlan.value as
-      (Plan & { cycleId?: number | string; cycle_id?: number | string }) | null
+      | (Plan & { cycleId?: number | string; cycle_id?: number | string })
+      | null
     const selectedPlanDetails = currentSelectedCollegePlanDetails.value as
-      (Plan & { cycleId?: number | string; cycle_id?: number | string }) | null
+      | (Plan & { cycleId?: number | string; cycle_id?: number | string })
+      | null
     const departmentPlan = currentDepartmentPlan.value as
-      (Plan & { cycleId?: number | string; cycle_id?: number | string }) | null
+      | (Plan & { cycleId?: number | string; cycle_id?: number | string })
+      | null
     const departmentPlanDetails = currentDepartmentPlanDetails.value as
-      (Plan & { cycleId?: number | string; cycle_id?: number | string }) | null
+      | (Plan & { cycleId?: number | string; cycle_id?: number | string })
+      | null
 
     const directCycleId =
       selectedPlanDetails?.cycleId ??
@@ -611,7 +615,8 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
     }
 
     const cycle = timeContext.cycles.find(item => Number(item.year) === timeContext.currentYear) as
-      { cycleId?: number | string; id?: number | string } | undefined
+      | { cycleId?: number | string; id?: number | string }
+      | undefined
     const numericCycleId = Number(cycle?.cycleId ?? cycle?.id)
     return Number.isFinite(numericCycleId) && numericCycleId > 0 ? numericCycleId : undefined
   }
@@ -2558,7 +2563,8 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
   // 获取选中学院的所有子指标（按父指标分组，只显示当前部门下发的）
   const currentDepartmentPlanIndicators = computed<StrategicIndicator[]>(() => {
     const plan = currentSelectedCollegePlanDetails.value as
-      (Plan & { indicators?: unknown[] }) | null
+      | (Plan & { indicators?: unknown[] })
+      | null
     if (!plan || !Array.isArray(plan.indicators)) {
       return []
     }
@@ -3718,7 +3724,8 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       if (editingEl) {
         // 处理不同类型的输入元素
         const input = editingEl.querySelector('input, textarea') as
-          HTMLInputElement | HTMLTextAreaElement
+          | HTMLInputElement
+          | HTMLTextAreaElement
         if (input) {
           input.focus()
           // 如果是文本输入框，选中所有文本
@@ -4936,7 +4943,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
       return '正常'
     }
     if (severity === 'WARNING') {
-      return '延期'
+      return '滞后'
     }
     return '未评定'
   }

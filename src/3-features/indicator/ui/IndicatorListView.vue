@@ -259,7 +259,6 @@ const {
   primaryApprovalWorkflowEntityType,
   readPersistedIndicatorDraft,
   readPlanReportUiState,
-  resolveParentIndicator,
   refreshCurrentPlanDetails,
   refreshIndicatorListAfterMutation,
   refreshIndicatorWorkflowContext,
@@ -369,7 +368,13 @@ const buildIndicatorListExportColumns = (
         return text
       }
     },
-    { header: '核心指标', width: 32, getValue: row => row.name || '-' },
+    // 2026-11-17（领导二-1）：学院视角该列装的是子指标名（row.name），表头与网格一致改
+    // 「子指标名称」——学院侧材料不再出现「核心指标」（职能部门原指标）字样
+    {
+      header: isSecondaryCollege.value ? '子指标名称' : '核心指标',
+      width: 32,
+      getValue: row => row.name || '-'
+    },
     { header: '指标类型', width: 12, align: 'center', getValue: row => row.type1 || '-' },
     { header: '任务类别', width: 12, align: 'center', getValue: row => row.type2 || '-' },
     { header: '权重', width: 10, align: 'center', getValue: row => Number(row.weight || 0) },
@@ -377,7 +382,12 @@ const buildIndicatorListExportColumns = (
       header: '审核进度',
       width: 18,
       align: 'center',
-      getValue: row => getManualAlertLabel(row.manualAlertSeverity)
+      // 2026-11-17（领导反馈「导出的表没有填报的内容」）：导出与网格同源——
+      // 实时等级 context 优先（getIndicatorAppraisalLevel），行内存字段兜底。
+      // 此前只读 row.manualAlertSeverity（依赖一次异步回显，审批中/回显失败恒空），
+      // 页面有值、导出为空。导出 handler 已在构建 sheet 前 await 加载 context。
+      getValue: row =>
+        getManualAlertLabel(getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity))
     },
     { header: '填报说明', width: 28, getValue: row => row.pendingRemark || '-' },
     // 2026-10-28：附件本体打进 zip 后，Excel 只保留「附件目录（相对路径）」+「文件名」；
@@ -493,6 +503,8 @@ const handleExportCollegeCurrentRange = async () => {
     }
 
     const rows = groups[0].rows
+    // 2026-11-17：导出前显式重查实时等级 context（与网格同源），确保「审核进度」列不为空
+    await loadIndicatorAppraisalContexts(rows.map(row => row.id))
     const summaryMap = await loadIndicatorAttachmentSummaryMap(rows.map(row => row.id))
 
     const payload = {
@@ -543,6 +555,8 @@ const handleExportAllCollegeDepartments = async () => {
     }
 
     const allRows = groups.flatMap(group => group.rows)
+    // 2026-11-17：导出前显式重查实时等级 context（与网格同源），确保「审核进度」列不为空
+    await loadIndicatorAppraisalContexts(allRows.map(row => row.id))
     const summaryMap = await loadIndicatorAttachmentSummaryMap(allRows.map(row => row.id))
 
     const payloads = groups.map(group => ({
@@ -569,7 +583,7 @@ const handleExportAllCollegeDepartments = async () => {
   }
 }
 
-// 2026-10-31 定稿：等级选项收敛到共享 appraisalGate（只有超前完成/正常/延期三档），
+// 2026-10-31 定稿：等级选项收敛到共享 appraisalGate（只有超前完成/正常/滞后三档），
 // 「未评定」退为初始空白显示态（不是选项，空值仍显示「—」），三视图同构。
 const getManualAlertLabel = (severity?: ManualAlertSeverity) =>
   getAppraisalLevelDisplay(severity).label
@@ -633,6 +647,9 @@ const handleExportIndicatorList = async () => {
 
   indicatorListExporting.value = true
   try {
+    // 2026-11-17：导出前显式重查实时等级 context（与网格同源），确保「审核进度」列
+    // 不因批量缓存陈旧/未加载而导出为空
+    await loadIndicatorAppraisalContexts(rows.map(row => row.id))
     const scopeName = effectiveViewingDept.value || authStore.userDepartment || '当前部门'
     // 2026-10-28：附件可见性由后端判定——填报人可见本人草稿，上级只可见上一轮已上报快照
     const summaryMap = await loadIndicatorAttachmentSummaryMap(rows.map(row => row.id))
@@ -943,10 +960,11 @@ const handleExportIndicatorList = async () => {
               <!-- 2026-10-28 华年定案：三个页面列宽/顺序必须与「战略任务管理」页面完全一致。
                    战略任务列改为与基准页相同的固定宽度（140），核心指标列取基准页的 min-width（210），
                    剩余宽度由核心指标列吃掉，表格仍铺满容器。取值统一在 TASK_TABLE_COLUMN_WIDTH。 -->
-              <!-- 2026-10-28 用户定案：学院端不显示战略任务列——学院的行是职能部门
-                   下发的子指标，首列改为所属「核心指标」（见下方学院专用列） -->
+              <!-- 2026-11-17（领导二-1）学院端也显示战略任务列：子指标行自带 taskContent，
+                   分组上下文由既有「战略任务」列承担；学院不再展示职能部门原指标（父级核心指标）
+                   的名称/类型（原学院专属「核心指标」列已删除，见领导口径）。 -->
               <el-table-column
-                v-if="showStrategicTaskColumn && !isSecondaryCollege"
+                v-if="showStrategicTaskColumn"
                 prop="taskContent"
                 label="战略任务"
                 :width="TASK_TABLE_COLUMN_WIDTH.strategicTask"
@@ -962,40 +980,6 @@ const handleExportIndicatorList = async () => {
                         class="task-content-colored"
                         :style="{ color: getTaskTypeColor(row.type2) }"
                         >{{ row.taskContent || '未关联任务' }}</span
-                      >
-                    </FullTextPanel>
-                  </el-tooltip>
-                </template>
-              </el-table-column>
-              <!-- 2026-10-28 用户定案：学院端首列=所属核心指标（父指标），
-                   与二级学院管理视图同构——定性/定量配色、同核心指标合并单元格、悬停看全文 -->
-              <el-table-column
-                v-if="isSecondaryCollege"
-                label="核心指标"
-                :min-width="TASK_TABLE_COLUMN_WIDTH.coreIndicatorMin"
-              >
-                <template #default="{ row }">
-                  <el-tooltip
-                    :content="
-                      resolveParentIndicator(row)?.type1 === '定性'
-                        ? '定性指标'
-                        : resolveParentIndicator(row)?.type1 === '定量'
-                          ? '定量指标'
-                          : '未设置类型'
-                    "
-                    placement="top"
-                  >
-                    <FullTextPanel :text="resolveParentIndicator(row)?.name || ''">
-                      <span
-                        class="indicator-name-text"
-                        :class="
-                          resolveParentIndicator(row)?.type1 === '定性'
-                            ? 'indicator-qualitative'
-                            : resolveParentIndicator(row)?.type1 === '定量'
-                              ? 'indicator-quantitative'
-                              : ''
-                        "
-                        >{{ resolveParentIndicator(row)?.name || '—' }}</span
                       >
                     </FullTextPanel>
                   </el-tooltip>
@@ -1087,7 +1071,7 @@ const handleExportIndicatorList = async () => {
                     size="small"
                   >
                     {{
-                      { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' }[row.selfRating] ||
+                      { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '滞后' }[row.selfRating] ||
                       row.selfRating
                     }}
                   </el-tag>
@@ -1345,7 +1329,7 @@ const handleExportIndicatorList = async () => {
           <el-descriptions-item label="自评进度">
             <el-tag v-if="(currentDetail as any).selfRating" size="small" type="info">
               {{
-                { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' }[
+                { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '滞后' }[
                   String((currentDetail as any).selfRating).toUpperCase()
                 ] || (currentDetail as any).selfRating
               }}
@@ -1440,7 +1424,7 @@ const handleExportIndicatorList = async () => {
             >
               <el-option label="超前完成" value="AHEAD" />
               <el-option label="正常" value="NORMAL" />
-              <el-option label="延期" value="DELAYED" />
+              <el-option label="滞后" value="DELAYED" />
             </el-select>
             <span class="form-hint">进度按等级定性评价，不再填写百分比</span>
           </el-form-item>

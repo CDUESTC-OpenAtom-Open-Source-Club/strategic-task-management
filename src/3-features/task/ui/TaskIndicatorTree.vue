@@ -320,7 +320,7 @@ const defaultExpandedKeys = computed(() => treeData.value.map(t => t.id))
                   <span class="stats-value">{{ data.stats.normal }}项</span>
                 </div>
                 <div class="stats-row warning">
-                  <span class="stats-label">延期:</span>
+                  <span class="stats-label">滞后:</span>
                   <span class="stats-value">{{ data.stats.warning }}项</span>
                 </div>
                 <div class="stats-row ahead">
