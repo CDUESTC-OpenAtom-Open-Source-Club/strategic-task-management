@@ -8833,6 +8833,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   return {
     PLAN_APPROVAL_HISTORY_WORKFLOW_CODES,
     PLAN_APPROVAL_SUBMIT_WORKFLOW_CODE,
+    // 2026-11-17 用户反馈第 2.2 条：导出必须与页面同口径取数。
+    // 页面表格（indicators）套了 reportDetail 覆盖层（自评进度/进度说明/附件），
+    // 而导出取的是未套覆盖层的 normalizedIndicators，导致导出的「自评进度」「进度说明」恒为空。
+    // （承接 PR #122 @Nerdlet369 的导出 overlay 部分）
+    applyReportDetailOverlayToRow,
     _addIndicatorToCategory,
     _currentDate,
     _currentTask,

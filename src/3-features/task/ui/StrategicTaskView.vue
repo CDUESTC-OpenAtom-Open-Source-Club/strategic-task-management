@@ -343,6 +343,9 @@ const {
   hasApprovalWorkflowReportBinding,
   hasDistributedIndicators,
   hasWorkflowBinding,
+  // 2026-11-17 用户反馈第 2.2 条：导出与页面同口径——行对象先套 reportDetail 覆盖层
+  // （承接 PR #122 @Nerdlet369 的导出 overlay 部分）
+  applyReportDetailOverlayToRow,
   hydrateCurrentPlanWorkflowState,
   hydratingPlanDetail,
   indicatorByIdMap,
@@ -1417,6 +1420,16 @@ const buildStrategicExportColumns = (
       align: 'center',
       getValue: row => Number(row.weight || 0)
     },
+    // 2026-11-17 用户反馈第 2.2 条：导出的表里没有「填报的内容」。
+    // 页面表格有「自评进度 / 进度说明」两列，导出却只有审核进度与附件，
+    // 填报人交上去的内容在 Excel 里完全看不到；此处按页面列序补齐（自评进度在权重之后）。
+    // （承接 PR #122 @Nerdlet369 的导出 overlay 部分；DELAYED 文案随本仓口径作「滞后」）
+    {
+      header: '自评进度',
+      width: 14,
+      align: 'center',
+      getValue: row => getExportSelfRatingLabel(row)
+    },
     // 2026-10-20：阅读列标注「导入忽略」——导入解析器不识别这两列，改了不起作用
     {
       header: '审核进度（导入忽略）',
@@ -1448,9 +1461,38 @@ const buildStrategicExportColumns = (
             resolveStrategicExportAttachmentItems(row)
           )
         )
+    },
+    // 2026-11-17 用户反馈第 2.2 条：进度说明同样是填报内容，页面有、导出必须有（列序与页面一致）
+    {
+      header: '进度说明',
+      width: 40,
+      getValue: row => getExportRemarkText(row)
     }
   ]
 }
+
+/**
+ * 2026-11-17（用户反馈第 2.2 条）：导出用「自评进度」文案。
+ *
+ * 行对象上的 selfRating 是填报时写入的等级码（AHEAD/NORMAL/DELAYED），
+ * StrategicIndicator 类型里没有该字段（运行时由填报装订层附加），故此处做窄化读取；
+ * 未知码原样输出，便于排查数据问题，不吞掉原文。
+ * （承接 PR #122 @Nerdlet369 的导出 overlay 部分；DELAYED 文案随本仓口径作「滞后」）
+ */
+const getExportSelfRatingLabel = (row: unknown): string => {
+  const raw = String((row as { selfRating?: string | null } | null)?.selfRating ?? '').trim()
+  if (!raw) {
+    return '—'
+  }
+  const key = raw.toUpperCase()
+  return (
+    ({ AHEAD: '超前完成', NORMAL: '正常', DELAYED: '滞后' } as Record<string, string>)[key] ?? raw
+  )
+}
+
+/** 导出用「进度说明」：填报的进度说明（pendingRemark），空值统一「—」 */
+const getExportRemarkText = (row: unknown): string =>
+  String((row as { pendingRemark?: string | null } | null)?.pendingRemark ?? '').trim() || '—'
 
 const findStrategicExportPlanByDepartment = (department: string) => {
   const normalizedDepartment = normalizeDepartmentName(department)
@@ -1533,7 +1575,9 @@ const getStrategicExportRowsByDepartment = (
           : isIndicatorInCurrentPlanScope(indicator))
     )
     .map(indicator => ({
-      ...indicator,
+      // 2026-11-17 用户反馈第 2.2 条：与页面表格同口径——先套 reportDetail 覆盖层，
+      // 再补导出专有字段，否则自评进度 / 进度说明 / 上报资料在 Excel 里恒为空。
+      ...applyReportDetailOverlayToRow(indicator),
       type2: getIndicatorCategoryLabel(indicator),
       exportDepartment: department
     }))
@@ -1657,6 +1701,24 @@ const handleExportCollegeIndicators = async () => {
             getValue: row => getCategoryText(getIndicatorCategoryLabel(row))
           },
           { header: '权重', width: 10, align: 'center', getValue: row => String(row.weight ?? '') },
+          // 2026-11-17 用户反馈第 2.2 条：学院页签的导出同样缺「填报的内容」，
+          // 与页面表格对齐补 自评进度 / 审核进度 / 进度说明 三列。
+          // （承接 PR #122 @Nerdlet369 的导出 overlay 部分；审核进度用本仓实时等级 context 方案）
+          {
+            header: '自评进度',
+            width: 14,
+            align: 'center',
+            getValue: row => getExportSelfRatingLabel(row)
+          },
+          {
+            header: '审核进度',
+            width: 14,
+            align: 'center',
+            getValue: row =>
+              getAppraisalLevelDisplay(getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity))
+                .label
+          },
+          { header: '进度说明', width: 40, getValue: row => getExportRemarkText(row) },
           { header: '状态', width: 14, getValue: row => String(row.status || '') }
         ],
         emptyMessage: '当前学院暂无可导出的指标数据'

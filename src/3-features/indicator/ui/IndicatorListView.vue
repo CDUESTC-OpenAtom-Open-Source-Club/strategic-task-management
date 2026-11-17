@@ -329,6 +329,24 @@ const selectedCollegeExportDepartments = ref<string[]>([])
 const collegeBatchExporting = ref(false)
 
 // 2026-10-14 用户定案：与战略任务管理/下发界面同构——同一战略任务多行在「战略任务」列合并；移除「内部ID」列
+/**
+ * 2026-11-17（用户反馈第 2.2 条）：导出的「自评进度」文案。
+ *
+ * 行对象上的 selfRating 由填报层附加（StrategicIndicator 声明里没有该字段），
+ * 这里做窄化读取；空值统一「—」，未知码原样输出便于排查。
+ * （承接 PR #122 @Nerdlet369 的导出 overlay 部分；DELAYED 文案随本仓口径作「滞后」）
+ */
+const getIndicatorListExportSelfRatingLabel = (row: StrategicIndicator): string => {
+  const raw = String((row as { selfRating?: string | null }).selfRating ?? '').trim()
+  if (!raw) {
+    return '—'
+  }
+  const key = raw.toUpperCase()
+  return (
+    ({ AHEAD: '超前完成', NORMAL: '正常', DELAYED: '滞后' } as Record<string, string>)[key] ?? raw
+  )
+}
+
 const buildIndicatorListExportColumns = (
   rows: StrategicIndicator[],
   summaryMap: IndicatorAttachmentSummaryMap | null
@@ -378,6 +396,14 @@ const buildIndicatorListExportColumns = (
     { header: '指标类型', width: 12, align: 'center', getValue: row => row.type1 || '-' },
     { header: '任务类别', width: 12, align: 'center', getValue: row => row.type2 || '-' },
     { header: '权重', width: 10, align: 'center', getValue: row => Number(row.weight || 0) },
+    // 2026-11-17 用户反馈第 2.2 条：导出缺少「填报的内容」——补自评进度（页面有权重之后这一列）
+    // （承接 PR #122 @Nerdlet369 的导出 overlay 部分）
+    {
+      header: '自评进度',
+      width: 14,
+      align: 'center',
+      getValue: row => getIndicatorListExportSelfRatingLabel(row)
+    },
     {
       header: '审核进度',
       width: 18,
@@ -389,7 +415,9 @@ const buildIndicatorListExportColumns = (
       getValue: row =>
         getManualAlertLabel(getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity))
     },
-    { header: '填报说明', width: 28, getValue: row => row.pendingRemark || '-' },
+    // 2026-11-17 用户反馈第 2.2 条：与页面列名对齐，「填报说明」改称「进度说明」
+    // （承接 PR #122 @Nerdlet369 的导出 overlay 部分）
+    { header: '进度说明', width: 28, getValue: row => row.pendingRemark || '-' },
     // 2026-10-28：附件本体打进 zip 后，Excel 只保留「附件目录（相对路径）」+「文件名」；
     // 附件来源由后端按当前登录人可见范围返回，页面看不到的填报不会进导出。
     {
