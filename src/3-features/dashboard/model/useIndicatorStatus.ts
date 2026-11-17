@@ -2,7 +2,7 @@
  * useIndicatorStatus - 指标状态计算 Model
  *
  * 职责:
- * - 计算指标状态（正常、超前、预警、延期）
+ * - 计算指标状态（正常、超前、预警、滞后）
  * - 获取当前目标进度
  * - 提供状态相关的工具函数
  *
@@ -34,8 +34,8 @@ export function getStatusText(status: IndicatorStatus): string {
   const statusMap: Record<IndicatorStatus, string> = {
     normal: '正常',
     ahead: '超前完成',
-    warning: '延期',
-    delayed: '延期'
+    warning: '滞后',
+    delayed: '滞后'
   }
   return statusMap[status]
 }
