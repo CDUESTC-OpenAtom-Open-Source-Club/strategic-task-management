@@ -10,7 +10,7 @@ import { getGradientColor } from '@/shared/lib/utils/colors'
 
 use([PieChart, TooltipComponent, LegendComponent, GraphicComponent, CanvasRenderer])
 
-// 进度等级三档（2026-09-17 定案）：超前完成 / 正常 / 延期
+// 进度等级三档（2026-09-17 定案）：超前完成 / 正常 / 滞后
 const props = defineProps<{
   ahead: number
   normal: number
@@ -81,7 +81,7 @@ const chartOption = computed(() => ({
         },
         {
           value: props.delayed,
-          name: '延期',
+          name: '滞后',
           itemStyle: {
             color: getGradientColor('#F56C6C', '#F56C6CCC')
           }
@@ -120,9 +120,9 @@ const chartOption = computed(() => ({
 }))
 
 const handleChartClick = (params: { name: string }) => {
-  // 点击扇区沿用原 alertLevel 筛选通道：延期→severe，超前完成/正常→normal
+  // 点击扇区沿用原 alertLevel 筛选通道：滞后→severe，超前完成/正常→normal
   const levelMap: Record<string, 'severe' | 'moderate' | 'normal'> = {
-    延期: 'severe',
+    滞后: 'severe',
     超前完成: 'normal',
     正常: 'normal'
   }

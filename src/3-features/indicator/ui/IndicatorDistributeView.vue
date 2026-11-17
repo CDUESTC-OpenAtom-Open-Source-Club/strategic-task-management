@@ -333,7 +333,7 @@ type DistributionExportChild = Partial<StrategicIndicator> & {
 }
 
 // 审核进度显示与门禁（2026-10-31 定稿）：等级选项收敛到共享 appraisalGate
-// （只有超前完成/正常/延期三档；「未评定」退为初始空白显示态，不是选项），三视图同构。
+// （只有超前完成/正常/滞后三档；「未评定」退为初始空白显示态，不是选项），三视图同构。
 // 注：此处改用 getAppraisalLevelDisplay 统一映射——原先 getChildManualAlertLabel/TagType
 // 的词表是 WARNING，context 返回的 DELAYED 会被误显示为「未评定」。
 const getChildAppraisalDisplay = (level: string | null | undefined) =>
@@ -778,7 +778,7 @@ const _getManualAlertLabel = (severity?: string | null): string => {
     .toUpperCase()
   if (normalized === 'AHEAD') return '超前完成'
   if (normalized === 'NORMAL') return '正常'
-  if (normalized === 'DELAYED' || normalized === 'WARNING') return '延期'
+  if (normalized === 'DELAYED' || normalized === 'WARNING') return '滞后'
   return '—'
 }
 
@@ -1251,7 +1251,7 @@ const handleDistributionImportCommitted = async () => {
                       <div class="manual-alert-cell">
                         <!-- 2026-10-31 定稿：点击格子先单条重查 context，canAppraise=true
                              才弹等级选择器，不满足条件当场弹对应原因（三视图同构）；
-                             DELAYED 经共享 getAppraisalLevelDisplay 正确显示「延期」。 -->
+                             DELAYED 经共享 getAppraisalLevelDisplay 正确显示「滞后」。 -->
                         <el-tag
                           :type="
                             getChildAppraisalDisplay(

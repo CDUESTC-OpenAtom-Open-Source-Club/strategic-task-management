@@ -5,7 +5,7 @@
  * 任一不满足 → 点击格子当场弹对应原因，绝不出现「打开下拉→填→保存失败」空转。
  *
  * 本模块是三视图（战略任务管理页 / 指标填报页 / 指标分发页）共用的纯函数与常量：
- * - 等级选项只有 超前完成/正常/延期 三档；「未评定」退为初始空白显示态，不是选项；
+ * - 等级选项只有 超前完成/正常/滞后 三档；「未评定」退为初始空白显示态，不是选项；
  * - 锁定原因与后端 lockHint 文案一一对应，前端仅做兜底与分类。
  */
 
@@ -24,7 +24,8 @@ export const APPRAISAL_LEVEL_OPTIONS: Array<{
 }> = [
   { label: '超前完成', value: 'AHEAD', type: 'success' },
   { label: '正常', value: 'NORMAL', type: 'success' },
-  { label: '延期', value: 'DELAYED', type: 'warning' }
+  // 2026-11-17 用户反馈第 3.1 条：审核进度的「延期」统一改称「滞后」（自评进度仍用「延期」）
+  { label: '滞后', value: 'DELAYED', type: 'warning' }
 ]
 
 /** 各原因的前端兜底文案（后端 lockHint 缺失/为空时使用） */

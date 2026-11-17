@@ -27,7 +27,8 @@ import { approvalApi } from '@/features/task/api/strategicApi'
 const APPRAISAL_LEVEL_LABELS: Record<string, string> = {
   AHEAD: '超前完成',
   NORMAL: '正常',
-  DELAYED: '延期'
+  // 2026-11-17 用户反馈第 3.1 条：审核进度的「延期」统一改称「滞后」
+  DELAYED: '滞后'
 }
 
 export function formatStayDuration(createdAt?: string | null): string {
@@ -427,7 +428,9 @@ export function useApprovalProgressDrawer(
   // → props.planName；占位名（「Plan 404457」/裸数字）或缺失时才回退拼参考标签。
   function resolvePlanReferenceLabel(): string {
     const planRecord = props.plan as
-      (Plan & { year?: number | string; cycleId?: number | string }) | null | undefined
+      | (Plan & { year?: number | string; cycleId?: number | string })
+      | null
+      | undefined
     const detail = planWorkflowDetail.value
     return resolvePlanInstanceReferenceLabel({
       instancePlanName: detail?.planName,
@@ -2613,9 +2616,9 @@ export function useApprovalProgressDrawer(
       return []
     }
 
-    if (!(
-      isDistributionFlow(currentDetailFlowCode.value) || props.approvalType === 'distribution'
-    )) {
+    if (
+      !(isDistributionFlow(currentDetailFlowCode.value) || props.approvalType === 'distribution')
+    ) {
       return []
     }
 
