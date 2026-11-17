@@ -31,6 +31,57 @@ export const resolveCycleDisplayLabel = (
   return String(cycleId)
 }
 
+/**
+ * 2026-11-17（学院线粒度改造 · 规格书 4.9④）：导入失败的**阻断文案**口径。
+ *
+ * <p>缺陷来源（曹老师线上反馈「导入未写入：当前任务已下发，不能重复导入或下发。」）：
+ * 后端返回了真实原因（点名归口部门，例如「该学院 2026 年度的「教务处」这条线已下发…」），
+ * 前端却把含「已下发 / 重复导入」的 reason **统一改写**成一句通用兜底，把真实原因盖掉了。
+ * 新口径：</p>
+ * <ul>
+ *   <li>后端给了可用 reason → **优先展示后端原文**（前端的通用文案只能作为补充说明，
+ *       不得替换原文）；</li>
+ *   <li>后端没给可用 reason → 才用前端兜底文案；</li>
+ *   <li>兜底文案的主语按导入类型区分：学院子指标表 = 「学院计划」，职能部门指标表 =
+ *       「部门计划」——绝不把学院计划说成部门计划。</li>
+ * </ul>
+ */
+export interface CommitBlockedMessageInput {
+  workflow?: { message?: string | null } | null
+}
+
+/** 导入类型（与 businessImport.ts 的 BusinessImportType 对齐，此处不重复 import 以免同块重复声明） */
+export type CommitBlockedImportType = 'strategic-task' | 'distribution'
+
+/**
+ * 2026-11-17（学院线粒度改造）：未选归口部门时发起学院子指标表导入的统一提示文案
+ * （实现与单测共用同一常量，防漂移）。
+ */
+export const COLLEGE_IMPORT_FUNCTIONAL_ORG_REQUIRED =
+  '请先选择职能部门（归口部门）：学院子指标表按归口部门分别导入'
+
+export const formatCommitBlockedMessage = (
+  result: CommitBlockedMessageInput,
+  type: CommitBlockedImportType = 'strategic-task'
+): string => {
+  const reason = String(result?.workflow?.message ?? '').trim()
+  const subject = type === 'distribution' ? '该学院计划' : '该部门计划'
+
+  // 后端没给可用信息 → 前端兜底（学院导入说「学院计划」，不说「部门计划」）
+  if (!reason) {
+    return `本次导入未写入：${subject}导入未执行，后端未返回失败原因。`
+  }
+
+  // 2026-10-31 用户拍板：权重拦截文案改为计划级口径并点名父级核心指标，
+  // 两种口径都识别——前端补充说明在前，后端原文照旧附在后面（原文不被替换）。
+  if (reason.includes('权重合计必须为100') || reason.includes('基础性指标权重全计划合计须为 100')) {
+    return `本次导入未写入：下发前权重校验未通过，基础性指标权重全计划合计须为 100%。${reason}`
+  }
+
+  // 其余情况：后端原文优先（不再把「已下发 / 重复导入」的原因统一改写成通用兜底）
+  return `本次导入未写入：${reason}`
+}
+
 export default {
   name: 'BusinessImportDialog'
 }
@@ -70,6 +121,18 @@ const props = defineProps<{
   sourceOrgId?: number | null
   sourceOrgName?: string | null
   cycleId?: number | null
+  /**
+   * 2026-11-17（学院线粒度改造 · 规格书 4.9①）：归口部门组织 ID（学院子指标表导入用）。
+   *
+   * <p>学院子指标表按「学院 × 归口部门」定位计划（线）——同一学院在同一考核年度可以有
+   * 多条归口部门各自的线，导入请求必须带上本次导入所属的归口部门，后端据此定位/新建
+   * 该线并与文件父级反查做交叉校验（跨归口 → 阻断「请按归口部门分别导入」）。</p>
+   *
+   * <p>职能部门指标表导入（strategic-task）不适用该字段，保持 undefined。</p>
+   */
+  functionalOrgId?: number | null
+  /** 归口部门名称（仅用于弹窗摘要区回显，让用户在导入前确认归口） */
+  functionalOrgName?: string | null
   /** 2026-10-14 P10：当前职能部门已接收的父级核心指标，用于下载模板时自动带出预填行；
    *  2026-10-31 终版表头：type1（定量/定性）用于「核心指标类型」列预填，
    *  type2（基础性/发展性）用于「任务类型」列预填（锚点只读，改了阻断点名） */
@@ -118,8 +181,23 @@ const cycleDisplayLabel = computed(() =>
   )
 )
 const targetLabel = computed(() => (isStrategicImport.value ? '当前职能部门' : '当前学院'))
+/**
+ * 2026-11-17（学院线粒度改造）：归口部门（学院子指标表导入的必填上下文）。
+ *
+ * <p>未选归口 → 导入请求拿不到 functionalOrgId，后端无法定位「学院 × 归口」这条线，
+ * 会按旧的「学院级」口径误命中别的归口的线（规格书第二节缺陷根因）。所以前端先拦一道：
+ * 未选归口不启用「解析预览」，并在点击时给出明确提示。</p>
+ */
+const hasFunctionalOrg = computed(() => {
+  const numeric = Number(props.functionalOrgId)
+  return Number.isFinite(numeric) && numeric > 0
+})
 const canPreview = computed(
-  () => Boolean(selectedFile.value?.raw) && Boolean(props.targetOrgId) && Boolean(props.cycleId)
+  () =>
+    Boolean(selectedFile.value?.raw) &&
+    Boolean(props.targetOrgId) &&
+    Boolean(props.cycleId) &&
+    (isStrategicImport.value || hasFunctionalOrg.value)
 )
 const importStepActive = computed(() => {
   if (previewResult.value) {
@@ -176,42 +254,32 @@ const previewSpanMethod = ({
   return { rowspan: rowSpan, colspan: rowSpan > 0 ? 1 : 0 }
 }
 
-const formatCommitBlockedMessage = (result: ImportCommitResponse) => {
-  const reason = result.workflow?.message?.trim() || '本次导入未执行'
-
-  if (reason.includes('已下发') || reason.includes('重复导入')) {
-    return '当前任务已下发，不能重复导入或下发。'
-  }
-  // 2026-10-31 用户拍板：后端权重拦截文案改为计划级口径并点名父级核心指标，两种口径都识别
-  if (reason.includes('权重合计必须为100') || reason.includes('基础性指标权重全计划合计须为 100')) {
-    return `本次导入未写入：下发前权重校验未通过，基础性指标权重全计划合计须为 100%。${reason}`
-  }
-  if (reason.includes('未产生可审批计划')) {
-    return '本次导入未写入：没有生成可审批计划，请检查导入目标和数据。'
-  }
-
-  return `本次导入未写入：${reason}`
-}
+// 2026-11-17（学院线粒度改造 · 规格书 4.9④）：阻断文案改为「优先展示后端原文」——
+// 纯函数实现与单测共用（普通 <script> 块导出），这里只做类型适配 + 导入类型分流。
+const formatCommitBlockedMessageForType = (result: ImportCommitResponse): string =>
+  formatCommitBlockedMessage(result, props.type)
 
 const formatAutoDispatchBlockedMessage = (result: ImportCommitResponse) => {
   const importSummary = `导入成功：新增 ${result.createdCount} 条，更新 ${result.updatedCount} 条`
-  const reason = result.workflow?.message?.trim() || '自动下发未完成'
+  const reason = String(result.workflow?.message ?? '').trim()
 
   // 2026-10-31 用户拍板：后端权重拦截文案改为计划级口径并点名父级核心指标，两种口径都识别
   if (reason.includes('权重合计必须为100') || reason.includes('基础性指标权重全计划合计须为 100')) {
     return `${importSummary}；下发已阻止：基础性指标权重全计划合计须为 100%。${reason}`
   }
+  // 2026-11-17（学院线粒度改造）：「已下发 / 重复发起」不再统一改写成通用兜底——
+  // 后端原文（点名归口部门）必须保留，前端只补一句说明。
   if (reason.includes('已下发') || reason.includes('重复发起')) {
-    return `${importSummary}；下发已阻止：当前任务已处于已下发状态，不能重复下发。`
+    return `${importSummary}；下发已阻止：当前任务已处于已下发状态，不能重复下发。${reason}`
   }
   if (reason.includes('未产生可审批计划')) {
-    return `${importSummary}；下发已阻止：本次导入没有生成可审批计划，请检查导入目标和数据。`
+    return `${importSummary}；下发已阻止：本次导入没有生成可审批计划，请检查导入目标和数据。${reason}`
   }
   if (reason.includes('自动审批流程未启用')) {
-    return `${importSummary}；下发已阻止：自动审批流程未启用，请联系管理员启用流程后再下发。`
+    return `${importSummary}；下发已阻止：自动审批流程未启用，请联系管理员启用流程后再下发。${reason}`
   }
 
-  return `${importSummary}；下发已阻止：${reason}`
+  return `${importSummary}；下发已阻止：${reason || '自动下发未完成'}`
 }
 
 const downloadTemplate = async () => {
@@ -304,6 +372,12 @@ const handlePreview = async () => {
     ElMessage.warning('当前页面缺少导入目标或周期信息')
     return
   }
+  // 2026-11-17（学院线粒度改造）：学院子指标表必须带归口部门——否则后端无法定位
+  // 「学院 × 归口部门」这条线，会按旧的学院级口径误命中别的归口的线。前端先拦一道。
+  if (!isStrategicImport.value && !hasFunctionalOrg.value) {
+    ElMessage.warning(COLLEGE_IMPORT_FUNCTIONAL_ORG_REQUIRED)
+    return
+  }
 
   previewing.value = true
   try {
@@ -317,7 +391,9 @@ const handlePreview = async () => {
       : await businessImportApi.previewDistributionImport(selectedFile.value.raw, {
           cycleId: props.cycleId,
           sourceOrgId: props.sourceOrgId || undefined,
-          targetCollegeOrgId: props.targetOrgId
+          targetCollegeOrgId: props.targetOrgId,
+          // 2026-11-17（学院线粒度改造）：带上归口部门，后端按「学院 × 归口部门」定位计划
+          functionalOrgId: props.functionalOrgId ?? undefined
         })
   } catch (error) {
     // 2026-10-31：解析预览失败（含文件类型/大小被拒等后端原文）属关键报错，
@@ -379,7 +455,13 @@ const handleCommit = async () => {
       confirmToken: previewResult.value.confirmToken,
       conflictMode: (overwriteExisting.value ? 'UPDATE' : 'APPEND') as ConflictMode,
       autoSubmitAndApprove: autoSubmitAndApprove.value,
-      comment: autoSubmitAndApprove.value ? '导入后自动下发审批' : '确认导入'
+      comment: autoSubmitAndApprove.value ? '导入后自动下发审批' : '确认导入',
+      // 2026-11-17（学院线粒度改造）：学院子指标表按「学院 × 归口部门」定位计划，
+      // commit 阶段同样带上归口部门（与 preview 同一入参口径）。
+      // 职能部门指标表导入不适用该字段，一律不传。
+      ...(isStrategicImport.value
+        ? {}
+        : { functionalOrgId: props.functionalOrgId ?? undefined })
     }
     const result = isStrategicImport.value
       ? await businessImportApi.commitStrategicTaskImport(previewResult.value.batchId, request)
@@ -389,7 +471,7 @@ const handleCommit = async () => {
       // 2026-10-31：导入被阻断（「本次导入未写入」+ 后端原因）属关键报错，不自动消失
       showCriticalErrorNotice({
         title: '导入未写入',
-        message: formatCommitBlockedMessage(result),
+        message: formatCommitBlockedMessageForType(result),
         type: 'warning',
         critical: true
       })
@@ -487,6 +569,12 @@ watch(
         <div v-if="!isStrategicImport">
           <span class="summary-label">来源职能部门</span>
           <strong>{{ sourceOrgName || '当前账号部门' }}</strong>
+        </div>
+        <!-- 2026-11-17（学院线粒度改造）：归口部门回显——导入按「学院 × 归口部门」
+             定位计划，用户必须在上传前就能确认本次导入属于哪条线。 -->
+        <div v-if="!isStrategicImport">
+          <span class="summary-label">归口部门</span>
+          <strong>{{ functionalOrgName || '未选择' }}</strong>
         </div>
         <div>
           <span class="summary-label">当前周期</span>

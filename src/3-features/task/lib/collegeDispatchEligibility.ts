@@ -346,11 +346,11 @@ export const buildCollegeDeptPlanWinnerByDept = (
   })
 
   const statusRank = (plan: CollegeDeptPlanStatusPlanLike): number =>
-    String(plan.status ?? '')
-      .trim()
-      .toUpperCase() === 'DISTRIBUTED'
-      ? 1
-      : 0
+    // 2026-11-17（学院线粒度改造 · 规格书 4.9②）：按**归一化**后的计划状态排序，
+    // 不能只认 raw 'DISTRIBUTED'——归一表（planStatus.ts）把 APPROVED / PUBLISHED /
+    // ACTIVE 也算作已下发。旧实现这些等价状态与 DRAFT 同为 0 分，可能被 id 更大的
+    // DRAFT 线抢走获胜位 → 徽标把「已下发」误显示成「未下发」（两态口径下是硬错）。
+    normalizePlanStatus(plan.status) === 'DISTRIBUTED' ? 1 : 0
 
   for (const dept of depts) {
     const deptName = context.normalize(dept)
@@ -531,20 +531,34 @@ export interface CollegeDeptPhaseBadge {
  * 新旧两个 tag 同时滞留 DOM（工学院×纪委办实测「已上报+未下发」并存）——
  * 单实例绑定让 el-tag 永不卸载，从根上消除双 tag。</p>
  */
+/**
+ * 2026-11-17（学院线粒度改造 · 规格书 4.9②）：「未下发」两态口径下，本常量同时是
+ * 「无计划」兜底与「DRAFT 线」的徽标取值（resolveCollegeDeptPhaseBadge 对 DRAFT
+ * 直接返回同款 { label: '未下发', tagType: 'warning' }），两处口径/配色必须一致。
+ */
 export const COLLEGE_DEPT_NOT_DISPATCHED_BADGE: CollegeDeptPhaseBadge = {
   label: '未下发',
   tagType: 'warning'
 }
 
 /**
- * 单一状态徽标判定（2026-11-13 用户拍板「只能显示一个状态」，纯函数，实现与单测共用）。
+ * 单一状态徽标判定（2026-11-13 用户拍板「只能显示一个状态」→ 2026-11-17 学院线
+ * 粒度改造收敛「未下发 / 已下发」两态，纯函数，实现与单测共用）。
+ *
+ * <p><b>2026-11-17 语义变更（规格书 4.9② / 第六节契约）</b>：徽标口径收敛为
+ * 「未下发 / 已下发」两态——<b>线已存在但状态是 DRAFT（未走下发审批）仍显示
+ * 「未下发」</b>，不再显示「草稿」。原因：徽标回答的是「这个归口部门这条线
+ * 下发到本学院了没有」，DRAFT 线在业务上就是「还没下发」，与「无计划」同属
+ * 未下发；旧文案「草稿」会让用户误以为"另有其事"，进而撞上后端
+ * 「该学院 2026 年度的「XX」这条线已下发…」的阻断（曹老师线上反馈）。</p>
  *
  * <p>合并口径（业务流转当前阶段，阶段优先取最新）：</p>
  * <ul>
  *   <li>无 FUNC_TO_COLLEGE 计划（planStatus 归一不出）→ null（模板回退「未下发」，
  *       该词为模板既有文案）；</li>
- *   <li>计划 DRAFT / WITHDRAWN / 其余（REJECTED 等回退态按 planStatus 归一表落
- *       DRAFT）→ 「草稿」（planStatus.ts 既有词表）；</li>
+ *   <li>计划 DRAFT / WITHDRAWN / 其余回退态（REJECTED 等按 planStatus 归一表落
+ *       DRAFT）→ <b>「未下发」</b>（warning，2026-11-17 由「草稿」改判，与
+ *       {@link COLLEGE_DEPT_NOT_DISPATCHED_BADGE} 同一口径同一配色）；</li>
  *   <li>计划下发审批中（PENDING，归一表含 IN_REVIEW / SUBMITTED）→ 「审批中」；</li>
  *   <li>计划已下发（DISTRIBUTED，归一表含 APPROVED / ACTIVE 等）——此后以该学院×
  *       部门的<b>上报侧最新状态</b>为主：</li>
@@ -575,7 +589,9 @@ export const resolveCollegeDeptPhaseBadge = (params: {
     return { label: '审批中', tagType: 'warning' }
   }
   if (canonical === 'DRAFT') {
-    return { label: '草稿', tagType: 'info' }
+    // 2026-11-17（学院线粒度改造 · 规格书 4.9②）：DRAFT 线 = 线已存在但未走
+    // 下发审批 → 归入「未下发」，与「无计划」同一口径（不再显示「草稿」）。
+    return { label: '未下发', tagType: 'warning' }
   }
   // canonical === 'DISTRIBUTED'：下发已完成，展示上报侧最新状态
   const reportStatus = String(params.reportStatus ?? '')

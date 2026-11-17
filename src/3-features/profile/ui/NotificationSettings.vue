@@ -16,7 +16,7 @@
 
         <el-form-item label="进度等级通知">
           <el-switch v-model="form.alertNotifications" active-text="开启" inactive-text="关闭" />
-          <div class="setting-description">当指标进度等级变化（如判定为延期）时发送通知</div>
+          <div class="setting-description">当指标进度等级变化（如判定为滞后）时发送通知</div>
         </el-form-item>
 
         <el-form-item label="审批通知">

@@ -5158,8 +5158,25 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
   }
 
+  /**
+   * 2026-11-17 用户反馈第 3.3 条：指标总表可滚动区域只占半屏（1620×900 下约 10 行），
+   * 一屏看不完全部指标。这里按视口高度给表格算一个上限高度，让滚动区尽量铺满首屏；
+   * 页面整体允许纵向滚动（.strategic-task-container 同步改为自适应高度）。
+   * （承接 PR #122 @Nerdlet369 的表格高度部分）
+   */
+  const taskTableMaxHeight = ref(560)
+
+  function syncTaskTableMaxHeight() {
+    if (typeof window === 'undefined') return
+    // 表格上方还有页头 + 页签导航 + 卡片标题/工具栏/页签/表头，实测约 420px；
+    // 其余高度都给表格，让滚动区正好铺到首屏底部（表头 sticky，页面本身不滚动）
+    taskTableMaxHeight.value = Math.max(360, Math.round(window.innerHeight - 420))
+  }
+
   // 挂载和卸载全局点击监听
   onMounted(async () => {
+    syncTaskTableMaxHeight()
+
     await Promise.all([
       (async () => {
         if (orgStore.departments.length === 0) {
@@ -5193,12 +5210,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       // 2026-10-24 跨窗口数据同步：别人改了哪条指标，本窗就局部刷哪条——
       // 单行拉取 + patch，权重合计 chip 是 computed 会自动重算
       window.addEventListener('indicator-data-changed', handleIndicatorDataChanged as EventListener)
+      window.addEventListener('resize', syncTaskTableMaxHeight)
     }
   })
 
   onUnmounted(() => {
     document.removeEventListener('click', handleGlobalClick, true)
     if (typeof window !== 'undefined') {
+      window.removeEventListener('resize', syncTaskTableMaxHeight)
       window.removeEventListener(
         GLOBAL_DATA_REFRESH_REQUEST_EVENT,
         handleGlobalDataRefreshRequest as EventListener
@@ -6181,6 +6200,23 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   )
 
   /**
+   * 2026-11-17（学院线粒度改造 · 规格书 4.9①）：学院页签右侧下拉所选**归口部门**
+   * 的组织 ID。
+   *
+   * <p>学院子指标导入按「学院 × 归口部门」定位计划（线）——同一个学院在同一考核年度
+   * 可以有多条归口部门各自的线。后端按 {@code functionalOrgId} 定位/新建该线并与
+   * 文件父级反查做交叉校验，所以前端必须把页面上已选中的归口部门作为入参传下去。</p>
+   *
+   * <p>取数链路复用既有解析（与 collegeScope 上报查询的归口解析同款）：
+   * {@code resolveDepartmentIdByName(collegeDispatchDeptEffective)} —— 归一化名 →
+   * 组织 ID。未选部门（effective 为空串）或部门名解析不出组织 ID 时返回 null
+   * （调用方据此拦下导入，不传 functionalOrgId）。</p>
+   */
+  const collegeDispatchDeptOrgId = computed<number | null>(() =>
+    resolveDepartmentIdByName(collegeDispatchDeptEffective.value)
+  )
+
+  /**
    * 当前选中的下拉项（用于在箭头右侧显示「当前是哪个部门」的小字）。
    *
    * <p>2026-11-13 回显缺陷修复：旧实现只在 collegeDeptDispatchOptions 里找——
@@ -6495,6 +6531,27 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         selectedDepartment.value ||
         ''
     )
+  })
+
+  /**
+   * 2026-11-17（学院线粒度改造 · 规格书 4.9③ / 用户拍板「保持两段，只在详情里带归口」）：
+   * 审批中心抽屉「审批流程详情」的归口部门行数据源。
+   *
+   * <p>取数链路复用既有字段（零新增接口调用）：生效计划（学院页签 = FUNC_TO_COLLEGE
+   * 子计划；职能页签 = 职能部门自身计划）的 {@code functionalOrgId} —— 后端
+   * PlanResponse 自 V104 起已暴露该字段（planApi 映射为驼峰），再经
+   * {@code departmentIdNameMap}（orgStore id→name 既有映射）反查部门名。</p>
+   *
+   * <p>找不到归口（legacy 计划 functional_org_id 为空 / 部门名解析不出）→ 返回空串，
+   * 抽屉详情按 v-if 不渲染该行（规格书要求：找不到归口不显示该行，不放空值占位）。</p>
+   */
+  const approvalDrawerFunctionalOrgName = computed<string>(() => {
+    const plan = effectivePlanContext.value.plan as { functionalOrgId?: unknown } | null
+    const functionalOrgId = Number(plan?.functionalOrgId ?? NaN)
+    if (!Number.isFinite(functionalOrgId) || functionalOrgId <= 0) {
+      return ''
+    }
+    return departmentIdNameMap.value.get(String(functionalOrgId)) || ''
   })
 
   // 学院页签下 flow6 实例的 business entity = 子计划本身；职能页签沿用现行 primary 解析。
@@ -8776,6 +8833,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   return {
     PLAN_APPROVAL_HISTORY_WORKFLOW_CODES,
     PLAN_APPROVAL_SUBMIT_WORKFLOW_CODE,
+    // 2026-11-17 用户反馈第 2.2 条：导出必须与页面同口径取数。
+    // 页面表格（indicators）套了 reportDetail 覆盖层（自评进度/进度说明/附件），
+    // 而导出取的是未套覆盖层的 normalizedIndicators，导致导出的「自评进度」「进度说明」恒为空。
+    // （承接 PR #122 @Nerdlet369 的导出 overlay 部分）
+    applyReportDetailOverlayToRow,
     _addIndicatorToCategory,
     _currentDate,
     _currentTask,
@@ -8918,6 +8980,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     // 2026-11-09（用户要求）：学院页签右侧的「职能部门」下拉筛选器
     collegeDispatchDeptFilter,
     collegeDispatchDeptEffective,
+    // 2026-11-17（学院线粒度改造）：所选归口部门的组织 ID（导入请求 functionalOrgId）
+    collegeDispatchDeptOrgId,
+    // 2026-11-17（学院线粒度改造）：审批中心抽屉详情的归口部门行（卡片标题保持两段不变）
+    approvalDrawerFunctionalOrgName,
     collegeDeptDispatchOptions,
     collegeDeptDropdownItems,
     collegeDeptCurrent,
@@ -9122,6 +9188,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     taskSpanMetaMap,
     taskTypeMap,
     taskTypeMapLoading,
+    taskTableMaxHeight,
     timeContext,
     triggerApprovalForDistribution,
     updateEditTime,

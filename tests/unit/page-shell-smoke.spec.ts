@@ -77,6 +77,17 @@ function createViewModel(overrides: Record<string, unknown> = {}) {
       completedIndicators: 0,
       alertIndicators: { severe: 0, moderate: 0, normal: 0 }
     },
+    // 2026-11-17 新口径：看板督办统计（任务完成简报供数）
+    collegeSupervision: {
+      ahead: 0,
+      normal: 0,
+      delayed: 0,
+      dispatchedTotal: 0,
+      appraisedTotal: 0,
+      completionRate: 0,
+      unreportedColleges: 0,
+      unreportedNames: [] as string[]
+    },
     dashboardStore: { departmentSummary: [] as unknown[], breadcrumbs: [] as unknown[] },
     currentRole: 'strategic_dept',
     delayedTasks: [] as unknown[],

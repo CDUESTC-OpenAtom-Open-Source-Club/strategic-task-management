@@ -2,7 +2,8 @@
  * 审核进度的统一视觉口径（2026-10-28 用户定案）。
  *
  * 此前 AHEAD 与 NORMAL 都用 el-tag success（同一个绿色），无法区分；
- * 现在：正常 = 标准绿，超前 = 更深的绿，延期 = 橙，未评定 = 灰。
+ * 现在：正常 = 标准绿，超前 = 更深的绿，滞后 = 橙，未评定 = 灰。
+ * 2026-11-17（领导三-1）：第三档显示文案全局统一改称「滞后」，仅改显示文案，枚举值 DELAYED 不变。
  */
 export type ProgressLevel = 'AHEAD' | 'NORMAL' | 'DELAYED'
 
@@ -30,7 +31,7 @@ export const PROGRESS_LEVEL_META: Record<ProgressLevel, ProgressLevelMeta> = {
     tagType: 'success'
   },
   DELAYED: {
-    label: '延期',
+    label: '滞后',
     color: '#E6A23C',
     background: 'rgba(230, 162, 60, 0.12)',
     border: 'rgba(230, 162, 60, 0.35)',

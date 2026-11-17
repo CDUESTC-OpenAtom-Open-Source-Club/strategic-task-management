@@ -43,6 +43,8 @@ const props = withDefaults(defineProps<DistributionApprovalProgressDrawerProps>(
   // 2026-10-30 用户定案：退回待重报活链（ReturnedMutationChainItem[]，见 types.ts）
   returnedMutationApprovals: () => [],
   relatedWorkflowEntities: () => [],
+  // 2026-11-17（学院线粒度改造）：详情区归口部门行（空串 = 解析不到，行不渲染）
+  functionalOrgName: '',
   routeTarget: ''
 })
 
@@ -135,6 +137,7 @@ const {
   loadSelectedHistoryInstanceDetail,
   loadWorkflowDefinitionPreview,
   mapWorkflowTaskStatusToNodeStatus,
+  markApprovalTabSelectedManually,
   matchesExpectedWorkflowCode,
   navigateToPendingPlanApproval,
   normalizeDisplayName,
@@ -462,7 +465,13 @@ const displayedCurrentPlanApprovalName = computed(() => {
     <!-- 审批内容 -->
     <div v-else class="approval-content">
       <!-- 标签页 -->
-      <el-tabs v-model="activeTab" class="approval-tabs">
+      <!-- 2026-11-17（流转图一点就消失修复）：tab-click 只在用户手动点击时触发——
+           手选后立起闩，数据到达触发的自动切页不再把「审批流程」弹走 -->
+      <el-tabs
+        v-model="activeTab"
+        class="approval-tabs"
+        @tab-click="markApprovalTabSelectedManually"
+      >
         <el-tab-pane v-if="showPlanApprovals" name="pending-plans" label="计划审批">
           <div
             v-loading="planApprovalsLoading || planWorkflowDetailLoading"
@@ -944,6 +953,14 @@ const displayedCurrentPlanApprovalName = computed(() => {
               <div v-if="item.flowName" class="detail-meta-row">
                 <span class="detail-label">流程名称：</span>
                 <span class="detail-value">{{ item.flowName }}</span>
+              </div>
+              <!-- 2026-11-17（学院线粒度改造 · 用户拍板「保持两段，只在详情里带归口」）：
+                   归口部门只写进详情；卡片标题（上方 detail-item-title 两段）保持不变。
+                   页面解析不到归口（legacy 计划 functional_org_id 为空）时不传/传空串
+                   → 本行整体不渲染，不放空值或「-」占位。 -->
+              <div v-if="functionalOrgName" class="detail-meta-row">
+                <span class="detail-label">归口部门：</span>
+                <span class="detail-value">{{ functionalOrgName }}</span>
               </div>
               <div class="detail-meta-row">
                 <span class="detail-label">流程编号：</span>

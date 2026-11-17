@@ -265,6 +265,9 @@ describe('学院页签两步显式选择（2026-11-09 用户拍板）', () => {
     const wrapper = mountView({
       collegeFillStatusScope: ref(false),
       collegeDispatchDeptFilter: ref('教务处'),
+      // 2026-11-17（学院线粒度改造）：导入门禁要求归口部门解析得出组织 ID
+      collegeDispatchDeptEffective: ref('教务处'),
+      collegeDispatchDeptOrgId: ref(44),
       selectedCollege: ref('经济管理学院'),
       collegeDepartmentsScoped: ref(['经济管理学院'])
     })
@@ -284,6 +287,49 @@ describe('学院页签两步显式选择（2026-11-09 用户拍板）', () => {
       .findAll('button')
       .find(button => button.attributes('title') === '请先选择职能部门')
     expect(distribute).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('2026-11-17（学院线粒度改造）：未选职能部门 → 导入置灰且 tooltip 点名「归口部门」按归口分别导入', async () => {
+    const wrapper = mountView({
+      collegeFillStatusScope: ref(false),
+      collegeDispatchDeptFilter: ref(''),
+      selectedCollege: ref('经济管理学院'),
+      collegeDepartmentsScoped: ref(['经济管理学院'])
+    })
+    await switchToCollegeTab(wrapper)
+
+    const importBtn = wrapper.findAll('button').find(
+      button =>
+        button.text().includes('导入') &&
+        (button.attributes('title') || '').includes('归口部门')
+    )
+    expect(importBtn).toBeDefined()
+    expect(importBtn!.attributes('disabled')).toBeDefined()
+    expect(importBtn!.attributes('title')).toBe(
+      '请先选择职能部门（归口部门）：学院子指标表按归口部门分别导入'
+    )
+    wrapper.unmount()
+  })
+
+  it('2026-11-17（学院线粒度改造）：选了职能部门但解析不出组织 ID → 导入置灰引导重选归口', async () => {
+    const wrapper = mountView({
+      collegeFillStatusScope: ref(false),
+      collegeDispatchDeptFilter: ref('教务处'),
+      collegeDispatchDeptOrgId: ref(null),
+      selectedCollege: ref('经济管理学院'),
+      collegeDepartmentsScoped: ref(['经济管理学院'])
+    })
+    await switchToCollegeTab(wrapper)
+
+    const importBtn = wrapper.findAll('button').find(
+      button =>
+        button.text().includes('导入') &&
+        (button.attributes('title') || '').includes('无法解析所选职能部门')
+    )
+    expect(importBtn).toBeDefined()
+    expect(importBtn!.attributes('disabled')).toBeDefined()
+    expect(importBtn!.attributes('title')).toContain('请重新选择归口部门后导入')
     wrapper.unmount()
   })
 

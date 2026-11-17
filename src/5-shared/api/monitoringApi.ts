@@ -160,7 +160,7 @@ export const alertApi = {
     return Object.fromEntries(
       Object.entries(payload || {}).map(([indicatorId, severity]) => {
         const normalized = String(severity || '').toUpperCase()
-        // 三档进度等级直接放行；旧预警档位归并显示为「延期」（用户定案 2026-09-18）
+        // 三档进度等级直接放行；旧预警档位归并显示为「滞后」（用户定案 2026-09-18）
         const threeTier: ManualAlertSeverity[] = ['AHEAD', 'NORMAL', 'DELAYED']
         if (threeTier.includes(normalized as ManualAlertSeverity)) {
           return [indicatorId, normalized as Exclude<ManualAlertSeverity, null>]
