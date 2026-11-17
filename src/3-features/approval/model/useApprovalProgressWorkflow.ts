@@ -1,4 +1,4 @@
-import { onMounted, onUnmounted, watch } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElLoading, ElMessage, ElMessageBox } from 'element-plus'
 import { approvalApi } from '@/features/task/api/strategicApi'
@@ -72,6 +72,18 @@ export function useApprovalProgressWorkflow({
 }: UseApprovalProgressWorkflowOptions) {
   const router = useRouter()
   const timeContext = useTimeContextStore()
+
+  // 2026-11-17 线上反馈（领导：流转图一点击就消失、找不到复原入口）：
+  // 抽屉打开后待办/实例详情异步加载完成会强制把 activeTab 切回「计划审批」，
+  // 用户刚点开「审批流程」页签看流转图就被切走，再点再被切，观感即"一点就消失"。
+  // 本闩在用户手动点过任意页签后立起（下次打开抽屉时复位），立起后自动切换一律让位；
+  // 页签栏本身保持可见，就是明确的复原入口。打开时的默认落点（2026-10-30 定案）不受影响。
+  const approvalTabSelectedManually = ref(false)
+
+  /** 用户手动点选页签（ElTabs tab-click）时置位；各自动切换点据此让位 */
+  function markApprovalTabSelectedManually() {
+    approvalTabSelectedManually.value = true
+  }
 
   /**
    * ElMessageBox.prompt 被用户「取消 / 关闭」时，promise reject 的是字符串
@@ -1423,6 +1435,9 @@ export function useApprovalProgressWorkflow({
     () => props.modelValue,
     async val => {
       if (val) {
+        // 2026-11-17（流转图一点就消失修复）：每次打开抽屉复位手选闩，
+        // 保证默认落点（2026-10-30 定案）不受上次会话影响。
+        approvalTabSelectedManually.value = false
         // 2026-10-30 用户定案：有待处理内容默认落「计划审批」，纯查看才落「审批历史」。
         // 待处理口径 = 计划在审 + 关联上报在审 + 异动在审 + 通用上报待办；
         // 此前漏掉异动/上报待办，按钮处于「处理审批」状态时抽屉会落在空的「审批历史」页签。
@@ -1552,7 +1567,10 @@ export function useApprovalProgressWorkflow({
         return
       }
 
-      if (state.hasRelatedPlanReportActiveWorkflow.value) {
+      if (
+        !approvalTabSelectedManually.value &&
+        state.hasRelatedPlanReportActiveWorkflow.value
+      ) {
         state.activeTab.value = 'pending-plans'
       }
     }
@@ -1583,6 +1601,7 @@ export function useApprovalProgressWorkflow({
     applyOptimisticPlanWorkflowPatch,
     ensureSubmitterNameLoaded,
     ensureWorkflowRelatedAvatarsLoaded,
+    markApprovalTabSelectedManually,
     ensureWorkflowUserAvatarLoaded,
     formatTime,
     canCurrentUserHandleMutationApproval,
