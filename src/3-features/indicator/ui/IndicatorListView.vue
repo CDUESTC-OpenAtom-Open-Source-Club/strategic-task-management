@@ -259,7 +259,6 @@ const {
   primaryApprovalWorkflowEntityType,
   readPersistedIndicatorDraft,
   readPlanReportUiState,
-  resolveParentIndicator,
   refreshCurrentPlanDetails,
   refreshIndicatorListAfterMutation,
   refreshIndicatorWorkflowContext,
@@ -330,6 +329,23 @@ const selectedCollegeExportDepartments = ref<string[]>([])
 const collegeBatchExporting = ref(false)
 
 // 2026-10-14 用户定案：与战略任务管理/下发界面同构——同一战略任务多行在「战略任务」列合并；移除「内部ID」列
+/**
+ * 2026-11-17（用户反馈第 2.2 条）：导出的「自评进度」文案。
+ *
+ * 行对象上的 selfRating 由填报层附加（StrategicIndicator 声明里没有该字段），
+ * 这里做窄化读取；空值统一「—」，未知码原样输出便于排查。
+ */
+const getIndicatorListExportSelfRatingLabel = (row: StrategicIndicator): string => {
+  const raw = String((row as { selfRating?: string | null }).selfRating ?? '').trim()
+  if (!raw) {
+    return '—'
+  }
+  const key = raw.toUpperCase()
+  return (
+    ({ AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' } as Record<string, string>)[key] ?? raw
+  )
+}
+
 const buildIndicatorListExportColumns = (
   rows: StrategicIndicator[],
   summaryMap: IndicatorAttachmentSummaryMap | null
@@ -373,13 +389,21 @@ const buildIndicatorListExportColumns = (
     { header: '指标类型', width: 12, align: 'center', getValue: row => row.type1 || '-' },
     { header: '任务类别', width: 12, align: 'center', getValue: row => row.type2 || '-' },
     { header: '权重', width: 10, align: 'center', getValue: row => Number(row.weight || 0) },
+    // 2026-11-17 用户反馈第 2.2 条：导出缺少「填报的内容」——补自评进度（页面有权重之后这一列）
+    {
+      header: '自评进度',
+      width: 14,
+      align: 'center',
+      getValue: row => getIndicatorListExportSelfRatingLabel(row)
+    },
     {
       header: '审核进度',
       width: 18,
       align: 'center',
       getValue: row => getManualAlertLabel(row.manualAlertSeverity)
     },
-    { header: '填报说明', width: 28, getValue: row => row.pendingRemark || '-' },
+    // 2026-11-17 用户反馈第 2.2 条：与页面列名对齐，「填报说明」改称「进度说明」
+    { header: '进度说明', width: 28, getValue: row => row.pendingRemark || '-' },
     // 2026-10-28：附件本体打进 zip 后，Excel 只保留「附件目录（相对路径）」+「文件名」；
     // 附件来源由后端按当前登录人可见范围返回，页面看不到的填报不会进导出。
     {
@@ -569,7 +593,7 @@ const handleExportAllCollegeDepartments = async () => {
   }
 }
 
-// 2026-10-31 定稿：等级选项收敛到共享 appraisalGate（只有超前完成/正常/延期三档），
+// 2026-10-31 定稿：等级选项收敛到共享 appraisalGate（只有超前完成/正常/滞后三档），
 // 「未评定」退为初始空白显示态（不是选项，空值仍显示「—」），三视图同构。
 const getManualAlertLabel = (severity?: ManualAlertSeverity) =>
   getAppraisalLevelDisplay(severity).label
@@ -967,40 +991,10 @@ const handleExportIndicatorList = async () => {
                   </el-tooltip>
                 </template>
               </el-table-column>
-              <!-- 2026-10-28 用户定案：学院端首列=所属核心指标（父指标），
-                   与二级学院管理视图同构——定性/定量配色、同核心指标合并单元格、悬停看全文 -->
-              <el-table-column
-                v-if="isSecondaryCollege"
-                label="核心指标"
-                :min-width="TASK_TABLE_COLUMN_WIDTH.coreIndicatorMin"
-              >
-                <template #default="{ row }">
-                  <el-tooltip
-                    :content="
-                      resolveParentIndicator(row)?.type1 === '定性'
-                        ? '定性指标'
-                        : resolveParentIndicator(row)?.type1 === '定量'
-                          ? '定量指标'
-                          : '未设置类型'
-                    "
-                    placement="top"
-                  >
-                    <FullTextPanel :text="resolveParentIndicator(row)?.name || ''">
-                      <span
-                        class="indicator-name-text"
-                        :class="
-                          resolveParentIndicator(row)?.type1 === '定性'
-                            ? 'indicator-qualitative'
-                            : resolveParentIndicator(row)?.type1 === '定量'
-                              ? 'indicator-quantitative'
-                              : ''
-                        "
-                        >{{ resolveParentIndicator(row)?.name || '—' }}</span
-                      >
-                    </FullTextPanel>
-                  </el-tooltip>
-                </template>
-              </el-table-column>
+              <!-- 2026-11-17（用户反馈第 2.1 条定案）：二级学院登录后不再展示职能部门的
+                   父指标（原「核心指标」列）。学院的行本身就是职能部门下发的子指标，
+                   再列一遍父指标既占宽度又容易让学院以为那行指标归自己填。
+                   父指标信息仍保留在数据层（parentIndicatorId），导出与详情不受影响。 -->
               <!-- 2026-10-28 华年定案：核心指标列取基准页 min-width（210），吃掉剩余宽度。
                    2026-10-28 用户定案：学院端该列展示的是子指标（职能部门下发），
                    列名改「子指标名称」，宽度取子指标列基准（192） -->

@@ -76,6 +76,7 @@ const {
   handleSummaryDrillClick,
   handleBackToColleges,
   handleBackToDepts,
+  handleBackToStrategy,
   handleBreadcrumbNavigate,
   handleCloseCollegeMonthIndicatorCard,
   handleCloseIndicatorCard,
@@ -299,17 +300,18 @@ function openApprovalCenterFromDashboard() {
             }}</span>
             项任务：超前完成
             <span class="highlight-primary">{{ dashboardData.levelDistribution?.ahead ?? 0 }}</span>
-            项、正常推进 {{ dashboardData.levelDistribution?.normal ?? 0 }} 项、延期
+            项、正常推进 {{ dashboardData.levelDistribution?.normal ?? 0 }} 项、滞后
             {{ dashboardData.levelDistribution?.delayed ?? 0 }} 项。
-            <!-- H3（2026-09-19 定案）：延期口径统一为人工鉴定三档（levelDistribution），与圆环图同源 -->
+            <!-- H3（2026-09-19 定案）：延期口径统一为人工鉴定三档（levelDistribution），与圆环图同源；
+                 2026-11-17 用户反馈第 3.1 条：审核进度的「延期」改称「滞后」 -->
             <template v-if="(dashboardData.levelDistribution?.delayed ?? 0) > 0">
               其中
               <span class="highlight-danger"
                 >{{ dashboardData.levelDistribution?.delayed ?? 0 }} 项</span
               >
-              已鉴定为延期。
+              已鉴定为滞后。
             </template>
-            <template v-else> 暂无延期鉴定。 </template>
+            <template v-else> 暂无滞后鉴定。 </template>
             总体完成率 <span class="highlight-success">{{ dashboardData.completionRate }}%</span>。
             <button type="button" class="drill-btn" @click.prevent="handleSummaryDrillClick">
               查看分布明细 →
@@ -507,7 +509,7 @@ function openApprovalCenterFromDashboard() {
                     :class="{ active: selectedStatusFilter === 'delayed' }"
                     @click="handleStatusFilterClick('delayed')"
                   >
-                    <span class="status-dot"></span>延期
+                    <span class="status-dot"></span>滞后
                     {{ selectedDeptStats.warning + selectedDeptStats.delayed }}
                   </span>
                 </div>
@@ -659,7 +661,7 @@ function openApprovalCenterFromDashboard() {
                     :class="{ active: selectedStatusFilter === 'delayed' }"
                     @click="handleStatusFilterClick('delayed')"
                   >
-                    <span class="status-dot"></span>延期
+                    <span class="status-dot"></span>滞后
                     {{ monthIndicatorStats.warning + monthIndicatorStats.delayed }}
                   </span>
                 </div>
@@ -893,7 +895,7 @@ function openApprovalCenterFromDashboard() {
                     :class="{ active: selectedStatusFilter === 'delayed' }"
                     @click="handleStatusFilterClick('delayed')"
                   >
-                    <span class="status-dot"></span>延期
+                    <span class="status-dot"></span>滞后
                     {{ collegeMonthIndicatorStats.warning + collegeMonthIndicatorStats.delayed }}
                   </span>
                 </div>
@@ -1205,10 +1207,8 @@ function openApprovalCenterFromDashboard() {
 
       <!-- 三级联动图表区域 -->
 
-      <!-- 战略发展部 - 组织级视图 -->
-      <template
-        v-if="currentRole === 'strategic_dept' && dashboardStore.currentOrgLevel === 'strategy'"
-      >
+      <!-- 战略发展部 - 组织级视图（下钻后仍保留本卡片，避免「一点击就整块消失」） -->
+      <template v-if="currentRole === 'strategic_dept'">
         <el-row :gutter="16" style="margin-top: 16px">
           <!-- 全校任务流转图 -->
           <el-col :span="24">
@@ -1224,6 +1224,22 @@ function openApprovalCenterFromDashboard() {
                     >
                       <el-icon class="help-icon"><QuestionFilled /></el-icon>
                     </el-tooltip>
+                  </div>
+                  <!-- 2026-11-17 用户反馈第 3.2 条：下钻后给出显式恢复入口（页面滚到底部时面包屑在视口外） -->
+                  <div
+                    v-if="dashboardStore.currentOrgLevel !== 'strategy'"
+                    style="display: flex; align-items: center; gap: 8px"
+                  >
+                    <span style="font-size: 12px; color: #909399">
+                      已下钻：{{
+                        dashboardStore.selectedCollege ||
+                        dashboardStore.selectedFunctionalDept ||
+                        '全部'
+                      }}
+                    </span>
+                    <el-button size="small" type="primary" plain @click="handleBackToStrategy">
+                      返回全校视图
+                    </el-button>
                   </div>
                 </div>
               </template>

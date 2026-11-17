@@ -55,6 +55,64 @@ export interface DashboardCollegeLevelsMonth {
   colleges: DashboardCollegeLevelStat[]
 }
 
+// ============================================================================
+// 审核鉴定口径汇总（2026-11-17 用户反馈第 1 条修复）
+// 一次返回：①职能部门等级分布（含月度快照）②滞后任务清单 ③年度简报汇总
+// 口径：每个指标取不晚于选中月份的最近一次 appraisal_level；当月未上报的部门沿用上次结论
+// ============================================================================
+
+/** 单个职能部门的鉴定等级计数 */
+export interface DashboardDepartmentLevelStat {
+  orgId: number
+  orgName: string
+  ahead: number
+  normal: number
+  /** 滞后数（上级鉴定 DELAYED） */
+  delayed: number
+  total: number
+}
+
+/** 部门等级月度快照（下钻趋势用） */
+export interface DashboardDepartmentLevelMonth {
+  month: number
+  departments: DashboardDepartmentLevelStat[]
+}
+
+/** 滞后任务（最近一次鉴定为 DELAYED 的指标） */
+export interface DashboardLaggingTask {
+  /** 指标 ID（前端表格的 REF_ID） */
+  indicatorId: number
+  indicatorName: string
+  /** 责任主体组织 ID */
+  orgId: number | null
+  /** 责任主体组织名称 */
+  orgName: string
+  /** 最近一次鉴定所在月份，格式 yyyyMM */
+  reportMonth: string
+}
+
+/** 年度鉴定等级汇总（简报口径） */
+export interface DashboardAnnualLevelSummary {
+  ahead: number
+  normal: number
+  delayed: number
+  total: number
+  /** 总体完成率百分比（0-100 整数） */
+  completionRate: number
+}
+
+/** GET /api/v1/dashboard/appraisal-summary?year=&month=&limit= 响应 */
+export interface DashboardAppraisalSummaryResponse {
+  year: number
+  month: number
+  /** 该年度最近一个有鉴定数据的月份（0 表示该年度无鉴定数据） */
+  latestMonth: number
+  departments: DashboardDepartmentLevelStat[]
+  departmentMonths: DashboardDepartmentLevelMonth[]
+  laggingTasks: DashboardLaggingTask[]
+  annual: DashboardAnnualLevelSummary
+}
+
 /** GET /api/v1/dashboard/college-levels-trend?year= 响应（months 只到最晚有数据月份） */
 export interface DashboardCollegeLevelsTrendResponse {
   year: number
@@ -244,6 +302,40 @@ export const dashboardApi = {
       return data
     } catch (error) {
       logger.error('[dashboardApi] Failed to fetch college levels trend:', error)
+      throw error
+    }
+  },
+
+  /**
+   * 审核鉴定口径的看板汇总（职能部门分布 / 滞后任务 / 年度简报）
+   * GET /api/v1/dashboard/appraisal-summary?year=&month=&limit=
+   * 每个指标取不晚于 month 的最近一次鉴定，当月未上报的部门沿用上次结论
+   */
+  async getAppraisalSummary(params: {
+    year: number
+    month: number
+    limit?: number
+  }): Promise<DashboardAppraisalSummaryResponse> {
+    try {
+      logger.debug('[dashboardApi] Fetching appraisal summary:', params)
+      const payload = await apiClient.get<unknown>('/dashboard/appraisal-summary', {
+        year: params.year,
+        month: params.month,
+        limit: params.limit
+      })
+      const data = unwrapDashboardPayload<DashboardAppraisalSummaryResponse>(payload)
+      if (
+        !data ||
+        !Array.isArray(data.departments) ||
+        !Array.isArray(data.departmentMonths) ||
+        !Array.isArray(data.laggingTasks) ||
+        !data.annual
+      ) {
+        throw new Error('审核鉴定汇总接口返回格式异常')
+      }
+      return data
+    } catch (error) {
+      logger.error('[dashboardApi] Failed to fetch appraisal summary:', error)
       throw error
     }
   },

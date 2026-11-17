@@ -3593,17 +3593,15 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   }) => {
     const dataList = indicators.value
 
-    if (!showStrategicTaskColumn.value) {
+    // 2026-11-17（用户反馈第 2.1 条）：学院端已移除父指标列，首列变为「子指标名称」，
+    // 每行就是一个子指标，不能再按父指标合并单元格（否则会把不同子指标合成一格）。
+    if (!showStrategicTaskColumn.value || isSecondaryCollege.value) {
       return { rowspan: 1, colspan: 1 }
     }
 
-    // 只有第 0 列需要合并：职能部门=战略任务列（按任务名分组）；
-    // 2026-10-28 用户定案：学院端第 0 列是核心指标列（按所属核心指标分组）
+    // 只有第 0 列需要合并：职能部门 = 战略任务列（按任务名分组）
     if (columnIndex === 0) {
-      const groupKeyOf = (item: any) =>
-        isSecondaryCollege.value
-          ? String(item?.parentIndicatorId ?? '') || '未关联核心指标'
-          : item?.taskContent || '未关联任务'
+      const groupKeyOf = (item: any) => item?.taskContent || '未关联任务'
       const currentTask = groupKeyOf(row)
 
       // 计算当前任务在列表中的起始位置
@@ -4422,7 +4420,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     // 2026-10-20 修复：自评进度保存后重开弹窗显示为空——回显取刚刷新的草稿明细等级，
     // 无草稿明细时依次退回列表行（覆盖层已算）与服务端快照的已存等级
     const draftDetail = reportDetailOverlay.value[String(row.id)] as
-      { selfRating?: string | null } | undefined
+      | { selfRating?: string | null }
+      | undefined
     reportForm.value = {
       newProgress: Math.max(actualProgress, Number(preferredProgress) || 0),
       remark: row.pendingRemark ?? persistedDraft?.remark ?? '',
@@ -5706,7 +5705,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           }
 
           let updatedReportSummary:
-            (typeof currentPlanReportSummary.value extends infer T ? T : never) | null = null
+            | (typeof currentPlanReportSummary.value extends infer T ? T : never)
+            | null = null
           if (usePlanReportFlow.value) {
             const reportOrgId = Number(currentViewingOrgId.value ?? NaN)
             if (!Number.isFinite(reportOrgId) || reportOrgId <= 0) {
@@ -5833,7 +5833,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           }
 
           let updatedReportSummary:
-            (typeof currentPlanReportSummary.value extends infer T ? T : never) | null = null
+            | (typeof currentPlanReportSummary.value extends infer T ? T : never)
+            | null = null
           if (usePlanReportFlow.value) {
             const reportOrgId = Number(currentViewingOrgId.value ?? NaN)
             if (!Number.isFinite(reportOrgId) || reportOrgId <= 0) {

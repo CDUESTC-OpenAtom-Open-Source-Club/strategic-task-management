@@ -338,6 +338,7 @@ const {
   hasApprovalWorkflowReportBinding,
   hasDistributedIndicators,
   hasWorkflowBinding,
+  applyReportDetailOverlayToRow,
   hydrateCurrentPlanWorkflowState,
   hydratingPlanDetail,
   indicatorByIdMap,
@@ -437,6 +438,7 @@ const {
   taskSpanMetaMap,
   taskTypeMap,
   taskTypeMapLoading,
+  taskTableMaxHeight,
   timeContext,
   triggerApprovalForDistribution,
   updateEditTime,
@@ -665,7 +667,8 @@ const collegeTabTwoStepGuideTip = computed(() => {
  */
 const collegeTabSubPlanStatus = computed(() => {
   const context = effectivePlanContext?.value as
-    { source?: string; plan?: Record<string, unknown> | null } | undefined
+    | { source?: string; plan?: Record<string, unknown> | null }
+    | undefined
   if (!context || context.source !== 'college') {
     return null
   }
@@ -792,7 +795,8 @@ const collegeTabWithdrawLocked = computed(
  */
 const withdrawControlVisible = computed(() => {
   const planContext = effectivePlanContext?.value as
-    { plan?: Record<string, unknown> | null } | undefined
+    | { plan?: Record<string, unknown> | null }
+    | undefined
   // 2026-11-14（D1 首次下发死锁解锁）：学院页签**尚无计划**的组合（子计划未解析，
   // effectivePlanContext.plan 为空 → createdByOrgId 取不到 → 旧口径恒 false）此前把
   // 「发起下发审批」整颗 v-if 藏死——而导入只是创建计划的入口，按钮藏掉后连
@@ -1265,7 +1269,7 @@ watch(
 const strategicBatchExportDialogVisible = ref(false)
 const selectedStrategicExportDepartments = ref<string[]>([])
 const strategicImportDialogVisible = ref(false)
-// 2026-10-31 定稿：等级选项收敛到共享 appraisalGate（只有超前完成/正常/延期三档），
+// 2026-10-31 定稿：等级选项收敛到共享 appraisalGate（只有超前完成/正常/滞后三档），
 // 「未评定」退为初始空白显示态（不是选项），三视图同构。
 const getManualAlertLabel = (severity?: ManualAlertSeverity) =>
   getAppraisalLevelDisplay(severity).label
@@ -1384,6 +1388,15 @@ const buildStrategicExportColumns = (
       align: 'center',
       getValue: row => Number(row.weight || 0)
     },
+    // 2026-11-17 用户反馈第 2.2 条：导出的表里没有「填报的内容」。
+    // 页面表格有「自评进度 / 进度说明」两列，导出却只有审核进度与附件，
+    // 填报人交上去的内容在 Excel 里完全看不到；此处按页面列序补齐（自评进度在权重之后）。
+    {
+      header: '自评进度',
+      width: 14,
+      align: 'center',
+      getValue: row => getExportSelfRatingLabel(row)
+    },
     // 2026-10-20：阅读列标注「导入忽略」——导入解析器不识别这两列，改了不起作用
     {
       header: '审核进度（导入忽略）',
@@ -1415,9 +1428,37 @@ const buildStrategicExportColumns = (
             resolveStrategicExportAttachmentItems(row)
           )
         )
+    },
+    // 2026-11-17 用户反馈第 2.2 条：进度说明同样是填报内容，页面有、导出必须有（列序与页面一致）
+    {
+      header: '进度说明',
+      width: 40,
+      getValue: row => getExportRemarkText(row)
     }
   ]
 }
+
+/**
+ * 2026-11-17（用户反馈第 2.2 条）：导出用「自评进度」文案。
+ *
+ * 行对象上的 selfRating 是填报时写入的等级码（AHEAD/NORMAL/DELAYED），
+ * StrategicIndicator 类型里没有该字段（运行时由填报装订层附加），故此处做窄化读取；
+ * 未知码原样输出，便于排查数据问题，不吞掉原文。
+ */
+const getExportSelfRatingLabel = (row: unknown): string => {
+  const raw = String((row as { selfRating?: string | null } | null)?.selfRating ?? '').trim()
+  if (!raw) {
+    return '—'
+  }
+  const key = raw.toUpperCase()
+  return (
+    ({ AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' } as Record<string, string>)[key] ?? raw
+  )
+}
+
+/** 导出用「进度说明」：填报的进度说明（pendingRemark），空值统一「—」 */
+const getExportRemarkText = (row: unknown): string =>
+  String((row as { pendingRemark?: string | null } | null)?.pendingRemark ?? '').trim() || '—'
 
 const findStrategicExportPlanByDepartment = (department: string) => {
   const normalizedDepartment = normalizeDepartmentName(department)
@@ -1500,7 +1541,9 @@ const getStrategicExportRowsByDepartment = (
           : isIndicatorInCurrentPlanScope(indicator))
     )
     .map(indicator => ({
-      ...indicator,
+      // 2026-11-17 用户反馈第 2.2 条：与页面表格同口径——先套 reportDetail 覆盖层，
+      // 再补导出专有字段，否则自评进度 / 进度说明 / 上报资料在 Excel 里恒为空。
+      ...applyReportDetailOverlayToRow(indicator),
       type2: getIndicatorCategoryLabel(indicator),
       exportDepartment: department
     }))
@@ -1624,6 +1667,23 @@ const handleExportCollegeIndicators = async () => {
             getValue: row => getCategoryText(getIndicatorCategoryLabel(row))
           },
           { header: '权重', width: 10, align: 'center', getValue: row => String(row.weight ?? '') },
+          // 2026-11-17 用户反馈第 2.2 条：学院页签的导出同样缺「填报的内容」，
+          // 与页面表格对齐补 自评进度 / 审核进度 / 进度说明 三列。
+          {
+            header: '自评进度',
+            width: 14,
+            align: 'center',
+            getValue: row => getExportSelfRatingLabel(row)
+          },
+          {
+            header: '审核进度',
+            width: 14,
+            align: 'center',
+            getValue: row =>
+              getAppraisalLevelDisplay(getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity))
+                .label
+          },
+          { header: '进度说明', width: 40, getValue: row => getExportRemarkText(row) },
           { header: '状态', width: 14, getValue: row => String(row.status || '') }
         ],
         emptyMessage: '当前学院暂无可导出的指标数据'
@@ -1795,7 +1855,8 @@ const currentStrategicImportCycleId = computed(() => {
   }
 
   const cycle = timeContext.cycles.find(item => Number(item.year) === timeContext.currentYear) as
-    { cycleId?: number | string; id?: number | string } | undefined
+    | { cycleId?: number | string; id?: number | string }
+    | undefined
   const numericCycleId = Number(cycle?.cycleId ?? cycle?.id)
   return Number.isFinite(numericCycleId) && numericCycleId > 0 ? numericCycleId : null
 })
@@ -2402,6 +2463,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   ref="tableRef"
                   :data="indicators"
                   :span-method="getSpanMethod"
+                  :max-height="taskTableMaxHeight"
                   border
                   highlight-current-row
                   class="unified-table"
@@ -3187,6 +3249,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
               <div class="table-container">
                 <el-table
                   :data="collegeTableIndicators"
+                  :max-height="taskTableMaxHeight"
                   border
                   highlight-current-row
                   class="unified-table"
