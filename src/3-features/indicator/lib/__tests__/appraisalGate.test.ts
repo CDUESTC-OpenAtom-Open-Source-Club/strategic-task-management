@@ -12,7 +12,7 @@ describe('appraisal gate (2026-10-31 定稿)', () => {
     expect(APPRAISAL_LEVEL_OPTIONS.map(option => option.label)).toEqual([
       '超前完成',
       '正常',
-      '延期'
+      '滞后'
     ])
     expect(APPRAISAL_LEVEL_OPTIONS.map(option => option.value)).toEqual([
       'AHEAD',
@@ -95,7 +95,7 @@ describe('appraisal gate (2026-10-31 定稿)', () => {
     expect(getAppraisalLevelDisplay('AHEAD')).toEqual({ label: '超前完成', type: 'success' })
     expect(getAppraisalLevelDisplay('ahead')).toEqual({ label: '超前完成', type: 'success' })
     expect(getAppraisalLevelDisplay('NORMAL')).toEqual({ label: '正常', type: 'success' })
-    expect(getAppraisalLevelDisplay('DELAYED')).toEqual({ label: '延期', type: 'warning' })
+    expect(getAppraisalLevelDisplay('DELAYED')).toEqual({ label: '滞后', type: 'warning' })
     expect(getAppraisalLevelDisplay(null)).toEqual({ label: '未评定', type: 'info' })
     expect(getAppraisalLevelDisplay(undefined)).toEqual({ label: '未评定', type: 'info' })
     expect(getAppraisalLevelDisplay('')).toEqual({ label: '未评定', type: 'info' })

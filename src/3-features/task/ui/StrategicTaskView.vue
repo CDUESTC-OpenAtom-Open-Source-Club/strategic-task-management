@@ -665,7 +665,8 @@ const collegeTabTwoStepGuideTip = computed(() => {
  */
 const collegeTabSubPlanStatus = computed(() => {
   const context = effectivePlanContext?.value as
-    { source?: string; plan?: Record<string, unknown> | null } | undefined
+    | { source?: string; plan?: Record<string, unknown> | null }
+    | undefined
   if (!context || context.source !== 'college') {
     return null
   }
@@ -792,7 +793,8 @@ const collegeTabWithdrawLocked = computed(
  */
 const withdrawControlVisible = computed(() => {
   const planContext = effectivePlanContext?.value as
-    { plan?: Record<string, unknown> | null } | undefined
+    | { plan?: Record<string, unknown> | null }
+    | undefined
   // 2026-11-14（D1 首次下发死锁解锁）：学院页签**尚无计划**的组合（子计划未解析，
   // effectivePlanContext.plan 为空 → createdByOrgId 取不到 → 旧口径恒 false）此前把
   // 「发起下发审批」整颗 v-if 藏死——而导入只是创建计划的入口，按钮藏掉后连
@@ -1265,7 +1267,7 @@ watch(
 const strategicBatchExportDialogVisible = ref(false)
 const selectedStrategicExportDepartments = ref<string[]>([])
 const strategicImportDialogVisible = ref(false)
-// 2026-10-31 定稿：等级选项收敛到共享 appraisalGate（只有超前完成/正常/延期三档），
+// 2026-10-31 定稿：等级选项收敛到共享 appraisalGate（只有超前完成/正常/滞后三档），
 // 「未评定」退为初始空白显示态（不是选项），三视图同构。
 const getManualAlertLabel = (severity?: ManualAlertSeverity) =>
   getAppraisalLevelDisplay(severity).label
@@ -1795,7 +1797,8 @@ const currentStrategicImportCycleId = computed(() => {
   }
 
   const cycle = timeContext.cycles.find(item => Number(item.year) === timeContext.currentYear) as
-    { cycleId?: number | string; id?: number | string } | undefined
+    | { cycleId?: number | string; id?: number | string }
+    | undefined
   const numericCycleId = Number(cycle?.cycleId ?? cycle?.id)
   return Number.isFinite(numericCycleId) && numericCycleId > 0 ? numericCycleId : null
 })
@@ -2616,7 +2619,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     <template #default="{ row }">
                       <el-tag v-if="row.selfRating" size="small" type="info">
                         {{
-                          { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' }[row.selfRating] ||
+                          { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '滞后' }[row.selfRating] ||
                           row.selfRating
                         }}
                       </el-tag>
@@ -3317,7 +3320,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     <template #default="{ row }">
                       <el-tag v-if="row.selfRating" size="small" type="info">
                         {{
-                          { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' }[row.selfRating] ||
+                          { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '滞后' }[row.selfRating] ||
                           row.selfRating
                         }}
                       </el-tag>
@@ -3674,7 +3677,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
           <el-descriptions-item label="自评进度">
             <el-tag v-if="(currentDetail as any).selfRating" size="small" type="info">
               {{
-                { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' }[
+                { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '滞后' }[
                   String((currentDetail as any).selfRating).toUpperCase()
                 ] || (currentDetail as any).selfRating
               }}
