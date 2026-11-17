@@ -929,6 +929,14 @@ const handleExportIndicatorList = async () => {
               <el-skeleton :rows="8" animated />
             </div>
 
+            <!-- 2026-11-17 领导界面优化（截图批注「滚动窗口竖直拉长」）：表格滚动区
+                 竖直拉长到占满视口剩余高度——高度链 = 页面容器 calc(100vh - 264px)
+                 （与战略任务管理页同一常量，见 IndicatorListView.css 顶部注释）→
+                 table-card / table-body / table-container 逐级 flex:1 传下来，
+                 el-table 用 height="100%" 吃满容器（Element Plus 对百分比字符串
+                 原样落到根元素 style.height，再由内部 ResizeObserver 量 offsetHeight
+                 切分表头/表体），表体内部滚动、表头钉住。窗口缩放自适应（纯 CSS
+                 视口计算 + el-table 自身 observer，无 JS 参与高度）。 -->
             <el-table
               v-else-if="indicators.length > 0"
               ref="tableRef"
@@ -938,6 +946,7 @@ const handleExportIndicatorList = async () => {
               border
               highlight-current-row
               class="unified-table"
+              height="100%"
               @selection-change="handleSelectionChange"
             >
               <!-- 2026-10-28 华年定案：三个页面列宽/顺序必须与「战略任务管理」页面完全一致。
