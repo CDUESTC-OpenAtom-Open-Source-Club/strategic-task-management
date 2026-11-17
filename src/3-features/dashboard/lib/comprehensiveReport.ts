@@ -7,15 +7,16 @@ import type { ComparisonItem, StrategicIndicator } from '@/shared/types'
  * 一个 Excel 文件、多个 Sheet 页签，一页看全局：
  *   总览 → 各部门进度 → 各学院进度 → 滞后任务清单 → 附件索引
  *
- * 数据来源全部来自看板既有 store（departmentComparison / indicators），
- * 不新增后端接口。
+ * 总览/进度 Sheet 数据来自看板既有 store（departmentComparison / indicators）；
+ * 滞后任务清单自 2026-11-17 起改由后端 /dashboard/delayed-indicators 真实供数
+ * （月报鉴定 DELAYED，等级制填报后 indicator.progress 恒 0，旧 progress<50 判定已死）。
  */
 
 export interface DashboardOverviewRow {
   指标总数: number
   已完成: number
   进行中: number
-  延期预警: number
+  滞后预警: number
   平均进度: string
   附件覆盖率: string
 }
@@ -30,16 +31,17 @@ export interface DashboardUnitRow {
   指标总数: number
   已完成: number
   进行中: number
-  延期预警: number
+  滞后预警: number
   状态: string
 }
 
 export interface DashboardLaggingRow {
   序号: number
   指标内容: string
-  所属部门: string
-  当前进度: string
-  自评进度: string
+  所属学院: string
+  来源部门: string
+  自评等级: string
+  鉴定等级: string
 }
 
 export interface DashboardAttachmentRow {
@@ -57,6 +59,16 @@ export interface ComprehensiveReportSheets {
   attachments: DashboardAttachmentRow[]
 }
 
+/** 滞后任务清单的外部真实源（/dashboard/delayed-indicators 行结构） */
+export interface ComprehensiveReportLaggingSource {
+  indicatorId: number
+  indicatorName: string | null
+  orgName: string
+  ownerOrgName: string | null
+  selfRating: string | null
+  appraisalLevel: string | null
+}
+
 const STATUS_LABEL: Record<ComparisonItem['status'], string> = {
   success: '优秀',
   warning: '良好',
@@ -66,14 +78,15 @@ const STATUS_LABEL: Record<ComparisonItem['status'], string> = {
 const RATING_LABEL: Record<string, string> = {
   AHEAD: '超前完成',
   NORMAL: '正常',
-  DELAYED: '延期'
+  DELAYED: '滞后'
 }
 
-/** 判断指标是否滞后：进度 < 50 视为滞后（与后端催办门槛一致） */
+/** 判断指标是否滞后：进度 < 50（遗留口径，仅用于单位进度列；滞后清单已切月报鉴定源） */
 const isLagging = (progress: number): boolean => progress < 50
 
 export function buildComprehensiveReport(
-  indicators: StrategicIndicator[]
+  indicators: StrategicIndicator[],
+  laggingSource: ComprehensiveReportLaggingSource[] = []
 ): ComprehensiveReportSheets {
   // ---- 单位维度聚合（部门 + 学院分离） ----
   const groupBy = new Map<string, StrategicIndicator[]>()
@@ -111,7 +124,7 @@ export function buildComprehensiveReport(
         指标总数: total,
         已完成: completed,
         进行中: inProgress,
-        延期预警: alertCount,
+        滞后预警: alertCount,
         状态: STATUS_LABEL[status],
         _completionRate: completionRate
       })
@@ -130,7 +143,6 @@ export function buildComprehensiveReport(
   const total = indicators.length
   const completed = indicators.filter(item => Number(item.progress ?? 0) >= 100).length
   const inProgress = total - completed
-  const laggingList = indicators.filter(item => isLagging(Number(item.progress ?? 0)))
   const avgProgress =
     total > 0
       ? Math.round(indicators.reduce((sum, item) => sum + Number(item.progress ?? 0), 0) / total)
@@ -146,23 +158,24 @@ export function buildComprehensiveReport(
       指标总数: total,
       已完成: completed,
       进行中: inProgress,
-      延期预警: laggingList.length,
+      // 滞后数来自月报鉴定真实源（progress 恒 0，进度判定不再可信）
+      滞后预警: laggingSource.length,
       平均进度: `${avgProgress}%`,
       附件覆盖率: `${attachmentCoverage}%`
     }
   ]
 
-  // ---- 滞后任务清单 ----
-  const lagging: DashboardLaggingRow[] = laggingList
-    .slice()
-    .sort((a, b) => Number(a.progress ?? 0) - Number(b.progress ?? 0))
-    .map((item, index) => ({
-      序号: index + 1,
-      指标内容: item.name || '未命名指标',
-      所属部门: item.responsibleDept || item.ownerDept || '未分配',
-      当前进度: `${item.progress ?? 0}%`,
-      自评进度: item.selfRating ? (RATING_LABEL[item.selfRating] ?? item.selfRating) : '未评定'
-    }))
+  // ---- 滞后任务清单（月报鉴定 DELAYED 明细，appraisal_level 优先 self_rating） ----
+  const lagging: DashboardLaggingRow[] = laggingSource.map((item, index) => ({
+    序号: index + 1,
+    指标内容: item.indicatorName || `指标#${item.indicatorId}`,
+    所属学院: item.orgName,
+    来源部门: item.ownerOrgName || '—',
+    自评等级: item.selfRating ? (RATING_LABEL[item.selfRating] ?? item.selfRating) : '未评定',
+    鉴定等级: item.appraisalLevel
+      ? (RATING_LABEL[item.appraisalLevel] ?? item.appraisalLevel)
+      : '未评定'
+  }))
 
   // ---- 附件索引 ----
   const attachments: DashboardAttachmentRow[] = []

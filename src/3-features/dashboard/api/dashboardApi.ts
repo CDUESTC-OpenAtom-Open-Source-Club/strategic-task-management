@@ -18,10 +18,10 @@ import { logger } from '@/shared/lib/utils/logger'
 import type { DashboardData, DepartmentProgress, AlertSummary } from '@/shared/types'
 
 // ============================================================================
-// 学院等级统计（2026-10-31 数据看板新口径，后端契约字段，禁止改名）
-// 口径：①未填报学院整列不显示（colleges 只含有数据的学院）
-//      ②只算已提交/已审批月报（后端过滤）③等级只看上级鉴定三档
-//      ④手动预警等级（alert_event/manualAlertSeverity）退出看板统计
+// 学院等级统计（2026-11-17 数据看板新口径，后端契约字段，禁止改名）
+// 口径：①未填报学院也要返回（reported=false，前端画灰柱「下发 n 项·未填报」督办）
+//      ②只算已提交/已审批月报（后端过滤，DRAFT 不计入）③等级 appraisal_level 优先
+//        self_rating 兜底三档 ④手动预警等级（alert_event/manualAlertSeverity）退出看板统计
 // ============================================================================
 
 /** 单个学院的上报等级统计（GET /api/v1/dashboard/college-levels 行结构） */
@@ -30,35 +30,69 @@ export interface DashboardCollegeLevelStat {
   orgId: number
   /** 学院名称 */
   orgName: string
+  /** 所属月份（1-12，趋势接口逐月返回时区分用） */
+  month?: number
   /** 超前完成数 */
   ahead: number
   /** 正常数 */
   normal: number
-  /** 延期数 */
+  /** 滞后数（后端枚举 DELAYED） */
   delayed: number
-  /** 总计 */
+  /** 总计（ahead + normal + delayed） */
   total: number
+  /** 当年已下发到该学院的指标数（灰柱「下发 n 项」数据源） */
+  dispatchedCount?: number
+  /** 当年未下发到该学院的指标数（status=DRAFT/PENDING） */
+  undispatchedCount?: number
+  /** 未填报标记：false=当月无已提交/已审批月报（灰柱督办），true=已填报 */
+  reported?: boolean
 }
 
 /** GET /api/v1/dashboard/college-levels?year=&month= 响应 */
 export interface DashboardCollegeLevelsResponse {
   year: number
   month: number
-  /** 只含有数据的学院（未填报学院不返回） */
+  /** 学院列表（当年有指标 ∪ 当月已上报；未填报学院 reported=false） */
   colleges: DashboardCollegeLevelStat[]
 }
 
 /** 趋势接口的单月结构 */
 export interface DashboardCollegeLevelsMonth {
   month: number
-  /** 只含有数据的学院（未填报学院不返回） */
+  /** 学院列表（含未填报学院 reported=false） */
   colleges: DashboardCollegeLevelStat[]
 }
 
-/** GET /api/v1/dashboard/college-levels-trend?year= 响应（months 只到最晚有数据月份） */
+/** GET /api/v1/dashboard/college-levels-trend?year= 响应（months 固定 1-12 月全量） */
 export interface DashboardCollegeLevelsTrendResponse {
   year: number
   months: DashboardCollegeLevelsMonth[]
+}
+
+/** 单条滞后指标明细（GET /api/v1/dashboard/delayed-indicators 行结构） */
+export interface DashboardDelayedIndicatorItem {
+  /** 指标ID（催办接口入参） */
+  indicatorId: number
+  /** 指标描述 */
+  indicatorName: string | null
+  /** 责任学院组织 ID */
+  orgId: number
+  /** 责任学院名称 */
+  orgName: string
+  /** 来源职能部门名称（可能为空） */
+  ownerOrgName: string | null
+  /** 自评等级 AHEAD/NORMAL/DELAYED（可能为空） */
+  selfRating: string | null
+  /** 上级鉴定等级 AHEAD/NORMAL/DELAYED（可能为空） */
+  appraisalLevel: string | null
+}
+
+/** GET /api/v1/dashboard/delayed-indicators?year=&month= 响应 */
+export interface DashboardDelayedIndicatorsResponse {
+  year: number
+  month: number
+  /** 滞后指标明细（按学院名+指标ID排序，指标ID去重） */
+  items: DashboardDelayedIndicatorItem[]
 }
 
 /**
@@ -227,7 +261,7 @@ export const dashboardApi = {
   /**
    * 学院等级月度趋势（按年）
    * GET /api/v1/dashboard/college-levels-trend?year=
-   * months 只到最晚有数据月份；x 轴只画接口返回的月份
+   * months 固定 1-12 月全量；未填报学院 reported=false 由前端画灰柱
    */
   async getCollegeLevelsTrend(params: {
     year: number
@@ -244,6 +278,33 @@ export const dashboardApi = {
       return data
     } catch (error) {
       logger.error('[dashboardApi] Failed to fetch college levels trend:', error)
+      throw error
+    }
+  },
+
+  /**
+   * 滞后任务清单（按年月）
+   * GET /api/v1/dashboard/delayed-indicators?year=&month=
+   * 只算已提交/已审批月报、等级 appraisal_level 优先 self_rating 兜底的 DELAYED 明细；
+   * 看板「滞后任务响应清单」卡片专用数据源（旧 progress<50 判定已死：等级制后恒 0）
+   */
+  async getDelayedIndicators(params: {
+    year: number
+    month: number
+  }): Promise<DashboardDelayedIndicatorsResponse> {
+    try {
+      logger.debug('[dashboardApi] Fetching delayed indicators:', params)
+      const payload = await apiClient.get<unknown>('/dashboard/delayed-indicators', {
+        year: params.year,
+        month: params.month
+      })
+      const data = unwrapDashboardPayload<DashboardDelayedIndicatorsResponse>(payload)
+      if (!data || !Array.isArray(data.items)) {
+        throw new Error('滞后任务清单接口返回格式异常')
+      }
+      return data
+    } catch (error) {
+      logger.error('[dashboardApi] Failed to fetch delayed indicators:', error)
       throw error
     }
   },
