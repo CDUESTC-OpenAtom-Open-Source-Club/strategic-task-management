@@ -125,6 +125,8 @@ const {
   currentApprovalCandidateNames,
   currentApprovalFlowName,
   currentApprovalStatusMeta,
+  // 2026-11-17（e2e 缺陷②修复）：驳回退回待重报（WITHDRAWN 活链）红横幅判定
+  hasReturnedReportChain,
   currentApprovalStepName,
   currentApprovalStepPreview,
   currentApprovalWorkflowStatus,
@@ -756,6 +758,26 @@ const handleExportIndicatorList = async () => {
         </el-button>
       </div>
     </div>
+
+    <!-- 2026-11-17（e2e 缺陷②修复，症状 A）：驳回退回待重报（WITHDRAWN 活链）红横幅。
+         驳回后落点 = 报告退回 DRAFT + 审批实例 WITHDRAWN 活链（completed_at 为空），
+         此前页面只有灰色「草稿」章——违背 2026-11-13 定案「驳回=退回填报人，
+         退回态要可见」。对齐任务管理页异动退回横幅口径（hasReturnedMutationChain 同构）：
+         红横幅常驻提示 + 指路「一键提交」重报。数据流不变（草稿本就可编辑可重报，
+         行为已被测试证实正常），只补状态提示层；重报提交后实例复活 IN_REVIEW、
+         报告离开 DRAFT → 横幅自动消失（判定见 model hasReturnedReportChain /
+         lib isReportReturnedChainAlive）。 -->
+    <el-alert
+      v-if="hasReturnedReportChain"
+      type="error"
+      :closable="false"
+      show-icon
+      style="margin: 12px 16px"
+    >
+      <template #title>
+        上报已退回待重报（驳回或撤回）：填报内容已退回为草稿，请完善后点「一键提交」重新上报
+      </template>
+    </el-alert>
 
     <!-- 主内容区域 -->
     <div class="content-wrapper">

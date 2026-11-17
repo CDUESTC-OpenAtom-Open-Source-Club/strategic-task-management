@@ -264,7 +264,9 @@ const {
   isMutationApprovalInFlight,
   // 2026-11-12（C3-D1）：学院页签退回链补拉 + 学院口径在审异动判定（新增行互斥）
   loadCollegeReturnedMutationChains,
-  isCollegeMutationApprovalInFlight,
+  // 2026-11-17（e2e 缺陷①修复）：学院线级在审异动判定（归口维度收窄）——
+  // 学院口径 isCollegeMutationApprovalInFlight 保留在 model 供回退，视图改用线级口径
+  isCollegeLineMutationApprovalInFlight,
   // 2026-11-14（B4）：学院页签子计划未下发时锁写入口（新增行/导入；发起异动走
   // mutationSubmitBlocked 的合并判定）
   collegeTabPlanNotDistributed,
@@ -621,10 +623,14 @@ const collegeSelectedFunctionalDeptName = computed(
  *   <li>空壳计划（无任何指标行）→ 放行（导入 = 往空计划建行）；</li>
  *   <li>草稿/退回且已有行 → 拦（B4 原始缺陷口径保留）。</li>
  * </ul>
- * <p>互斥守卫（D3）与「新增行」同口径并入学院链下清单：学院子指标异动实例
- * （source=战略发展部、target=学院）只落在 departmentChainMutationPendingApprovals，
- * 主清单按职能部门 orgId 查不到 —— 旧口径只读 isMutationApprovalInFlight 会漏锁，
- * 这里经 isCollegeMutationApprovalInFlight（主清单+链下清单按所选学院收口）并集。</p>
+ * <p>互斥守卫（D3 → 2026-11-17 e2e 缺陷①修复收窄到线级）：异动在审互斥改用
+ * isCollegeLineMutationApprovalInFlight——在审异动所在线的归口（其
+ * plan.functional_org_id）等于当前选中归口时才置灰本线导入；同学院别归口（别线）
+ * 的异动不再置灰（与后端 CollegeDispatchGuardService 2026-11-17 线级收窄实测放行
+ * 语义对齐）。学院子指标异动实例（source=战略发展部、target=学院）只落在
+ * departmentChainMutationPendingApprovals，主清单按职能部门 orgId 查不到——线级判定
+ * 合并两份清单后按「学院 × 归口」收口；归口未选/解析失败时保守回退学院级口径
+ * （且该场景已被上方「请先选择职能部门」前置守卫拦下）。</p>
  * <p>两选前置（未选学院 / 未选职能部门）与既有口径一致，排在最前。仅学院页签生效；
  * 职能页签导入行为零变化（模板分支保留原状）。</p>
  */
@@ -647,12 +653,10 @@ const collegeTabImportDisabledReason = computed(() => {
   if (!collegeDispatchDeptOrgId?.value) {
     return `无法解析所选职能部门「${collegeSelectedFunctionalDeptName.value}」：请重新选择归口部门后导入`
   }
-  // D3：异动在审互斥（主清单 + 学院链下清单并集，与「新增行」同口径）
-  if (
-    isMutationApprovalInFlight?.value === true ||
-    isCollegeMutationApprovalInFlight?.value === true
-  ) {
-    return '异动审批进行中，暂不能导入：等审批结束或先撤回/取消本次异动'
+  // D3：异动在审互斥（2026-11-17 e2e 缺陷①修复：线级口径，与「新增行」同源；
+  // 条目线归口判不出时 lib 内按冲突保守处理）
+  if (isCollegeLineMutationApprovalInFlight?.value === true) {
+    return '当前归口这条线的异动审批进行中，暂不能导入：等审批结束或先撤回/取消本次异动'
   }
   // D1：计划相位 gating（尚无计划/空壳放行，在审+已下发+草稿有行拦）
   return resolveCollegeTabImportGate({
@@ -1916,8 +1920,9 @@ const openStrategicImportDialog = () => {
     // 这条线已下发」等前置与业务条件统一收敛到 collegeTabImportDisabledReason
     // （按钮置灰与点击兜底单一口径，防键盘/编程式调用绕过置灰）。
     // 2026-11-11（E-1 互斥守卫）→ 2026-11-14（D1/D3）收敛：导入的剩余拦截统一读
-    // collegeTabImportDisabledReason（异动在审互斥 = 主清单 + 学院链下清单并集（D3，
-    // 与「新增行」同口径）；计划相位 gating = 尚无计划/空壳放行、在审+已下发+草稿有行拦（D1））。
+    // collegeTabImportDisabledReason（异动在审互斥 = 线级口径（2026-11-17 e2e 缺陷①修复，
+    // 主清单 + 学院链下清单按「学院 × 归口」收口，与「新增行」同源）；
+    // 计划相位 gating = 尚无计划/空壳放行、在审+已下发+草稿有行拦（D1））。
     const importBlockedReason = collegeTabImportDisabledReason.value
     if (importBlockedReason) {
       ElMessage.warning(importBlockedReason)
@@ -2110,8 +2115,13 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                口径与后端 isOrgLockedByMutation 一致，只认 IN_REVIEW；
                退回待重报（WITHDRAWN 活链）不锁——新增行会成为草稿随下次发起提交。
                2026-11-12（低⑩·C3 观察项 O-3 对齐）：学院页签补上学院口径在审异动
-               （isCollegeMutationApprovalInFlight，主清单+链下学院追回清单按所选学院
-               targetOrgId 收口）——此前学院子指标异动在审时新增行仍可点。
+               （主清单+链下学院追回清单按所选学院 targetOrgId 收口）——此前学院子指标
+               异动在审时新增行仍可点。
+               2026-11-17（e2e 缺陷①修复）：学院页签在审互斥收窄到线级
+               （isCollegeLineMutationApprovalInFlight，主清单+链下清单按「学院 × 归口」
+               收口）——同学院别归口（别线）的异动不再锁本线新增行（对齐后端
+               CollegeDispatchGuardService 线级收窄）；职能页签仍用
+               isMutationApprovalInFlight（本部门口径，零变化）。
                tooltip 文案同步写准（C2 观察项 O-1）：isCurrentPlanUnderApproval 的实际
                触发源可能是上报审批在审（shouldPreferCurrentReportWorkflow 优先上报链），
                「计划正在审批中」会让用户误以为是下发审批在途，改为上报/异动并提。 -->
@@ -2121,8 +2131,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
             :disabled="
               !canEdit ||
               isCurrentPlanUnderApproval ||
-              isMutationApprovalInFlight ||
-              (activeTaskTabName === 'college' && isCollegeMutationApprovalInFlight) ||
+              (activeTaskTabName === 'college'
+                ? isCollegeLineMutationApprovalInFlight
+                : isMutationApprovalInFlight) ||
               (activeTaskTabName === 'college' && collegeTabPlanNotDistributed) ||
               (activeTaskTabName === 'college' && (!selectedCollege || !collegeDispatchDeptFilter))
             "
@@ -2131,9 +2142,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                 ? '当前角色仅可查看，填报人才能新增'
                 : isCurrentPlanUnderApproval
                   ? '当前计划的上报/异动审批进行中，暂不能新增：请等审批结束或先撤回本次审批'
-                  : isMutationApprovalInFlight
-                    ? '异动审批进行中，暂不能新增：等审批结束或先撤回/取消本次异动'
-                    : activeTaskTabName === 'college' && isCollegeMutationApprovalInFlight
+                  : activeTaskTabName === 'college' && isCollegeLineMutationApprovalInFlight
+                    ? '当前归口这条线的异动审批进行中，暂不能新增：等审批结束或先撤回/取消本次异动'
+                    : activeTaskTabName !== 'college' && isMutationApprovalInFlight
                       ? '异动审批进行中，暂不能新增：等审批结束或先撤回/取消本次异动'
                       : activeTaskTabName === 'college' && collegeTabPlanNotDistributed
                         ? '该学院×部门的计划未下发，暂不能新增：异动的前提是计划已下发（DISTRIBUTED）'
@@ -2260,8 +2271,11 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                组合也拦死，而导入本来就是「创建计划并下发」的入口（后端 findOrCreatePlan
                建计划）→ 新口径：尚无计划放行 / 已下发放行 / 空壳计划放行；仅
                「在审审批中」与「草稿且已有行」（B4 原始缺陷）拦；
-               ② D3：异动在审互斥并入学院链下清单（isCollegeMutationApprovalInFlight），
-               学院子指标异动在审时导入也置灰（此前只读主清单会漏锁）。
+               ② D3：异动在审互斥并入学院链下清单（学院口径收口，此前只读主清单会漏锁）；
+               2026-11-17（e2e 缺陷①修复）：互斥口径再收窄到线级
+               （isCollegeLineMutationApprovalInFlight，主清单+链下清单按「学院 × 归口」
+               收口）——同学院别归口（别线）的异动在审不再置灰本线导入（对齐后端
+               CollegeDispatchGuardService 线级收窄的放行语义）。
                职能部门页签 disabled/title 逐字不变。 -->
           <el-button
             size="small"

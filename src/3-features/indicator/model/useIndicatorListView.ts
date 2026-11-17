@@ -52,6 +52,7 @@ import {
 } from '@/features/indicator/lib/reportBatch'
 import {
   resolveReportSubmitLockReason,
+  isReportReturnedChainAlive,
   isReportReturnedToSubmitter
 } from '@/features/indicator/lib/reportSubmitGate'
 // 2026-11-13（学院上报按归口部门分批提交）：归属部门口径的纯函数（选项聚合/行过滤）
@@ -3387,11 +3388,41 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     { immediate: true }
   )
 
+  // 2026-11-17（e2e 缺陷②修复，症状 A）：上报「驳回退回待重报」红横幅判定。
+  // 驳回后落点 = plan_report→DRAFT + audit_instance→WITHDRAWN（completed_at 为空的
+  // 重报复活实例，report.audit_instance_id 保留指向它 → currentPlanWorkflowDetail
+  // 经 workflowInstanceId / byBusiness('PLAN_REPORT') 加载到的就是该活链）。
+  // 旧横幅逻辑只认「IN_REVIEW 且当前节点=填报人提交」的活链态，WITHDRAWN 活链
+  // 落进「草稿」灰章——违背 2026-11-13 定案「驳回=退回填报人，退回态要可见」。
+  // 数据流不动（DRAFT 可编辑可重报行为正常），只补状态提示层：横幅 + 状态章。
+  // 纯函数 isReportReturnedChainAlive（lib/reportSubmitGate，与单测共用）收口判定。
+  const hasReturnedReportChain = computed(() => {
+    if (!usePlanReportFlow.value) {
+      return false
+    }
+    return isReportReturnedChainAlive({
+      reportStatus: currentPlanReportUiStatus.value,
+      instanceStatus: currentPlanWorkflowDetail.value?.status,
+      instanceEndTime: currentPlanWorkflowDetail.value?.endTime
+    })
+  })
+
   const currentApprovalStatusMeta = computed(() => {
     const workflowStatus = currentApprovalWorkflowStatus.value
     const stepName = currentApprovalStepName.value
     const approverName = currentApprovalApproverName.value
     const candidateNames = currentApprovalCandidateNames.value
+
+    // 2026-11-17（e2e 缺陷②修复，症状 A）：WITHDRAWN 活链退回待重报 → 红章。
+    // 排最前（最具体态）：此前的 IN_REVIEW+填报人提交 与 DRAFT 分支都不认 WITHDRAWN
+    // 活链，驳回后会显示灰色「草稿」。文案对齐 2026-11-13 B-2 修复的既有词。
+    if (hasReturnedReportChain.value) {
+      return {
+        label: '已回退待重报',
+        type: 'danger' as const,
+        description: '上报审批已退回，请完善填报后重新提交。'
+      }
+    }
 
     // 2026-10-27 用户定案：填报页的审批状态说的是「本部门上报审批」，只有两态——
     // 草稿（还没报）和已上报（上报审批已通过）。计划下发审批（已完成审批/审批中等）
@@ -5964,6 +5995,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     currentApprovalCandidateNames,
     currentApprovalFlowName,
     currentApprovalStatusMeta,
+    // 2026-11-17（e2e 缺陷②修复）：驳回退回待重报（WITHDRAWN 活链）红横幅判定
+    hasReturnedReportChain,
     currentApprovalStepName,
     currentApprovalStepPreview,
     currentApprovalWorkflowStatus,
