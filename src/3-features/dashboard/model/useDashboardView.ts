@@ -63,11 +63,11 @@ export function useDashboardView(props: DashboardViewProps) {
       '总得分 = 基础性指标得分 + 发展性指标得分，满分120分。基础性指标满分100分，发展性指标满分20分。',
     basicScore: '基础性指标是必须完成的核心指标，根据各指标完成进度加权计算得分，满分100分。',
     developmentScore: '发展性指标是鼓励性指标，完成后可获得额外加分，满分20分。',
-    warningCount: '延期任务按所选月份状态统计：延期表示该指标进度等级被判定为滞后，需上级关注。',
+    warningCount: '滞后任务按所选月份状态统计：滞后表示该指标进度等级被上级鉴定为滞后，需上级关注。',
     scoreComposition: '展示基础性指标和发展性指标的得分占比，帮助了解整体得分构成。',
-    alertDistribution: '按所选月份统计指标进度等级分布：超前完成、正常、延期。',
+    alertDistribution: '按所选月份统计指标进度等级分布：超前完成、正常、滞后。',
     completionRate:
-      '完成率 = 所选月份状态为正常或超前的指标数 / 总指标数 × 100%。未下发或延期指标不计入完成。',
+      '完成率 = 所选月份状态为正常或超前的指标数 / 总指标数 × 100%。未下发或滞后指标不计入完成。',
     departmentProgress:
       '展示各部门的指标完成进度，进度条颜色表示状态：绿色（≥80%）、黄色（50%-80%）、红色（<50%）。',
     benchmark: '展示各部门执行进度与基准线对比，红色表示低于基准线，蓝色表示达标。',
@@ -158,7 +158,7 @@ export function useDashboardView(props: DashboardViewProps) {
     ahead: '#1A7F37', // 深绿 - 超前完成
     normal: '#67C23A', // 绿色 - 正常
     warning: '#E6A23C', // 黄色 - 预警
-    delayed: '#F56C6C' // 红色 - 延期
+    delayed: '#F56C6C' // 红色 - 滞后
   }
 
   // 计算指标状态的函数
@@ -168,13 +168,13 @@ export function useDashboardView(props: DashboardViewProps) {
     return getIndicatorStatusAtMonth(indicator, selectedMonth.value, timeContext.currentYear)
   }
 
-  // 获取状态显示文本（三档口径：原「预警」状态并入「延期」展示）
+  // 获取状态显示文本（三档口径：原「预警」状态并入「滞后」展示）
   const getStatusText = (status: IndicatorStatus): string => {
     const statusMap: Record<IndicatorStatus, string> = {
       normal: '正常',
       ahead: '超前完成',
-      warning: '延期',
-      delayed: '延期'
+      warning: '滞后',
+      delayed: '滞后'
     }
     return statusMap[status]
   }
@@ -291,7 +291,7 @@ export function useDashboardView(props: DashboardViewProps) {
       }))
   })
 
-  // 筛选后的指标列表（根据状态筛选；三档口径：选「延期」时包含原预警状态）
+  // 筛选后的指标列表（根据状态筛选；三档口径：选「滞后」时包含原预警状态）
   const filteredDeptIndicators = computed(() => {
     if (!selectedStatusFilter.value) {
       return selectedDeptIndicators.value
@@ -443,7 +443,7 @@ export function useDashboardView(props: DashboardViewProps) {
       }))
   })
 
-  // 月份指标筛选后的列表（三档口径：选「延期」时包含原预警状态）
+  // 月份指标筛选后的列表（三档口径：选「滞后」时包含原预警状态）
   const filteredMonthIndicators = computed(() => {
     if (!selectedStatusFilter.value) {
       return monthIndicators.value
@@ -540,7 +540,7 @@ export function useDashboardView(props: DashboardViewProps) {
     if (!selectedStatusFilter.value) {
       return collegeMonthIndicators.value
     }
-    // 三档口径：选「延期」时包含原预警状态
+    // 三档口径：选「滞后」时包含原预警状态
     return collegeMonthIndicators.value.filter(i =>
       selectedStatusFilter.value === 'delayed'
         ? i.status === 'delayed' || i.status === 'warning'
@@ -990,7 +990,7 @@ export function useDashboardView(props: DashboardViewProps) {
             col('指标总数', 12, 'center'),
             col('已完成', 12, 'center'),
             col('进行中', 12, 'center'),
-            col('延期预警', 12, 'center'),
+            col('滞后预警', 12, 'center'),
             col('平均进度', 12, 'center'),
             col('附件覆盖率', 14, 'center')
           ],
@@ -1008,7 +1008,7 @@ export function useDashboardView(props: DashboardViewProps) {
             col('指标总数', 10, 'center'),
             col('已完成', 10, 'center'),
             col('进行中', 10, 'center'),
-            col('延期预警', 10, 'center'),
+            col('滞后预警', 10, 'center'),
             col('状态', 10, 'center')
           ],
           emptyMessage: '暂无部门数据'
@@ -1092,7 +1092,7 @@ export function useDashboardView(props: DashboardViewProps) {
           指标总数: item.totalIndicators,
           已完成: item.completedIndicators,
           进行中: item.totalIndicators - item.completedIndicators,
-          延期数: item.alertCount,
+          滞后数: item.alertCount,
           状态: item.status === 'success' ? '优秀' : item.status === 'warning' ? '良好' : '需改进'
         }))
 
@@ -1317,7 +1317,7 @@ export function useDashboardView(props: DashboardViewProps) {
         gradient: 'success'
       },
       {
-        label: '延期任务',
+        label: '滞后任务',
         helpText: helpTexts.warningCount,
         value: data.alertIndicators.severe,
         unit: '项',
@@ -1669,14 +1669,14 @@ export function useDashboardView(props: DashboardViewProps) {
             tooltip += `${params[0].name}<br/>`
             tooltip += `<span style="color: ${statusColors.ahead}">●</span> 超前: ${dataItem?.ahead || 0}<br/>`
             tooltip += `<span style="color: ${statusColors.normal}">●</span> 正常: ${dataItem?.normal || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.delayed}">●</span> 延期: ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}<br/>`
+            tooltip += `<span style="color: ${statusColors.delayed}">●</span> 滞后: ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}<br/>`
             tooltip += `总计: ${dataItem?.total || 0}`
           } else {
             // 部门视图显示统计
             tooltip += `${selectedMonth.value}月完成情况<br/>`
             tooltip += `<span style="color: ${statusColors.ahead}">■</span> 超前: ${dataItem?.ahead || 0}<br/>`
             tooltip += `<span style="color: ${statusColors.normal}">■</span> 正常: ${dataItem?.normal || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.delayed}">■</span> 延期: ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}<br/>`
+            tooltip += `<span style="color: ${statusColors.delayed}">■</span> 滞后: ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}<br/>`
             tooltip += `总计: ${dataItem?.total || 0}<br/>`
             tooltip += `<span style="color: #409eff; font-size: 11px;">点击查看月度趋势</span>`
           }
@@ -1684,7 +1684,7 @@ export function useDashboardView(props: DashboardViewProps) {
         }
       },
       legend: {
-        data: ['超前完成', '正常', '延期'],
+        data: ['超前完成', '正常', '滞后'],
         bottom: 0,
         left: 'center',
         itemWidth: 12,
@@ -1751,8 +1751,8 @@ export function useDashboardView(props: DashboardViewProps) {
           data: data.map(d => d.normal || 0)
         },
         {
-          // 三档口径：原「预警」桶并入「延期」展示
-          name: '延期',
+          // 三档口径：原「预警」桶并入「滞后」展示
+          name: '滞后',
           type: 'bar',
           stack: 'total',
           barWidth: isDrillDown.value ? 40 : 30,

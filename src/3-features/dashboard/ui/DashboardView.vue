@@ -514,7 +514,7 @@ function openApprovalCenterFromDashboard() {
                     :class="{ active: selectedStatusFilter === 'delayed' }"
                     @click="handleStatusFilterClick('delayed')"
                   >
-                    <span class="status-dot"></span>延期
+                    <span class="status-dot"></span>滞后
                     {{ selectedDeptStats.warning + selectedDeptStats.delayed }}
                   </span>
                 </div>
