@@ -973,19 +973,21 @@ export function useDashboardView(props: DashboardViewProps) {
           emptyMessage: '暂无数据'
         },
         {
+          // 2026-11-17 用户拍板：等级制填报后 indicator.progress 恒 0，进度列是死数据——
+          // 两个单位 Sheet 改出鉴定等级分布（COALESCE(appraisal_level, self_rating)，
+          // 见 comprehensiveReport.ts），列名/口径与全局「滞后」文案统一。
+          // Sheet 名保守沿用原名（改动最小），列头已是等级语义。
           sheetName: '各部门进度',
           rows: report.departments as unknown as Array<Record<string, unknown>>,
           columns: [
             col('排名', 8, 'center'),
-            col('部门', 22),
-            col('平均进度', 12, 'center'),
-            col('综合得分', 12, 'center'),
-            col('完成率', 12, 'center'),
+            col('单位', 22),
+            col('类型', 12, 'center'),
             col('指标总数', 10, 'center'),
-            col('已完成', 10, 'center'),
-            col('进行中', 10, 'center'),
-            col('延期预警', 10, 'center'),
-            col('状态', 10, 'center')
+            col('超前完成', 10, 'center'),
+            col('正常', 10, 'center'),
+            col('滞后', 10, 'center'),
+            col('未评定', 10, 'center')
           ],
           emptyMessage: '暂无部门数据'
         },
@@ -994,15 +996,13 @@ export function useDashboardView(props: DashboardViewProps) {
           rows: report.colleges as unknown as Array<Record<string, unknown>>,
           columns: [
             col('排名', 8, 'center'),
-            col('学院', 22),
-            col('平均进度', 12, 'center'),
-            col('综合得分', 12, 'center'),
-            col('完成率', 12, 'center'),
+            col('单位', 22),
+            col('类型', 12, 'center'),
             col('指标总数', 10, 'center'),
-            col('已完成', 10, 'center'),
-            col('进行中', 10, 'center'),
-            col('延期预警', 10, 'center'),
-            col('状态', 10, 'center')
+            col('超前完成', 10, 'center'),
+            col('正常', 10, 'center'),
+            col('滞后', 10, 'center'),
+            col('未评定', 10, 'center')
           ],
           emptyMessage: '暂无学院数据'
         },
@@ -1213,7 +1213,8 @@ export function useDashboardView(props: DashboardViewProps) {
       ...filteredCollegeMonthIndicators.value
     ]
     const match = pool.find(item => String(item.id) === String(indicator.id)) as
-      (typeof filteredDeptIndicators.value)[number] | undefined
+      | (typeof filteredDeptIndicators.value)[number]
+      | undefined
     if (!match) {
       return
     }
