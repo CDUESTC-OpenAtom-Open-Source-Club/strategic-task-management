@@ -36,7 +36,10 @@ const compatibilityWhitelist = [
   { method: 'post', path: '/api/v1/indicators/mutations/batch' },
   // 2026-10-31 数据看板新口径（后端并行开发中，契约已钉死；openapi 基线落地前先挂白名单）
   { method: 'get', path: '/api/v1/dashboard/college-levels' },
-  { method: 'get', path: '/api/v1/dashboard/college-levels-trend' }
+  { method: 'get', path: '/api/v1/dashboard/college-levels-trend' },
+  // 2026-11-17 滞后任务清单（前端在用但评审发现漏挂白名单；后端 openapi 基线
+  // 已随集成树重新生成覆盖本条，挂白名单兜底 CI checkout 旧基线的场景）
+  { method: 'get', path: '/api/v1/dashboard/delayed-indicators' }
 ] as const
 
 function normalizePathLiteral(rawPath: string): string | null {
