@@ -24,10 +24,11 @@ import type {
 } from '@/shared/types'
 import { approvalApi } from '@/features/task/api/strategicApi'
 
+// 2026-11-17（全局文案统一）：「延期」→「滞后」，仅改显示文案，接口枚举 DELAYED 不动
 const APPRAISAL_LEVEL_LABELS: Record<string, string> = {
   AHEAD: '超前完成',
   NORMAL: '正常',
-  DELAYED: '延期'
+  DELAYED: '滞后'
 }
 
 export function formatStayDuration(createdAt?: string | null): string {
@@ -799,6 +800,18 @@ export function useApprovalProgressDrawer(
 
   // ============ 状态 ============
   const activeTab = ref('workflow')
+  // 2026-11-17 线上反馈（领导：流转图一点击就消失、找不到复原入口）：
+  // 抽屉打开后待办/实例详情异步加载完成会强制把 activeTab 切回「计划审批/审批历史」，
+  // 用户刚点开「审批流程」页签看流转图就被切走，再点再被切，观感即"一点就消失"。
+  // 本闩在用户手动点过任意页签后立起（下次打开抽屉时复位），立起后自动切换一律让位；
+  // 页签栏本身保持可见，就是明确的复原入口。打开时的默认落点（2026-10-30 定案）不受影响。
+  // 与 useApprovalProgressWorkflow（分发审批抽屉）同口径。
+  const approvalTabSelectedManually = ref(false)
+
+  /** 用户手动点选页签（ElTabs tab-click）时置位；各自动切换点据此让位 */
+  function markApprovalTabSelectedManually() {
+    approvalTabSelectedManually.value = true
+  }
   const planApprovalsLoading = ref(false)
   const pendingPlanApprovals = ref<Record<string, any>[]>([])
   const planDetailDialogVisible = ref(false)
@@ -3587,7 +3600,12 @@ export function useApprovalProgressDrawer(
       const response = await approvalApi.getPendingApprovals(userId)
       if (response.success && Array.isArray(response.data)) {
         pendingPlanApprovals.value = response.data
-        if (props.modelValue && props.showPlanApprovals && scopedPendingPlanCount.value > 0) {
+        if (
+          !approvalTabSelectedManually.value &&
+          props.modelValue &&
+          props.showPlanApprovals &&
+          scopedPendingPlanCount.value > 0
+        ) {
           activeTab.value = 'pending-plans'
         }
         return
@@ -3635,10 +3653,16 @@ export function useApprovalProgressDrawer(
 
   // 2026-10-26：上报待办到达后，若当前停在其它页签则切到「计划审批」——
   // 否则用户打开抽屉只看到历史/流程页签，以为没有待办。
+  // 2026-11-17：用户已手动选中的页签不再被自动切走（见 approvalTabSelectedManually）。
   watch(
     () => reportTodoItems.value.length,
     count => {
-      if (count > 0 && props.modelValue && props.showPlanApprovals) {
+      if (
+        !approvalTabSelectedManually.value &&
+        count > 0 &&
+        props.modelValue &&
+        props.showPlanApprovals
+      ) {
         activeTab.value = 'pending-plans'
       }
     }
@@ -3744,6 +3768,7 @@ export function useApprovalProgressDrawer(
           // 预取实例发起人（真实提交人）的显示名，供提交人展示使用
           void ensureSubmitterNameLoaded(response.data.starterId, response.data.starterName)
           if (
+            !approvalTabSelectedManually.value &&
             props.modelValue &&
             props.showPlanApprovals &&
             normalizeWorkflowStatus(response.data.status) === 'PENDING'
@@ -3770,6 +3795,7 @@ export function useApprovalProgressDrawer(
           // 预取实例发起人（真实提交人）的显示名，供提交人展示使用
           void ensureSubmitterNameLoaded(response.data.starterId, response.data.starterName)
           if (
+            !approvalTabSelectedManually.value &&
             props.modelValue &&
             props.showPlanApprovals &&
             normalizeWorkflowStatus(response.data.status) === 'PENDING'
@@ -4867,6 +4893,9 @@ export function useApprovalProgressDrawer(
       if (val) {
         const retainedDetail = getRetainedWorkflowDetail()
         planWorkflowDetail.value = retainedDetail ?? props.initialPlanWorkflowDetail ?? null
+        // 2026-11-17（流转图一点就消失修复）：手选页签闩随打开复位，
+        // 默认落点（2026-10-30 定案）在每次打开时重新生效。
+        approvalTabSelectedManually.value = false
         // 打开时重置到工作流标签页；焦点实例索引一并复位——
         // 上次打开选到「实例2」时，换个上下文再开不能默认还停在最后一条。
         workflowFocusIdx.value = 0
@@ -5070,6 +5099,12 @@ export function useApprovalProgressDrawer(
         return
       }
 
+      // 2026-11-17（流转图一点就消失修复）：用户已手动选中的页签不被自动切回——
+      // 否则用户点开「审批流程」看流转图后，待办/详情任一异步数据到达都会把页签弹走。
+      if (approvalTabSelectedManually.value) {
+        return
+      }
+
       const preferredTab = resolvePreferredActiveTab()
       if (
         activeTab.value !== preferredTab &&
@@ -5164,6 +5199,7 @@ export function useApprovalProgressDrawer(
     handleApproveExternalWorkflowTodo,
     handleApprovePlanBatch,
     handleClose,
+    markApprovalTabSelectedManually,
     handleWorkflowNodeAttachmentOpen,
     handleRejectExternalWorkflowTodo,
     handleRejectPlanBatch,

@@ -137,6 +137,7 @@ const {
   loadSelectedHistoryInstanceDetail,
   loadWorkflowDefinitionPreview,
   mapWorkflowTaskStatusToNodeStatus,
+  markApprovalTabSelectedManually,
   matchesExpectedWorkflowCode,
   navigateToPendingPlanApproval,
   normalizeDisplayName,
@@ -464,7 +465,13 @@ const displayedCurrentPlanApprovalName = computed(() => {
     <!-- 审批内容 -->
     <div v-else class="approval-content">
       <!-- 标签页 -->
-      <el-tabs v-model="activeTab" class="approval-tabs">
+      <!-- 2026-11-17（流转图一点就消失修复）：tab-click 只在用户手动点击时触发——
+           手选后立起闩，数据到达触发的自动切页不再把「审批流程」弹走 -->
+      <el-tabs
+        v-model="activeTab"
+        class="approval-tabs"
+        @tab-click="markApprovalTabSelectedManually"
+      >
         <el-tab-pane v-if="showPlanApprovals" name="pending-plans" label="计划审批">
           <div
             v-loading="planApprovalsLoading || planWorkflowDetailLoading"
