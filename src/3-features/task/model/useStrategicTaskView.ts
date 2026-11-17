@@ -71,13 +71,15 @@ import {
   type CollegeDeptPlanStatusPlanLike
 } from '@/features/task/lib/collegeDispatchEligibility'
 import {
+  hasCollegeLineMutationApprovalInFlight,
   hasCollegeMutationApprovalInFlight,
   isReportApprovalStatusInFlight,
   mergeReturnedMutationChains,
   resolveCollegeReportApprovalStatusMeta,
   resolveCollegeReturnedChainOwnerOrgId,
   resolveMutationGateWeightTotal,
-  resolveViewScopedMutationPendingApprovals
+  resolveViewScopedMutationPendingApprovals,
+  type CollegeMutationApprovalEntryLike
 } from '@/features/task/lib/collegeTabDistribute'
 import {
   resolveCollegeReportPlanScope,
@@ -7105,6 +7107,90 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     )
   )
 
+  /**
+   * 计划 id → 归口部门组织 id（plan.functional_org_id，2026-11-17 e2e 缺陷①修复）。
+   *
+   * <p>线级互斥判定需要「在审异动所在线的归口」：条目 entityId（异动指标 id）→
+   * 指标行 → taskId → backendTaskPlanMap（task.plan_id）→ 本映射取归口。
+   * 归口字段读取沿用 collegeScopePlanFunctionalOrgId 的防坑口径——
+   * Number(null) === 0 会把「归口为空」误判成「归口=0」，null/undefined/空串
+   * 一律按无值（存 null），正数才入表。</p>
+   */
+  const planFunctionalOrgIdById = computed(() => {
+    const map = new Map<number, number | null>()
+    for (const plan of planStore.plans as Array<Record<string, unknown>>) {
+      const planId = Number(plan?.id)
+      if (!Number.isFinite(planId) || planId <= 0) {
+        continue
+      }
+      const raw = plan.functionalOrgId ?? plan.functional_org_id
+      if (raw === null || raw === undefined || raw === '') {
+        map.set(planId, null)
+        continue
+      }
+      const functionalOrgId = Number(raw)
+      map.set(planId, Number.isFinite(functionalOrgId) && functionalOrgId > 0 ? functionalOrgId : null)
+    }
+    return map
+  })
+
+  /**
+   * 在审异动条目 → 其异动指标所属线的归口组织 id（判不出返回 null）。
+   *
+   * <p>解析链与 isIndicatorInCollegePlanScope 同源：entityId（后端 indicator.id，
+   * 与表格行 id 同一 id 空间——isEntityMutationInFlight('INDICATOR', row.id) 同款）→
+   * indicatorById 指标行 → getIndicatorTaskId（子指标沿父链回溯 task_id）→
+   * backendTaskPlanMap（task.plan_id）→ planFunctionalOrgIdById（plan 归口）。
+   * TASK 型条目（entityId=任务 id）在指标映射里查不到 → null（按冲突保守处理，
+   * 与既有学院级锁对 TASK 条目的拦截行为一致）。任何一环缺失都返回 null，
+   * 由 lib hasCollegeLineMutationApprovalInFlight 按 fail-safe 收口。</p>
+   */
+  const resolveMutationEntryLineFunctionalOrgId = (
+    entry: CollegeMutationApprovalEntryLike
+  ): number | null => {
+    const indicatorId = Number(entry?.entityId)
+    if (!Number.isFinite(indicatorId) || indicatorId <= 0) {
+      return null
+    }
+    // indicatorById 的键是指标行 id 原始形态（strategic indicator id 为字符串），
+    // 必须按字符串取，数字键会 miss（同 compareCollegeTableRows 的 String() 口径）
+    const row = indicatorById.value.get(String(indicatorId))
+    if (!row) {
+      return null
+    }
+    const taskId = getIndicatorTaskId(row as StrategicIndicator)
+    if (!taskId) {
+      return null
+    }
+    const planId = Number(backendTaskPlanMap.value[taskId] ?? Number.NaN)
+    if (!Number.isFinite(planId) || planId <= 0) {
+      return null
+    }
+    return planFunctionalOrgIdById.value.get(planId) ?? null
+  }
+
+  // 2026-11-17（e2e 缺陷①修复：学院线级互斥，对齐后端 CollegeDispatchGuardService
+  // 2026-11-17 线级收窄）：学院页签「本线」在审异动判定——在审异动所在线的归口
+  // （其 plan.functional_org_id）等于当前选中归口（collegeDispatchDeptOrgId）才算
+  // 冲突；同学院别归口（别线）的异动不再锁本线「导入 / 新增行」。消费方仅学院
+  // 页签两处（StrategicTaskView 的 collegeTabImportDisabledReason 与「新增行」按钮），
+  // 职能页签互斥锁（isMutationApprovalInFlight）与本判定（isCollegeMutationApprovalInFlight
+  // 学院级口径，保留供回退）均不变。归口未选/解析失败时保守回退学院级口径
+  // （宁可多锁）——且该场景下导入/新增行本就被「请先选择职能部门」前置守卫拦下。
+  // 注意 collegeDispatchDeptOrgId 声明在本文件更后位置（学院页签下拉区）——computed
+  // 惰性求值，getter 运行期取值，无 TDZ（同 line 1554/3364 既有取数口径）。
+  const isCollegeLineMutationApprovalInFlight = computed(() =>
+    hasCollegeLineMutationApprovalInFlight({
+      entries: [
+        ...departmentMutationPendingApprovals.value,
+        ...departmentChainMutationPendingApprovals.value
+      ],
+      collegeOrgId: resolveDepartmentIdByName(selectedCollege.value),
+      functionalOrgId: collegeDispatchDeptOrgId.value,
+      resolveEntryFunctionalOrgId: resolveMutationEntryLineFunctionalOrgId
+    })
+  )
+
   // 2026-10-30（多态撤回·异动分支）：工具栏「撤回」在异动在审时是否按「撤回异动」处理。
   // 口径与审批中心异动卡撤回（原 useApprovalProgressWorkflow.canCurrentUserWithdrawMutation）同源：
   // 仅发起人（submitter_name 与当前登录人姓名比对）且未过撤回窗口（当前节点不含
@@ -8998,6 +9084,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     // 2026-11-12（C3-D1）：学院页签退回链补拉 + 学院口径在审异动判定（新增行互斥）
     loadCollegeReturnedMutationChains,
     isCollegeMutationApprovalInFlight,
+    // 2026-11-17（e2e 缺陷①修复）：学院线级在审异动判定（归口维度收窄，导入/新增行）
+    isCollegeLineMutationApprovalInFlight,
     // 2026-11-11（学院页签按钮体系修正）：学院页签按钮按子计划相位分流所需——
     // 生效计划上下文（学院页签 → FUNC_TO_COLLEGE 子计划）与异动在审可撤判定/执行体
     effectivePlanContext,
