@@ -115,3 +115,49 @@ export function isReportReturnedToSubmitter(rawStatus: unknown, currentStepName:
   }
   return String(currentStepName ?? '').includes('填报人提交')
 }
+
+/**
+ * 2026-11-17（e2e 缺陷②修复）：上报「驳回退回待重报（WITHDRAWN 活链）」判定。
+ *
+ * <p>2026-11-17 起驳回落点 = plan_report→DRAFT + audit_instance→WITHDRAWN
+ * （completed_at 为空的重报复活实例，ReportApplicationService.
+ * markWorkflowReturnedForResubmission 保留 report.audit_instance_id 指向它）。
+ * 填报页此前只认「IN_REVIEW 且当前节点=填报人提交」的活链态
+ * （isReportReturnedToSubmitter），WITHDRAWN 活链一律落进「草稿」灰章，
+ * 2026-11-13 定案要求的「退回态可见」缺失。</p>
+ *
+ * <p>口径（与异动侧「退回待重报」横幅同构，参照 returnedMutationChains：
+ * 驳回与发起人撤回都归「退回待重报」）：</p>
+ * <ul>
+ *   <li>当前报告轮已回草稿态（reportStatus=DRAFT，currentPlanReportUiStatus 已把
+ *       原始 DRAFT / 退回待重报等价态归到这里）——有 DRAFT 报告且有对应退回实例；</li>
+ *   <li>实例状态 = WITHDRAWN 且 endTime（completed_at）为空 = 活链（未终结）；</li>
+ *   <li>IN_REVIEW 正常在审 / APPROVED 已通过 / 实例已终结（endTime 非空）/ 摘要缺失
+ *       一律 false——防「正常在审误报退回」「新月份草稿误挂历史退回链」。</li>
+ * </ul>
+ *
+ * <p>重报提交后实例复活为 IN_REVIEW（reactivateWithdrawnStep）→ reportStatus 离开
+ * DRAFT → false（横幅消失）；审批通过 APPROVED → false。纯函数，实现与单测共用。</p>
+ */
+export function isReportReturnedChainAlive(input: {
+  /** 当前报告轮状态（currentPlanReportUiStatus：DRAFT=草稿/退回待重报等价态） */
+  reportStatus: unknown
+  /** 上报实例状态（WorkflowInstanceDetailResponse.status） */
+  instanceStatus: unknown
+  /** 实例终结时间（WorkflowInstanceDetailResponse.endTime；空 = completed_at 为空活链） */
+  instanceEndTime?: unknown
+}): boolean {
+  const reportStatus = String(input.reportStatus ?? '')
+    .trim()
+    .toUpperCase()
+  if (reportStatus !== 'DRAFT') {
+    return false
+  }
+  const instanceStatus = String(input.instanceStatus ?? '')
+    .trim()
+    .toUpperCase()
+  if (instanceStatus !== 'WITHDRAWN') {
+    return false
+  }
+  return String(input.instanceEndTime ?? '').trim() === ''
+}
