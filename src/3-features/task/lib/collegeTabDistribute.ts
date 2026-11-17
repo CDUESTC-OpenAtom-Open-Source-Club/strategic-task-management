@@ -415,6 +415,76 @@ export const hasCollegeMutationApprovalInFlight = (
   return entries.some(entry => Number(entry.targetOrgId) === orgId)
 }
 
+/**
+ * 学院线级在审异动判定条目解析输入（2026-11-17 e2e 缺陷①修复）。
+ *
+ * <p>{@code functionalOrgId} = 学院页签右侧下拉所选**归口部门**组织 id
+ * （model 侧 collegeDispatchDeptOrgId 同源）；{@code resolveEntryFunctionalOrgId}
+ * 由 model 注入——条目 entityId（异动指标 id）→ 指标行 → taskId → task.plan_id
+ * → plan.functional_org_id 的解析链（lib 层零依赖，保持纯函数可单测）。</p>
+ */
+export interface CollegeLineMutationInFlightInput {
+  /** 主清单 + 链下学院追回清单合并后的在审异动条目（与学院级判定同源） */
+  entries: CollegeMutationApprovalEntryLike[]
+  /** 所选学院组织 id（解析失败为 null → 恒 false，与学院级口径一致） */
+  collegeOrgId: number | null
+  /**
+   * 当前选中归口部门组织 id（null/解析失败 = 归口未选 → 保守回退学院级口径，
+   * 宁可多锁、不放行语义模糊）
+   */
+  functionalOrgId: number | null
+  /**
+   * 条目 → 其异动指标所属线（plan.functional_org_id）的归口组织 id；
+   * 判不出（指标/任务/计划在缓存缺失、TASK 型条目等）返回 null → 按冲突处理
+   * （fail-safe：前端缓存缺口不得放松后端可能仍会拦的锁）。
+   */
+  resolveEntryFunctionalOrgId: (entry: CollegeMutationApprovalEntryLike) => number | null
+}
+
+/**
+ * 学院页签「本线」在审异动判定（2026-11-17 e2e 缺陷①修复：互斥锁收窄到线级）。
+ *
+ * <p><b>缺陷</b>：数字校园线（归口 50）异动在审时，同学院教务处线（归口 44）的
+ * 「导入 / 新增行」也被置灰——但后端 {@code CollegeDispatchGuardService}
+ * （2026-11-17 线级收窄）实测放行：在审异动所在线的 {@code plan.functional_org_id}
+ * 必须与目标线归口一致才算冲突。前端只按学院收口，过严。</p>
+ *
+ * <p><b>口径（与后端线级语义对齐）</b>：同学院（targetOrgId 命中）且条目线归口
+ * 等于当前选中归口 → 冲突；别线（他归口）的异动不锁本线入口。</p>
+ *
+ * <p><b>保守边界</b>（前端数据面弱于后端 SQL，宁可多锁）：</p>
+ * <ul>
+ *   <li>归口未选 / 解析不出（functionalOrgId 非法）→ 回退学院级口径
+ *       （hasCollegeMutationApprovalInFlight，现状行为）；</li>
+ *   <li>条目线归口判不出（指标/任务/计划缓存缺失）→ 视为冲突；</li>
+ *   <li>学院 id 解析不出 → 恒 false（与学院级口径一致，锁不放无意义）。</li>
+ * </ul>
+ */
+export const hasCollegeLineMutationApprovalInFlight = (
+  input: CollegeLineMutationInFlightInput
+): boolean => {
+  const collegeOrgId = Number(input.collegeOrgId)
+  if (!Number.isFinite(collegeOrgId) || collegeOrgId <= 0) {
+    return false
+  }
+  const lineOrgId = Number(input.functionalOrgId)
+  // 归口未选/解析失败：保持既有保守行为（学院级口径），不放行语义模糊
+  if (!Number.isFinite(lineOrgId) || lineOrgId <= 0) {
+    return hasCollegeMutationApprovalInFlight(input.entries, collegeOrgId)
+  }
+  return input.entries.some(entry => {
+    if (Number(entry.targetOrgId) !== collegeOrgId) {
+      return false
+    }
+    const entryLineOrgId = Number(input.resolveEntryFunctionalOrgId(entry))
+    // 条目线归口判不出 → 保守按冲突（fail-safe，不因缓存缺口放松互斥）
+    if (!Number.isFinite(entryLineOrgId) || entryLineOrgId <= 0) {
+      return true
+    }
+    return entryLineOrgId === lineOrgId
+  })
+}
+
 /** 学院页签「导入」入口 gating 的输入（2026-11-14 D1 首次下发死锁解锁） */
 export interface CollegeTabImportGateInput {
   /**

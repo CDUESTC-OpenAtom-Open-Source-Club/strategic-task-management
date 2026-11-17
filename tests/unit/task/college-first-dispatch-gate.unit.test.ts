@@ -323,7 +323,10 @@ function createViewModel(overrides: Record<string, unknown> = {}) {
     collegeTabTwoStepReady: ref(true),
     isReportApprovalInFlight: ref(false),
     isMutationApprovalInFlight: ref(false),
+    // 2026-11-17（e2e 缺陷①修复）：视图互斥消费方改读线级口径（学院 × 归口收口），
+    // 学院级 isCollegeMutationApprovalInFlight 保留在 model 供回退、不再被视图消费
     isCollegeMutationApprovalInFlight: ref(false),
+    isCollegeLineMutationApprovalInFlight: ref(false),
     canEdit: ref(true),
     isCurrentPlanUnderApproval: ref(false),
     canWithdrawMutationInFlight: ref(false),
@@ -608,12 +611,12 @@ describe('D1 组件接线 · 计划在审/审批中（互斥拦导入）', () =>
   })
 })
 
-describe('D3 组件接线 · 学院链下异动在审 → 导入置灰（互斥并集）', () => {
-  it('isCollegeMutationApprovalInFlight=true（链下清单口径）→ 导入置灰 + 异动互斥 tooltip', async () => {
+describe('D3 组件接线 · 学院线级异动在审 → 导入置灰（2026-11-17 e2e 缺陷①修复：收窄到线级）', () => {
+  it('本线（同学院同归口）异动在审 → 导入置灰 + 线级互斥 tooltip', async () => {
     const wrapper = mountView({
       collegeSubPlanUnresolved: ref(true),
       effectivePlanContext: ref({ source: 'college', plan: null }),
-      isCollegeMutationApprovalInFlight: ref(true)
+      isCollegeLineMutationApprovalInFlight: ref(true)
     })
     await switchToCollegeTab(wrapper)
 
@@ -621,22 +624,24 @@ describe('D3 组件接线 · 学院链下异动在审 → 导入置灰（互斥�
     expect(importBtn).toBeDefined()
     expect(importBtn!.attributes('disabled')).toBeDefined()
     expect(importBtn!.attributes('title')).toBe(
-      '异动审批进行中，暂不能导入：等审批结束或先撤回/取消本次异动'
+      '当前归口这条线的异动审批进行中，暂不能导入：等审批结束或先撤回/取消本次异动'
     )
     wrapper.unmount()
   })
 
-  it('主清单口径（isMutationApprovalInFlight）不回归：同样置灰（既有 E-1 守卫）', async () => {
+  it('缺陷①回归：他线异动在审只点亮学院级/主清单口径（isMutationApprovalInFlight / isCollegeMutationApprovalInFlight）→ 本线导入不置灰（对齐后端线级放行）', async () => {
     const wrapper = mountView({
       collegeSubPlanUnresolved: ref(true),
       effectivePlanContext: ref({ source: 'college', plan: null }),
-      isMutationApprovalInFlight: ref(true)
+      isMutationApprovalInFlight: ref(true),
+      isCollegeMutationApprovalInFlight: ref(true),
+      isCollegeLineMutationApprovalInFlight: ref(false)
     })
     await switchToCollegeTab(wrapper)
 
     const importBtn = findButtonByText(wrapper, '导入')
     expect(importBtn).toBeDefined()
-    expect(importBtn!.attributes('disabled')).toBeDefined()
+    expect(importBtn!.attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })
 })
