@@ -442,6 +442,8 @@ const {
   taskSpanMetaMap,
   taskTypeMap,
   taskTypeMapLoading,
+  // 2026-11-17 用户反馈第 3.3 条：指标总表滚动区按视口高度自适应（承接 PR #122 @Nerdlet369）
+  taskTableMaxHeight,
   timeContext,
   triggerApprovalForDistribution,
   updateEditTime,
@@ -2432,6 +2434,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   ref="tableRef"
                   :data="indicators"
                   :span-method="getSpanMethod"
+                  :max-height="taskTableMaxHeight"
                   border
                   highlight-current-row
                   class="unified-table"
@@ -3217,6 +3220,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
               <div class="table-container">
                 <el-table
                   :data="collegeTableIndicators"
+                  :max-height="taskTableMaxHeight"
                   border
                   highlight-current-row
                   class="unified-table"

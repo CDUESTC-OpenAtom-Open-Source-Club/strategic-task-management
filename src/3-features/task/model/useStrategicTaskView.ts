@@ -5158,8 +5158,25 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
   }
 
+  /**
+   * 2026-11-17 用户反馈第 3.3 条：指标总表可滚动区域只占半屏（1620×900 下约 10 行），
+   * 一屏看不完全部指标。这里按视口高度给表格算一个上限高度，让滚动区尽量铺满首屏；
+   * 页面整体允许纵向滚动（.strategic-task-container 同步改为自适应高度）。
+   * （承接 PR #122 @Nerdlet369 的表格高度部分）
+   */
+  const taskTableMaxHeight = ref(560)
+
+  function syncTaskTableMaxHeight() {
+    if (typeof window === 'undefined') return
+    // 表格上方还有页头 + 页签导航 + 卡片标题/工具栏/页签/表头，实测约 420px；
+    // 其余高度都给表格，让滚动区正好铺到首屏底部（表头 sticky，页面本身不滚动）
+    taskTableMaxHeight.value = Math.max(360, Math.round(window.innerHeight - 420))
+  }
+
   // 挂载和卸载全局点击监听
   onMounted(async () => {
+    syncTaskTableMaxHeight()
+
     await Promise.all([
       (async () => {
         if (orgStore.departments.length === 0) {
@@ -5193,12 +5210,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       // 2026-10-24 跨窗口数据同步：别人改了哪条指标，本窗就局部刷哪条——
       // 单行拉取 + patch，权重合计 chip 是 computed 会自动重算
       window.addEventListener('indicator-data-changed', handleIndicatorDataChanged as EventListener)
+      window.addEventListener('resize', syncTaskTableMaxHeight)
     }
   })
 
   onUnmounted(() => {
     document.removeEventListener('click', handleGlobalClick, true)
     if (typeof window !== 'undefined') {
+      window.removeEventListener('resize', syncTaskTableMaxHeight)
       window.removeEventListener(
         GLOBAL_DATA_REFRESH_REQUEST_EVENT,
         handleGlobalDataRefreshRequest as EventListener
@@ -9164,6 +9183,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     taskSpanMetaMap,
     taskTypeMap,
     taskTypeMapLoading,
+    taskTableMaxHeight,
     timeContext,
     triggerApprovalForDistribution,
     updateEditTime,
