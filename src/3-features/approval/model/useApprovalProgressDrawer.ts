@@ -24,10 +24,11 @@ import type {
 } from '@/shared/types'
 import { approvalApi } from '@/features/task/api/strategicApi'
 
+// 2026-11-17（全局文案统一）：「延期」→「滞后」，仅改显示文案，接口枚举 DELAYED 不动
 const APPRAISAL_LEVEL_LABELS: Record<string, string> = {
   AHEAD: '超前完成',
   NORMAL: '正常',
-  DELAYED: '延期'
+  DELAYED: '滞后'
 }
 
 export function formatStayDuration(createdAt?: string | null): string {
