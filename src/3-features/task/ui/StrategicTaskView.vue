@@ -139,6 +139,8 @@ const {
   approvalDrawerPlan,
   approvalDrawerPlanName,
   approvalDrawerDepartmentName,
+  // 2026-11-17（学院线粒度改造）：抽屉审批详情的归口部门行数据源（标题保持两段不变）
+  approvalDrawerFunctionalOrgName,
   approvalDrawerWorkflowEntityType,
   approvalDrawerWorkflowEntityId,
   approvalDrawerSecondaryWorkflowEntityType,
@@ -250,6 +252,9 @@ const {
   collegeTableIndicators,
   // 2026-11-09（用户要求）：学院页签右侧「职能部门」下拉筛选器
   collegeDispatchDeptFilter,
+  collegeDispatchDeptEffective,
+  // 2026-11-17（学院线粒度改造）：所选归口部门的组织 ID（导入请求带 functionalOrgId）
+  collegeDispatchDeptOrgId,
   collegeDeptDropdownItems,
   collegeDeptCurrent,
   // 2026-11-09（页签分流）：二级学院页签的「基础性权重合计」（学院口径，分母固定 100）
@@ -585,7 +590,19 @@ const collegeTabDistributeDisabledReason = computed(() => {
 })
 
 /**
- * 2026-11-14（D1 首次下发死锁解锁 + D3 互斥并集）：学院页签「导入」入口的置灰口径。
+ * 2026-11-17（学院线粒度改造）：当前选中的**归口部门**名称（生效值优先，回退下拉原始值）。
+ *
+ * <p>学院页签右侧「请选择职能部门」下拉的生效值 collegeDispatchDeptEffective 是
+ * 归一化后的部门名；归口名称要出现在导入阻断文案与导入弹窗摘要里，这里做一次
+ * 单一取值（避免各消费点各写一份回退链）。</p>
+ */
+const collegeSelectedFunctionalDeptName = computed(
+  () => collegeDispatchDeptEffective?.value || collegeDispatchDeptFilter?.value || ''
+)
+
+/**
+ * 2026-11-14（D1 首次下发死锁解锁 + D3 互斥并集）→ 2026-11-17（学院线粒度改造）：
+ * 学院页签「导入」入口的置灰口径。
  *
  * <p>取代模板里 collegeTabPlanNotDistributed 的整段并入（PR#115 回归：旧口径
  * 「计划非 DISTRIBUTED 一律拦」把**尚无计划**的组合也拦死——而导入本来就是
@@ -594,9 +611,9 @@ const collegeTabDistributeDisabledReason = computed(() => {
  * resolveCollegeTabImportGate（lib 纯函数，与单测共用同一份逻辑）：</p>
  * <ul>
  *   <li>尚无计划 → 放行（导入 = 创建计划并下发）；</li>
- *   <li>已有 DISTRIBUTED 计划 → 放行（既有口径）；</li>
- *   <li>空壳计划（无任何指标行）→ 放行（导入 = 往空计划建行）；</li>
  *   <li>计划在审/审批中 → 拦（互斥）；</li>
+ *   <li>已下发 → <b>拦</b>（2026-11-17：当前归口这条线已下发，后端会拒绝重复导入）；</li>
+ *   <li>空壳计划（无任何指标行）→ 放行（导入 = 往空计划建行）；</li>
  *   <li>草稿/退回且已有行 → 拦（B4 原始缺陷口径保留）。</li>
  * </ul>
  * <p>互斥守卫（D3）与「新增行」同口径并入学院链下清单：学院子指标异动实例
@@ -614,7 +631,16 @@ const collegeTabImportDisabledReason = computed(() => {
     return '请先在左侧选择学院'
   }
   if (!collegeDispatchDeptFilter?.value) {
-    return '请先选择职能部门'
+    // 2026-11-17（学院线粒度改造）：未选归口部门 → 不允许发起导入（导入请求要带
+    // functionalOrgId 才能定位「学院 × 归口」这条线；未选时后端会按学院级口径
+    // 误命中别的归口的线）。文案点名「归口部门」，与上报页「请先选择归属部门」
+    // 的引导范式一致。
+    return '请先选择职能部门（归口部门）：学院子指标表按归口部门分别导入'
+  }
+  // 2026-11-17：选了部门但解析不出组织 ID → 同样不允许发起导入（拿不到
+  // functionalOrgId，后端无法定位线）。此时多半是组织数据未加载/别名未映射。
+  if (!collegeDispatchDeptOrgId?.value) {
+    return `无法解析所选职能部门「${collegeSelectedFunctionalDeptName.value}」：请重新选择归口部门后导入`
   }
   // D3：异动在审互斥（主清单 + 学院链下清单并集，与「新增行」同口径）
   if (
@@ -623,11 +649,14 @@ const collegeTabImportDisabledReason = computed(() => {
   ) {
     return '异动审批进行中，暂不能导入：等审批结束或先撤回/取消本次异动'
   }
-  // D1：计划相位 gating（尚无计划/空壳放行，在审+草稿有行拦）
+  // D1：计划相位 gating（尚无计划/空壳放行，在审+已下发+草稿有行拦）
   return resolveCollegeTabImportGate({
     collegeSubPlanResolved: collegeSubPlanUnresolved?.value !== true,
     collegePlanStatus: collegeTabSubPlanStatus.value,
-    collegePlanHasRows: collegeTableIndicators.value.length > 0
+    collegePlanHasRows: collegeTableIndicators.value.length > 0,
+    // 2026-11-17：阻断文案点名当前归口部门（与后端「该学院 2026 年度的「XX」这条线
+    // 已下发…」同口径）
+    functionalDeptName: collegeSelectedFunctionalDeptName.value
   })
 })
 
@@ -1816,14 +1845,12 @@ const openStrategicImportDialog = () => {
     // 2026-11-09（用户拍板：两步显式选择）：学院已选但未显式选择职能部门时同样阻断。
     // 弹窗内提交链路（BusinessImportDialog）不再二次校验部门选择，且弹窗是模态框、
     // 打开期间部门下拉不可点 —— 所以「打开导入」这一道双条件守卫就是提交的唯一入口闸门。
-    if (!collegeDispatchDeptFilter?.value) {
-      ElMessage.warning('请先选择职能部门')
-      return
-    }
+    // 2026-11-17（学院线粒度改造）：「未选归口部门 / 归口部门解析不出组织 ID / 当前归口
+    // 这条线已下发」等前置与业务条件统一收敛到 collegeTabImportDisabledReason
+    // （按钮置灰与点击兜底单一口径，防键盘/编程式调用绕过置灰）。
     // 2026-11-11（E-1 互斥守卫）→ 2026-11-14（D1/D3）收敛：导入的剩余拦截统一读
     // collegeTabImportDisabledReason（异动在审互斥 = 主清单 + 学院链下清单并集（D3，
-    // 与「新增行」同口径）；计划相位 gating = 尚无计划/空壳放行、在审+草稿有行拦（D1））。
-    // 按钮置灰与点击兜底单一口径，防键盘/编程式调用绕过置灰往在审/未下发计划加行。
+    // 与「新增行」同口径）；计划相位 gating = 尚无计划/空壳放行、在审+已下发+草稿有行拦（D1））。
     const importBlockedReason = collegeTabImportDisabledReason.value
     if (importBlockedReason) {
       ElMessage.warning(importBlockedReason)
@@ -3819,7 +3846,10 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
          2026-11-13（方案甲恢复）：二级学院页签 = distribution（战略部 → 所选学院），
          parent-indicators 恢复传真实 seeds（collegeImportParentIndicators：右侧下拉
          所选部门已接收的已下发核心指标，id 升序）——与原「指标下发与审批」页一致，
-         父级行预填（序号/任务类型/核心指标/核心指标类型/学院），子指标三列留空。 -->
+         父级行预填（序号/任务类型/核心指标/核心指标类型/学院），子指标三列留空。
+         2026-11-17（学院线粒度改造）：学院页签导入按「学院 × 归口部门」定位计划（线），
+         必须把右侧下拉所选归口部门（collegeDispatchDeptOrgId / 生效名）传给弹窗 →
+         弹窗带 functionalOrgId 交给后端定位/新建该线并与文件父级反查交叉校验。 -->
     <BusinessImportDialog
       v-model:visible="strategicImportDialogVisible"
       :type="activeTaskTabName === 'college' ? 'distribution' : 'strategic-task'"
@@ -3831,6 +3861,12 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
       :source-org-name="activeTaskTabName === 'college' ? strategicDeptName : undefined"
       :cycle-id="
         activeTaskTabName === 'college' ? collegeDispatchCycleId : currentStrategicImportCycleId
+      "
+      :functional-org-id="
+        activeTaskTabName === 'college' ? (collegeDispatchDeptOrgId ?? undefined) : undefined
+      "
+      :functional-org-name="
+        activeTaskTabName === 'college' ? collegeDispatchDeptEffective : undefined
       "
       :parent-indicators="
         activeTaskTabName === 'college' ? collegeImportParentIndicators : undefined
@@ -3935,6 +3971,9 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
     <!-- 2026-11-13（学院口径上报审批可见）：学院页签两选齐时 related 前部拼接
          「学院×部门」报告实体（上报 flow4 审批历史），下发 flow6（主锚子计划）不丢；
          职能页签仍为部门计划族实体（零回归） -->
+    <!-- 2026-11-17（学院线粒度改造 · 用户拍板「保持两段，只在详情里带归口」）：
+         functional-org-name 只进「审批流程详情」详情区一行；卡片标题（routeTitle
+         两段「源 -> 目标」）不动，解析不到归口（legacy 空归口）时该行整体不渲染。 -->
     <DistributionApprovalProgressDrawer
       v-model="taskApprovalVisible"
       :indicators="approvalIndicators"
@@ -3942,6 +3981,7 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
       :initial-plan-workflow-detail="preloadedPlanWorkflowDetail"
       :department-name="approvalDrawerDepartmentName"
       :plan-name="approvalDrawerPlanName"
+      :functional-org-name="approvalDrawerFunctionalOrgName"
       :show-plan-approvals="true"
       :show-approval-section="true"
       :workflow-code="PLAN_APPROVAL_HISTORY_WORKFLOW_CODES"
