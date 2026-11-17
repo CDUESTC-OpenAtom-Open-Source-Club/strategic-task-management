@@ -1221,9 +1221,9 @@ function openApprovalCenterFromDashboard() {
       <!-- 三级联动图表区域 -->
 
       <!-- 战略发展部 - 组织级视图 -->
-      <template
-        v-if="currentRole === 'strategic_dept' && dashboardStore.currentOrgLevel === 'strategy'"
-      >
+      <!-- 2026-11-17 修复（领导催办）：流转图点击下钻后整卡被 v-if 隐藏、只能靠面包屑复原——
+           改为下钻后卡片常驻 + 卡头「返回全校视图」按钮（不再藏进面包屑） -->
+      <template v-if="currentRole === 'strategic_dept'">
         <el-row :gutter="16" style="margin-top: 16px">
           <!-- 全校任务流转图 -->
           <el-col :span="24">
@@ -1240,6 +1240,14 @@ function openApprovalCenterFromDashboard() {
                       <el-icon class="help-icon"><QuestionFilled /></el-icon>
                     </el-tooltip>
                   </div>
+                  <el-button
+                    v-if="dashboardStore.currentOrgLevel !== 'strategy'"
+                    type="primary"
+                    size="small"
+                    @click="handleBreadcrumbNavigate(0)"
+                  >
+                    返回全校视图
+                  </el-button>
                 </div>
               </template>
               <TaskSankeyChart
