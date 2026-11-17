@@ -1,40 +1,68 @@
 /* ========================================
    页面容器 - 统一页面布局样式
    Requirements: 2.1, 3.1
+
+   2026-11-17 领导界面优化（截图批注）：「滚动窗口在整个页面的占比太小，
+   竖直拉长整个滚动界面，一次性看到更多指标」。
+
+   高度链与战略任务管理页（StrategicTaskView.css）同构：
+   - 264px = 页头(app-header 92) + 页签导航(tab-nav 52+间距 20) +
+     app-main 上下留白(40) + 页脚(约 46) + 余量，是该页已验证过的同款常量；
+   - 容器占满视口剩余高度后内部不再滚动，表格卡片吃满剩余空间，
+     el-table（height="100%"）内部滚动、表头钉住，一屏可视行数最大化；
+   - 本页面专属规则放本文件，不动共享布局组件——对 AppLayout 里
+     `.content-area { min-height: calc(100vh - 180px) }` 的豁免，
+     复用 AppLayout 为 strategic-task-container 已开先例的 :has() 写法，
+     仅命中本页容器。
    ======================================== */
+:global(.content-area:has(.indicator-list-container)) {
+  min-height: 0;
+}
+
 .indicator-list-container {
-  padding: var(--spacing-2xl);
+  display: flex;
+  flex-direction: column;
+  /* 竖向留白 24→16（横向 24 不动，保持与战略任务管理页的表格对齐宽度），
+     让出来的高度全部给表格滚动区 */
+  padding: var(--spacing-lg) var(--spacing-2xl);
   background: var(--bg-page);
-  min-height: calc(100vh - 120px);
+  height: calc(100vh - 264px);
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* ========================================
    页面头部 - 统一页面头部样式
    Requirements: 5.1, 5.2, 5.3, 5.4
+   2026-11-17 领导批注配套：标题/描述紧凑化，压缩非表格区高度
    ======================================== */
 .page-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: var(--spacing-2xl);
+  margin-bottom: var(--spacing-md);
+  /* 视口高度布局下头部不参与压缩 */
+  flex-shrink: 0;
 }
 
 .header-left {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: baseline;
+  gap: var(--spacing-md);
 }
 
 .page-title {
   margin: 0;
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 600;
   color: var(--text-main);
 }
 
 .page-desc {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--text-secondary);
-  margin-top: var(--spacing-sm);
+  margin-top: 0;
 }
 
 .page-actions {
@@ -49,7 +77,10 @@
 .content-wrapper {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-lg);
+  gap: var(--spacing-md);
+  /* 吃掉页面容器剩余高度，让表格卡片贴住视口底部 */
+  flex: 1;
+  min-height: 0;
 }
 
 /* ========================================
@@ -60,10 +91,13 @@
   background: var(--bg-white);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
+  /* 高度链里保持自然高度，压缩全让给表格 */
+  flex-shrink: 0;
 }
 
 .filter-card .card-body {
-  padding: var(--spacing-lg) var(--spacing-2xl);
+  /* 2026-11-17 领导批注配套：筛选条紧凑化（原 16px 上下留白） */
+  padding: 10px var(--spacing-2xl);
 }
 
 .filter-form {
@@ -110,14 +144,21 @@
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
   overflow: hidden;
+  /* 2026-11-17 领导批注：表格卡片吃满内容区剩余高度（卡片头之外全是表格滚动区） */
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 .table-card .card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: var(--spacing-lg) var(--spacing-2xl);
+  /* 2026-11-17 领导批注配套：卡片头紧凑化（原 16px 上下留白） */
+  padding: 10px var(--spacing-2xl);
   border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
 }
 
 /* 2026-10-29 定案：指标填报页表格宽度与「战略任务管理」页对齐。
@@ -211,14 +252,56 @@
   padding: 0;
 }
 
+/* 卡片体把剩余高度全部让给表格容器（el-table height="100%" 在此容器内滚动） */
+.table-card .card-body.table-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 .table-container {
   width: 100%;
   overflow-x: auto;
+  /* 2026-11-17 领导批注：滚动区竖直拉长——表格容器吃满卡片剩余高度，
+     竖直滚动交给 el-table 内部（表头钉住），容器自身不重复出竖直滚动条 */
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* el-table 以百分比高度吃满 .table-container（height="100%" 属性会把
+   inline style height 落在根元素上；这里只是等值兜底，不改它的内部 flex 结构——
+   Element Plus 自带 .el-table__inner-wrapper { height: 100%; flex column }。 */
+.table-container .unified-table {
+  width: 100%;
+  height: 100%;
+}
+
+/* 加载骨架 / 空状态在高度链里保持自然高度 */
+.loading-state {
+  flex-shrink: 0;
 }
 
 /* 确保表头不换行，列宽自适应 */
 .table-container .unified-table {
   width: 100%;
+}
+
+/* ========================================
+   2026-11-17 领导批注「一次性看到更多指标」：行高密度改造（仅本页）
+   战略任务/核心指标列此前全文换行展示，长任务名一行可撑到 280px+，
+   一屏只能看到两三行。现钳制为最多 3 行省略——完整内容不丢：
+   这两列本就包着 FullTextPanel（悬停右侧弹全文面板，2026-10-19 定案），
+   钳制后悬停仍可看全文。「进度说明」列维持 2026-10-30 完整换行定案不动。
+   ======================================== */
+.table-container .unified-table :deep(.task-content-colored),
+.table-container .unified-table :deep(.indicator-name-text) {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
 }
 
 .table-container .unified-table :deep(.el-table__header) th .cell {
@@ -696,8 +779,23 @@
    响应式适配
    ======================================== */
 @media (max-width: 768px) {
+  /* 窄屏回退：视口高度布局在竖屏小窗里会挤死表格，恢复自然高度整页滚动 */
   .indicator-list-container {
     padding: var(--spacing-lg);
+    height: auto;
+    overflow: visible;
+  }
+
+  .content-wrapper,
+  .table-card,
+  .table-card .card-body.table-body,
+  .table-container {
+    flex: none;
+    min-height: 0;
+  }
+
+  .table-container .unified-table {
+    height: auto;
   }
 
   .page-header {
