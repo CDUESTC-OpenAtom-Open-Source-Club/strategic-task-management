@@ -616,6 +616,10 @@ const findButtonByText = (wrapper: VueWrapper, text: string) =>
 const collegeTabReady = (extra: Record<string, unknown> = {}) => ({
   collegeFillStatusScope: ref(true),
   collegeDispatchDeptFilter: ref('教务处'),
+  // 2026-11-17（学院线粒度改造）：导入门禁要求归口部门可解析出组织 ID（functionalOrgId），
+  // 两选齐的基础 mock 同步补齐（缺省时新分支「无法解析所选职能部门」会误置灰导入）
+  collegeDispatchDeptEffective: ref('教务处'),
+  collegeDispatchDeptOrgId: ref(44),
   selectedCollege: ref('航空学院'),
   collegeDepartmentsScoped: ref(['航空学院']),
   canWithdrawMutationInFlight: ref(false),

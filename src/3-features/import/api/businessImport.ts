@@ -64,6 +64,16 @@ export interface ImportCommitRequest {
   conflictMode: ConflictMode
   autoSubmitAndApprove: boolean
   comment?: string
+  /**
+   * 2026-11-17（学院线粒度改造 · 规格书 4.9①）：归口部门组织 ID（Long，可空=未指定）。
+   *
+   * <p>学院子指标导入按「学院 × 归口部门」定位计划（线）——同一个学院在同一考核年度
+   * 可以有多条归口部门各自的线。字段名由规格书第六节「契约」固定为 {@code functionalOrgId}，
+   * 前端不得改名。缺省（undefined/null）= 未指定，后端回退既有定位口径。</p>
+   *
+   * <p>职能部门指标导入（strategic-task）不涉及归口维度，一律不传该字段。</p>
+   */
+  functionalOrgId?: number | null
 }
 
 export interface ImportWorkflowResult {
@@ -97,6 +107,18 @@ export interface DistributionImportPreviewParams {
   cycleId: number
   targetCollegeOrgId: number
   sourceOrgId?: number
+  /**
+   * 2026-11-17（学院线粒度改造 · 规格书 4.9①）：归口部门组织 ID（Long，可空=未指定）。
+   *
+   * <p>学院子指标表按「学院 × 归口部门」定位计划（线）：同一个学院在同一考核年度可以有
+   * 多条归口部门各自的线，后端据此定位/新建该线并与文件父级反查做**交叉校验**
+   * （跨归口或与所选归口不一致 → 阻断，提示「请按归口部门分别导入」）。
+   * 字段名由规格书第六节「契约」固定为 {@code functionalOrgId}，前端不得改名。</p>
+   *
+   * <p>取值来源：学院页签右侧「请选择职能部门」下拉的生效值（归一化部门名）解析出的
+   * 组织 ID。未选归口部门时不传（undefined）——但前端门禁本就不允许未选归口发起导入。</p>
+   */
+  functionalOrgId?: number | null
   sheetName?: string
 }
 
@@ -104,12 +126,31 @@ function unwrap<T>(response: ApiResponse<T>): T {
   return response.data
 }
 
+/**
+ * 2026-11-17（学院线粒度改造）：上传参数清洗——**剔除 null / undefined 键**。
+ *
+ * <p>{@code apiClient.upload} 会把 additionalData 的每个键原样 {@code String(value)}
+ * 写进 FormData：null → 字符串 "null"、undefined → 字符串 "undefined"，后端
+ * {@code @RequestParam Long xxx} 收到后转换失败直接 400。新增的可选入参
+ * （如归口部门 functionalOrgId）在未指定时必须**整个键不出现**，不能塞空串。</p>
+ */
+const compactUploadParams = (params: Record<string, unknown>): Record<string, unknown> => {
+  const compacted: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(params)) {
+    if (value === null || value === undefined || value === '') {
+      continue
+    }
+    compacted[key] = value
+  }
+  return compacted
+}
+
 export const businessImportApi = {
   async previewStrategicTaskImport(file: File, params: StrategicImportPreviewParams) {
     const response = await apiClient.upload<ApiResponse<ImportPreviewResponse>>(
       '/imports/strategic-tasks/preview',
       file,
-      params as unknown as Record<string, unknown>
+      compactUploadParams(params as unknown as Record<string, unknown>)
     )
     return unwrap(response)
   },
@@ -126,7 +167,7 @@ export const businessImportApi = {
     const response = await apiClient.upload<ApiResponse<ImportPreviewResponse>>(
       '/imports/distribution/preview',
       file,
-      params as unknown as Record<string, unknown>
+      compactUploadParams(params as unknown as Record<string, unknown>)
     )
     return unwrap(response)
   },

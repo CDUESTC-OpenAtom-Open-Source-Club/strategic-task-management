@@ -430,6 +430,12 @@ export interface CollegeTabImportGateInput {
    * 「空壳计划」（存在但没有任何指标行）放行导入：导入就是往空计划里建行。
    */
   collegePlanHasRows: boolean
+  /**
+   * 2026-11-17（学院线粒度改造 · 规格书 4.9② / 用户拍板）：当前选中**归口部门**名称
+   * （学院页签右侧「请选择职能部门」下拉的生效值）。只用于阻断文案点名归口，
+   * 缺省不影响判定结果。
+   */
+  functionalDeptName?: string | null
 }
 
 /** 学院下发审批「在途」状态集（与 resolveCollegeTabDistributeAction 审批中分支同口径） */
@@ -457,15 +463,35 @@ const COLLEGE_PLAN_DISTRIBUTED_STATUSES: readonly string[] = [
  * 学院 × 部门组合也拦死——而导入本来就是「创建计划并下发」的入口（后端
  * findOrCreatePlan 建计划），「发起下发审批」按钮又因计划缺失被 v-if 藏掉 →
  * 新组合的首次下发无路可走（存量已下发组合不受影响，所以只点现成组合的
- * 回归发现不了）。新口径：</p>
+ * 回归发现不了）。</p>
+ *
+ * <p><b>2026-11-17（学院线粒度改造 · 规格书 4.9②）语义变更</b>：后端已把「线」的
+ * 身份收敛为「学院 × 归口部门」，同一条线已下发后**再导入会被后端直接拒绝**
+ * （「该学院 2026 年度的「教务处」这条线已下发…」）。前端门禁此前对 DISTRIBUTED
+ * **放行**，用户点进去白跑一趟选文件流程才吃到后端 400 —— 前后端契约不一致。
+ * 现在口径：<b>当前归口这条线已下发 → 拦</b>，并给出与职能页签点击期同口径的
+ * 友好提示（引导改用「新增行 / 发起异动」），不再让用户去撞后端。</p>
+ *
+ * <p>当前口径（判定顺序 = 命中即返回第一条原因）：</p>
  * <ul>
  *   <li>尚无计划（子计划未解析）→ 放行（导入 = 创建计划并下发）；</li>
- *   <li>已有 DISTRIBUTED 计划 → 放行（既有口径：已下发组合导入走异动审批链）；</li>
- *   <li>空壳计划（存在但没有任何指标行）→ 放行（导入 = 往空计划建行）；</li>
  *   <li>计划在审/审批中（PENDING/IN_REVIEW 等）→ 拦（互斥：审批中的计划不能加行）；</li>
+ *   <li>已下发（DISTRIBUTED/APPROVED/PUBLISHED/ACTIVE）→ <b>拦</b>（该归口的线
+ *       已下发，后端会拒绝重复导入）；</li>
+ *   <li>空壳计划（存在但没有任何指标行）→ 放行（导入 = 往空计划建行）；</li>
  *   <li>已存在、非 DISTRIBUTED 且非空壳（草稿/退回且已有行）→ 拦（B4 原始缺陷
  *       口径保留：未下发计划的存量行集不能再用导入改，先发起下发审批）。</li>
  * </ul>
+ *
+ * <p><b>归口维度是否已能区分</b>：能。门禁入参 {@code collegePlanStatus} 取自
+ * {@code effectivePlanContext.plan.status}，而 effectivePlanContext 的子计划解析
+ * （lib/collegeReportScope.ts 的 resolveCollegeReportPlanScope）在**战略部登录**
+ * 时按 {@code scopeByFunctionalOrg=true} 收口——归口桶（functional_org_id = 当前
+ * 所选部门）优先、无归口字段才走 legacy 兜底桶。因此这里的「已下发」判定天然是
+ * 「当前归口这条线」，不会误伤同学院其他归口的线。职能部门登录不启用归口收口，
+ * 但职能部门本就不能发起学院子指标导入（后端 assertStrategyOrgScope 拦截），
+ * 不构成风险面。</p>
+ *
  * <p>「新增行 / 发起异动」不适用本口径——它们仍按 collegeTabPlanNotDistributed
  * 全量拦（异动前提是计划已下发），见 useStrategicTaskView 的 B4 注释。</p>
  */
@@ -481,9 +507,12 @@ export const resolveCollegeTabImportGate = (input: CollegeTabImportGateInput): s
   if (COLLEGE_PLAN_APPROVAL_IN_FLIGHT_STATUSES.includes(status)) {
     return '该学院×部门的计划审批进行中，暂不能导入：等下发审批结束或先撤回'
   }
-  // 已下发：放行（既有口径，已下发组合导入走异动审批链）
+  // 已下发：拦（2026-11-17 学院线粒度改造）——当前归口这条线已下发，后端会拒绝
+  // 重复导入；前端先给友好提示，不再放行让用户点进去挨后端拒绝。
   if (COLLEGE_PLAN_DISTRIBUTED_STATUSES.includes(status)) {
-    return ''
+    const dept = String(input.functionalDeptName ?? '').trim()
+    const scope = dept ? `「${dept}」` : '所选归口部门'
+    return `该学院×${scope}这条线已下发，不能重复导入：请用表格「新增行」或「发起异动」调整指标`
   }
   // 草稿/退回/未知：空壳放行（导入=建行）；已有行拦（未下发计划的存量行集不能导入改）
   if (input.collegePlanHasRows) {
