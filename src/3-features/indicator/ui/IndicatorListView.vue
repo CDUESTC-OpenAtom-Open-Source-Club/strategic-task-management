@@ -121,6 +121,8 @@ const {
   collegePlanCandidates,
   collegePlanDetailsLoading,
   collegePlanDetailsMap,
+  // 2026-11-18（学院未选归口=行集置空）：空态引导文案
+  collegeFillEmptyHint,
   currentApprovalApproverName,
   currentApprovalCandidateNames,
   currentApprovalFlowName,
@@ -1292,7 +1294,12 @@ const handleExportIndicatorList = async () => {
               </template>
             </el-alert>
 
-            <el-empty :description="shouldShowPlanWarning ? '' : '暂无指标数据'"> </el-empty>
+            <!-- 2026-11-18（学院未选归口=行集置空，用户定案）：学院未选归属部门时
+                 空态显示引导文案（与琥珀描边选择器同范式指路）；其余场景走既有文案 -->
+            <el-empty
+              :description="collegeFillEmptyHint || (shouldShowPlanWarning ? '' : '暂无指标数据')"
+            >
+            </el-empty>
           </div>
         </div>
       </div>

@@ -114,6 +114,7 @@ import {
   mergeCollegeLineRows,
   resolveCollegeAggregateDispatchMonth,
   resolveCollegeLinePlanIdByFunctionalDept,
+  selectCollegeFillRows,
   type CollegePlanLineSource
 } from '@/features/indicator/lib/collegeMultiLineRowset'
 import { canViewReceivedPlanContent as canViewReceivedPlanContentByStatus } from '@/features/indicator/lib/visibility'
@@ -2936,9 +2937,13 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       if (filterType1.value) {
         list = list.filter(i => i.type1 === filterType1.value)
       }
-      // 学院角色：按来源部门筛选（2026-11-05：筛选值与数据对不上时不过滤，避免整页滤空）
+      // 学院角色：行集出口选择器（2026-11-18 用户定案：未选归属部门=行集为空，
+      // 选中归口=只显示该线；与任务管理页「先选学院再选职能部门」口径同构）。
+      // 归属部门下拉选项不受影响（collegeFunctionalDeptRows 仍聚合全部已下发归口）
       if (isSecondaryCollege.value) {
-        list = filterIndicatorsByOwnerDept(list)
+        list = selectCollegeFillRows(list, filterOwnerDept.value, row =>
+          getRowFunctionalDeptName(row)
+        )
       }
 
       // 2026-10-07：等级/说明/附件回显覆盖（草稿明细优先）
@@ -3059,9 +3064,12 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     if (filterType1.value) {
       list = list.filter(i => i.type1 === filterType1.value)
     }
-    // 学院角色：按来源部门筛选（2026-11-05：筛选值与数据对不上时不过滤，避免整页滤空）
+    // 学院角色：行集出口选择器（2026-11-18 用户定案：未选归属部门=行集为空，
+    // 与主分支同口径——详情未加载的回退态同样先选归属部门才显示）
     if (isSecondaryCollege.value) {
-      list = filterIndicatorsByOwnerDept(list)
+      list = selectCollegeFillRows(list, filterOwnerDept.value, row =>
+        getRowFunctionalDeptName(row)
+      )
     }
 
     // 2026-10-28 用户定案：学院端按「核心指标 → 子指标」同序规则排列
@@ -3085,14 +3093,27 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     })
   })
 
+  // 2026-11-18（学院未选归口=行集置空，用户定案）：空态引导文案——
+  // 学院页签未选归属部门时行集为空，空态块用本提示指路（与琥珀描边选择器、
+  // 一键提交置灰 tooltip 同一引导范式）；非学院/已选归口返回空串（走既有文案）
+  const collegeFillEmptyHint = computed(() => {
+    if (!isSecondaryCollege.value) {
+      return ''
+    }
+    return filterOwnerDept.value.trim() ? '' : '请先选择归属部门，再查看对应职能部门的指标'
+  })
+
   // 2026-10-28：学院端「核心指标」列的父指标信息补全。
   // 监听行集合里的 parentIndicatorId，缺哪个拉哪个（接口带缓存，重复切换零开销）。
+  // 2026-11-18（学院未选归口=行集置空）：水合源改用 collegeFunctionalDeptRows
+  // （多线聚合行集，与归属部门下拉选项同源）——行集出口未选归口时为空，
+  // 若仍以 indicators 为源会造成「不选→不水合→选项聚合不出→没法选」死锁。
   const hydrateParentIndicators = async () => {
     if (!isSecondaryCollege.value) {
       return
     }
     const pendingIds = new Set<string>()
-    indicators.value.forEach(item => {
+    collegeFunctionalDeptRows.value.forEach(item => {
       const pid = String(
         (item as { parentIndicatorId?: string | number | null }).parentIndicatorId ?? ''
       ).trim()
@@ -3142,7 +3163,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   watch(
     () => [
       isSecondaryCollege.value,
-      indicators.value
+      // 2026-11-18（学院未选归口=行集置空）：水合源=多线聚合行集（与下拉选项同源），
+      // 不再跟行集出口走——未选归口时也要把全部可见线的父级归口拉齐
+      collegeFunctionalDeptRows.value
         .map(i =>
           String((i as { parentIndicatorId?: string | number | null }).parentIndicatorId ?? '')
         )
@@ -3760,9 +3783,17 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   })
 
   const showPlanBatchActions = computed(() => {
+    // 2026-11-18（学院未选归口=行集置空）：学院分支不再依赖行集出口的行数
+    // （未选归口时 indicators 为空）——只要存在可见线内容就渲染批量操作区，
+    // 让「一键提交/一键撤回」保持置灰+tooltip 的主动引导（复用 2026-11-15 范式）；
+    // 提交按钮的「请先选择归属部门」置灰原因由 resolveReportSubmitLockReason 保证
+    if (isStrategicDept.value || !isCurrentUserReporter.value) {
+      return false
+    }
+    if (isSecondaryCollege.value) {
+      return collegeHasVisibleLineContent.value && Boolean(currentUserPlanId.value)
+    }
     return (
-      !isStrategicDept.value &&
-      isCurrentUserReporter.value &&
       canViewReceivedPlanContent.value &&
       Boolean(currentUserPlanId.value) &&
       indicators.value.length > 0
@@ -6170,6 +6201,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     collegePlanCandidates,
     collegePlanDetailsLoading,
     collegePlanDetailsMap,
+    // 2026-11-18（学院未选归口=行集置空）：空态引导文案
+    collegeFillEmptyHint,
     currentApprovalApproverName,
     currentApprovalCandidateNames,
     currentApprovalFlowName,

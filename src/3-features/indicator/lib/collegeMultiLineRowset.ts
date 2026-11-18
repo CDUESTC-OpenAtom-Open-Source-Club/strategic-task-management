@@ -17,12 +17,15 @@
  * - resolveCollegeAggregateDispatchMonth：多线下发月取 earliest（未选归口时的
  *   填报周期起算月兜底）；
  * - resolveCollegePlanStatusSummary：多线计划状态汇总（全同=单态；不同=mixed，
- *   供「多线汇总」类展示判定）。
+ *   供「多线汇总」类展示判定）；
+ * - selectCollegeFillRows：填报页行集出口选择器（2026-11-18 用户定案：未选归口
+ *   时填报行集为空，选中归口=只显示该线；与「归属部门下拉=全部已下发归口」解耦）。
  *
  * 单测见 __tests__/collegeMultiLineRowset.test.ts。
  */
 
 import { canViewReceivedPlanContent as canViewPlanContentByStatus } from './visibility'
+import { filterRowsByFunctionalDept, type FunctionalDeptRowLike } from './functionalDeptScope'
 
 /** 学院候选计划线的最小字段形状（plan 列表行或详情缓存，弱类型兼容） */
 export interface CollegePlanLineSource {
@@ -182,4 +185,27 @@ export function resolveCollegePlanStatusSummary(
     return { kind: 'single', status: unique[0] ?? null }
   }
   return { kind: 'mixed', status: null }
+}
+
+/**
+ * 填报页行集出口选择器（2026-11-18 用户定案，与任务管理页「先选学院再选职能部门
+ * 才显示」口径同构）：**未选归属部门时填报行集为空**，选中归口后只显示该线行。
+ *
+ * - 未选（空串/undefined/null）→ 空数组（页面走既有空态块 + 琥珀引导选择器）；
+ * - 选中 → 复用 filterRowsByFunctionalDept 既有守卫（归口未解析出的行保留，
+ *   「筛不对不过滤」，避免父级 map 未加载完时整页滤空）；
+ * - 注意与「归属部门下拉选项」解耦：选项=全部已下发线的归口集合
+ *   （本月是否已提交不影响，2026-11-18 用户确认 1），仍由
+ *   aggregateFunctionalDeptOptions(collegeFunctionalDeptRows) 聚合，不受本函数影响。
+ */
+export function selectCollegeFillRows<T extends FunctionalDeptRowLike>(
+  rows: ReadonlyArray<T>,
+  selectedDept: unknown,
+  getRowDeptName: (row: T) => string | null
+): T[] {
+  const selected = String(selectedDept ?? '').trim()
+  if (!selected) {
+    return []
+  }
+  return filterRowsByFunctionalDept(rows, selected, getRowDeptName)
 }

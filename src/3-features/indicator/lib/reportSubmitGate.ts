@@ -55,13 +55,17 @@ export interface ReportSubmitGateInput {
  * 优先级：状态门（只读 → 空列表）→ 归属部门门（2026-11-13）→ 未来月门（2026-11-15）→
  * 草稿态门（2026-11-15）→ 异动锁 → 内容门（自评缺口）。
  * 三门（部门 > 未来月 > 草稿）的相对顺序为 2026-11-15 用户拍板的 tooltip 文案优先级。
+ * 2026-11-18（学院未选归口=行集置空，用户定案）：学院未选归属部门时填报行集为空
+ * （selectCollegeFillRows），空列表门不得抢在部门门之前——否则引导文案从
+ * 「请先选择归属部门」退化为「没有可提交的指标」。仅当部门门不命中
+ * （非学院/已选部门）时空列表门照旧生效。
  */
 export function resolveReportSubmitLockReason(input: ReportSubmitGateInput): string {
   if (input.isReadOnly) {
     return '历史快照为只读状态，暂不能提交上报'
   }
 
-  if (!input.hasIndicators) {
+  if (!input.hasIndicators && input.functionalDeptSelected !== false) {
     return '没有可提交的指标'
   }
 
