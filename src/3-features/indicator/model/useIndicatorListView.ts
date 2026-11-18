@@ -3607,8 +3607,10 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     )
   })
 
-  // 2026-10-07 裁决：/indicators 页面（职能部门）也要看到所属战略任务列，不再隐藏
-  const showStrategicTaskColumn = computed(() => true)
+  // 2026-11-18 用户拍板（外部反馈三问题·学院删列）：学院视角「战略任务」列也不显示
+  // （此前已删核心指标列；子指标纯平铺，无分组列），职能部门/战略部视角照旧显示
+  // （2026-10-07 裁决保留：/indicators 页面职能部门要看所属战略任务列）。
+  const showStrategicTaskColumn = computed(() => !isSecondaryCollege.value)
 
   // 计算单元格合并信息
   const getSpanMethod = ({
@@ -3628,10 +3630,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return { rowspan: 1, colspan: 1 }
     }
 
-    // 只有第 0 列需要合并：按任务名分组（第 0 列=「战略任务」列）。
-    // 2026-11-17（领导二-1）：学院端第 0 列改回「战略任务」列后，学院与非学院同构——
-    // 不再按 parentIndicatorId（父级核心指标）分组，分组上下文统一由任务列承担，
-    // 学院视角不出现职能部门原指标（父级核心指标）的任何内容。
+    // 只有第 0 列需要合并：按任务名分组（第 0 列=「战略任务」列，仅职能部门/战略部视角渲染）。
+    // 2026-11-18 用户拍板（学院删列）：学院视角无「战略任务」列（上方守卫直接返回不合并），
+    // 子指标纯平铺；职能部门/战略部视角保持按 taskContent 合并第 0 列不变。
     if (columnIndex === 0) {
       const groupKeyOf = (item: any) => item?.taskContent || '未关联任务'
       const currentTask = groupKeyOf(row)

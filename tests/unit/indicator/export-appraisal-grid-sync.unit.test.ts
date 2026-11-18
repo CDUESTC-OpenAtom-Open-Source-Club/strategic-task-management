@@ -298,4 +298,12 @@ describe('导出「审核进度」列与网格同源（2026-11-17 领导二-2）
       '导出前应调用 load(导出行 ids) 重查实时等级 context'
     ).toBe(true)
   })
+
+  it('职能部门/战略部视角导出列结构不变：仍含「战略任务」列（2026-11-18 学院删列不影响非学院视角）', async () => {
+    const sheet = await mountAndExportCurrentRange()
+    const headers = ((sheet.columns as ExportColumn[]) ?? []).map(column => column.header)
+
+    expect(headers, '非学院视角导出保留「战略任务」列').toContain('战略任务')
+    expect(headers, '非学院视角导出保留「核心指标」列').toContain('核心指标')
+  })
 })

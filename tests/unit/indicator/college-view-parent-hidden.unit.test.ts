@@ -1,21 +1,27 @@
 import { describe, expect, it, vi } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
 import { ref } from 'vue'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+/** 源码契约锁：巨型 SFC/composable 不整体实例化，直接断言关键源码接线（仓库惯例） */
+const readSource = (relative: string): string =>
+  readFileSync(resolve(process.cwd(), relative), 'utf8')
 
 /**
- * 2026-11-17（领导二-1「二级学院的指标不要出现父指标的内容」）学院视角矩阵契约锁定：
+ * 学院视角矩阵契约锁定：
  *
  * ① 学院视角（isSecondaryCollege=true）：
- *    - 不再渲染学院专属「核心指标」列（此前该列渲染父级核心指标=职能部门原指标的
- *      名称与定性/定量类型，是学院侧唯一的父指标内容露出点）；
- *    - 首列改回既有「战略任务」列（子指标行自带 taskContent），分组上下文由任务列
- *      合并单元格承担（getSpanMethod 同步改为按 taskContent 分组，useIndicatorListView）；
+ *    - 2026-11-17（领导二-1）：不再渲染学院专属「核心指标」列（父级核心指标=职能部门
+ *      原指标的名称与定性/定量类型）；
+ *    - 2026-11-18 用户拍板（外部反馈三问题·学院删列）：「战略任务」列也不显示——
+ *      子指标纯平铺、无分组列，getSpanMethod 学院分支随之不合并（无列即无合并）；
  *    - 「子指标名称」列保留（学院视角 row.name 本就是子指标名）。
  * ② 职能部门/战略部视角（isSecondaryCollege=false）：列结构完全不变——
- *    「战略任务」+「核心指标」（row.name）两列照旧。
+ *    「战略任务」+「核心指标」两列照旧（showStrategicTaskColumn 仅对学院收窄）。
  *
  * 模板里 resolveParentIndicator(row) 调用已全部移除（父指标名/类型不再进入学院模板），
- * 由 export-appraisal-source-contract 源码契约锁兜底断言。
+ * 由 lead-report-batch-fe-contract 源码契约锁兜底断言。
  */
 
 const viewModelOverrides = vi.hoisted(() => ({
@@ -187,16 +193,19 @@ function mountedColumnLabels(wrapper: ReturnType<typeof mountList>): string[] {
   return wrapper.findAll('.col-stub').map(node => node.attributes('data-label') || '')
 }
 
-describe('学院视角不出现父指标内容（2026-11-17 领导二-1）', () => {
-  it('学院视角：渲染「战略任务」「子指标名称」列，不渲染「核心指标」列（父指标内容露出点）', () => {
+describe('学院视角不出现父指标内容（2026-11-17 领导二-1 + 2026-11-18 学院删列）', () => {
+  it('学院视角：渲染「子指标名称」列，不渲染「战略任务」「核心指标」列（子指标纯平铺）', () => {
     viewModelOverrides.list = {
       isSecondaryCollege: true,
+      showStrategicTaskColumn: false,
       resolveParentIndicator: () => ({ name: '职能部门原指标甲', type1: '定量' })
     }
     const wrapper = mountList()
 
     const labels = mountedColumnLabels(wrapper)
-    expect(labels, '学院视角应渲染「战略任务」列（分组上下文承担者）').toContain('战略任务')
+    expect(labels, '学院视角不得渲染「战略任务」列（2026-11-18 用户拍板删列）').not.toContain(
+      '战略任务'
+    )
     expect(labels, '学院视角应渲染「子指标名称」列').toContain('子指标名称')
     expect(labels, '学院视角不得渲染「核心指标」列（父指标=职能部门原指标）').not.toContain(
       '核心指标'
@@ -209,6 +218,7 @@ describe('学院视角不出现父指标内容（2026-11-17 领导二-1）', () 
   it('职能部门视角：列结构不变——「战略任务」「核心指标」两列照旧渲染', () => {
     viewModelOverrides.list = {
       isSecondaryCollege: false,
+      showStrategicTaskColumn: true,
       resolveParentIndicator: () => ({ name: '职能部门原指标甲', type1: '定量' })
     }
     const wrapper = mountList()
@@ -220,5 +230,35 @@ describe('学院视角不出现父指标内容（2026-11-17 领导二-1）', () 
 
     wrapper.unmount()
     viewModelOverrides.list = {}
+  })
+
+  it('源码契约：showStrategicTaskColumn 仅对学院收窄，职能部门/战略部零变化', () => {
+    const viewModelSource = readSource('src/3-features/indicator/model/useIndicatorListView.ts')
+    expect(
+      viewModelSource.includes(
+        'const showStrategicTaskColumn = computed(() => !isSecondaryCollege.value)'
+      ),
+      'showStrategicTaskColumn 必须按视角收窄（学院 false / 职能部门与战略部 true）'
+    ).toBe(true)
+    expect(
+      viewModelSource.includes('if (!showStrategicTaskColumn.value)'),
+      'getSpanMethod 必须保留「无列即无合并」守卫（学院视角不合并）'
+    ).toBe(true)
+  })
+
+  it('源码契约：导出「战略任务」列按视角门控（学院删列 → 导出列同步删除）', () => {
+    const listViewSource = readSource('src/3-features/indicator/ui/IndicatorListView.vue')
+    expect(
+      listViewSource.includes('const showTaskColumn = !isSecondaryCollege.value'),
+      '导出列必须与界面同口径：学院视角不出「战略任务」列（showTaskColumn 门控）'
+    ).toBe(true)
+    expect(
+      listViewSource.includes("header: '战略任务'"),
+      '职能部门/战略部视角导出保留「战略任务」列（视角不变铁律）'
+    ).toBe(true)
+    expect(
+      listViewSource.includes('if (showTaskColumn)'),
+      '跨行合并的 taskSpan 计算必须与任务列同门控（学院视角跳过）'
+    ).toBe(true)
   })
 })
