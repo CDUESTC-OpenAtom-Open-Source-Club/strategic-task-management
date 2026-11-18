@@ -101,6 +101,30 @@ describe('reportSubmitGate 未选归属部门门禁（2026-11-13 口径变更）
         hasIndicators: false,
         functionalDeptSelected: false
       })
+    ).toBe('请先选择归属部门')
+  })
+
+  // 2026-11-18 用户定案（学院未选归口=行集置空）：未选归口时填报行集为空
+  // （selectCollegeFillRows），空列表门让位部门门——置灰引导仍指「先选归属部门」
+  it('学院未选归口 + 行集为空 → 仍是「请先选择归属部门」（空列表门让位部门门）', () => {
+    expect(
+      resolveReportSubmitLockReason({
+        ...passInput,
+        hasIndicators: false,
+        functionalDeptSelected: false
+      })
+    ).toBe('请先选择归属部门')
+
+    // 部门门不命中（非学院/已选）时空列表门照旧生效
+    expect(resolveReportSubmitLockReason({ ...passInput, hasIndicators: false })).toBe(
+      '没有可提交的指标'
+    )
+    expect(
+      resolveReportSubmitLockReason({
+        ...passInput,
+        hasIndicators: false,
+        functionalDeptSelected: true
+      })
     ).toBe('没有可提交的指标')
   })
 })

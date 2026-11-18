@@ -5,6 +5,7 @@ import {
   resolveCollegeAggregateDispatchMonth,
   resolveCollegeLinePlanIdByFunctionalDept,
   resolveCollegePlanStatusSummary,
+  selectCollegeFillRows,
   type CollegeLineRowsRef
 } from '../collegeMultiLineRowset'
 
@@ -148,5 +149,53 @@ describe('resolveCollegePlanStatusSummary', () => {
       kind: 'none',
       status: null
     })
+  })
+})
+
+// 2026-11-18 用户定案（未选归口=填报行集为空）：与任务管理页「先选学院再选职能部门
+// 才显示」口径同构。归属部门下拉选项与提交态无关（确认 1），由
+// aggregateFunctionalDeptOptions 聚合全部已下发归口，与行集出口解耦——见
+// functionalDeptScope.unit.test.ts 的选项聚合用例。
+describe('selectCollegeFillRows（填报页行集出口选择器）', () => {
+  interface Row {
+    id: string
+    parentIndicatorId?: string | null
+  }
+  const getRowDeptName = (row: Row): string | null => {
+    if (row.parentIndicatorId === '2005') return '教务处'
+    if (row.parentIndicatorId === '2029') return '数字校园建设办公室'
+    return null
+  }
+  // 多线聚合行集（两线 4 条 + 1 条父级未解析的守卫行）
+  const aggregatedRows: Row[] = [
+    { id: '2072', parentIndicatorId: '2005' },
+    { id: '2073', parentIndicatorId: '2005' },
+    { id: '2074', parentIndicatorId: '2029' },
+    { id: '2075', parentIndicatorId: '2029' },
+    { id: '9999' }
+  ]
+
+  it('未选归口（空串/undefined/null/空白）→ 行集为空', () => {
+    expect(selectCollegeFillRows(aggregatedRows, '', getRowDeptName)).toEqual([])
+    expect(selectCollegeFillRows(aggregatedRows, undefined, getRowDeptName)).toEqual([])
+    expect(selectCollegeFillRows(aggregatedRows, null, getRowDeptName)).toEqual([])
+    expect(selectCollegeFillRows(aggregatedRows, '   ', getRowDeptName)).toEqual([])
+  })
+
+  it('选中教务处 → 只显示教务处线（其它线行被滤掉）；选中数字校园 → 只显示数字校园线', () => {
+    const jiaowu = selectCollegeFillRows(aggregatedRows, '教务处', getRowDeptName)
+    expect(jiaowu.map(row => row.id)).toEqual(['2072', '2073', '9999'])
+    expect(jiaowu.map(row => row.id)).not.toContain('2074')
+    expect(jiaowu.map(row => row.id)).not.toContain('2075')
+
+    const shuzi = selectCollegeFillRows(aggregatedRows, '数字校园建设办公室', getRowDeptName)
+    expect(shuzi.map(row => row.id)).toEqual(['2074', '2075', '9999'])
+    expect(shuzi.map(row => row.id)).not.toContain('2072')
+    expect(shuzi.map(row => row.id)).not.toContain('2073')
+  })
+
+  it('选中归口时父级未解析的守卫行保留（复用「筛不对不过滤」，不误删）', () => {
+    const guarded = selectCollegeFillRows(aggregatedRows, '教务处', getRowDeptName)
+    expect(guarded.map(row => row.id)).toContain('9999')
   })
 })
