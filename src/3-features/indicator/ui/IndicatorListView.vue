@@ -121,6 +121,8 @@ const {
   collegePlanCandidates,
   collegePlanDetailsLoading,
   collegePlanDetailsMap,
+  // 2026-11-18（学院未选归口=行集置空）：空态引导文案
+  collegeFillEmptyHint,
   currentApprovalApproverName,
   currentApprovalCandidateNames,
   currentApprovalFlowName,
@@ -353,26 +355,34 @@ const buildIndicatorListExportColumns = (
   rows: StrategicIndicator[],
   summaryMap: IndicatorAttachmentSummaryMap | null
 ): ExcelExportColumn<StrategicIndicator>[] => {
+  // 2026-11-18 用户拍板（学院删列）：学院视角不显示「战略任务」列（与界面一致），
+  // 导出也不出该列——无列即无跨行合并；职能部门/战略部视角导出保留任务列与合并逻辑。
+  const showTaskColumn = !isSecondaryCollege.value
   const taskSpanByIndex = new Map<number, number>()
-  rows.forEach((row, index) => {
-    const key = row.taskContent || '-'
-    const prevKey = index > 0 ? rows[index - 1].taskContent || '-' : null
-    if (prevKey === key) {
-      taskSpanByIndex.set(index, 0)
-      return
-    }
-    let end = index + 1
-    while (end < rows.length && (rows[end].taskContent || '-') === key) {
-      end += 1
-    }
-    taskSpanByIndex.set(index, end - index)
-  })
+  if (showTaskColumn) {
+    rows.forEach((row, index) => {
+      const key = row.taskContent || '-'
+      const prevKey = index > 0 ? rows[index - 1].taskContent || '-' : null
+      if (prevKey === key) {
+        taskSpanByIndex.set(index, 0)
+        return
+      }
+      let end = index + 1
+      while (end < rows.length && (rows[end].taskContent || '-') === key) {
+        end += 1
+      }
+      taskSpanByIndex.set(index, end - index)
+    })
+  }
 
-  return [
+  const columns: ExcelExportColumn<StrategicIndicator>[] = [
     { header: '序号', width: 8, align: 'center', getValue: (_row, index) => index + 1 },
     { header: '来源部门', width: 18, getValue: row => row.ownerDept || '-' },
-    { header: '责任部门', width: 18, getValue: row => row.responsibleDept || '-' },
-    {
+    { header: '责任部门', width: 18, getValue: row => row.responsibleDept || '-' }
+  ]
+
+  if (showTaskColumn) {
+    columns.push({
       header: '战略任务',
       width: 28,
       getValue: (row, index) => {
@@ -387,7 +397,10 @@ const buildIndicatorListExportColumns = (
         }
         return text
       }
-    },
+    })
+  }
+
+  columns.push(
     // 2026-11-17（领导二-1）：学院视角该列装的是子指标名（row.name），表头与网格一致改
     // 「子指标名称」——学院侧材料不再出现「核心指标」（职能部门原指标）字样
     {
@@ -442,7 +455,9 @@ const buildIndicatorListExportColumns = (
           resolveVisibleAttachments(summaryMap, row.id, () => resolveIndicatorAttachmentItems(row))
         )
     }
-  ]
+  )
+
+  return columns
 }
 
 const getIndicatorListExportRows = (): StrategicIndicator[] => {
@@ -1019,9 +1034,9 @@ const handleExportIndicatorList = async () => {
               <!-- 2026-10-28 华年定案：三个页面列宽/顺序必须与「战略任务管理」页面完全一致。
                    战略任务列改为与基准页相同的固定宽度（140），核心指标列取基准页的 min-width（210），
                    剩余宽度由核心指标列吃掉，表格仍铺满容器。取值统一在 TASK_TABLE_COLUMN_WIDTH。 -->
-              <!-- 2026-11-17（领导二-1）学院端也显示战略任务列：子指标行自带 taskContent，
-                   分组上下文由既有「战略任务」列承担；学院不再展示职能部门原指标（父级核心指标）
-                   的名称/类型（原学院专属「核心指标」列已删除，见领导口径）。 -->
+              <!-- 2026-11-18 用户拍板（外部反馈三问题·学院删列）：学院视角「战略任务」列也不显示
+                   （此前已删核心指标列，子指标纯平铺、无分组列，getSpanMethod 学院分支随之不合并）；
+                   职能部门/战略部视角零变化（showStrategicTaskColumn 仅对学院收窄）。 -->
               <el-table-column
                 v-if="showStrategicTaskColumn"
                 prop="taskContent"
@@ -1292,7 +1307,12 @@ const handleExportIndicatorList = async () => {
               </template>
             </el-alert>
 
-            <el-empty :description="shouldShowPlanWarning ? '' : '暂无指标数据'"> </el-empty>
+            <!-- 2026-11-18（学院未选归口=行集置空，用户定案）：学院未选归属部门时
+                 空态显示引导文案（与琥珀描边选择器同范式指路）；其余场景走既有文案 -->
+            <el-empty
+              :description="collegeFillEmptyHint || (shouldShowPlanWarning ? '' : '暂无指标数据')"
+            >
+            </el-empty>
           </div>
         </div>
       </div>

@@ -40,6 +40,8 @@ const {
   benchmarkChartRef,
   benchmarkSectionRef,
   benchmarkData,
+  benchmarkChartHasData,
+  benchmarkChartEmptyText,
   canViewAllDepartments,
   collegeBarData,
   collegeChartHasData,
@@ -69,7 +71,6 @@ const {
   filteredDeptIndicators,
   filteredMonthIndicators,
   getCollegeRankingData,
-  getDeptStatsAtMonth,
   getIndicatorStatus,
   getStatusClass,
   getStatusText,
@@ -302,9 +303,7 @@ function openApprovalCenterFromDashboard() {
                  2026-11-17 起数据来自月报鉴定（appraisal 优先 self），审核完成后随看板同步刷新 -->
             <template v-if="(collegeSupervision.delayed ?? 0) > 0">
               其中
-              <span class="highlight-danger"
-                >{{ collegeSupervision.delayed }} 项</span
-              >
+              <span class="highlight-danger">{{ collegeSupervision.delayed }} 项</span>
               已鉴定为滞后。
             </template>
             <template v-else> 暂无滞后鉴定。 </template>
@@ -448,7 +447,18 @@ function openApprovalCenterFromDashboard() {
                 </div>
               </div>
             </template>
-            <div ref="benchmarkChartRef" class="benchmark-chart"></div>
+            <!-- 2026-11-18（PR #127 评审意见 A）：鉴定汇总接口失败/无数据时展示空态占位，
+                 不再画与鉴定无关的启发式柱（配合 loadAppraisalSummary 的错误提示） -->
+            <div
+              v-show="benchmarkChartHasData"
+              ref="benchmarkChartRef"
+              class="benchmark-chart"
+            ></div>
+            <el-empty
+              v-if="!benchmarkChartHasData"
+              :description="benchmarkChartEmptyText"
+              :image-size="80"
+            />
           </el-card>
         </div>
 
@@ -1182,7 +1192,13 @@ function openApprovalCenterFromDashboard() {
             >
           </div>
         </template>
-        <el-table v-loading="delayedTasksLoading" :data="delayedTasks" style="width: 100%" :show-header="true" class="task-table">
+        <el-table
+          v-loading="delayedTasksLoading"
+          :data="delayedTasks"
+          style="width: 100%"
+          :show-header="true"
+          class="task-table"
+        >
           <el-table-column label="战略任务内容" min-width="240">
             <template #default="{ row }">
               <div class="task-name-primary">{{ row.name }}</div>

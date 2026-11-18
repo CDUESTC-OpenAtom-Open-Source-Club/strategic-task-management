@@ -24,6 +24,16 @@ import type { DashboardData, DepartmentProgress, AlertSummary } from '@/shared/t
 //        self_rating 兜底三档 ④手动预警等级（alert_event/manualAlertSeverity）退出看板统计
 // ============================================================================
 
+/**
+ * 月份快照状态（2026-11-18 按月快照口径，后端契约字段，禁止改名）。
+ *
+ * 只有 APPROVED 月份出鉴定值；IN_REVIEW=该月上报仍在审批中、NOT_REPORTED=该月未填报，
+ * 两种状态下前端一律置灰显示（#C0C4CC 灰柱 + tooltip 状态说明），不画鉴定柱。
+ * 字段缺省（后端未合并 month-snapshot 分支时）按 reported 兜底：
+ * reported=false → NOT_REPORTED，否则视为 APPROVED（兼容旧响应）。
+ */
+export type DashboardMonthState = 'APPROVED' | 'IN_REVIEW' | 'NOT_REPORTED'
+
 /** 单个学院的上报等级统计（GET /api/v1/dashboard/college-levels 行结构） */
 export interface DashboardCollegeLevelStat {
   /** 学院组织 ID */
@@ -46,12 +56,16 @@ export interface DashboardCollegeLevelStat {
   undispatchedCount?: number
   /** 未填报标记：false=当月无已提交/已审批月报（灰柱督办），true=已填报 */
   reported?: boolean
+  /** 该学院该月的快照状态（按月快照口径；缺省按 reported 兜底） */
+  monthState?: DashboardMonthState
 }
 
 /** GET /api/v1/dashboard/college-levels?year=&month= 响应 */
 export interface DashboardCollegeLevelsResponse {
   year: number
   month: number
+  /** 选中月份的全校快照状态（按月快照口径；缺省按 colleges 行内 reported 兜底） */
+  monthState?: DashboardMonthState
   /** 学院列表（当年有指标 ∪ 当月已上报；未填报学院 reported=false） */
   colleges: DashboardCollegeLevelStat[]
 }
@@ -59,6 +73,8 @@ export interface DashboardCollegeLevelsResponse {
 /** 趋势接口的单月结构 */
 export interface DashboardCollegeLevelsMonth {
   month: number
+  /** 该月全校快照状态（按月快照口径；缺省按 colleges 行内 reported 兜底） */
+  monthState?: DashboardMonthState
   /** 学院列表（含未填报学院 reported=false） */
   colleges: DashboardCollegeLevelStat[]
 }
@@ -75,9 +91,9 @@ export interface DashboardDelayedIndicatorItem {
   indicatorId: number
   /** 指标描述 */
   indicatorName: string | null
-  /** 责任学院组织 ID */
+  /** 责任单位组织 ID（2026-11-18 滞后清单扩全量后含职能部门，语义由「责任学院」放宽为「责任单位」） */
   orgId: number
-  /** 责任学院名称 */
+  /** 责任单位名称（学院或职能部门） */
   orgName: string
   /** 来源职能部门名称（可能为空） */
   ownerOrgName: string | null
@@ -116,12 +132,20 @@ export interface DashboardDepartmentLevelStat {
   delayed: number
   /** 总计（ahead + normal + delayed） */
   total: number
+  /** 未填报标记：false=该部门当月未填报（灰柱督办）；缺省视为已填报 */
+  reported?: boolean
+  /** 该部门该月的快照状态（按月快照口径；缺省按 reported 兜底） */
+  monthState?: DashboardMonthState
+  /** 该部门当年已下发指标数（非 APPROVED 月份灰柱高度数据源；缺省灰柱不出高度） */
+  dispatchedCount?: number
 }
 
 /** 部门等级月度快照（下钻趋势用） */
 export interface DashboardDepartmentLevelMonth {
   /** 月份（1-12） */
   month: number
+  /** 该月全校快照状态（按月快照口径；缺省按 departments 行内 reported 兜底） */
+  monthState?: DashboardMonthState
   /** 该月截止口径下的部门分布 */
   departments: DashboardDepartmentLevelStat[]
 }
@@ -132,7 +156,9 @@ export interface DashboardAppraisalSummaryResponse {
   month: number
   /** 该年度最近一个有鉴定数据的月份（0 表示该年度无鉴定数据） */
   latestMonth: number
-  /** 选中月份的部门分布（含「最近一次鉴定」口径，未上报部门沿用上次结论） */
+  /** 选中月份的全校快照状态（按月快照口径；缺省按 departments 行内 reported 兜底） */
+  monthState?: DashboardMonthState
+  /** 选中月份的部门分布（按月快照口径，只有 APPROVED 月份出鉴定值） */
   departments: DashboardDepartmentLevelStat[]
   /** 1..选中月份的月度快照 */
   departmentMonths: DashboardDepartmentLevelMonth[]

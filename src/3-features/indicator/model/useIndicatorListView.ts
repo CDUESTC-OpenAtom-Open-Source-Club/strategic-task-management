@@ -109,6 +109,14 @@ import {
   isCollegePlanCandidate,
   resolveCollegePlanSourceDept
 } from '@/features/indicator/lib/collegePlanModule'
+import {
+  buildCollegePlanLineSnapshots,
+  mergeCollegeLineRows,
+  resolveCollegeAggregateDispatchMonth,
+  resolveCollegeLinePlanIdByFunctionalDept,
+  selectCollegeFillRows,
+  type CollegePlanLineSource
+} from '@/features/indicator/lib/collegeMultiLineRowset'
 import { canViewReceivedPlanContent as canViewReceivedPlanContentByStatus } from '@/features/indicator/lib/visibility'
 import {
   PROGRESS_APPROVAL_STATUS_VALUES,
@@ -1152,6 +1160,274 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   // 声明之后统一收口——watch 注册即求值 source，放本处会在 setup 期触发
   // collegeFunctionalDeptRows → hasCurrentUserPlan 的 TDZ，见下方实现区注释。）
 
+  const currentViewingOrgId = computed(() => {
+    const viewingDept = effectiveViewingDept.value || authStore.userDepartment || ''
+    if (!viewingDept) {
+      const rawUserOrgId = Number(authStore.user?.orgId ?? NaN)
+      return Number.isFinite(rawUserOrgId) && rawUserOrgId > 0 ? rawUserOrgId : null
+    }
+
+    const matchedDepartment = orgStore.getDepartmentByName(viewingDept)
+    const matchedOrgId = Number(matchedDepartment?.id ?? NaN)
+    if (Number.isFinite(matchedOrgId) && matchedOrgId > 0) {
+      return matchedOrgId
+    }
+
+    const rawUserOrgId = Number(authStore.user?.orgId ?? NaN)
+    return Number.isFinite(rawUserOrgId) && rawUserOrgId > 0 ? rawUserOrgId : null
+  })
+
+  /**
+   * 2026-11-18（学院×多线填报修复）：单条计划源 → 标准化行集的映射抽成可复用函数。
+   * - 职能部门/战略部视角 = 当前计划（currentPlanDetails）一次映射（行为零变化红线）；
+   * - 学院视角 = 逐条可见线各映射一次后合并（collegePlanLineRowsets → collegeAggregatedIndicators）。
+   * 仅做「计划明细 × store 标准化行」合并 + 视角过滤，不含上报摘要合并
+   * （摘要按线生效，仍在 currentPlanIndicators 学院分支收口）。
+   */
+  function mapPlanSourceIndicators(
+    planSource: Plan | Record<string, unknown> | null | undefined,
+    options: { canViewGate?: boolean } = {}
+  ): StrategicIndicator[] {
+    const plan = planSource as { indicators?: unknown[] } | null
+    if (!plan || !plan.indicators) {
+      return []
+    }
+
+    const storeIndicatorMap = new Map(
+      strategicStore.indicators.map(indicator => [String(indicator.id), indicator] as const)
+    )
+
+    // Plan 详情接口字段仍然偏瘦，这里优先复用 strategicStore 已标准化的数据，
+    // 再用当前 plan 明细里的实时字段覆盖，避免任务名等字段被硬编码丢失。
+    const mappedIndicators = plan.indicators.map((ind: any) => {
+      const source = ind && typeof ind === 'object' ? (ind as Record<string, unknown>) : {}
+      const indicatorId = String(source.id ?? source.indicatorId ?? '')
+      const storeIndicator = indicatorId ? storeIndicatorMap.get(indicatorId) : undefined
+      const progress = getPlanIndicatorOptionalNumber(source, 'progress')
+      const weight = getPlanIndicatorOptionalNumber(source, 'weightPercent', 'weight')
+      const reportProgress = getPlanIndicatorOptionalNumber(
+        source,
+        'reportProgress',
+        'report_progress'
+      )
+      const pendingProgress = getPlanIndicatorOptionalNumber(
+        source,
+        'pendingProgress',
+        'pending_progress'
+      )
+      const pendingRemark = getPlanIndicatorText(source, 'pendingRemark', 'pending_remark')
+      const pendingAttachments = getPlanIndicatorAttachments(source)
+      const currentReportId = getPlanIndicatorOptionalNumber(
+        source,
+        'currentReportId',
+        'current_report_id'
+      )
+      const pendingAttachmentDetails =
+        Array.isArray(source.pendingAttachmentDetails) && source.pendingAttachmentDetails.length > 0
+          ? (source.pendingAttachmentDetails as Attachment[])
+          : ((storeIndicator as StrategicIndicator & { pendingAttachmentDetails?: Attachment[] })
+              ?.pendingAttachmentDetails ?? [])
+      const sourceApprovalStatus = getPlanIndicatorText(
+        source,
+        'progressApprovalStatus',
+        'progress_approval_status'
+      )
+
+      const normalizedIndicator = {
+        ...(storeIndicator || {}),
+        id: indicatorId || storeIndicator?.id || String(Date.now()),
+        name: getPlanIndicatorText(source, 'indicatorName', 'name') || storeIndicator?.name || '',
+        indicator_desc:
+          getPlanIndicatorText(source, 'indicatorDesc', 'description') ||
+          (storeIndicator as StrategicIndicator & { indicator_desc?: string })?.indicator_desc ||
+          '',
+        description:
+          getPlanIndicatorText(source, 'indicatorDesc', 'description') ||
+          (storeIndicator as StrategicIndicator & { description?: string })?.description ||
+          '',
+        progress: progress ?? storeIndicator?.progress ?? 0,
+        weight: weight ?? storeIndicator?.weight ?? 0,
+        type1:
+          (getPlanIndicatorText(
+            source,
+            'type1',
+            'indicatorType',
+            'indicatorType1'
+          ) as StrategicIndicator['type1']) ||
+          storeIndicator?.type1 ||
+          '定量',
+        type2: resolveIndicatorType2(source.taskType, storeIndicator?.type2 || '其他'),
+        status: (getPlanIndicatorText(source, 'status').toUpperCase() ||
+          storeIndicator?.status ||
+          'ACTIVE') as StrategicIndicator['status'],
+        isStrategic: storeIndicator?.isStrategic ?? true,
+        year: Number(source.year) || storeIndicator?.year || timeContext.currentYear,
+        ownerDept:
+          getPlanIndicatorText(source, 'ownerOrgName', 'ownerDept') ||
+          storeIndicator?.ownerDept ||
+          '战略发展部',
+        responsibleDept:
+          getPlanIndicatorText(source, 'targetOrgName', 'responsibleDept') ||
+          storeIndicator?.responsibleDept ||
+          effectiveViewingDept.value ||
+          authStore.userDepartment ||
+          '',
+        taskContent:
+          getPlanIndicatorText(source, 'taskName', 'taskContent') ||
+          storeIndicator?.taskContent ||
+          '',
+        remark: getPlanIndicatorText(source, 'remark') || storeIndicator?.remark || '',
+        progressApprovalStatus: sourceApprovalStatus
+          ? getSafeApprovalStatus(sourceApprovalStatus)
+          : getSafeApprovalStatus(storeIndicator?.progressApprovalStatus),
+        pendingProgress: pendingProgress ?? storeIndicator?.pendingProgress ?? null,
+        pendingRemark: pendingRemark || storeIndicator?.pendingRemark || null,
+        pendingAttachments: pendingAttachments ?? storeIndicator?.pendingAttachments ?? [],
+        pendingAttachmentDetails,
+        createdAt:
+          getPlanIndicatorText(source, 'createdAt') ||
+          (storeIndicator as StrategicIndicator & { createdAt?: string })?.createdAt ||
+          '',
+        updatedAt:
+          getPlanIndicatorText(source, 'updatedAt') ||
+          (storeIndicator as StrategicIndicator & { updatedAt?: string })?.updatedAt ||
+          ''
+      } as StrategicIndicator & {
+        reportProgress?: number | null
+        targetOrgId?: number
+        ownerOrgId?: number
+        targetOrgName?: string
+        ownerOrgName?: string
+      }
+
+      if (reportProgress !== undefined) {
+        normalizedIndicator.reportProgress = reportProgress
+      } else if (
+        (storeIndicator as (StrategicIndicator & { reportProgress?: number | null }) | undefined)
+          ?.reportProgress !== undefined
+      ) {
+        normalizedIndicator.reportProgress = (
+          storeIndicator as StrategicIndicator & { reportProgress?: number | null }
+        ).reportProgress
+      }
+
+      const targetOrgId =
+        getPlanIndicatorNumber(source, 'targetOrgId', 'target_org_id') ||
+        Number(
+          (storeIndicator as StrategicIndicator & { targetOrgId?: number | string })?.targetOrgId ??
+            0
+        )
+      if (Number.isFinite(targetOrgId) && targetOrgId > 0) {
+        normalizedIndicator.targetOrgId = targetOrgId
+      }
+
+      const ownerOrgId =
+        getPlanIndicatorNumber(source, 'ownerOrgId', 'owner_org_id') ||
+        Number(
+          (storeIndicator as StrategicIndicator & { ownerOrgId?: number | string })?.ownerOrgId ?? 0
+        )
+      if (Number.isFinite(ownerOrgId) && ownerOrgId > 0) {
+        normalizedIndicator.ownerOrgId = ownerOrgId
+      }
+
+      if (currentReportId !== undefined) {
+        ;(
+          normalizedIndicator as StrategicIndicator & { currentReportId?: number | null }
+        ).currentReportId = currentReportId
+      } else if (
+        (storeIndicator as (StrategicIndicator & { currentReportId?: number | null }) | undefined)
+          ?.currentReportId !== undefined
+      ) {
+        ;(
+          normalizedIndicator as StrategicIndicator & { currentReportId?: number | null }
+        ).currentReportId = (
+          storeIndicator as StrategicIndicator & { currentReportId?: number | null }
+        ).currentReportId
+      }
+
+      const targetOrgName = getPlanIndicatorText(source, 'targetOrgName', 'target_org_name')
+      if (targetOrgName) {
+        normalizedIndicator.targetOrgName = targetOrgName
+      }
+
+      const ownerOrgName = getPlanIndicatorText(source, 'ownerOrgName', 'owner_org_name')
+      if (ownerOrgName) {
+        normalizedIndicator.ownerOrgName = ownerOrgName
+      }
+
+      return normalizedIndicator
+    })
+
+    // 视角过滤：门禁可按线注入（学院多线逐线判定）；缺省=既有单计划口径
+    // canViewReceivedPlanContent（= filterIndicatorsForCurrentViewer 的原行为）
+    const viewerRole = isStrategicDept.value
+      ? 'strategic_dept'
+      : isSecondaryCollege.value
+        ? 'secondary_college'
+        : 'functional_dept'
+    const canViewGate = options.canViewGate ?? canViewReceivedPlanContent.value
+    return filterIndicatorsForViewerRole(
+      mappedIndicators,
+      viewerRole,
+      currentViewingOrgId.value,
+      canViewGate
+    )
+  }
+
+  // ============================================================================
+  // 2026-11-18（学院×多线填报修复）：候选计划的「逐线快照 + 多线聚合行集」。
+  // 根因：原 selectedCollegePlan 在 collegePlanCandidates 里 find 只取第一条线 →
+  // 多归口线（多个 FUNC_TO_COLLEGE plan）时填报页行集/归属部门下拉只剩第一条线
+  // （2026-11-18 复现报告 B1/B2）。修复口径：
+  // - 行集基座 = 全部可见线子指标合并（每线沿用既有可见性口径
+  //   canViewReceivedPlanContentByStatus(线状态, false)，非 DISTRIBUTED 线不贡献行）；
+  // - 单线计划上下文（selectedCollegePlan → currentUserPlan → currentPlanDetails，
+  //   详情/摘要/工作流/提交撤回链）保留，升级为「按所选归属部门绑定所在线」
+  //   ——见下方 selectedCollegePlan（行级归口透传）。
+  // 本区块声明顺序约束：必须位于 collegePlanCandidates / currentViewingOrgId 之后，
+  // 且早于 selectedCollegePlan（其 getter 会读 collegePlanLineRowsets，
+  // 经 watch(currentUserPlanId, {immediate}) 在 setup 期同步求值——TDZ 约束与
+  // 上方 2026-11-13 收口注释同款）。
+  // ============================================================================
+  const collegePlanLineSnapshots = computed(() =>
+    buildCollegePlanLineSnapshots(
+      collegePlanCandidates.value as CollegePlanLineSource[],
+      collegePlanDetailsMap.value as Record<string, CollegePlanLineSource | undefined>
+    )
+  )
+
+  // 逐线行集：可见线各自映射（线内过滤用本线「已可见」门禁），不可见线不贡献行
+  const collegePlanLineRowsets = computed<Array<{ planId: string; rows: StrategicIndicator[] }>>(
+    () => {
+      if (!isSecondaryCollege.value) {
+        return []
+      }
+      return collegePlanCandidates.value.map(plan => {
+        const planId = String(plan.id)
+        const snapshot = collegePlanLineSnapshots.value.find(line => line.planId === planId)
+        if (!snapshot?.visible) {
+          return { planId, rows: [] as StrategicIndicator[] }
+        }
+        const detail = collegePlanDetailsMap.value[planId] || plan
+        return { planId, rows: mapPlanSourceIndicators(detail as Plan, { canViewGate: true }) }
+      })
+    }
+  )
+
+  // 学院多线聚合行集：全部可见线子指标合并（id 去重、按线先后顺序；
+  // 展示排序由消费方 compareCollegeIndicatorRows 统一收口）
+  const collegeAggregatedIndicators = computed<StrategicIndicator[]>(() =>
+    mergeCollegeLineRows(collegePlanLineRowsets.value.map(line => line.rows))
+  )
+
+  // 多线可见性汇总：任意一条线可见 / 任意一条可见线有可展示内容
+  const collegeHasAnyVisibleLine = computed(() =>
+    collegePlanLineSnapshots.value.some(line => line.visible)
+  )
+  const collegeHasVisibleLineContent = computed(() =>
+    collegePlanLineSnapshots.value.some(line => line.visible && line.hasIndicatorContent)
+  )
+
   /**
    * 2026-10-29 定案：二级学院「全部导出」按职能部门分组。
    * 2026-11-13 口径变更：分组与行匹配由 ownerDept（来源部门）改为 functionalDeptName
@@ -1215,7 +1491,29 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return null
     }
 
+    // 2026-11-18（学院×多线）：选中「归属部门」→ 行级归口反查绑定所在线的计划。
+    // 原实现按 plan 源部门（resolveCollegePlanSourceDept）匹配选中值——11-13 归属部门
+    // 口径变更后选中值是「父级核心指标的归口部门」，与 plan 源部门对不上，多线时
+    // find 恒落到第一条候选线（11-18 复现报告根因之一）。现改为按行集行级归口
+    //（父级反查）反查选中部门所在线，单线计划上下文（详情/摘要/工作流/提交撤回）
+    // 跟随所选归口切换。
     const selectedSourceDept = filterOwnerDept.value.trim()
+    if (selectedSourceDept) {
+      const matchedPlanId = resolveCollegeLinePlanIdByFunctionalDept(
+        collegePlanLineRowsets.value,
+        selectedSourceDept,
+        row => getRowFunctionalDeptName(row as { parentIndicatorId?: string | number | null })
+      )
+      const matchedPlan = matchedPlanId
+        ? collegePlanCandidates.value.find(plan => String(plan.id) === matchedPlanId)
+        : null
+      if (matchedPlan) {
+        return matchedPlan
+      }
+      // 归口绑定暂解析不到（父级 map 未加载完/选中项失效）→ 不在此处空转，
+      // 落到下方既有兜底（第一条候选线），计划上下文不闪空
+    }
+
     const matchedPlan = collegePlanCandidates.value.find(plan => {
       const cachedPlan = collegePlanDetailsMap.value[String(plan.id)]
       const sourceDept = resolveCollegePlanSourceDept((cachedPlan || plan) as Plan)
@@ -1244,11 +1542,20 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }
 
     if (isSecondaryCollege.value) {
+      // 2026-11-18（学院×多线）：下发月按线区分——选中归属部门时 selectedCollegePlan
+      // 已按行级归口绑定该线，取该线计划的下发月；未选归口时取全部可见线中
+      // **最早**的下发月（resolveCollegeAggregateDispatchMonth，全不可得 → 空串走原降级）
       const collegePlan = selectedCollegePlan.value
       const cached = collegePlan
         ? (collegePlanDetailsMap.value[String(collegePlan.id)] as Plan | undefined)
         : undefined
-      return dispatchMonth(cached) || dispatchMonth(collegePlan)
+      const selectedLineMonth = dispatchMonth(cached) || dispatchMonth(collegePlan)
+      if (selectedLineMonth) {
+        return selectedLineMonth
+      }
+      return resolveCollegeAggregateDispatchMonth(
+        collegePlanLineSnapshots.value.filter(line => line.visible).map(line => line.dispatchMonth)
+      )
     }
 
     const fallback = dispatchMonth(currentPlanDetails.value as Plan | null)
@@ -1272,23 +1579,6 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
   // 职能部门列表（从数据库动态获取）
   const functionalDepartments = computed(() => orgStore.getAllFunctionalDepartmentNames())
-
-  const currentViewingOrgId = computed(() => {
-    const viewingDept = effectiveViewingDept.value || authStore.userDepartment || ''
-    if (!viewingDept) {
-      const rawUserOrgId = Number(authStore.user?.orgId ?? NaN)
-      return Number.isFinite(rawUserOrgId) && rawUserOrgId > 0 ? rawUserOrgId : null
-    }
-
-    const matchedDepartment = orgStore.getDepartmentByName(viewingDept)
-    const matchedOrgId = Number(matchedDepartment?.id ?? NaN)
-    if (Number.isFinite(matchedOrgId) && matchedOrgId > 0) {
-      return matchedOrgId
-    }
-
-    const rawUserOrgId = Number(authStore.user?.orgId ?? NaN)
-    return Number.isFinite(rawUserOrgId) && rawUserOrgId > 0 ? rawUserOrgId : null
-  })
 
   /**
    * 2026-10-27 用户定案：用「最近一轮已上报通过」的审核进度回显到列表行。
@@ -1347,30 +1637,40 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return
     }
 
-    const targetPlan = selectedCollegePlan.value || collegePlanCandidates.value[0] || null
-    if (!targetPlan?.id) {
-      return
-    }
-
-    const cacheKey = String(targetPlan.id)
-    if (!options.force && collegePlanDetailsMap.value[cacheKey]) {
+    // 2026-11-18（学院×多线）：加载**全部候选线**的计划详情——原先只加载选中的
+    // 第一条线，其它线的行集映射/下发月/状态快照无详情可用。逐线覆盖缓存写入，
+    // 单线失败只跳过该线（不中断其它线）。非 force 时已缓存的线跳过。
+    const targets = options.force
+      ? [...collegePlanCandidates.value]
+      : collegePlanCandidates.value.filter(plan => !collegePlanDetailsMap.value[String(plan.id)])
+    if (targets.length === 0) {
       return
     }
 
     collegePlanDetailsLoading.value = true
     try {
-      const detailedPlan =
-        (await planStore.loadPlanDetails(targetPlan.id, {
-          force: options.force,
-          background: true
-        })) || targetPlan
+      for (const targetPlan of targets) {
+        if (!targetPlan?.id) {
+          continue
+        }
+        try {
+          const detailedPlan =
+            (await planStore.loadPlanDetails(targetPlan.id, {
+              force: options.force,
+              background: true
+            })) || targetPlan
 
-      collegePlanDetailsMap.value = {
-        ...collegePlanDetailsMap.value,
-        [cacheKey]: detailedPlan as Plan
+          collegePlanDetailsMap.value = {
+            ...collegePlanDetailsMap.value,
+            [String(targetPlan.id)]: detailedPlan as Plan
+          }
+        } catch (error) {
+          logger.warn('[IndicatorListView] 加载学院计划详情失败:', {
+            planId: targetPlan.id,
+            error
+          })
+        }
       }
-    } catch (error) {
-      logger.warn('[IndicatorListView] 加载学院计划详情失败:', error)
     } finally {
       collegePlanDetailsLoading.value = false
     }
@@ -1383,11 +1683,13 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         ? 'secondary_college'
         : 'functional_dept'
 
+    // 2026-11-18（学院×多线）：学院门禁=任意候选线可见（多线聚合口径——
+    // 选中线未下发不应滤没其它已下发线的行）；其它视角维持单计划门禁（零变化）
     return filterIndicatorsForViewerRole(
       list,
       viewerRole,
       currentViewingOrgId.value,
-      canViewReceivedPlanContent.value
+      isSecondaryCollege.value ? collegeHasAnyVisibleLine.value : canViewReceivedPlanContent.value
     )
   }
 
@@ -1752,233 +2054,93 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   )
 
   // 从当前 Plan 中提取指标列表（使用后端返回的指标数据）
+  // 2026-11-18（学院×多线填报修复）：学院行集 = 全部可见线子指标合并
+  //（collegeAggregatedIndicators：逐线 mapPlanSourceIndicators + 按线可见门禁）；
+  // 上报摘要按线收口——摘要属于当前选中线的计划（selectedCollegePlan 已按所选归属
+  // 部门绑定），明细按指标 id 键控合并只命中本线行，不再对合并结果套单线可见门禁
+  //（可见性已在逐线映射时按各线状态判定）。映射逻辑抽至上方 mapPlanSourceIndicators
+  //（学院逐线共用同一份标准化），职能部门/战略部维持单一 currentPlanDetails（零变化）。
   const currentPlanIndicators = computed(() => {
-    const plan = currentPlanDetails.value
-    if (!plan || !plan.indicators) {
-      return []
-    }
+    if (isSecondaryCollege.value) {
+      const aggregatedIndicators = collegeAggregatedIndicators.value
 
-    const storeIndicatorMap = new Map(
-      strategicStore.indicators.map(indicator => [String(indicator.id), indicator] as const)
-    )
-
-    // Plan 详情接口字段仍然偏瘦，这里优先复用 strategicStore 已标准化的数据，
-    // 再用当前 plan 明细里的实时字段覆盖，避免任务名等字段被硬编码丢失。
-    const mappedIndicators = plan.indicators.map((ind: any) => {
-      const source = ind && typeof ind === 'object' ? (ind as Record<string, unknown>) : {}
-      const indicatorId = String(source.id ?? source.indicatorId ?? '')
-      const storeIndicator = indicatorId ? storeIndicatorMap.get(indicatorId) : undefined
-      const progress = getPlanIndicatorOptionalNumber(source, 'progress')
-      const weight = getPlanIndicatorOptionalNumber(source, 'weightPercent', 'weight')
-      const reportProgress = getPlanIndicatorOptionalNumber(
-        source,
-        'reportProgress',
-        'report_progress'
-      )
-      const pendingProgress = getPlanIndicatorOptionalNumber(
-        source,
-        'pendingProgress',
-        'pending_progress'
-      )
-      const pendingRemark = getPlanIndicatorText(source, 'pendingRemark', 'pending_remark')
-      const pendingAttachments = getPlanIndicatorAttachments(source)
-      const currentReportId = getPlanIndicatorOptionalNumber(
-        source,
-        'currentReportId',
-        'current_report_id'
-      )
-      const pendingAttachmentDetails =
-        Array.isArray(source.pendingAttachmentDetails) && source.pendingAttachmentDetails.length > 0
-          ? (source.pendingAttachmentDetails as Attachment[])
-          : ((storeIndicator as StrategicIndicator & { pendingAttachmentDetails?: Attachment[] })
-              ?.pendingAttachmentDetails ?? [])
-      const sourceApprovalStatus = getPlanIndicatorText(
-        source,
-        'progressApprovalStatus',
-        'progress_approval_status'
-      )
-
-      const normalizedIndicator = {
-        ...(storeIndicator || {}),
-        id: indicatorId || storeIndicator?.id || String(Date.now()),
-        name: getPlanIndicatorText(source, 'indicatorName', 'name') || storeIndicator?.name || '',
-        indicator_desc:
-          getPlanIndicatorText(source, 'indicatorDesc', 'description') ||
-          (storeIndicator as StrategicIndicator & { indicator_desc?: string })?.indicator_desc ||
-          '',
-        description:
-          getPlanIndicatorText(source, 'indicatorDesc', 'description') ||
-          (storeIndicator as StrategicIndicator & { description?: string })?.description ||
-          '',
-        progress: progress ?? storeIndicator?.progress ?? 0,
-        weight: weight ?? storeIndicator?.weight ?? 0,
-        type1:
-          (getPlanIndicatorText(
-            source,
-            'type1',
-            'indicatorType',
-            'indicatorType1'
-          ) as StrategicIndicator['type1']) ||
-          storeIndicator?.type1 ||
-          '定量',
-        type2: resolveIndicatorType2(source.taskType, storeIndicator?.type2 || '其他'),
-        status: (getPlanIndicatorText(source, 'status').toUpperCase() ||
-          storeIndicator?.status ||
-          'ACTIVE') as StrategicIndicator['status'],
-        isStrategic: storeIndicator?.isStrategic ?? true,
-        year: Number(source.year) || storeIndicator?.year || timeContext.currentYear,
-        ownerDept:
-          getPlanIndicatorText(source, 'ownerOrgName', 'ownerDept') ||
-          storeIndicator?.ownerDept ||
-          '战略发展部',
-        responsibleDept:
-          getPlanIndicatorText(source, 'targetOrgName', 'responsibleDept') ||
-          storeIndicator?.responsibleDept ||
-          effectiveViewingDept.value ||
-          authStore.userDepartment ||
-          '',
-        taskContent:
-          getPlanIndicatorText(source, 'taskName', 'taskContent') ||
-          storeIndicator?.taskContent ||
-          '',
-        remark: getPlanIndicatorText(source, 'remark') || storeIndicator?.remark || '',
-        progressApprovalStatus: sourceApprovalStatus
-          ? getSafeApprovalStatus(sourceApprovalStatus)
-          : getSafeApprovalStatus(storeIndicator?.progressApprovalStatus),
-        pendingProgress: pendingProgress ?? storeIndicator?.pendingProgress ?? null,
-        pendingRemark: pendingRemark || storeIndicator?.pendingRemark || null,
-        pendingAttachments: pendingAttachments ?? storeIndicator?.pendingAttachments ?? [],
-        pendingAttachmentDetails,
-        createdAt:
-          getPlanIndicatorText(source, 'createdAt') ||
-          (storeIndicator as StrategicIndicator & { createdAt?: string })?.createdAt ||
-          '',
-        updatedAt:
-          getPlanIndicatorText(source, 'updatedAt') ||
-          (storeIndicator as StrategicIndicator & { updatedAt?: string })?.updatedAt ||
-          ''
-      } as StrategicIndicator & {
-        reportProgress?: number | null
-        targetOrgId?: number
-        ownerOrgId?: number
-        targetOrgName?: string
-        ownerOrgName?: string
-      }
-
-      if (reportProgress !== undefined) {
-        normalizedIndicator.reportProgress = reportProgress
-      } else if (
-        (storeIndicator as (StrategicIndicator & { reportProgress?: number | null }) | undefined)
-          ?.reportProgress !== undefined
+      if (
+        Array.isArray(currentPlanReportSummary.value?.indicatorDetails) &&
+        aggregatedIndicators.length > 0
       ) {
-        normalizedIndicator.reportProgress = (
-          storeIndicator as StrategicIndicator & { reportProgress?: number | null }
-        ).reportProgress
-      }
-
-      const targetOrgId =
-        getPlanIndicatorNumber(source, 'targetOrgId', 'target_org_id') ||
-        Number(
-          (storeIndicator as StrategicIndicator & { targetOrgId?: number | string })?.targetOrgId ??
-            0
+        const reportId = Number(currentPlanReportSummary.value?.id ?? NaN)
+        const detailMap = new Map(
+          currentPlanReportSummary.value.indicatorDetails.map(detail => [
+            String(detail?.indicatorId ?? ''),
+            detail
+          ])
         )
-      if (Number.isFinite(targetOrgId) && targetOrgId > 0) {
-        normalizedIndicator.targetOrgId = targetOrgId
-      }
 
-      const ownerOrgId =
-        getPlanIndicatorNumber(source, 'ownerOrgId', 'owner_org_id') ||
-        Number(
-          (storeIndicator as StrategicIndicator & { ownerOrgId?: number | string })?.ownerOrgId ?? 0
-        )
-      if (Number.isFinite(ownerOrgId) && ownerOrgId > 0) {
-        normalizedIndicator.ownerOrgId = ownerOrgId
-      }
+        const mergedIndicators = aggregatedIndicators.map(indicator => {
+          const detail = detailMap.get(String(indicator.id))
+          if (!detail) {
+            return indicator
+          }
 
-      if (currentReportId !== undefined) {
-        ;(
-          normalizedIndicator as StrategicIndicator & { currentReportId?: number | null }
-        ).currentReportId = currentReportId
-      } else if (
-        (storeIndicator as (StrategicIndicator & { currentReportId?: number | null }) | undefined)
-          ?.currentReportId !== undefined
-      ) {
-        ;(
-          normalizedIndicator as StrategicIndicator & { currentReportId?: number | null }
-        ).currentReportId = (
-          storeIndicator as StrategicIndicator & { currentReportId?: number | null }
-        ).currentReportId
-      }
+          // 行上参与摘要合并的扩展字段（pendingProgress/pendingRemark/pendingAttachments/
+          // currentReportId）是运行时字段，StrategicIndicator 接口未声明——与基线噪音
+          // 同源，这里集中断言一次（2026-11-18 学院多线合并体）
+          const withPending = indicator as StrategicIndicator & {
+            pendingProgress?: number | null
+            pendingRemark?: string | null
+            pendingAttachments?: string[]
+            currentReportId?: number | null
+            pendingAttachmentDetails?: Attachment[]
+          }
 
-      const targetOrgName = getPlanIndicatorText(source, 'targetOrgName', 'target_org_name')
-      if (targetOrgName) {
-        normalizedIndicator.targetOrgName = targetOrgName
-      }
-
-      const ownerOrgName = getPlanIndicatorText(source, 'ownerOrgName', 'owner_org_name')
-      if (ownerOrgName) {
-        normalizedIndicator.ownerOrgName = ownerOrgName
-      }
-
-      return normalizedIndicator
-    })
-
-    if (
-      isSecondaryCollege.value &&
-      Array.isArray(currentPlanReportSummary.value?.indicatorDetails)
-    ) {
-      const reportId = Number(currentPlanReportSummary.value?.id ?? NaN)
-      const detailMap = new Map(
-        currentPlanReportSummary.value.indicatorDetails.map(detail => [
-          String(detail?.indicatorId ?? ''),
-          detail
-        ])
-      )
-
-      const mergedIndicators = mappedIndicators.map(indicator => {
-        const detail = detailMap.get(String(indicator.id))
-        if (!detail) {
-          return indicator
-        }
-
-        const detailProgress = Number(detail.progress)
-        const nextProgress = Number.isFinite(detailProgress)
-          ? detailProgress
-          : indicator.pendingProgress
-        const nextRemark = String(detail.comment || '').trim() || indicator.pendingRemark || null
-        const nextAttachmentDetails = Array.isArray(detail.attachments) ? detail.attachments : []
-        const nextAttachments =
-          nextAttachmentDetails.length > 0
-            ? nextAttachmentDetails
-                .map(attachment => attachment?.fileName || attachment?.url || '')
-                .filter(Boolean)
-            : (indicator.pendingAttachments ?? [])
-
-        return {
-          ...indicator,
-          currentReportId:
-            Number.isFinite(reportId) && reportId > 0 ? reportId : indicator.currentReportId,
-          reportProgress: nextProgress,
-          pendingProgress: nextProgress,
-          pendingRemark: nextRemark,
-          pendingAttachments: nextAttachments,
-          pendingAttachmentDetails:
+          const detailProgress = Number(detail.progress)
+          const nextProgress = Number.isFinite(detailProgress)
+            ? detailProgress
+            : withPending.pendingProgress
+          const nextRemark =
+            String(detail.comment || '').trim() || withPending.pendingRemark || null
+          const nextAttachmentDetails = Array.isArray(detail.attachments) ? detail.attachments : []
+          const nextAttachments =
             nextAttachmentDetails.length > 0
               ? nextAttachmentDetails
-              : ((indicator as StrategicIndicator & { pendingAttachmentDetails?: Attachment[] })
-                  .pendingAttachmentDetails ?? [])
-        }
-      })
+                  .map(attachment => attachment?.fileName || attachment?.url || '')
+                  .filter(Boolean)
+              : (withPending.pendingAttachments ?? [])
 
-      return filterIndicatorsForCurrentViewer(mergedIndicators)
+          return {
+            ...withPending,
+            currentReportId:
+              Number.isFinite(reportId) && reportId > 0 ? reportId : withPending.currentReportId,
+            reportProgress: nextProgress,
+            pendingProgress: nextProgress,
+            pendingRemark: nextRemark,
+            pendingAttachments: nextAttachments,
+            pendingAttachmentDetails:
+              nextAttachmentDetails.length > 0
+                ? nextAttachmentDetails
+                : (withPending.pendingAttachmentDetails ?? [])
+          }
+        })
+
+        return mergedIndicators
+      }
+
+      return aggregatedIndicators
     }
 
-    return filterIndicatorsForCurrentViewer(mappedIndicators)
+    return filterIndicatorsForCurrentViewer(
+      mapPlanSourceIndicators(currentPlanDetails.value as Plan | null)
+    )
   })
-
   // 判断当前是否存在可供当前页面展示的 Plan 数据
   // 职能部门/学院在计划进入下发或审批流程后，都应继续看到计划内容。
+  // 2026-11-18（学院×多线）：学院口径=任意一条可见线有可展示内容（多线聚合——
+  // 选中线无内容不应否定其它已下发线）；其它视角=当前计划（currentPlanDetails）有内容。
   const hasCurrentUserPlanData = computed(() => {
+    if (isSecondaryCollege.value) {
+      return collegeHasVisibleLineContent.value
+    }
+
     const plan = currentPlanDetails.value
     if (!plan) {
       return false
@@ -1993,6 +2155,12 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   })
 
   const hasCurrentUserPlan = computed(() => {
+    // 2026-11-18（学院×多线）：学院可见性已在逐线快照判定（仅 DISTRIBUTED 线可见），
+    // 不再叠加单计划门禁 canViewReceivedPlanContent（选中线未下发会滤没其它线）
+    if (isSecondaryCollege.value) {
+      return hasCurrentUserPlanData.value
+    }
+
     return hasCurrentUserPlanData.value && canViewReceivedPlanContent.value
   })
 
@@ -2769,9 +2937,13 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       if (filterType1.value) {
         list = list.filter(i => i.type1 === filterType1.value)
       }
-      // 学院角色：按来源部门筛选（2026-11-05：筛选值与数据对不上时不过滤，避免整页滤空）
+      // 学院角色：行集出口选择器（2026-11-18 用户定案：未选归属部门=行集为空，
+      // 选中归口=只显示该线；与任务管理页「先选学院再选职能部门」口径同构）。
+      // 归属部门下拉选项不受影响（collegeFunctionalDeptRows 仍聚合全部已下发归口）
       if (isSecondaryCollege.value) {
-        list = filterIndicatorsByOwnerDept(list)
+        list = selectCollegeFillRows(list, filterOwnerDept.value, row =>
+          getRowFunctionalDeptName(row)
+        )
       }
 
       // 2026-10-07：等级/说明/附件回显覆盖（草稿明细优先）
@@ -2869,10 +3041,15 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
     // 根据 Plan 筛选指标（优先级高于角色过滤）
     // 如果存在当前用户的 Plan，只显示该 Plan 包含的指标
-    const plan = currentUserPlan.value
-    const planIndicatorIds = getPlanIndicatorIds(plan)
-    if (planIndicatorIds.length > 0) {
-      list = list.filter(i => planIndicatorIds.includes(Number(i.id)))
+    // 2026-11-18（学院×多线）：学院回退分支（计划详情未加载完成的瞬时态）不再按
+    // 单线 planIndicatorIds 收窄——多线聚合口径下按组织+年份+角色过滤即可（详情加载
+    // 完成后行集主分支恢复「全部可见线合并」），避免瞬时态只显示第一条线
+    if (!isSecondaryCollege.value) {
+      const plan = currentUserPlan.value
+      const planIndicatorIds = getPlanIndicatorIds(plan)
+      if (planIndicatorIds.length > 0) {
+        list = list.filter(i => planIndicatorIds.includes(Number(i.id)))
+      }
     }
 
     // 根据当前角色过滤数据
@@ -2887,9 +3064,12 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     if (filterType1.value) {
       list = list.filter(i => i.type1 === filterType1.value)
     }
-    // 学院角色：按来源部门筛选（2026-11-05：筛选值与数据对不上时不过滤，避免整页滤空）
+    // 学院角色：行集出口选择器（2026-11-18 用户定案：未选归属部门=行集为空，
+    // 与主分支同口径——详情未加载的回退态同样先选归属部门才显示）
     if (isSecondaryCollege.value) {
-      list = filterIndicatorsByOwnerDept(list)
+      list = selectCollegeFillRows(list, filterOwnerDept.value, row =>
+        getRowFunctionalDeptName(row)
+      )
     }
 
     // 2026-10-28 用户定案：学院端按「核心指标 → 子指标」同序规则排列
@@ -2913,14 +3093,27 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     })
   })
 
+  // 2026-11-18（学院未选归口=行集置空，用户定案）：空态引导文案——
+  // 学院页签未选归属部门时行集为空，空态块用本提示指路（与琥珀描边选择器、
+  // 一键提交置灰 tooltip 同一引导范式）；非学院/已选归口返回空串（走既有文案）
+  const collegeFillEmptyHint = computed(() => {
+    if (!isSecondaryCollege.value) {
+      return ''
+    }
+    return filterOwnerDept.value.trim() ? '' : '请先选择归属部门，再查看对应职能部门的指标'
+  })
+
   // 2026-10-28：学院端「核心指标」列的父指标信息补全。
   // 监听行集合里的 parentIndicatorId，缺哪个拉哪个（接口带缓存，重复切换零开销）。
+  // 2026-11-18（学院未选归口=行集置空）：水合源改用 collegeFunctionalDeptRows
+  // （多线聚合行集，与归属部门下拉选项同源）——行集出口未选归口时为空，
+  // 若仍以 indicators 为源会造成「不选→不水合→选项聚合不出→没法选」死锁。
   const hydrateParentIndicators = async () => {
     if (!isSecondaryCollege.value) {
       return
     }
     const pendingIds = new Set<string>()
-    indicators.value.forEach(item => {
+    collegeFunctionalDeptRows.value.forEach(item => {
       const pid = String(
         (item as { parentIndicatorId?: string | number | null }).parentIndicatorId ?? ''
       ).trim()
@@ -2970,7 +3163,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   watch(
     () => [
       isSecondaryCollege.value,
-      indicators.value
+      // 2026-11-18（学院未选归口=行集置空）：水合源=多线聚合行集（与下拉选项同源），
+      // 不再跟行集出口走——未选归口时也要把全部可见线的父级归口拉齐
+      collegeFunctionalDeptRows.value
         .map(i =>
           String((i as { parentIndicatorId?: string | number | null }).parentIndicatorId ?? '')
         )
@@ -3588,9 +3783,17 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   })
 
   const showPlanBatchActions = computed(() => {
+    // 2026-11-18（学院未选归口=行集置空）：学院分支不再依赖行集出口的行数
+    // （未选归口时 indicators 为空）——只要存在可见线内容就渲染批量操作区，
+    // 让「一键提交/一键撤回」保持置灰+tooltip 的主动引导（复用 2026-11-15 范式）；
+    // 提交按钮的「请先选择归属部门」置灰原因由 resolveReportSubmitLockReason 保证
+    if (isStrategicDept.value || !isCurrentUserReporter.value) {
+      return false
+    }
+    if (isSecondaryCollege.value) {
+      return collegeHasVisibleLineContent.value && Boolean(currentUserPlanId.value)
+    }
     return (
-      !isStrategicDept.value &&
-      isCurrentUserReporter.value &&
       canViewReceivedPlanContent.value &&
       Boolean(currentUserPlanId.value) &&
       indicators.value.length > 0
@@ -3607,8 +3810,10 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     )
   })
 
-  // 2026-10-07 裁决：/indicators 页面（职能部门）也要看到所属战略任务列，不再隐藏
-  const showStrategicTaskColumn = computed(() => true)
+  // 2026-11-18 用户拍板（外部反馈三问题·学院删列）：学院视角「战略任务」列也不显示
+  // （此前已删核心指标列；子指标纯平铺，无分组列），职能部门/战略部视角照旧显示
+  // （2026-10-07 裁决保留：/indicators 页面职能部门要看所属战略任务列）。
+  const showStrategicTaskColumn = computed(() => !isSecondaryCollege.value)
 
   // 计算单元格合并信息
   const getSpanMethod = ({
@@ -3628,10 +3833,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return { rowspan: 1, colspan: 1 }
     }
 
-    // 只有第 0 列需要合并：按任务名分组（第 0 列=「战略任务」列）。
-    // 2026-11-17（领导二-1）：学院端第 0 列改回「战略任务」列后，学院与非学院同构——
-    // 不再按 parentIndicatorId（父级核心指标）分组，分组上下文统一由任务列承担，
-    // 学院视角不出现职能部门原指标（父级核心指标）的任何内容。
+    // 只有第 0 列需要合并：按任务名分组（第 0 列=「战略任务」列，仅职能部门/战略部视角渲染）。
+    // 2026-11-18 用户拍板（学院删列）：学院视角无「战略任务」列（上方守卫直接返回不合并），
+    // 子指标纯平铺；职能部门/战略部视角保持按 taskContent 合并第 0 列不变。
     if (columnIndex === 0) {
       const groupKeyOf = (item: any) => item?.taskContent || '未关联任务'
       const currentTask = groupKeyOf(row)
@@ -5005,7 +5209,14 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       }
 
       const batchSourceIndicators =
-        currentPlanIndicators.value.length > 0 ? currentPlanIndicators.value : indicators.value
+        currentPlanIndicators.value.length > 0
+          ? isSecondaryCollege.value
+            ? // 2026-11-18（学院×多线）：草稿按 (月, 归口部门) 隔离——多线聚合行集必须
+              // 先按所选归属部门收窄再批量保存，避免把其它归口线的行混进同一份草稿
+              //（后端对混归口草稿有提交拦截）。未选部门=不过滤（聚合口径，与旧行为一致）
+              filterIndicatorsByOwnerDept(currentPlanIndicators.value)
+            : currentPlanIndicators.value
+          : indicators.value
 
       const batchItems = batchSourceIndicators
         .map(item => {
@@ -5991,6 +6202,8 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     collegePlanCandidates,
     collegePlanDetailsLoading,
     collegePlanDetailsMap,
+    // 2026-11-18（学院未选归口=行集置空）：空态引导文案
+    collegeFillEmptyHint,
     currentApprovalApproverName,
     currentApprovalCandidateNames,
     currentApprovalFlowName,
