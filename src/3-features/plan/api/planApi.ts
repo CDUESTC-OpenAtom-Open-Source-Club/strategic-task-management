@@ -994,7 +994,9 @@ async function resolveIndicatorFillSaveContext(
   latestCurrentMonthReport?: PlanReportSimpleResponse
   editableExistingReport?: PlanReportSimpleResponse
 }> {
-  const context = await resolveIndicatorReportContext(indicatorId)
+  // 2026-11-18（学院多归口线下填报串计划）：定位计划时必须带上当前选中的归属部门，
+  // 否则同一学院的多条下发线会被「按 id 顺序取第一条」命中，填报写进别的部门的计划线。
+  const context = await resolveIndicatorReportContext(indicatorId, functionalOrgId)
   const reports = await loadPlanReportsByPlanId(context.planId, functionalOrgId)
   // 「审批中不可重复保存」检查按目标填报月判断（显式传月优先，当前月仅兜底），
   // 否则当前月报告进入审批后会连带锁死下一个月的填报（月度上报链断裂）。
@@ -1032,7 +1034,13 @@ async function resolveIndicatorFillSaveContext(
 }
 
 async function resolveIndicatorReportContext(
-  indicatorId: number | string
+  indicatorId: number | string,
+  /**
+   * 2026-11-18（学院多归口线下填报串计划）：当前选中的归属部门 ID。
+   * 学院被多个职能部门分别下发时，同一 (学院, 年度) 下会存在多条 FUNC_TO_COLLEGE 计划线，
+   * 仅按 target + createdBy + year 匹配会取到任意一条，必须用归口部门把线钉死。
+   */
+  functionalOrgId?: number | string | null
 ): Promise<IndicatorReportContext> {
   const { indicatorApi } = await import('@/features/indicator/api')
   const { useOrgStore } = await import('@/features/organization/model/store')
@@ -1103,12 +1111,11 @@ async function resolveIndicatorReportContext(
     const allPlans = await fetchAllPlansFromPages(resolveCycleYear)
 
     if (isCollegeReportContext) {
-      const matchedCollegeReceivingPlan = allPlans.find(plan => {
+      const normalizedFunctionalOrgId = Number(functionalOrgId ?? NaN)
+      const matchesCollegeReceivingPlan = (plan: Record<string, unknown>): boolean => {
         const candidateTargetOrgId = Number(plan.targetOrgId ?? plan.orgId ?? NaN)
-        const candidateCreatedByOrgId = Number(
-          (plan as Record<string, unknown>).createdByOrgId ?? NaN
-        )
-        const candidatePlanLevel = String((plan as Record<string, unknown>).planLevel || '')
+        const candidateCreatedByOrgId = Number(plan.createdByOrgId ?? NaN)
+        const candidatePlanLevel = String(plan.planLevel || '')
           .trim()
           .toUpperCase()
         const candidateYear = Number(plan.year ?? resolveCycleYear(plan.cycleId) ?? NaN)
@@ -1122,7 +1129,30 @@ async function resolveIndicatorReportContext(
           Number.isFinite(candidateYear) &&
           candidateYear === currentYear
         )
-      })
+      }
+
+      // 2026-11-18（学院多归口线）：先按「归口部门」精确命中本部门的那条计划线；
+      // 未传归口 / 归口没命中（历史数据无 functional_org_id）时退回原来的第一条匹配。
+      if (Number.isFinite(normalizedFunctionalOrgId) && normalizedFunctionalOrgId > 0) {
+        const matchedFunctionalOrgPlan = allPlans.find(plan => {
+          const candidateFunctionalOrgId = Number(
+            plan.functionalOrgId ?? (plan as Record<string, unknown>).functional_org_id ?? NaN
+          )
+          return (
+            Number.isFinite(candidateFunctionalOrgId) &&
+            candidateFunctionalOrgId === normalizedFunctionalOrgId &&
+            matchesCollegeReceivingPlan(plan as Record<string, unknown>)
+          )
+        })
+
+        if (matchedFunctionalOrgPlan?.id) {
+          return Number(matchedFunctionalOrgPlan.id)
+        }
+      }
+
+      const matchedCollegeReceivingPlan = allPlans.find(plan =>
+        matchesCollegeReceivingPlan(plan as Record<string, unknown>)
+      )
 
       if (matchedCollegeReceivingPlan?.id) {
         return Number(matchedCollegeReceivingPlan.id)

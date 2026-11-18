@@ -36,6 +36,7 @@ import {
 } from '@/features/dashboard/lib/summaryMetrics'
 import type {
   DashboardAppraisalSummaryResponse,
+  DashboardCollegeLevelsResponse,
   DashboardMonthState
 } from '@/features/dashboard/api/dashboardApi'
 import { useDashboardView } from '@/features/dashboard/model/useDashboardView'
@@ -281,5 +282,66 @@ describe('useDashboardView 部门分布图按月快照置灰（API 供数 + 失�
 
     const row = view.stackedBarData.value.find(item => item.fullName === '党委办公室')
     expect(row?.monthState).toBe<DashboardMonthState>('NOT_REPORTED')
+  })
+})
+
+describe('useDashboardView 简报空态判定 briefMonthApproved（2026-11-18 折中方案）', () => {
+  /** 构造 college-levels 响应 */
+  const levelsResponse = (
+    colleges: DashboardCollegeLevelsResponse['colleges']
+  ): DashboardCollegeLevelsResponse => ({ year: 2026, month: 10, colleges })
+
+  const loadLevels = async (
+    colleges: DashboardCollegeLevelsResponse['colleges']
+  ) => {
+    setActivePinia(createPinia())
+    mockedGet.mockImplementation(async (url: string) => {
+      if (url === '/dashboard/college-levels') {
+        return levelsResponse(colleges)
+      }
+      return { year: 2026, month: 10, colleges: [] }
+    })
+    const view = useDashboardView({})
+    await view.loadCollegeLevels()
+    await flushPromises()
+    return view
+  }
+
+  it('全部行非 APPROVED（未填报/审批中）→ 空态（briefMonthApproved=false）', async () => {
+    const view = await loadLevels([
+      { orgId: 1, orgName: '计算机学院', ahead: 0, normal: 0, delayed: 0, total: 0, reported: false },
+      { orgId: 2, orgName: '电子信息学院', ahead: 0, normal: 0, delayed: 0, total: 0, reported: true, monthState: 'IN_REVIEW', dispatchedCount: 4 }
+    ])
+    expect(view.briefMonthApproved.value).toBe(false)
+  })
+
+  it('colleges 为空（当月无数据）→ 空态', async () => {
+    const view = await loadLevels([])
+    expect(view.briefMonthApproved.value).toBe(false)
+  })
+
+  it('含 APPROVED 行且有鉴定值 → 完整简报（briefMonthApproved=true）', async () => {
+    const view = await loadLevels([
+      { orgId: 1, orgName: '计算机学院', ahead: 3, normal: 1, delayed: 0, total: 4, reported: true, monthState: 'APPROVED', dispatchedCount: 5 },
+      { orgId: 2, orgName: '电子信息学院', ahead: 0, normal: 0, delayed: 0, total: 0, reported: false, monthState: 'NOT_REPORTED', dispatchedCount: 4 }
+    ])
+    expect(view.briefMonthApproved.value).toBe(true)
+    // 未填报督办提示两条状态都保留（简报正文外独立渲染）
+    expect(view.collegeSupervision.value.unreportedColleges).toBe(1)
+    expect(view.collegeSupervision.value.dispatchedTotal).toBe(9)
+  })
+
+  it('旧响应兼容（无 monthState）：reported=true 但鉴定三档全 0 且无未填报 → 无审定内容，空态', async () => {
+    const view = await loadLevels([
+      { orgId: 1, orgName: '计算机学院', ahead: 0, normal: 0, delayed: 0, total: 0, reported: true }
+    ])
+    expect(view.briefMonthApproved.value).toBe(false)
+  })
+
+  it('旧行含鉴定值（无 monthState，兜底 APPROVED）→ 完整简报', async () => {
+    const view = await loadLevels([
+      { orgId: 1, orgName: '计算机学院', ahead: 2, normal: 1, delayed: 1, total: 4, reported: true }
+    ])
+    expect(view.briefMonthApproved.value).toBe(true)
   })
 })

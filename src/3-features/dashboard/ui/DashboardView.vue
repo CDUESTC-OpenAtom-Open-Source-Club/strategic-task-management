@@ -42,6 +42,7 @@ const {
   benchmarkData,
   benchmarkChartHasData,
   benchmarkChartEmptyText,
+  briefMonthApproved,
   canViewAllDepartments,
   collegeBarData,
   collegeChartHasData,
@@ -295,18 +296,26 @@ function openApprovalCenterFromDashboard() {
           <p class="summary-text">
             {{ timeContext.currentYear }} 年度当前已下发
             <span class="highlight-primary">{{ collegeSupervision.dispatchedTotal }}</span>
-            项指标：超前完成
-            <span class="highlight-primary">{{ collegeSupervision.ahead }}</span>
-            项、正常推进 {{ collegeSupervision.normal }} 项、滞后
-            {{ collegeSupervision.delayed }} 项。
-            <!-- H3（2026-09-19 定案）：滞后口径统一为人工鉴定三档（levelDistribution），与圆环图同源；
-                 2026-11-17 起数据来自月报鉴定（appraisal 优先 self），审核完成后随看板同步刷新 -->
-            <template v-if="(collegeSupervision.delayed ?? 0) > 0">
-              其中
-              <span class="highlight-danger">{{ collegeSupervision.delayed }} 项</span>
-              已鉴定为滞后。
+            项指标。
+            <!-- 2026-11-18 折中方案（PR #131 采纳内核）：非审定月简报正文替换为空态文案，
+                 只保留「已下发 n」（永远真实）与未填报督办提示；审定月照常显示完整简报 -->
+            <template v-if="briefMonthApproved">
+              超前完成
+              <span class="highlight-primary">{{ collegeSupervision.ahead }}</span>
+              项、正常推进 {{ collegeSupervision.normal }} 项、滞后
+              {{ collegeSupervision.delayed }} 项。
+              <!-- H3（2026-09-19 定案）：滞后口径统一为人工鉴定三档（levelDistribution），与圆环图同源；
+                   2026-11-17 起数据来自月报鉴定（appraisal 优先 self），审核完成后随看板同步刷新 -->
+              <template v-if="(collegeSupervision.delayed ?? 0) > 0">
+                其中
+                <span class="highlight-danger">{{ collegeSupervision.delayed }} 项</span>
+                已鉴定为滞后。
+              </template>
+              <template v-else> 暂无滞后鉴定。 </template>
+              总体完成率
+              <span class="highlight-success">{{ collegeSupervision.completionRate }}%</span>。
             </template>
-            <template v-else> 暂无滞后鉴定。 </template>
+            <template v-else> 本月尚未审定，完成后自动更新。 </template>
             <!-- 2026-11-17 新口径：未填报学院灰柱督办（可见谁没报，审核/上报后自动消除） -->
             <template v-if="(collegeSupervision.unreportedColleges ?? 0) > 0">
               本月
@@ -315,29 +324,10 @@ function openApprovalCenterFromDashboard() {
               >
               未填报（{{ collegeSupervision.unreportedNames.join('、') }}），已灰柱督办。
             </template>
-            总体完成率
-            <span class="highlight-success">{{ collegeSupervision.completionRate }}%</span>。
             <button type="button" class="drill-btn" @click.prevent="handleSummaryDrillClick">
               查看分布明细 →
             </button>
           </p>
-        </div>
-        <div class="summary-stats">
-          <div class="mini-stat">
-            <div class="mini-label">健康度</div>
-            <div
-              class="mini-value"
-              :class="dashboardData.completionRate >= 70 ? 'success' : 'warning'"
-            >
-              {{ Math.min(100, dashboardData.completionRate + 10) }}%
-            </div>
-          </div>
-          <div class="mini-stat">
-            <div class="mini-label">响应率</div>
-            <div class="mini-value primary">
-              {{ (2.4 - dashboardData.alertIndicators.severe * 0.1).toFixed(1) }}h
-            </div>
-          </div>
         </div>
       </section>
       <!-- 面包屑导航 -->
