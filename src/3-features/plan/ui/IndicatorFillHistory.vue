@@ -106,7 +106,7 @@ const getStatusLabel = (status?: string) => {
 const SELF_RATING_LABELS: Record<string, string> = {
   AHEAD: '超前完成',
   NORMAL: '正常',
-  DELAYED: '延期'
+  DELAYED: '滞后'
 }
 
 const resolveSelfRatingLabel = (rating?: string | null): string => {
@@ -339,7 +339,7 @@ void loadHistory()
       >
         <div class="history-top">
           <!-- 2026-10-24 用户定案：「进度百分比」概念已废弃，统一为审核进度体系——
-               上报记录卡只展示本轮自评进度（超前完成/正常/延期），不再显示进度% -->
+               上报记录卡只展示本轮自评进度（超前完成/正常/滞后），不再显示进度% -->
           <div class="progress-block">
             <span class="muted-label">自评进度</span>
             <span

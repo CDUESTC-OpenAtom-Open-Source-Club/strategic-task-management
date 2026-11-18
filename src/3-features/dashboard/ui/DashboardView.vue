@@ -37,16 +37,18 @@ const {
   _showFilterFeature,
   applyFilters,
   authStore,
-  baseDelayedTasks,
   benchmarkChartRef,
   benchmarkSectionRef,
   benchmarkData,
+  benchmarkChartHasData,
+  benchmarkChartEmptyText,
   canViewAllDepartments,
   collegeBarData,
   collegeChartHasData,
   collegeChartEmptyText,
   collegeChartRef,
   collegeLevelsLoading,
+  collegeSupervision,
   collegeTrendLoading,
   collegeMonthIndicatorStats,
   collegeMonthIndicators,
@@ -61,6 +63,7 @@ const {
   dashboardData,
   dashboardStore,
   delayedTasks,
+  delayedTasksLoading,
   drilledCollege,
   drilledDept,
   filterForm,
@@ -68,7 +71,6 @@ const {
   filteredDeptIndicators,
   filteredMonthIndicators,
   getCollegeRankingData,
-  getDeptStatsAtMonth,
   getIndicatorStatus,
   getStatusClass,
   getStatusText,
@@ -291,26 +293,30 @@ function openApprovalCenterFromDashboard() {
             >
           </div>
           <p class="summary-text">
-            {{ timeContext.currentYear }} 年度当前共
-            <span class="highlight-primary">{{
-              (dashboardData.levelDistribution?.ahead ?? 0) +
-              (dashboardData.levelDistribution?.normal ?? 0) +
-              (dashboardData.levelDistribution?.delayed ?? 0)
-            }}</span>
-            项任务：超前完成
-            <span class="highlight-primary">{{ dashboardData.levelDistribution?.ahead ?? 0 }}</span>
-            项、正常推进 {{ dashboardData.levelDistribution?.normal ?? 0 }} 项、延期
-            {{ dashboardData.levelDistribution?.delayed ?? 0 }} 项。
-            <!-- H3（2026-09-19 定案）：延期口径统一为人工鉴定三档（levelDistribution），与圆环图同源 -->
-            <template v-if="(dashboardData.levelDistribution?.delayed ?? 0) > 0">
+            {{ timeContext.currentYear }} 年度当前已下发
+            <span class="highlight-primary">{{ collegeSupervision.dispatchedTotal }}</span>
+            项指标：超前完成
+            <span class="highlight-primary">{{ collegeSupervision.ahead }}</span>
+            项、正常推进 {{ collegeSupervision.normal }} 项、滞后
+            {{ collegeSupervision.delayed }} 项。
+            <!-- H3（2026-09-19 定案）：滞后口径统一为人工鉴定三档（levelDistribution），与圆环图同源；
+                 2026-11-17 起数据来自月报鉴定（appraisal 优先 self），审核完成后随看板同步刷新 -->
+            <template v-if="(collegeSupervision.delayed ?? 0) > 0">
               其中
-              <span class="highlight-danger"
-                >{{ dashboardData.levelDistribution?.delayed ?? 0 }} 项</span
-              >
-              已鉴定为延期。
+              <span class="highlight-danger">{{ collegeSupervision.delayed }} 项</span>
+              已鉴定为滞后。
             </template>
-            <template v-else> 暂无延期鉴定。 </template>
-            总体完成率 <span class="highlight-success">{{ dashboardData.completionRate }}%</span>。
+            <template v-else> 暂无滞后鉴定。 </template>
+            <!-- 2026-11-17 新口径：未填报学院灰柱督办（可见谁没报，审核/上报后自动消除） -->
+            <template v-if="(collegeSupervision.unreportedColleges ?? 0) > 0">
+              本月
+              <span class="highlight-danger"
+                >{{ collegeSupervision.unreportedColleges }} 个学院</span
+              >
+              未填报（{{ collegeSupervision.unreportedNames.join('、') }}），已灰柱督办。
+            </template>
+            总体完成率
+            <span class="highlight-success">{{ collegeSupervision.completionRate }}%</span>。
             <button type="button" class="drill-btn" @click.prevent="handleSummaryDrillClick">
               查看分布明细 →
             </button>
@@ -441,7 +447,18 @@ function openApprovalCenterFromDashboard() {
                 </div>
               </div>
             </template>
-            <div ref="benchmarkChartRef" class="benchmark-chart"></div>
+            <!-- 2026-11-18（PR #127 评审意见 A）：鉴定汇总接口失败/无数据时展示空态占位，
+                 不再画与鉴定无关的启发式柱（配合 loadAppraisalSummary 的错误提示） -->
+            <div
+              v-show="benchmarkChartHasData"
+              ref="benchmarkChartRef"
+              class="benchmark-chart"
+            ></div>
+            <el-empty
+              v-if="!benchmarkChartHasData"
+              :description="benchmarkChartEmptyText"
+              :image-size="80"
+            />
           </el-card>
         </div>
 
@@ -507,7 +524,7 @@ function openApprovalCenterFromDashboard() {
                     :class="{ active: selectedStatusFilter === 'delayed' }"
                     @click="handleStatusFilterClick('delayed')"
                   >
-                    <span class="status-dot"></span>延期
+                    <span class="status-dot"></span>滞后
                     {{ selectedDeptStats.warning + selectedDeptStats.delayed }}
                   </span>
                 </div>
@@ -659,7 +676,7 @@ function openApprovalCenterFromDashboard() {
                     :class="{ active: selectedStatusFilter === 'delayed' }"
                     @click="handleStatusFilterClick('delayed')"
                   >
-                    <span class="status-dot"></span>延期
+                    <span class="status-dot"></span>滞后
                     {{ monthIndicatorStats.warning + monthIndicatorStats.delayed }}
                   </span>
                 </div>
@@ -893,7 +910,7 @@ function openApprovalCenterFromDashboard() {
                     :class="{ active: selectedStatusFilter === 'delayed' }"
                     @click="handleStatusFilterClick('delayed')"
                   >
-                    <span class="status-dot"></span>延期
+                    <span class="status-dot"></span>滞后
                     {{ collegeMonthIndicatorStats.warning + collegeMonthIndicatorStats.delayed }}
                   </span>
                 </div>
@@ -1175,16 +1192,30 @@ function openApprovalCenterFromDashboard() {
             >
           </div>
         </template>
-        <el-table :data="delayedTasks" style="width: 100%" :show-header="true" class="task-table">
+        <el-table
+          v-loading="delayedTasksLoading"
+          :data="delayedTasks"
+          style="width: 100%"
+          :show-header="true"
+          class="task-table"
+        >
           <el-table-column label="战略任务内容" min-width="240">
             <template #default="{ row }">
               <div class="task-name-primary">{{ row.name }}</div>
               <div class="task-ref-id">REF_ID: {{ row.id }}</div>
             </template>
           </el-table-column>
-          <el-table-column label="责任主体" width="140" align="center">
+          <el-table-column label="责任学院" width="140" align="center">
             <template #default="{ row }">
               <span class="dept-badge">{{ row.dept }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="鉴定情况" width="170" align="center">
+            <template #default="{ row }">
+              <el-tag type="danger" size="small">{{ row.levelText }}</el-tag>
+              <div class="task-ref-id">
+                自评 {{ row.selfRating || '未评定' }} · 鉴定 {{ row.appraisalLevel || '未评定' }}
+              </div>
             </template>
           </el-table-column>
           <el-table-column label="闭环管理" width="130" align="center">
@@ -1206,9 +1237,9 @@ function openApprovalCenterFromDashboard() {
       <!-- 三级联动图表区域 -->
 
       <!-- 战略发展部 - 组织级视图 -->
-      <template
-        v-if="currentRole === 'strategic_dept' && dashboardStore.currentOrgLevel === 'strategy'"
-      >
+      <!-- 2026-11-17 修复（领导催办）：流转图点击下钻后整卡被 v-if 隐藏、只能靠面包屑复原——
+           改为下钻后卡片常驻 + 卡头「返回全校视图」按钮（不再藏进面包屑） -->
+      <template v-if="currentRole === 'strategic_dept'">
         <el-row :gutter="16" style="margin-top: 16px">
           <!-- 全校任务流转图 -->
           <el-col :span="24">
@@ -1225,6 +1256,14 @@ function openApprovalCenterFromDashboard() {
                       <el-icon class="help-icon"><QuestionFilled /></el-icon>
                     </el-tooltip>
                   </div>
+                  <el-button
+                    v-if="dashboardStore.currentOrgLevel !== 'strategy'"
+                    type="primary"
+                    size="small"
+                    @click="handleBreadcrumbNavigate(0)"
+                  >
+                    返回全校视图
+                  </el-button>
                 </div>
               </template>
               <TaskSankeyChart

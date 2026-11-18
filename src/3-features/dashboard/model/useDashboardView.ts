@@ -14,14 +14,22 @@ import { useLoadingState } from '@/shared/lib/loading/useLoadingState'
 import { logger } from '@/shared/lib/utils/logger'
 import {
   aggregateCollegeLevels,
-  getIndicatorStatusAtMonth,
+  isGrayMonth,
+  monthStateCollegeTooltip,
+  monthStateDeptTooltip,
+  monthStateGrayLabel,
+  resolveMonthState,
   toCollegeBarRows,
   toCollegeRankingRows,
   toCollegeTrendRows
 } from '@/features/dashboard/lib'
 import type {
+  DashboardAppraisalSummaryResponse,
   DashboardCollegeLevelStat,
-  DashboardCollegeLevelsMonth
+  DashboardCollegeLevelsMonth,
+  DashboardDelayedIndicatorItem,
+  DashboardDepartmentLevelStat,
+  DashboardMonthState
 } from '@/features/dashboard/api/dashboardApi'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
 import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
@@ -62,11 +70,12 @@ export function useDashboardView(props: DashboardViewProps) {
       '总得分 = 基础性指标得分 + 发展性指标得分，满分120分。基础性指标满分100分，发展性指标满分20分。',
     basicScore: '基础性指标是必须完成的核心指标，根据各指标完成进度加权计算得分，满分100分。',
     developmentScore: '发展性指标是鼓励性指标，完成后可获得额外加分，满分20分。',
-    warningCount: '延期任务按所选月份状态统计：延期表示该指标进度等级被判定为滞后，需上级关注。',
+    warningCount:
+      '滞后任务按所选月份状态统计：滞后表示该指标进度等级被上级鉴定为滞后，需上级关注。',
     scoreComposition: '展示基础性指标和发展性指标的得分占比，帮助了解整体得分构成。',
-    alertDistribution: '按所选月份统计指标进度等级分布：超前完成、正常、延期。',
+    alertDistribution: '按所选月份统计指标进度等级分布：超前完成、正常、滞后。',
     completionRate:
-      '完成率 = 所选月份状态为正常或超前的指标数 / 总指标数 × 100%。未下发或延期指标不计入完成。',
+      '完成率 = 所选月份状态为正常或超前的指标数 / 总指标数 × 100%。未下发或滞后指标不计入完成。',
     departmentProgress:
       '展示各部门的指标完成进度，进度条颜色表示状态：绿色（≥80%）、黄色（50%-80%）、红色（<50%）。',
     benchmark: '展示各部门执行进度与基准线对比，红色表示低于基准线，蓝色表示达标。',
@@ -147,6 +156,16 @@ export function useDashboardView(props: DashboardViewProps) {
   const collegeTrendMonths = ref<DashboardCollegeLevelsMonth[]>([]) // 年度趋势（只到最晚有数据月份）
   const collegeTrendLoading = ref(false)
 
+  // ============ 部门审核鉴定分布（2026-11-18：部门分布图唯一数据源）============
+  // 口径：每个指标取不晚于选中月份的最近一次 appraisal_level（后端按业务口径折叠），
+  // 替代原前端启发式 getDeptStatsAtMonth——它忽略 month、也不读 appraisal_level，
+  // 导致各月份图形完全一样、与战略任务表的审核进度对不上（用户反馈 2026-11-18）
+  const appraisalSummary = ref<DashboardAppraisalSummaryResponse | null>(null)
+  const appraisalSummaryLoading = ref(false)
+  // 选中月份无任何鉴定数据时，只在首轮自动跳到年度最近有数据的月份一次，
+  // 避免用户手动切到空月份又被弹回去
+  const appraisalMonthAutoJumped = ref(false)
+
   // ============ 分院排名看板状态 ============
   const collegeRankingMonth = ref(previousMonthNumber) // 分院排名选中月份（默认上月）
   // 2026-10-31 新口径：分院排名改吃 college-levels 接口（无来源部门维度），
@@ -157,23 +176,29 @@ export function useDashboardView(props: DashboardViewProps) {
     ahead: '#1A7F37', // 深绿 - 超前完成
     normal: '#67C23A', // 绿色 - 正常
     warning: '#E6A23C', // 黄色 - 预警
-    delayed: '#F56C6C' // 红色 - 延期
+    delayed: '#F56C6C' // 红色 - 滞后
   }
+
+  // 2026-11-18 按月快照口径：非 APPROVED 月份的置灰柱颜色（与学院图灰柱同色系）
+  const MONTH_GRAY_COLOR = '#C0C4CC'
 
   // 计算指标状态的函数
-  // 口径依据《SISM-业务口径决议录-2026-09-16》：里程碑移除后改由
-  // 「人工进度等级 + 生命周期状态 + 进度」推导，详见 dashboard/lib/summaryMetrics。
+  // 2026-11-18（PR #127 评审意见 A 收尾）：原 getIndicatorStatusAtMonth 启发式
+  // （DRAFT/REJECTED→滞后、其余一律正常——既不看月份也不读鉴定）已从 summaryMetrics 删除。
+  // 指标明细卡片目前没有逐指标的月度鉴定快照数据源（appraisal-summary 只有部门聚合，
+  // 逐指标源待后端 month-snapshot 口径合入后接入），状态仅保留数据库预警覆盖，
+  // 不再产出与鉴定无关的「正常/滞后」判定。
   const getIndicatorStatus = (indicator: Indicator): IndicatorStatus => {
-    return getIndicatorStatusAtMonth(indicator, selectedMonth.value, timeContext.currentYear)
+    return getDatabaseAlertStatus(indicator) ?? 'normal'
   }
 
-  // 获取状态显示文本（三档口径：原「预警」状态并入「延期」展示）
+  // 获取状态显示文本（三档口径：原「预警」状态并入「滞后」展示）
   const getStatusText = (status: IndicatorStatus): string => {
     const statusMap: Record<IndicatorStatus, string> = {
       normal: '正常',
       ahead: '超前完成',
-      warning: '延期',
-      delayed: '延期'
+      warning: '滞后',
+      delayed: '滞后'
     }
     return statusMap[status]
   }
@@ -259,13 +284,6 @@ export function useDashboardView(props: DashboardViewProps) {
     return null
   }
 
-  const getUnifiedIndicatorStatus = (
-    indicator: Indicator,
-    fallbackStatus: IndicatorStatus
-  ): IndicatorStatus => {
-    return getDatabaseAlertStatus(indicator) ?? fallbackStatus
-  }
-
   // 选中部门的指标列表
   const selectedDeptIndicators = computed(() => {
     if (!selectedBenchmarkDept.value) {
@@ -285,12 +303,12 @@ export function useDashboardView(props: DashboardViewProps) {
       })
       .map(i => ({
         ...i,
-        status: getUnifiedIndicatorStatus(i, getIndicatorStatus(i)),
+        status: getIndicatorStatus(i),
         targetProgress: getCurrentTargetProgress(i)
       }))
   })
 
-  // 筛选后的指标列表（根据状态筛选；三档口径：选「延期」时包含原预警状态）
+  // 筛选后的指标列表（根据状态筛选；三档口径：选「滞后」时包含原预警状态）
   const filteredDeptIndicators = computed(() => {
     if (!selectedStatusFilter.value) {
       return selectedDeptIndicators.value
@@ -337,7 +355,7 @@ export function useDashboardView(props: DashboardViewProps) {
       })
       .map(i => ({
         ...i,
-        status: getUnifiedIndicatorStatus(i, getIndicatorStatus(i))
+        status: getIndicatorStatus(i)
       }))
 
     return {
@@ -349,48 +367,144 @@ export function useDashboardView(props: DashboardViewProps) {
     }
   }
 
-  // 获取部门在指定月份的指标状态统计
-  const getDeptStatsAtMonth = (deptName: string, month: number, year: number) => {
-    const strategicStore = useStrategicStore()
-    const timeContext = useTimeContextStore()
-    const currentYear = timeContext.currentYear
-    const realYear = timeContext.realCurrentYear
+  // ============ 部门审核鉴定分布（2026-11-18 用户反馈修复）============
+  // 数据源统一为 GET /dashboard/appraisal-summary（后端已合入），前端不再自行推算等级。
+  // 2026-11-18 按月快照口径：行带 monthState（APPROVED/IN_REVIEW/NOT_REPORTED），
+  // 只有 APPROVED 月份出鉴定值，其余月份柱形置灰（#C0C4CC）+ tooltip 状态说明。
+  type DeptLevelStats = {
+    ahead: number
+    normal: number
+    delayed: number
+    warning: number
+    total: number
+    /** 该部门该月快照状态（缺省 APPROVED） */
+    monthState: DashboardMonthState
+    /** 该部门当年已下发指标数（非 APPROVED 灰柱高度；缺省 0=灰柱不出高度） */
+    dispatchedCount: number
+  }
 
-    const indicators = strategicStore.indicators
-      .filter(i => {
-        const indicatorYear = resolveIndicatorYear(i, realYear)
-        return indicatorYear === currentYear && i.responsibleDept === deptName
+  const emptyDeptStats = (): DeptLevelStats => ({
+    ahead: 0,
+    normal: 0,
+    delayed: 0,
+    warning: 0,
+    total: 0,
+    monthState: 'APPROVED',
+    dispatchedCount: 0
+  })
+
+  /** 建「部门名 / 部门ID」双索引：后端 orgId 是 number，Department.id 是 string */
+  const indexDeptStats = (
+    departments: DashboardDepartmentLevelStat[],
+    monthEnvelope?: { monthState?: DashboardMonthState } | null
+  ) => {
+    const byName = new Map<string, DeptLevelStats>()
+    const byId = new Map<string, DeptLevelStats>()
+    departments.forEach(dept => {
+      const stats: DeptLevelStats = {
+        ahead: dept.ahead,
+        normal: dept.normal,
+        delayed: dept.delayed,
+        // warning 恒 0：三档口径落地后「预警」并为「滞后」，仅为对齐旧数据结构保留
+        warning: 0,
+        total: dept.total,
+        monthState: resolveMonthState(dept, monthEnvelope, appraisalSummary.value),
+        dispatchedCount: dept.dispatchedCount ?? 0
+      }
+      if (dept.orgName) {
+        byName.set(dept.orgName, stats)
+      }
+      byId.set(String(dept.orgId), stats)
+    })
+    return { byName, byId }
+  }
+
+  /** 先按部门名查、再按组织 ID 查（重名/改名都能兜住），未命中返回全 0 */
+  const lookupDeptStats = (
+    index: ReturnType<typeof indexDeptStats>,
+    deptId: string | undefined,
+    deptName: string
+  ): DeptLevelStats => {
+    const byName = index.byName.get(deptName)
+    if (byName) {
+      return byName
+    }
+    if (deptId) {
+      return index.byId.get(String(deptId)) ?? emptyDeptStats()
+    }
+    return emptyDeptStats()
+  }
+
+  const currentDeptStatsIndex = computed(() =>
+    indexDeptStats(appraisalSummary.value?.departments ?? [], appraisalSummary.value)
+  )
+
+  const deptStatsIndexByMonth = computed(() => {
+    const indexByMonth = new Map<number, ReturnType<typeof indexDeptStats>>()
+    ;(appraisalSummary.value?.departmentMonths ?? []).forEach(entry => {
+      indexByMonth.set(entry.month, indexDeptStats(entry.departments, entry))
+    })
+    return indexByMonth
+  })
+
+  const loadAppraisalSummary = async () => {
+    appraisalSummaryLoading.value = true
+    try {
+      const summary = await dashboardApi.getAppraisalSummary({
+        year: timeContext.currentYear,
+        month: selectedMonth.value
       })
-      .map(i => ({
-        ...i,
-        status: getUnifiedIndicatorStatus(i, getIndicatorStatusAtMonth(i, month, year))
-      }))
+      appraisalSummary.value = summary
 
-    return {
-      ahead: indicators.filter(i => i.status === 'ahead').length,
-      warning: indicators.filter(i => i.status === 'warning').length,
-      delayed: indicators.filter(i => i.status === 'delayed').length,
-      normal: indicators.filter(i => i.status === 'normal').length,
-      total: indicators.length
+      // 首屏默认「上月」：若该月尚无任何鉴定数据，自动跳到年度最近有数据的月份，
+      // 保证一进看板就能看到真实分布（只跳一次，用户手动切月后不再干预）
+      if (
+        !appraisalMonthAutoJumped.value &&
+        summary.departments.length === 0 &&
+        summary.latestMonth > 0 &&
+        summary.latestMonth !== selectedMonth.value
+      ) {
+        appraisalMonthAutoJumped.value = true
+        selectedMonth.value = summary.latestMonth
+        return
+      }
+      appraisalMonthAutoJumped.value = true
+    } catch (error) {
+      // 接口失败：置空走空态，不回退前端启发式（否则又会画出于鉴定无关的结果）
+      appraisalSummary.value = null
+      logger.error('[Dashboard] Failed to load appraisal summary:', error)
+      ElMessage.error('审核鉴定分布加载失败，请稍后重试')
+    } finally {
+      appraisalSummaryLoading.value = false
     }
   }
 
   // 计算堆叠柱状图数据（部门视图 - 第一层）
+  // 2026-11-18（PR #127 评审意见 A）：删除 getDeptStatsAtMonth 启发式回退——
+  // 接口失败（appraisalSummary=null）一律空态 + 错误提示，不再画与鉴定无关的柱。
   const stackedBarData = computed(() => {
     if (isDrillDown.value) {
       return []
     }
 
-    const functionalDepts = orgStore.functionalDepartments.map(item => item.name).filter(Boolean)
+    const summary = appraisalSummary.value
+    if (summary === null) {
+      return []
+    }
+
+    const functionalDepts = orgStore.functionalDepartments.filter(item => Boolean(item.name))
     if (functionalDepts.length === 0) {
       return []
     }
 
-    return functionalDepts.map(dept => {
-      const stats = getDeptStatsAtMonth(dept, selectedMonth.value, timeContext.currentYear)
+    const statsIndex = currentDeptStatsIndex.value
+
+    return functionalDepts.map(item => {
+      const deptName = item.name
+      const stats = lookupDeptStats(statsIndex, item.id, deptName)
       return {
-        name: dept.length > 8 ? dept.slice(0, 8) + '...' : dept,
-        fullName: dept,
+        name: deptName.length > 8 ? deptName.slice(0, 8) + '...' : deptName,
+        fullName: deptName,
         ...stats
       }
     })
@@ -402,14 +516,28 @@ export function useDashboardView(props: DashboardViewProps) {
       return []
     }
 
+    // 2026-11-18（PR #127 评审意见 A）：接口失败一律空态，不回退启发式
+    if (appraisalSummary.value === null) {
+      return []
+    }
+
     // 显示1月到选中的月份
-    const months = []
+    const months: number[] = []
     for (let m = 1; m <= selectedMonth.value; m++) {
       months.push(m)
     }
 
+    const indexByMonth = deptStatsIndexByMonth.value
+    const drilledDeptId = orgStore.functionalDepartments.find(
+      item => item.name === drilledDept.value
+    )?.id
+
     return months.map(month => {
-      const stats = getDeptStatsAtMonth(drilledDept.value, month, timeContext.currentYear)
+      const stats = lookupDeptStats(
+        indexByMonth.get(month) ?? indexDeptStats([], null),
+        drilledDeptId,
+        drilledDept.value
+      )
       return {
         name: `${month}月`,
         month,
@@ -428,7 +556,6 @@ export function useDashboardView(props: DashboardViewProps) {
     const timeContext = useTimeContextStore()
     const currentYear = timeContext.currentYear
     const realYear = timeContext.realCurrentYear
-    const month = selectedMonthInDrillDown.value
 
     return strategicStore.indicators
       .filter(i => {
@@ -437,12 +564,12 @@ export function useDashboardView(props: DashboardViewProps) {
       })
       .map(i => ({
         ...i,
-        status: getUnifiedIndicatorStatus(i, getIndicatorStatusAtMonth(i, month, currentYear)),
+        status: getIndicatorStatus(i),
         targetProgress: getCurrentTargetProgress(i)
       }))
   })
 
-  // 月份指标筛选后的列表（三档口径：选「延期」时包含原预警状态）
+  // 月份指标筛选后的列表（三档口径：选「滞后」时包含原预警状态）
   const filteredMonthIndicators = computed(() => {
     if (!selectedStatusFilter.value) {
       return monthIndicators.value
@@ -512,7 +639,6 @@ export function useDashboardView(props: DashboardViewProps) {
     const timeContext = useTimeContextStore()
     const currentYear = timeContext.currentYear
     const realYear = timeContext.realCurrentYear
-    const month = selectedMonthInCollegeDrillDown.value
 
     let indicators = strategicStore.indicators
       .filter(i => {
@@ -521,7 +647,7 @@ export function useDashboardView(props: DashboardViewProps) {
       })
       .map(i => ({
         ...i,
-        status: getUnifiedIndicatorStatus(i, getIndicatorStatusAtMonth(i, month, currentYear)),
+        status: getIndicatorStatus(i),
         targetProgress: getCurrentTargetProgress(i)
       }))
 
@@ -539,7 +665,7 @@ export function useDashboardView(props: DashboardViewProps) {
     if (!selectedStatusFilter.value) {
       return collegeMonthIndicators.value
     }
-    // 三档口径：选「延期」时包含原预警状态
+    // 三档口径：选「滞后」时包含原预警状态
     return collegeMonthIndicators.value.filter(i =>
       selectedStatusFilter.value === 'delayed'
         ? i.status === 'delayed' || i.status === 'warning'
@@ -674,6 +800,15 @@ export function useDashboardView(props: DashboardViewProps) {
     isCollegeDrillDown.value ? '该学院暂无月度趋势数据' : '该月暂无学院上报数据'
   )
   const collegeRankingHasData = computed(() => getCollegeRankingData.value.length > 0)
+
+  // 部门分布图空态（2026-11-18 PR #127 评审意见 A）：鉴定汇总接口失败/无数据时
+  // 展示占位文案（配合 loadAppraisalSummary 的错误提示），不再画启发式柱
+  const benchmarkChartHasData = computed(() =>
+    isDrillDown.value ? monthlyStackedData.value.length > 0 : stackedBarData.value.length > 0
+  )
+  const benchmarkChartEmptyText = computed(() =>
+    isDrillDown.value ? '该部门暂无月度趋势数据' : '该月暂无部门鉴定数据（接口不可用或后端无数据）'
+  )
 
   // ============================================================================
   // 加载状态管理 - Requirements 1.5, 1.6
@@ -851,11 +986,13 @@ export function useDashboardView(props: DashboardViewProps) {
     return [currentDepartment.value]
   })
 
-  // 总览统计（2026-10-31 新口径）：等级分布 / 完成率改由 college-levels 接口供数
-  // （只算已提交/已审批月报 + 上级鉴定三档；alert_event/manualAlertSeverity 退出统计）
+  // 总览统计（2026-11-17 新口径）：等级分布 / 完成率改由 college-levels 接口供数
+  // （只算已提交/已审批月报 + 鉴定三档；alert_event/manualAlertSeverity 退出统计；
+  // 完成率分母改为已下发指标总数——未填报学院不再把分母悄悄变小虚高完成率）
   const dashboardData = computed<DashboardData>(() => {
     const aggregate = aggregateCollegeLevels(collegeLevels.value)
     const completedIndicators = aggregate.ahead + aggregate.normal
+    const denominator = aggregate.dispatchedTotal > 0 ? aggregate.dispatchedTotal : aggregate.total
 
     return {
       totalScore: 0,
@@ -866,16 +1003,34 @@ export function useDashboardView(props: DashboardViewProps) {
         normal: aggregate.normal,
         delayed: aggregate.delayed
       },
-      completionRate:
-        aggregate.total > 0 ? Math.round((completedIndicators / aggregate.total) * 100) : 0,
+      completionRate: denominator > 0 ? Math.round((completedIndicators / denominator) * 100) : 0,
       warningCount: aggregate.delayed,
-      totalIndicators: aggregate.total,
+      totalIndicators: denominator,
       completedIndicators,
       alertIndicators: {
         severe: aggregate.delayed,
         moderate: 0,
         normal: completedIndicators
       }
+    }
+  })
+
+  // 督办统计（2026-11-17 新口径）：任务完成简报 / 未填报学院提示供数
+  const collegeSupervision = computed(() => {
+    const aggregate = aggregateCollegeLevels(collegeLevels.value)
+    const denominator = aggregate.dispatchedTotal > 0 ? aggregate.dispatchedTotal : aggregate.total
+    const completed = aggregate.ahead + aggregate.normal
+    return {
+      ahead: aggregate.ahead,
+      normal: aggregate.normal,
+      delayed: aggregate.delayed,
+      dispatchedTotal: denominator,
+      appraisedTotal: aggregate.total,
+      completionRate: denominator > 0 ? Math.round((completed / denominator) * 100) : 0,
+      unreportedColleges: aggregate.unreportedColleges,
+      unreportedNames: collegeLevels.value
+        .filter(college => college.reported === false)
+        .map(college => college.orgName)
     }
   })
 
@@ -944,7 +1099,8 @@ export function useDashboardView(props: DashboardViewProps) {
     }
     exporting.value = true
     try {
-      const report = buildComprehensiveReport(indicators)
+      // 2026-11-17 新口径：滞后清单接月报鉴定真实源（progress 恒 0，旧判定已死）
+      const report = buildComprehensiveReport(indicators, delayedTaskItems.value)
       const dateTag = formatLocalDateTag()
       // 列定义统一走 getValue（ExcelExportSheet 的规范），值取行对象的同名字段
       const col = <T extends Record<string, unknown>>(
@@ -966,26 +1122,31 @@ export function useDashboardView(props: DashboardViewProps) {
             col('指标总数', 12, 'center'),
             col('已完成', 12, 'center'),
             col('进行中', 12, 'center'),
-            col('延期预警', 12, 'center'),
+            col('滞后预警', 12, 'center'),
             col('平均进度', 12, 'center'),
             col('附件覆盖率', 14, 'center')
           ],
           emptyMessage: '暂无数据'
         },
         {
+          // 2026-11-17 用户拍板：等级制填报后 indicator.progress 恒 0，进度列是死数据——
+          // 两个单位 Sheet 改出鉴定等级分布（COALESCE(appraisal_level, self_rating)，
+          // 见 comprehensiveReport.ts），列名/口径与全局「滞后」文案统一。
+          // Sheet 名保守沿用原名（改动最小），列头已是等级语义。
           sheetName: '各部门进度',
           rows: report.departments as unknown as Array<Record<string, unknown>>,
           columns: [
             col('排名', 8, 'center'),
-            col('部门', 22),
-            col('平均进度', 12, 'center'),
-            col('综合得分', 12, 'center'),
-            col('完成率', 12, 'center'),
+            col('单位', 22),
+            col('类型', 12, 'center'),
             col('指标总数', 10, 'center'),
-            col('已完成', 10, 'center'),
-            col('进行中', 10, 'center'),
-            col('延期预警', 10, 'center'),
-            col('状态', 10, 'center')
+            // 冲突融合说明：HEAD 侧四列（已完成/进行中/滞后预警/状态）是被本次
+            // 等级重写退役的旧进度列（对方分支仅做了延期预警→滞后预警改名），
+            // 取等级重写侧；滞后清单 Sheet 的真实源列（上方）为对方新增，保留。
+            col('超前完成', 10, 'center'),
+            col('正常', 10, 'center'),
+            col('滞后', 10, 'center'),
+            col('未评定', 10, 'center')
           ],
           emptyMessage: '暂无部门数据'
         },
@@ -994,15 +1155,14 @@ export function useDashboardView(props: DashboardViewProps) {
           rows: report.colleges as unknown as Array<Record<string, unknown>>,
           columns: [
             col('排名', 8, 'center'),
-            col('学院', 22),
-            col('平均进度', 12, 'center'),
-            col('综合得分', 12, 'center'),
-            col('完成率', 12, 'center'),
+            col('单位', 22),
+            col('类型', 12, 'center'),
             col('指标总数', 10, 'center'),
-            col('已完成', 10, 'center'),
-            col('进行中', 10, 'center'),
-            col('延期预警', 10, 'center'),
-            col('状态', 10, 'center')
+            // 同上：等级分布列（等级重写），旧进度列退役
+            col('超前完成', 10, 'center'),
+            col('正常', 10, 'center'),
+            col('滞后', 10, 'center'),
+            col('未评定', 10, 'center')
           ],
           emptyMessage: '暂无学院数据'
         },
@@ -1012,9 +1172,10 @@ export function useDashboardView(props: DashboardViewProps) {
           columns: [
             col('序号', 8, 'center'),
             col('指标内容', 40),
-            col('所属部门', 20),
-            col('当前进度', 12, 'center'),
-            col('自评进度', 12, 'center')
+            col('所属学院', 20),
+            col('来源部门', 20),
+            col('自评等级', 12, 'center'),
+            col('鉴定等级', 12, 'center')
           ],
           emptyMessage: '没有滞后任务'
         },
@@ -1067,7 +1228,7 @@ export function useDashboardView(props: DashboardViewProps) {
           指标总数: item.totalIndicators,
           已完成: item.completedIndicators,
           进行中: item.totalIndicators - item.completedIndicators,
-          延期数: item.alertCount,
+          滞后数: item.alertCount,
           状态: item.status === 'success' ? '优秀' : item.status === 'warning' ? '良好' : '需改进'
         }))
 
@@ -1213,7 +1374,8 @@ export function useDashboardView(props: DashboardViewProps) {
       ...filteredCollegeMonthIndicators.value
     ]
     const match = pool.find(item => String(item.id) === String(indicator.id)) as
-      (typeof filteredDeptIndicators.value)[number] | undefined
+      | (typeof filteredDeptIndicators.value)[number]
+      | undefined
     if (!match) {
       return
     }
@@ -1292,7 +1454,7 @@ export function useDashboardView(props: DashboardViewProps) {
         gradient: 'success'
       },
       {
-        label: '延期任务',
+        label: '滞后任务',
         helpText: helpTexts.warningCount,
         value: data.alertIndicators.severe,
         unit: '项',
@@ -1323,23 +1485,38 @@ export function useDashboardView(props: DashboardViewProps) {
     ]
   })
 
-  const baseDelayedTasks = computed(() => {
-    const indicators = dashboardStore.visibleIndicators
-    return indicators
-      .filter(i => (i.progress ?? 0) < 50)
-      .sort((a, b) => (a.progress ?? 0) - (b.progress ?? 0))
-      .slice(0, 5)
-      .map(i => ({
-        id: i.id,
-        name: i.name || i.indicator || '未命名任务',
-        dept: i.responsibleDept,
-        progress: i.progress ?? 0,
-        days: Math.floor((50 - (i.progress ?? 0)) / 5) + 1
-      }))
-  })
+  // ============ 滞后任务响应清单（2026-11-17 新口径：月报鉴定 DELAYED 真实源）============
+  // 旧判定 progress<50 已死：等级制填报后 indicator.progress 恒 0，所有指标都会被误判滞后。
+  // 现由后端 /dashboard/delayed-indicators 供数（只算已提交/已审批月报、
+  // appraisal_level 优先 self_rating 兜底、按指标 ID 去重），催办链路复用原接口。
+  const delayedTasksLoading = ref(false)
+  const delayedTaskItems = ref<DashboardDelayedIndicatorItem[]>([])
+  const DELAYED_TASKS_LIMIT = 5
+
+  const loadDelayedTasks = async () => {
+    delayedTasksLoading.value = true
+    try {
+      const response = await dashboardApi.getDelayedIndicators({
+        year: timeContext.currentYear,
+        // 2026-11-18 修复：与分布图同源（selectedMonth），原取学院卡月份 collegeSelectedMonth，
+        // 两处月份不一致导致「分布图已切到 11 月、滞后清单却按 10 月查询而显示 No Data」
+        month: selectedMonth.value
+      })
+      delayedTaskItems.value = response.items
+    } catch (error) {
+      // 接口失败：清空走空态，不打断看板（学院等级加载失败已有独立提示）
+      delayedTaskItems.value = []
+      logger.error('[Dashboard] Failed to load delayed indicators:', error)
+    } finally {
+      delayedTasksLoading.value = false
+    }
+  }
 
   const loadReminderStatuses = async () => {
-    const indicatorIds = baseDelayedTasks.value.map(task => Number(task.id)).filter(Number.isFinite)
+    const indicatorIds = delayedTaskItems.value
+      .slice(0, DELAYED_TASKS_LIMIT)
+      .map(item => Number(item.indicatorId))
+      .filter(Number.isFinite)
     if (indicatorIds.length === 0) {
       reminderStatuses.value = {}
       return
@@ -1356,24 +1533,34 @@ export function useDashboardView(props: DashboardViewProps) {
   }
 
   watch(
-    () => baseDelayedTasks.value.map(task => task.id).join(','),
+    () =>
+      delayedTaskItems.value
+        .slice(0, DELAYED_TASKS_LIMIT)
+        .map(item => item.indicatorId)
+        .join(','),
     () => {
       void loadReminderStatuses()
     },
     { immediate: true }
   )
 
-  // 滞后任务列表
+  // 滞后任务列表（TOP N，催办所需字段与旧结构对齐）
   const delayedTasks = computed(() => {
-    return baseDelayedTasks.value.map(task => {
-      const status = reminderStatuses.value[task.id]
+    return delayedTaskItems.value.slice(0, DELAYED_TASKS_LIMIT).map(item => {
+      const status = reminderStatuses.value[item.indicatorId]
       const reminded = Boolean(status?.lastRemindedAt) && !(status?.canRemind ?? true)
 
       return {
-        ...task,
+        id: item.indicatorId,
+        name: item.indicatorName || `指标#${item.indicatorId}`,
+        dept: item.orgName,
+        ownerDept: item.ownerOrgName || '',
+        levelText: '滞后',
+        selfRating: item.selfRating,
+        appraisalLevel: item.appraisalLevel,
         reminded,
         canRemind: status?.canRemind ?? true,
-        reminding: Boolean(remindingMap.value[task.id]),
+        reminding: Boolean(remindingMap.value[item.indicatorId]),
         lastRemindedAt: status?.lastRemindedAt ?? null,
         remindCount: status?.remindCount ?? 0,
         cooldownUntil: status?.cooldownUntil ?? null
@@ -1616,19 +1803,31 @@ export function useDashboardView(props: DashboardViewProps) {
 
           let tooltip = `<strong>${name}</strong><br/>`
 
+          // 2026-11-18 按月快照口径：非 APPROVED 月份只出置灰说明，不出鉴定数
+          if (dataItem && isGrayMonth(dataItem.monthState)) {
+            tooltip += `<span style="color: #909399; font-weight: bold;">■ ${monthStateDeptTooltip(dataItem.monthState)}</span><br/>`
+            if ((dataItem.dispatchedCount || 0) > 0) {
+              tooltip += `已下发: ${dataItem.dispatchedCount} 项<br/>`
+            }
+            if (!isDrillDown.value) {
+              tooltip += `<span style="color: #409eff; font-size: 11px;">点击查看月度趋势</span>`
+            }
+            return tooltip
+          }
+
           if (isDrillDown.value) {
             // 月度视图显示该月的统计
             tooltip += `${params[0].name}<br/>`
             tooltip += `<span style="color: ${statusColors.ahead}">●</span> 超前: ${dataItem?.ahead || 0}<br/>`
             tooltip += `<span style="color: ${statusColors.normal}">●</span> 正常: ${dataItem?.normal || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.delayed}">●</span> 延期: ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}<br/>`
+            tooltip += `<span style="color: ${statusColors.delayed}">●</span> 滞后: ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}<br/>`
             tooltip += `总计: ${dataItem?.total || 0}`
           } else {
             // 部门视图显示统计
             tooltip += `${selectedMonth.value}月完成情况<br/>`
             tooltip += `<span style="color: ${statusColors.ahead}">■</span> 超前: ${dataItem?.ahead || 0}<br/>`
             tooltip += `<span style="color: ${statusColors.normal}">■</span> 正常: ${dataItem?.normal || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.delayed}">■</span> 延期: ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}<br/>`
+            tooltip += `<span style="color: ${statusColors.delayed}">■</span> 滞后: ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}<br/>`
             tooltip += `总计: ${dataItem?.total || 0}<br/>`
             tooltip += `<span style="color: #409eff; font-size: 11px;">点击查看月度趋势</span>`
           }
@@ -1636,7 +1835,7 @@ export function useDashboardView(props: DashboardViewProps) {
         }
       },
       legend: {
-        data: ['超前完成', '正常', '延期'],
+        data: ['超前完成', '正常', '滞后', '未出鉴定'],
         bottom: 0,
         left: 'center',
         itemWidth: 12,
@@ -1690,7 +1889,8 @@ export function useDashboardView(props: DashboardViewProps) {
             color: statusColors.ahead,
             borderRadius: isDrillDown.value ? [0, 0, 0, 0] : [4, 0, 0, 4]
           },
-          data: data.map(d => d.ahead || 0)
+          // 按月快照口径：只有 APPROVED 月份出鉴定值
+          data: data.map(d => (isGrayMonth(d.monthState) ? 0 : d.ahead || 0))
         },
         {
           name: '正常',
@@ -1700,11 +1900,11 @@ export function useDashboardView(props: DashboardViewProps) {
           itemStyle: {
             color: statusColors.normal
           },
-          data: data.map(d => d.normal || 0)
+          data: data.map(d => (isGrayMonth(d.monthState) ? 0 : d.normal || 0))
         },
         {
-          // 三档口径：原「预警」桶并入「延期」展示
-          name: '延期',
+          // 三档口径：原「预警」桶并入「滞后」展示
+          name: '滞后',
           type: 'bar',
           stack: 'total',
           barWidth: isDrillDown.value ? 40 : 30,
@@ -1712,7 +1912,20 @@ export function useDashboardView(props: DashboardViewProps) {
             color: statusColors.delayed,
             borderRadius: isDrillDown.value ? [0, 0, 0, 0] : [0, 4, 4, 0]
           },
-          data: data.map(d => (d.warning || 0) + (d.delayed || 0))
+          data: data.map(d => (isGrayMonth(d.monthState) ? 0 : (d.warning || 0) + (d.delayed || 0)))
+        },
+        {
+          // 2026-11-18 按月快照口径：非 APPROVED 月份置灰柱（#C0C4CC，与学院图同色系），
+          // 柱高=已下发数（后端未给 dispatchedCount 时不出高度，tooltip 仍说明状态）
+          name: '未出鉴定',
+          type: 'bar',
+          stack: 'total',
+          barWidth: isDrillDown.value ? 40 : 30,
+          itemStyle: {
+            color: MONTH_GRAY_COLOR,
+            borderRadius: isDrillDown.value ? [0, 0, 0, 0] : [0, 4, 4, 0]
+          },
+          data: data.map(d => (isGrayMonth(d.monthState) ? d.dispatchedCount || 0 : 0))
         }
       ]
     })
@@ -1789,12 +2002,29 @@ export function useDashboardView(props: DashboardViewProps) {
     })
   })
 
-  // 监听年份变化：学院等级数据重新请求 + 重新渲染所有图表
+  // 2026-11-18：分布图与滞后清单同源跟随 selectedMonth 重新取数
+  // （原滞后清单跟的是 collegeSelectedMonth，两处月份不同步）
+  watch(selectedMonth, () => {
+    void loadAppraisalSummary()
+    void loadDelayedTasks()
+  })
+
+  // 鉴定汇总（异步）到达后重绘分布图：首屏图与数据是并行加载的，
+  // 图可能先渲染出全 0，等数据回来必须再画一次
+  watch(appraisalSummary, () => {
+    nextTick(() => {
+      initBenchmarkChart()
+    })
+  })
+
+  // 监听年份变化：学院等级/滞后任务数据重新请求 + 重新渲染所有图表
   watch(
     () => timeContext.currentYear,
     () => {
       void loadCollegeLevels()
       void loadCollegeLevelsTrend()
+      void loadDelayedTasks()
+      void loadAppraisalSummary()
       nextTick(() => {
         initBenchmarkChart()
         initCollegeChart()
@@ -1922,17 +2152,22 @@ export function useDashboardView(props: DashboardViewProps) {
 
           let tooltip = `<strong>${name}</strong><br/>`
 
-          if (isCollegeDrillDown.value) {
+          // 2026-11-18 按月快照口径：非 APPROVED（未填报/审批中）灰柱督办，
+          // tooltip 给状态说明 + 下发/未下发数（既有 reported=false 逻辑并入 monthState 统一处理）
+          if (dataItem && isGrayMonth(dataItem.monthState)) {
+            tooltip += `<span style="color: #909399; font-weight: bold;">■ ${monthStateCollegeTooltip(dataItem.monthState)}</span><br/>`
+            tooltip += `已下发: ${dataItem.dispatchedCount || 0} 项 · 未下发: ${dataItem.undispatchedCount || 0} 项<br/>`
+          } else if (isCollegeDrillDown.value) {
             tooltip += `${params[0].name}<br/>`
             tooltip += `<span style="color: ${statusColors.ahead}">●</span> 超前: ${dataItem?.ahead || 0}<br/>`
             tooltip += `<span style="color: ${statusColors.normal}">●</span> 正常: ${dataItem?.normal || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.delayed}">●</span> 延期: ${dataItem?.delayed || 0}<br/>`
+            tooltip += `<span style="color: ${statusColors.delayed}">●</span> 滞后: ${dataItem?.delayed || 0}<br/>`
             tooltip += `总计: ${dataItem?.total || 0}`
           } else {
             tooltip += `${collegeSelectedMonth.value}月完成情况<br/>`
             tooltip += `<span style="color: ${statusColors.ahead}">■</span> 超前: ${dataItem?.ahead || 0}<br/>`
             tooltip += `<span style="color: ${statusColors.normal}">■</span> 正常: ${dataItem?.normal || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.delayed}">■</span> 延期: ${dataItem?.delayed || 0}<br/>`
+            tooltip += `<span style="color: ${statusColors.delayed}">■</span> 滞后: ${dataItem?.delayed || 0}<br/>`
             tooltip += `总计: ${dataItem?.total || 0}<br/>`
             tooltip += `<span style="color: #409eff; font-size: 11px;">点击查看月度趋势</span>`
           }
@@ -1940,7 +2175,7 @@ export function useDashboardView(props: DashboardViewProps) {
         }
       },
       legend: {
-        data: ['超前完成', '正常', '延期'],
+        data: ['超前完成', '正常', '滞后', '未出鉴定'],
         bottom: 0,
         left: 'center',
         itemWidth: 12,
@@ -1994,7 +2229,8 @@ export function useDashboardView(props: DashboardViewProps) {
             color: statusColors.ahead,
             borderRadius: isCollegeDrillDown.value ? [0, 0, 0, 0] : [4, 0, 0, 4]
           },
-          data: data.map(d => d.ahead || 0)
+          // 按月快照口径：只有 APPROVED 月份出鉴定值
+          data: data.map(d => (isGrayMonth(d.monthState) ? 0 : d.ahead || 0))
         },
         {
           name: '正常',
@@ -2004,11 +2240,11 @@ export function useDashboardView(props: DashboardViewProps) {
           itemStyle: {
             color: statusColors.normal
           },
-          data: data.map(d => d.normal || 0)
+          data: data.map(d => (isGrayMonth(d.monthState) ? 0 : d.normal || 0))
         },
         {
-          // 三档口径：延期直接来自接口 delayed（上级鉴定）
-          name: '延期',
+          // 三档口径：滞后直接来自接口 delayed（月报鉴定，appraisal 优先 self 兜底）
+          name: '滞后',
           type: 'bar',
           stack: 'total',
           barWidth: isCollegeDrillDown.value ? 40 : 30,
@@ -2016,7 +2252,20 @@ export function useDashboardView(props: DashboardViewProps) {
             color: statusColors.delayed,
             borderRadius: isCollegeDrillDown.value ? [0, 0, 0, 0] : [0, 4, 4, 0]
           },
-          data: data.map(d => d.delayed || 0)
+          data: data.map(d => (isGrayMonth(d.monthState) ? 0 : d.delayed || 0))
+        },
+        {
+          // 2026-11-18 按月快照口径：非 APPROVED（未填报/审批中）灰柱督办
+          // （柱高=已下发数；既有 reported=false「未填报」逻辑并入 monthState 统一处理）
+          name: '未出鉴定',
+          type: 'bar',
+          stack: 'total',
+          barWidth: isCollegeDrillDown.value ? 40 : 30,
+          itemStyle: {
+            color: MONTH_GRAY_COLOR,
+            borderRadius: isCollegeDrillDown.value ? [0, 0, 0, 0] : [0, 4, 4, 0]
+          },
+          data: data.map(d => (isGrayMonth(d.monthState) ? d.dispatchedCount || 0 : 0))
         }
       ]
     })
@@ -2054,7 +2303,7 @@ export function useDashboardView(props: DashboardViewProps) {
     })
   }
 
-  // 处理学院看板月份变化（2026-10-31 新口径：切月触发重新请求）
+  // 处理学院看板月份变化（2026-10-31 新口径：切月触发重新请求；2026-11-17 增滞后清单同步）
   const handleCollegeMonthChange = () => {
     showCollegeMonthIndicatorCard.value = false
     selectedMonthInCollegeDrillDown.value = null
@@ -2063,6 +2312,7 @@ export function useDashboardView(props: DashboardViewProps) {
       drilledCollege.value = ''
     }
     void loadCollegeLevels()
+    void loadDelayedTasks()
     nextTick(() => {
       initCollegeChart()
     })
@@ -2125,13 +2375,24 @@ export function useDashboardView(props: DashboardViewProps) {
           const item = params[0]
           const dataItem = data[item.dataIndex]
           const fullName = dataItem?.fullName || item.name
+          // 2026-11-18 按月快照口径：非 APPROVED（未填报/审批中）灰条督办，
+          // 既有 reported=false 逻辑并入 monthState 统一处理
+          if (dataItem && isGrayMonth(dataItem.monthState)) {
+            const reasonText =
+              dataItem.monthState === 'IN_REVIEW'
+                ? `本月上报审批中（灰条督办）<br/>已下发 ${dataItem.total || 0} 项，鉴定待审批通过后计入`
+                : `未填报（灰条督办）<br/>已下发 ${dataItem.total || 0} 项，本月未提交月报`
+            return `<strong>${fullName}</strong><br/>
+                <span style="color: #909399; font-weight: bold;">${reasonText}</span><br/>
+                <span style="color: #909399; font-size: 11px;">完成率按 0 分计，请督办</span>`
+          }
           return `<strong>${fullName}</strong><br/>
                 分数: ${item.value}<br/>
                 完成: ${dataItem?.completed || 0}/${dataItem?.total || 0} 项<br/>
                 <div style="margin-top: 6px; padding-top: 6px; border-top: 1px dashed #e4e7ed;">
                   <span style="color: #67c23a; margin-right: 8px;">超前 ${dataItem?.ahead || 0}</span>
                   <span style="color: #409eff; margin-right: 8px;">正常 ${dataItem?.normal || 0}</span>
-                  <span style="color: #f56c6c;">延期 ${dataItem?.delayed || 0}</span>
+                  <span style="color: #f56c6c;">滞后 ${dataItem?.delayed || 0}</span>
                 </div>`
         }
       },
@@ -2175,7 +2436,12 @@ export function useDashboardView(props: DashboardViewProps) {
           barGap: '30%',
           itemStyle: {
             borderRadius: [0, 4, 4, 0],
-            color: (params: { value: number }) => {
+            color: (params: { dataIndex: number; value: number }) => {
+              // 2026-11-18 按月快照口径：非 APPROVED 灰条督办，不参与分档配色
+              const dataItem = data[params.dataIndex]
+              if (dataItem && isGrayMonth(dataItem.monthState)) {
+                return MONTH_GRAY_COLOR
+              }
               const value = params.value as number
               if (value >= 80) {
                 return '#67c23a'
@@ -2192,7 +2458,12 @@ export function useDashboardView(props: DashboardViewProps) {
           label: {
             show: true,
             position: 'right',
-            formatter: '{c}',
+            formatter: (params: { dataIndex: number; value: number }) => {
+              const dataItem = data[params.dataIndex]
+              return dataItem && isGrayMonth(dataItem.monthState)
+                ? monthStateGrayLabel(dataItem.monthState)
+                : `${params.value}`
+            },
             fontSize: 12,
             color: '#606266'
           },
@@ -2285,9 +2556,11 @@ export function useDashboardView(props: DashboardViewProps) {
       logger.error('[Dashboard] Initial load failed:', err)
     }
 
-    // 学院等级数据（2026-10-31 新口径）：与指标加载并行，不阻塞首屏图表
+    // 学院等级/滞后任务数据（新口径）：与指标加载并行，不阻塞首屏图表
     void loadCollegeLevels()
     void loadCollegeLevelsTrend()
+    void loadDelayedTasks()
+    void loadAppraisalSummary()
 
     await nextTick()
     await initRadarChart()
@@ -2327,6 +2600,12 @@ export function useDashboardView(props: DashboardViewProps) {
         return
       }
       void reloadData({ silent: true })
+      // 2026-11-17 新口径：学院等级/趋势/滞后清单与指标同拍兜底刷新，
+      // 否则审批终态后看板分布与简报会停在旧数据（领导②③根因之一）
+      void loadCollegeLevels()
+      void loadCollegeLevelsTrend()
+      void loadDelayedTasks()
+      void loadAppraisalSummary()
       void loadMutationSummary()
     }, DASHBOARD_AUTO_REFRESH_INTERVAL)
   }
@@ -2357,6 +2636,14 @@ export function useDashboardView(props: DashboardViewProps) {
       logger.info('[DashboardView] handling global data refresh request', detail)
       // 事件驱动刷新一律后台静默：数据就地更新，不打断当前浏览（2026-10-07）
       await reloadData({ silent: true })
+      // 2026-11-17 新口径：审批终态（dashboard 域事件）后学院等级/趋势/滞后清单必须重拉，
+      // 否则看板学院分布图、月度趋势、任务完成简报全部停在审核前旧数据（领导催办①③根因）
+      await Promise.allSettled([
+        loadCollegeLevels(),
+        loadCollegeLevelsTrend(),
+        loadDelayedTasks(),
+        loadAppraisalSummary()
+      ])
     })().finally(() => {
       globalDataRefreshPromise = null
     })
@@ -2377,11 +2664,14 @@ export function useDashboardView(props: DashboardViewProps) {
     _resetFilters,
     _showFilterFeature,
     applyFilters,
+    appraisalSummary,
+    appraisalSummaryLoading,
     authStore,
-    baseDelayedTasks,
     benchmarkChartRef,
     benchmarkSectionRef,
     benchmarkData,
+    benchmarkChartHasData,
+    benchmarkChartEmptyText,
     canViewAllDepartments,
     collegeBarData,
     collegeChartHasData,
@@ -2396,12 +2686,14 @@ export function useDashboardView(props: DashboardViewProps) {
     collegeRankingHasData,
     collegeRankingMonth,
     collegeSelectedMonth,
+    collegeSupervision,
     createChartInstance,
     currentDepartment,
     currentRole,
     dashboardData,
     dashboardStore,
     delayedTasks,
+    delayedTasksLoading,
     drilledCollege,
     drilledDept,
     filterForm,
@@ -2410,9 +2702,10 @@ export function useDashboardView(props: DashboardViewProps) {
     filteredMonthIndicators,
     getCollegeRankingData,
     getCurrentTargetProgress,
-    getDeptStatsAtMonth,
+    loadAppraisalSummary,
     loadCollegeLevels,
     loadCollegeLevelsTrend,
+    loadDelayedTasks,
     getIndicatorStatus,
     getStatusClass,
     getStatusText,

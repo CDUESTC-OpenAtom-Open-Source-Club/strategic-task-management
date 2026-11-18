@@ -415,6 +415,76 @@ export const hasCollegeMutationApprovalInFlight = (
   return entries.some(entry => Number(entry.targetOrgId) === orgId)
 }
 
+/**
+ * 学院线级在审异动判定条目解析输入（2026-11-17 e2e 缺陷①修复）。
+ *
+ * <p>{@code functionalOrgId} = 学院页签右侧下拉所选**归口部门**组织 id
+ * （model 侧 collegeDispatchDeptOrgId 同源）；{@code resolveEntryFunctionalOrgId}
+ * 由 model 注入——条目 entityId（异动指标 id）→ 指标行 → taskId → task.plan_id
+ * → plan.functional_org_id 的解析链（lib 层零依赖，保持纯函数可单测）。</p>
+ */
+export interface CollegeLineMutationInFlightInput {
+  /** 主清单 + 链下学院追回清单合并后的在审异动条目（与学院级判定同源） */
+  entries: CollegeMutationApprovalEntryLike[]
+  /** 所选学院组织 id（解析失败为 null → 恒 false，与学院级口径一致） */
+  collegeOrgId: number | null
+  /**
+   * 当前选中归口部门组织 id（null/解析失败 = 归口未选 → 保守回退学院级口径，
+   * 宁可多锁、不放行语义模糊）
+   */
+  functionalOrgId: number | null
+  /**
+   * 条目 → 其异动指标所属线（plan.functional_org_id）的归口组织 id；
+   * 判不出（指标/任务/计划在缓存缺失、TASK 型条目等）返回 null → 按冲突处理
+   * （fail-safe：前端缓存缺口不得放松后端可能仍会拦的锁）。
+   */
+  resolveEntryFunctionalOrgId: (entry: CollegeMutationApprovalEntryLike) => number | null
+}
+
+/**
+ * 学院页签「本线」在审异动判定（2026-11-17 e2e 缺陷①修复：互斥锁收窄到线级）。
+ *
+ * <p><b>缺陷</b>：数字校园线（归口 50）异动在审时，同学院教务处线（归口 44）的
+ * 「导入 / 新增行」也被置灰——但后端 {@code CollegeDispatchGuardService}
+ * （2026-11-17 线级收窄）实测放行：在审异动所在线的 {@code plan.functional_org_id}
+ * 必须与目标线归口一致才算冲突。前端只按学院收口，过严。</p>
+ *
+ * <p><b>口径（与后端线级语义对齐）</b>：同学院（targetOrgId 命中）且条目线归口
+ * 等于当前选中归口 → 冲突；别线（他归口）的异动不锁本线入口。</p>
+ *
+ * <p><b>保守边界</b>（前端数据面弱于后端 SQL，宁可多锁）：</p>
+ * <ul>
+ *   <li>归口未选 / 解析不出（functionalOrgId 非法）→ 回退学院级口径
+ *       （hasCollegeMutationApprovalInFlight，现状行为）；</li>
+ *   <li>条目线归口判不出（指标/任务/计划缓存缺失）→ 视为冲突；</li>
+ *   <li>学院 id 解析不出 → 恒 false（与学院级口径一致，锁不放无意义）。</li>
+ * </ul>
+ */
+export const hasCollegeLineMutationApprovalInFlight = (
+  input: CollegeLineMutationInFlightInput
+): boolean => {
+  const collegeOrgId = Number(input.collegeOrgId)
+  if (!Number.isFinite(collegeOrgId) || collegeOrgId <= 0) {
+    return false
+  }
+  const lineOrgId = Number(input.functionalOrgId)
+  // 归口未选/解析失败：保持既有保守行为（学院级口径），不放行语义模糊
+  if (!Number.isFinite(lineOrgId) || lineOrgId <= 0) {
+    return hasCollegeMutationApprovalInFlight(input.entries, collegeOrgId)
+  }
+  return input.entries.some(entry => {
+    if (Number(entry.targetOrgId) !== collegeOrgId) {
+      return false
+    }
+    const entryLineOrgId = Number(input.resolveEntryFunctionalOrgId(entry))
+    // 条目线归口判不出 → 保守按冲突（fail-safe，不因缓存缺口放松互斥）
+    if (!Number.isFinite(entryLineOrgId) || entryLineOrgId <= 0) {
+      return true
+    }
+    return entryLineOrgId === lineOrgId
+  })
+}
+
 /** 学院页签「导入」入口 gating 的输入（2026-11-14 D1 首次下发死锁解锁） */
 export interface CollegeTabImportGateInput {
   /**
@@ -430,6 +500,12 @@ export interface CollegeTabImportGateInput {
    * 「空壳计划」（存在但没有任何指标行）放行导入：导入就是往空计划里建行。
    */
   collegePlanHasRows: boolean
+  /**
+   * 2026-11-17（学院线粒度改造 · 规格书 4.9② / 用户拍板）：当前选中**归口部门**名称
+   * （学院页签右侧「请选择职能部门」下拉的生效值）。只用于阻断文案点名归口，
+   * 缺省不影响判定结果。
+   */
+  functionalDeptName?: string | null
 }
 
 /** 学院下发审批「在途」状态集（与 resolveCollegeTabDistributeAction 审批中分支同口径） */
@@ -457,15 +533,35 @@ const COLLEGE_PLAN_DISTRIBUTED_STATUSES: readonly string[] = [
  * 学院 × 部门组合也拦死——而导入本来就是「创建计划并下发」的入口（后端
  * findOrCreatePlan 建计划），「发起下发审批」按钮又因计划缺失被 v-if 藏掉 →
  * 新组合的首次下发无路可走（存量已下发组合不受影响，所以只点现成组合的
- * 回归发现不了）。新口径：</p>
+ * 回归发现不了）。</p>
+ *
+ * <p><b>2026-11-17（学院线粒度改造 · 规格书 4.9②）语义变更</b>：后端已把「线」的
+ * 身份收敛为「学院 × 归口部门」，同一条线已下发后**再导入会被后端直接拒绝**
+ * （「该学院 2026 年度的「教务处」这条线已下发…」）。前端门禁此前对 DISTRIBUTED
+ * **放行**，用户点进去白跑一趟选文件流程才吃到后端 400 —— 前后端契约不一致。
+ * 现在口径：<b>当前归口这条线已下发 → 拦</b>，并给出与职能页签点击期同口径的
+ * 友好提示（引导改用「新增行 / 发起异动」），不再让用户去撞后端。</p>
+ *
+ * <p>当前口径（判定顺序 = 命中即返回第一条原因）：</p>
  * <ul>
  *   <li>尚无计划（子计划未解析）→ 放行（导入 = 创建计划并下发）；</li>
- *   <li>已有 DISTRIBUTED 计划 → 放行（既有口径：已下发组合导入走异动审批链）；</li>
- *   <li>空壳计划（存在但没有任何指标行）→ 放行（导入 = 往空计划建行）；</li>
  *   <li>计划在审/审批中（PENDING/IN_REVIEW 等）→ 拦（互斥：审批中的计划不能加行）；</li>
+ *   <li>已下发（DISTRIBUTED/APPROVED/PUBLISHED/ACTIVE）→ <b>拦</b>（该归口的线
+ *       已下发，后端会拒绝重复导入）；</li>
+ *   <li>空壳计划（存在但没有任何指标行）→ 放行（导入 = 往空计划建行）；</li>
  *   <li>已存在、非 DISTRIBUTED 且非空壳（草稿/退回且已有行）→ 拦（B4 原始缺陷
  *       口径保留：未下发计划的存量行集不能再用导入改，先发起下发审批）。</li>
  * </ul>
+ *
+ * <p><b>归口维度是否已能区分</b>：能。门禁入参 {@code collegePlanStatus} 取自
+ * {@code effectivePlanContext.plan.status}，而 effectivePlanContext 的子计划解析
+ * （lib/collegeReportScope.ts 的 resolveCollegeReportPlanScope）在**战略部登录**
+ * 时按 {@code scopeByFunctionalOrg=true} 收口——归口桶（functional_org_id = 当前
+ * 所选部门）优先、无归口字段才走 legacy 兜底桶。因此这里的「已下发」判定天然是
+ * 「当前归口这条线」，不会误伤同学院其他归口的线。职能部门登录不启用归口收口，
+ * 但职能部门本就不能发起学院子指标导入（后端 assertStrategyOrgScope 拦截），
+ * 不构成风险面。</p>
+ *
  * <p>「新增行 / 发起异动」不适用本口径——它们仍按 collegeTabPlanNotDistributed
  * 全量拦（异动前提是计划已下发），见 useStrategicTaskView 的 B4 注释。</p>
  */
@@ -481,9 +577,12 @@ export const resolveCollegeTabImportGate = (input: CollegeTabImportGateInput): s
   if (COLLEGE_PLAN_APPROVAL_IN_FLIGHT_STATUSES.includes(status)) {
     return '该学院×部门的计划审批进行中，暂不能导入：等下发审批结束或先撤回'
   }
-  // 已下发：放行（既有口径，已下发组合导入走异动审批链）
+  // 已下发：拦（2026-11-17 学院线粒度改造）——当前归口这条线已下发，后端会拒绝
+  // 重复导入；前端先给友好提示，不再放行让用户点进去挨后端拒绝。
   if (COLLEGE_PLAN_DISTRIBUTED_STATUSES.includes(status)) {
-    return ''
+    const dept = String(input.functionalDeptName ?? '').trim()
+    const scope = dept ? `「${dept}」` : '所选归口部门'
+    return `该学院×${scope}这条线已下发，不能重复导入：请用表格「新增行」或「发起异动」调整指标`
   }
   // 草稿/退回/未知：空壳放行（导入=建行）；已有行拦（未下发计划的存量行集不能导入改）
   if (input.collegePlanHasRows) {

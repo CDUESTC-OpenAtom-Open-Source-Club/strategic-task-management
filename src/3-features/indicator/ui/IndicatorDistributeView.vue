@@ -116,7 +116,6 @@ const {
   canEditChildManualAlert,
   childManualAlertEditable,
   childManualAlertLockHint,
-  getChildManualAlertLabel,
   getChildManualAlertSeverity,
   handleChildManualAlertChange,
   savingChildManualAlertId,
@@ -333,7 +332,7 @@ type DistributionExportChild = Partial<StrategicIndicator> & {
 }
 
 // 审核进度显示与门禁（2026-10-31 定稿）：等级选项收敛到共享 appraisalGate
-// （只有超前完成/正常/延期三档；「未评定」退为初始空白显示态，不是选项），三视图同构。
+// （只有超前完成/正常/滞后三档；「未评定」退为初始空白显示态，不是选项），三视图同构。
 // 注：此处改用 getAppraisalLevelDisplay 统一映射——原先 getChildManualAlertLabel/TagType
 // 的词表是 WARNING，context 返回的 DELAYED 会被误显示为「未评定」。
 const getChildAppraisalDisplay = (level: string | null | undefined) =>
@@ -468,7 +467,15 @@ const buildDistributionExportColumns = (
       header: '审核进度',
       width: 18,
       align: 'center',
-      getValue: row => getChildManualAlertLabel(getChildManualAlertSeverity(row.child))
+      // 2026-11-17（领导反馈「导出的表没有填报的内容」）：导出与网格同源——
+      // 实时等级 context 优先（getIndicatorAppraisalLevel），行内等级字段兜底；
+      // 经共享 getChildAppraisalDisplay（getAppraisalLevelDisplay）映射，
+      // 修复旧 getChildManualAlertLabel 词表（WARNING）认不出 DELAYED 显示「未评定」的问题。
+      // 导出 handler 已在构建 sheet 前 await 加载 context。
+      getValue: row =>
+        getChildAppraisalDisplay(
+          getIndicatorAppraisalLevel(row.child?.id, getChildManualAlertSeverity(row.child))
+        ).label
     },
     // 2026-10-28：附件本体打进 zip 后，Excel 只保留「附件目录（相对路径）」+「文件名」；
     // 附件来源由后端按当前登录人可见范围返回，页面看不到的填报不会进导出。
@@ -635,6 +642,8 @@ const handleExportCurrentDistributionCollege = async () => {
 
   distributionExporting.value = true
   try {
+    // 2026-11-17：导出前显式重查实时等级 context（与网格同源），确保「审核进度」列不为空
+    await loadIndicatorAppraisalContexts(rows.map(row => row.child.id))
     // 2026-10-28：附件可见性由后端判定——填报人可见本人草稿，上级只可见上一轮已上报快照
     const summaryMap = await loadIndicatorAttachmentSummaryMap(rows.map(row => row.child.id))
     const attachmentGroups = buildDistributionExportAttachmentGroups(rows, summaryMap)
@@ -697,6 +706,10 @@ const handleExportSelectedDistributionColleges = async () => {
       rows: getDistributionExportRowsByCollege(college)
     }))
 
+    // 2026-11-17：导出前显式重查实时等级 context（与网格同源），确保「审核进度」列不为空
+    await loadIndicatorAppraisalContexts(
+      collegeRows.flatMap(item => item.rows.map(row => row.child.id))
+    )
     // 一次批量查询所有学院的可见附件（服务端按当前登录人过滤草稿）
     const summaryMap = await loadIndicatorAttachmentSummaryMap(
       collegeRows.flatMap(item => item.rows.map(row => row.child.id))
@@ -777,7 +790,7 @@ const _getManualAlertLabel = (severity?: string | null): string => {
     .toUpperCase()
   if (normalized === 'AHEAD') return '超前完成'
   if (normalized === 'NORMAL') return '正常'
-  if (normalized === 'DELAYED' || normalized === 'WARNING') return '延期'
+  if (normalized === 'DELAYED' || normalized === 'WARNING') return '滞后'
   return '—'
 }
 
@@ -1231,7 +1244,7 @@ const handleDistributionImportCommitted = async () => {
                           {
                             AHEAD: '超前完成',
                             NORMAL: '正常',
-                            DELAYED: '延期'
+                            DELAYED: '滞后'
                           }[row.child.selfRating] || row.child.selfRating
                         }}
                       </el-tag>
@@ -1250,7 +1263,7 @@ const handleDistributionImportCommitted = async () => {
                       <div class="manual-alert-cell">
                         <!-- 2026-10-31 定稿：点击格子先单条重查 context，canAppraise=true
                              才弹等级选择器，不满足条件当场弹对应原因（三视图同构）；
-                             DELAYED 经共享 getAppraisalLevelDisplay 正确显示「延期」。 -->
+                             DELAYED 经共享 getAppraisalLevelDisplay 正确显示「滞后」。 -->
                         <el-tag
                           :type="
                             getChildAppraisalDisplay(
@@ -1552,7 +1565,7 @@ const handleDistributionImportCommitted = async () => {
           <el-descriptions-item label="自评进度">
             <el-tag v-if="(currentDetailIndicator as any).selfRating" size="small" type="info">
               {{
-                { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '延期' }[
+                { AHEAD: '超前完成', NORMAL: '正常', DELAYED: '滞后' }[
                   String((currentDetailIndicator as any).selfRating).toUpperCase()
                 ] || (currentDetailIndicator as any).selfRating
               }}

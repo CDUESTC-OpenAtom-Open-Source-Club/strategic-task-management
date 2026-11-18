@@ -6,6 +6,7 @@ import { shallowMount, type VueWrapper } from '@vue/test-utils'
 import { flushPromises } from '../../setup'
 
 import {
+  hasCollegeLineMutationApprovalInFlight,
   hasCollegeMutationApprovalInFlight,
   isReportApprovalStatusInFlight,
   mergeReturnedMutationChains,
@@ -524,8 +525,10 @@ function createViewModel(overrides: Record<string, unknown> = {}) {
     isReportApprovalInFlight: ref(false),
     isMutationApprovalInFlight: ref(false),
     // 2026-11-12（低⑩）：学院口径在审异动判定（新增行互斥）——基线不锁，
-    // 用例按需覆写；缺省交给 Proxy 会变成真值函数，新增行恒灰干扰断言
+    // 用例按需覆写；缺省交给 Proxy 会变成真值函数，新增行恒灰干扰断言。
+    // 2026-11-17（e2e 缺陷①修复）：视图互斥消费方改读线级口径，基线同步补齐
     isCollegeMutationApprovalInFlight: ref(false),
+    isCollegeLineMutationApprovalInFlight: ref(false),
     canEdit: ref(true),
     isCurrentPlanUnderApproval: ref(false),
     canWithdrawMutationInFlight: ref(false),
@@ -616,6 +619,10 @@ const findButtonByText = (wrapper: VueWrapper, text: string) =>
 const collegeTabReady = (extra: Record<string, unknown> = {}) => ({
   collegeFillStatusScope: ref(true),
   collegeDispatchDeptFilter: ref('教务处'),
+  // 2026-11-17（学院线粒度改造）：导入门禁要求归口部门可解析出组织 ID（functionalOrgId），
+  // 两选齐的基础 mock 同步补齐（缺省时新分支「无法解析所选职能部门」会误置灰导入）
+  collegeDispatchDeptEffective: ref('教务处'),
+  collegeDispatchDeptOrgId: ref(44),
   selectedCollege: ref('航空学院'),
   collegeDepartmentsScoped: ref(['航空学院']),
   canWithdrawMutationInFlight: ref(false),
@@ -797,10 +804,10 @@ describe('学院页签按钮分流与互斥守卫（2026-11-11 组件接线）',
     wrapper.unmount()
   })
 
-  it('⑤ 异动在审时学院页签「导入」置灰 + tooltip；异动结束恢复可用', async () => {
+  it('⑤ 本线异动在审时学院页签「导入」置灰 + tooltip（2026-11-17 e2e 缺陷①：线级口径）；异动结束恢复可用', async () => {
     const wrapper = mountView(
       collegeTabReady({
-        isMutationApprovalInFlight: ref(true)
+        isCollegeLineMutationApprovalInFlight: ref(true)
       })
     )
     await switchToCollegeTab(wrapper)
@@ -809,7 +816,7 @@ describe('学院页签按钮分流与互斥守卫（2026-11-11 组件接线）',
     expect(importBtn).toBeDefined()
     expect(importBtn!.attributes('disabled')).toBeDefined()
     expect(importBtn!.attributes('title')).toBe(
-      '异动审批进行中，暂不能导入：等审批结束或先撤回/取消本次异动'
+      '当前归口这条线的异动审批进行中，暂不能导入：等审批结束或先撤回/取消本次异动'
     )
     wrapper.unmount()
 
@@ -1163,6 +1170,100 @@ describe('task/lib/collegeTabDistribute · 学院口径退回链加载（C3-D1�
       expect(hasCollegeMutationApprovalInFlight([{ instanceId: 1 }], 56)).toBe(false)
     })
   })
+
+  // 2026-11-17（e2e 缺陷①修复：学院线级互斥收窄，对齐后端 CollegeDispatchGuardService
+  // 2026-11-17 线级语义——在审异动所在线的 plan.functional_org_id 与目标线归口一致才冲突）
+  describe('hasCollegeLineMutationApprovalInFlight（线级在审异动，e2e 缺陷①）', () => {
+    const collegeOrgId = 56
+    /** 异动条目（target=学院 56，entityId=异动指标；线归口由 resolver 注入） */
+    const lineEntry = (targetOrgId: number = collegeOrgId) => ({
+      targetOrgId,
+      entityId: 2048,
+      entityType: 'INDICATOR',
+      instanceId: 1
+    })
+    /** 模拟 model 注入的「条目 → 指标所属线归口」解析（50=数字校园线 / 44=教务处线） */
+    const resolveEntry = (lineFunctionalOrgId: number | null) => () => lineFunctionalOrgId
+
+    it('他归口异动在审 × 本线导入 → 不置灰（false）：数字校园线(50)在审不锁教务处线(44)', () => {
+      expect(
+        hasCollegeLineMutationApprovalInFlight({
+          entries: [lineEntry()],
+          collegeOrgId,
+          functionalOrgId: 44,
+          resolveEntryFunctionalOrgId: resolveEntry(50)
+        })
+      ).toBe(false)
+    })
+
+    it('同归口异动在审 × 本线导入 → 置灰（true），文案口径由调用方 collegeTabImportDisabledReason 承接', () => {
+      expect(
+        hasCollegeLineMutationApprovalInFlight({
+          entries: [lineEntry()],
+          collegeOrgId,
+          functionalOrgId: 44,
+          resolveEntryFunctionalOrgId: resolveEntry(44)
+        })
+      ).toBe(true)
+    })
+
+    it('归口未选/解析失败（functionalOrgId=null/NaN/0）× 异动在审 → 保守置灰（回退学院级口径）', () => {
+      for (const functionalOrgId of [null, Number.NaN, 0]) {
+        expect(
+          hasCollegeLineMutationApprovalInFlight({
+            entries: [lineEntry()],
+            collegeOrgId,
+            functionalOrgId,
+            resolveEntryFunctionalOrgId: resolveEntry(50)
+          })
+        ).toBe(true)
+      }
+    })
+
+    it('条目线归口判不出（resolveEntryFunctionalOrgId 返回 null）→ 保守按冲突（fail-safe）', () => {
+      expect(
+        hasCollegeLineMutationApprovalInFlight({
+          entries: [lineEntry()],
+          collegeOrgId,
+          functionalOrgId: 44,
+          resolveEntryFunctionalOrgId: resolveEntry(null)
+        })
+      ).toBe(true)
+    })
+
+    it('别学院的在审异动不串台（targetOrgId 不命中 → 恒 false）', () => {
+      expect(
+        hasCollegeLineMutationApprovalInFlight({
+          entries: [lineEntry(57)],
+          collegeOrgId,
+          functionalOrgId: 44,
+          resolveEntryFunctionalOrgId: resolveEntry(44)
+        })
+      ).toBe(false)
+    })
+
+    it('学院未选/解析失败 → 恒 false（与学院级口径一致，锁不放无意义）', () => {
+      expect(
+        hasCollegeLineMutationApprovalInFlight({
+          entries: [lineEntry()],
+          collegeOrgId: null,
+          functionalOrgId: 44,
+          resolveEntryFunctionalOrgId: resolveEntry(44)
+        })
+      ).toBe(false)
+    })
+
+    it('归口未选回退学院级口径时同样遵守「别学院不串台」', () => {
+      expect(
+        hasCollegeLineMutationApprovalInFlight({
+          entries: [lineEntry(57)],
+          collegeOrgId,
+          functionalOrgId: null,
+          resolveEntryFunctionalOrgId: resolveEntry(50)
+        })
+      ).toBe(false)
+    })
+  })
 })
 
 describe('学院页签驳回闭环与在审互斥（2026-11-12 组件接线）', () => {
@@ -1245,10 +1346,10 @@ describe('学院页签驳回闭环与在审互斥（2026-11-12 组件接线）',
     wrapper.unmount()
   })
 
-  it('低⑩（C3 O-3）学院口径异动在审：学院页签「新增行」置灰 + 同款互斥 tooltip', async () => {
+  it('低⑩（C3 O-3）→ 2026-11-17 e2e 缺陷①收窄：本线异动在审时学院页签「新增行」置灰 + 线级互斥 tooltip', async () => {
     const wrapper = mountView(
       collegeTabReady({
-        isCollegeMutationApprovalInFlight: ref(true)
+        isCollegeLineMutationApprovalInFlight: ref(true)
       })
     )
     await switchToCollegeTab(wrapper)
@@ -1257,7 +1358,7 @@ describe('学院页签驳回闭环与在审互斥（2026-11-12 组件接线）',
     expect(addRow).toBeDefined()
     expect(addRow!.attributes('disabled')).toBeDefined()
     expect(addRow!.attributes('title')).toBe(
-      '异动审批进行中，暂不能新增：等审批结束或先撤回/取消本次异动'
+      '当前归口这条线的异动审批进行中，暂不能新增：等审批结束或先撤回/取消本次异动'
     )
     wrapper.unmount()
   })
@@ -1265,7 +1366,7 @@ describe('学院页签驳回闭环与在审互斥（2026-11-12 组件接线）',
   it('低⑩（零回归）学院口径在审只锁学院页签：职能页签「新增行」不受影响', async () => {
     const wrapper = mountView({
       collegeFillStatusScope: ref(false),
-      isCollegeMutationApprovalInFlight: ref(true)
+      isCollegeLineMutationApprovalInFlight: ref(true)
     })
 
     const addRow = findButtonByText(wrapper, '新增行')
@@ -1342,11 +1443,43 @@ describe('useStrategicTaskView / StrategicTaskView 学院退回链接线契约�
     )
   })
 
-  it('view：新增行互斥补上学院口径在审判定（仅挂学院页签分支）', () => {
+  it('view：新增行互斥挂线级在审判定（2026-11-17 e2e 缺陷①修复：学院页签线级 / 职能页签本部门口径分流）', () => {
     const source = readViewSource()
+    // 学院页签走线级口径（学院 × 归口收口），职能页签保持 isMutationApprovalInFlight 零变化
     expect(source).toMatch(
+      /activeTaskTabName === 'college'\s*\?\s*isCollegeLineMutationApprovalInFlight\s*:\s*isMutationApprovalInFlight/
+    )
+    // 旧的学院级口径接线不得回流（会重新引入「别归口异动锁全学院」的过严置灰）
+    expect(source).not.toMatch(
       /\(activeTaskTabName === 'college' && isCollegeMutationApprovalInFlight\)/
     )
+  })
+
+  it('view：导入置灰互斥改读线级口径（2026-11-17 e2e 缺陷①修复，collegeTabImportDisabledReason 单一口径）', () => {
+    const source = readViewSource()
+    expect(source).toMatch(
+      /if \(isCollegeLineMutationApprovalInFlight\?\.value === true\) \{\s*return '当前归口这条线的异动审批进行中，暂不能导入：等审批结束或先撤回\/取消本次异动'/
+    )
+    // 旧并集（isMutationApprovalInFlight || isCollegeMutationApprovalInFlight）不得回流导入门禁
+    expect(source).not.toMatch(
+      /isMutationApprovalInFlight\?\.value === true \|\|\s*isCollegeMutationApprovalInFlight\?\.value === true/
+    )
+  })
+
+  it('model：线级判定注入归口维度（collegeDispatchDeptOrgId）+ 双清单合并（e2e 缺陷①单一数据源）', () => {
+    const source = readModelSource()
+    expect(source).toMatch(
+      /import\s*\{[^}]*hasCollegeLineMutationApprovalInFlight[^}]*\}\s*from\s*'@\/features\/task\/lib\/collegeTabDistribute'/
+    )
+    expect(source).toMatch(
+      /hasCollegeLineMutationApprovalInFlight\(\{\s*entries:\s*\[\s*\.\.\.departmentMutationPendingApprovals\.value,\s*\.\.\.departmentChainMutationPendingApprovals\.value\s*\],\s*collegeOrgId:\s*resolveDepartmentIdByName\(selectedCollege\.value\),\s*functionalOrgId:\s*collegeDispatchDeptOrgId\.value/
+    )
+    // 条目线归口解析链：entityId → 指标行 → getIndicatorTaskId → backendTaskPlanMap → 计划归口
+    expect(source).toContain('const resolveMutationEntryLineFunctionalOrgId')
+    expect(source).toMatch(/resolveMutationEntryLineFunctionalOrgId[\s\S]{0,900}getIndicatorTaskId\(/)
+    expect(source).toMatch(/resolveMutationEntryLineFunctionalOrgId[\s\S]{0,1200}backendTaskPlanMap\.value\[taskId\]/)
+    // 线级判定透出（视图消费）
+    expect(source).toContain('isCollegeLineMutationApprovalInFlight,')
   })
 })
 

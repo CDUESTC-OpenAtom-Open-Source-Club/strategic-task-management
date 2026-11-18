@@ -13,6 +13,15 @@ import {
 /**
  * 2026-11-14（D1 阻断 · PR#115 回归 + D2/D3 低危）：学院下发「首次下发死锁」解锁契约。
  *
+ * <p><b>2026-11-17（学院线粒度改造 · 规格书 4.9②）语义变更</b>：后端已把「线」的身份
+ * 收敛为「学院 × 归口部门」，同一条线已下发后再导入会被后端直接拒绝（「该学院 2026
+ * 年度的「教务处」这条线已下发…」）。前端门禁对 DISTRIBUTED 从**放行**改判为**拦**
+ * （友好提示引导改用「新增行 / 发起异动」，不让用户白跑选文件流程再吃后端 400）——
+ * 本文件的「DISTRIBUTED → 放行」用例按新口径重写。门禁的「已下发」判定天然是
+ * 「当前归口这条线」：入参 collegePlanStatus 取自 effectivePlanContext.plan.status，
+ * 而子计划解析（collegeReportScope.resolveCollegeReportPlanScope）在战略部登录时按
+ * 归口收口（归口桶优先），不会误伤同学院其他归口的线。</p>
+ *
  * <p>D1 缺陷（真机实测）：任何**新的学院×部门组合**（尚无计划的）无法完成首次下发——
  * ① 导入入口被 B4 gating 置灰（collegeTabPlanNotDistributed 判定「计划未下发」），
  * 而导入本来就是「创建计划并下发」的入口（后端 findOrCreatePlan 建计划）；
@@ -20,12 +29,12 @@ import {
  * →「发起下发审批」整颗隐藏。两个入口同时不可达 = 首次下发死锁。存量已下发组合
  * （705489/705488）不受影响——只点现成组合的回归发现不了。</p>
  *
- * <p>修法口径（显隐矩阵，三类组合 × 三入口）：</p>
+ * <p>修法口径（显隐矩阵，2026-11-17 更新，三类组合 × 三入口）：</p>
  * <table>
  *   <tr><td>组合 \ 入口</td><td>导入</td><td>新增行 / 发起异动</td><td>发起下发审批</td></tr>
  *   <tr><td>尚无计划</td><td>可点（创建并下发）</td><td>置灰（B4 保留）</td><td>可见可点（点击=引导先导入）</td></tr>
  *   <tr><td>DRAFT 存量（有行）</td><td>置灰（B4 保留）</td><td>置灰（B4 保留）</td><td>可见可点（发起链路）</td></tr>
- *   <tr><td>DISTRIBUTED</td><td>可点</td><td>可点</td><td>置灰（distributed-locked，既有）</td></tr>
+ *   <tr><td>DISTRIBUTED</td><td><b>置灰（2026-11-17：线已下发，后端会拒绝重复导入）</b></td><td>可点</td><td>置灰（distributed-locked，既有）</td></tr>
  * </table>
  *
  * <p>D2/D3（同一根因）：学院子指标异动实例（source=战略发展部、target=学院）只落在
@@ -44,7 +53,7 @@ const viewSource = readSource('src/3-features/task/ui/StrategicTaskView.vue')
 
 // ==================== D1 · 导入入口计划相位纯函数矩阵 ====================
 
-describe('task/lib/collegeTabDistribute · resolveCollegeTabImportGate（D1 导入入口矩阵）', () => {
+describe('task/lib/collegeTabDistribute · resolveCollegeTabImportGate（D1 导入入口矩阵，2026-11-17 更新）', () => {
   it('尚无计划（子计划未解析）→ 放行：导入就是创建计划的入口（findOrCreatePlan 链路）', () => {
     for (const status of [null, undefined, '', 'DRAFT']) {
       expect(
@@ -57,16 +66,40 @@ describe('task/lib/collegeTabDistribute · resolveCollegeTabImportGate（D1 导�
     }
   })
 
-  it('已有 DISTRIBUTED 计划 → 放行（既有口径：已下发组合导入走异动审批链）', () => {
+  it('2026-11-17 语义变更：当前归口这条线已下发（DISTRIBUTED/APPROVED/PUBLISHED/ACTIVE）→ 拦（后端会拒绝重复导入）', () => {
+    // 旧口径「DISTRIBUTED → 放行（导入走异动审批链）」作废：线粒度改造后，同一条线
+    // 已下发再导入会被后端直接拒绝，前端必须先给友好提示，不让用户白跑选文件流程。
     for (const status of ['DISTRIBUTED', 'APPROVED', 'PUBLISHED', 'ACTIVE', ' distributed ']) {
-      expect(
-        resolveCollegeTabImportGate({
-          collegeSubPlanResolved: true,
-          collegePlanStatus: status,
-          collegePlanHasRows: true
-        })
-      ).toBe('')
+      const reason = resolveCollegeTabImportGate({
+        collegeSubPlanResolved: true,
+        collegePlanStatus: status,
+        collegePlanHasRows: true
+      })
+      expect(reason).toContain('已下发')
+      expect(reason).toContain('不能重复导入')
+      expect(reason).toContain('新增行')
     }
+  })
+
+  it('2026-11-17：已下发阻断文案点名当前归口部门；未传归口名时回退「所选归口部门」', () => {
+    expect(
+      resolveCollegeTabImportGate({
+        collegeSubPlanResolved: true,
+        collegePlanStatus: 'DISTRIBUTED',
+        collegePlanHasRows: true,
+        functionalDeptName: '教务处'
+      })
+    ).toBe(
+      '该学院×「教务处」这条线已下发，不能重复导入：请用表格「新增行」或「发起异动」调整指标'
+    )
+    expect(
+      resolveCollegeTabImportGate({
+        collegeSubPlanResolved: true,
+        collegePlanStatus: 'APPROVED',
+        collegePlanHasRows: true,
+        functionalDeptName: ''
+      })
+    ).toContain('该学院×所选归口部门这条线已下发')
   })
 
   it('空壳计划（存在但无任何指标行）→ 放行：导入 = 往空计划建行', () => {
@@ -272,6 +305,11 @@ function createViewModel(overrides: Record<string, unknown> = {}) {
     reportForm: { attachments: [] },
     collegeTableIndicators: ref([] as unknown[]),
     collegeTableData: [] as unknown[],
+    // 2026-11-17（学院线粒度改造）：导入门禁要求归口部门解析得出组织 ID 与生效名
+    // （functionalOrgId 取数链路）；基础 mock 补齐，缺省时新分支「无法解析所选职能部门」
+    // 会误置灰导入。归口未选/解析不出的场景按需覆写（见下方 2026-11-17 接线用例）。
+    collegeDispatchDeptEffective: ref('教务处'),
+    collegeDispatchDeptOrgId: ref(44),
     currentPlanIndicators: [] as unknown[],
     plansWithIndicators: [] as unknown[],
     taskList: [] as unknown[],
@@ -285,7 +323,10 @@ function createViewModel(overrides: Record<string, unknown> = {}) {
     collegeTabTwoStepReady: ref(true),
     isReportApprovalInFlight: ref(false),
     isMutationApprovalInFlight: ref(false),
+    // 2026-11-17（e2e 缺陷①修复）：视图互斥消费方改读线级口径（学院 × 归口收口），
+    // 学院级 isCollegeMutationApprovalInFlight 保留在 model 供回退、不再被视图消费
     isCollegeMutationApprovalInFlight: ref(false),
+    isCollegeLineMutationApprovalInFlight: ref(false),
     canEdit: ref(true),
     isCurrentPlanUnderApproval: ref(false),
     canWithdrawMutationInFlight: ref(false),
@@ -513,7 +554,7 @@ describe('D1 组件接线 · DRAFT 存量计划组合（B4 口径保留 + 发起
   })
 })
 
-describe('D1 组件接线 · DISTRIBUTED 组合（放行 + 既有置灰相位零回归）', () => {
+describe('2026-11-17 组件接线 · DISTRIBUTED 组合（线已下发 → 导入拦 + 既有置灰相位）', () => {
   const distributedContext = {
     effectivePlanContext: ref({
       source: 'college',
@@ -523,14 +564,16 @@ describe('D1 组件接线 · DISTRIBUTED 组合（放行 + 既有置灰相位零
     collegeSubPlanUnresolved: ref(false)
   }
 
-  it('DISTRIBUTED → 导入可点（既有口径：导入走异动审批链）', async () => {
+  it('DISTRIBUTED → 导入置灰 + tooltip 点名归口「这条线已下发，不能重复导入」（2026-11-17 语义变更，旧口径为放行）', async () => {
     const wrapper = mountView(distributedContext)
     await switchToCollegeTab(wrapper)
 
     const importBtn = findButtonByText(wrapper, '导入')
     expect(importBtn).toBeDefined()
-    expect(importBtn!.attributes('disabled')).toBeUndefined()
-    expect(importBtn!.attributes('title')).toBe('')
+    expect(importBtn!.attributes('disabled')).toBeDefined()
+    expect(importBtn!.attributes('title')).toBe(
+      '该学院×「教务处」这条线已下发，不能重复导入：请用表格「新增行」或「发起异动」调整指标'
+    )
     wrapper.unmount()
   })
 
@@ -568,12 +611,12 @@ describe('D1 组件接线 · 计划在审/审批中（互斥拦导入）', () =>
   })
 })
 
-describe('D3 组件接线 · 学院链下异动在审 → 导入置灰（互斥并集）', () => {
-  it('isCollegeMutationApprovalInFlight=true（链下清单口径）→ 导入置灰 + 异动互斥 tooltip', async () => {
+describe('D3 组件接线 · 学院线级异动在审 → 导入置灰（2026-11-17 e2e 缺陷①修复：收窄到线级）', () => {
+  it('本线（同学院同归口）异动在审 → 导入置灰 + 线级互斥 tooltip', async () => {
     const wrapper = mountView({
       collegeSubPlanUnresolved: ref(true),
       effectivePlanContext: ref({ source: 'college', plan: null }),
-      isCollegeMutationApprovalInFlight: ref(true)
+      isCollegeLineMutationApprovalInFlight: ref(true)
     })
     await switchToCollegeTab(wrapper)
 
@@ -581,22 +624,24 @@ describe('D3 组件接线 · 学院链下异动在审 → 导入置灰（互斥�
     expect(importBtn).toBeDefined()
     expect(importBtn!.attributes('disabled')).toBeDefined()
     expect(importBtn!.attributes('title')).toBe(
-      '异动审批进行中，暂不能导入：等审批结束或先撤回/取消本次异动'
+      '当前归口这条线的异动审批进行中，暂不能导入：等审批结束或先撤回/取消本次异动'
     )
     wrapper.unmount()
   })
 
-  it('主清单口径（isMutationApprovalInFlight）不回归：同样置灰（既有 E-1 守卫）', async () => {
+  it('缺陷①回归：他线异动在审只点亮学院级/主清单口径（isMutationApprovalInFlight / isCollegeMutationApprovalInFlight）→ 本线导入不置灰（对齐后端线级放行）', async () => {
     const wrapper = mountView({
       collegeSubPlanUnresolved: ref(true),
       effectivePlanContext: ref({ source: 'college', plan: null }),
-      isMutationApprovalInFlight: ref(true)
+      isMutationApprovalInFlight: ref(true),
+      isCollegeMutationApprovalInFlight: ref(true),
+      isCollegeLineMutationApprovalInFlight: ref(false)
     })
     await switchToCollegeTab(wrapper)
 
     const importBtn = findButtonByText(wrapper, '导入')
     expect(importBtn).toBeDefined()
-    expect(importBtn!.attributes('disabled')).toBeDefined()
+    expect(importBtn!.attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })
 })
@@ -649,5 +694,50 @@ describe('D1/D2/D3 源码契约锁', () => {
     const blockedStart = modelSource.indexOf('const mutationSubmitBlocked = computed')
     const blocked = modelSource.slice(blockedStart, blockedStart + 400)
     expect(blocked).toContain('collegeTabPlanNotDistributed.value')
+  })
+
+  // ==================== 2026-11-17（学院线粒度改造）接线契约锁 ====================
+
+  it('2026-11-17：导入门禁要求归口部门可解析出组织 ID（functionalOrgId 取数链路）', () => {
+    const start = modelSource.indexOf('const collegeDispatchDeptOrgId = computed')
+    expect(start).toBeGreaterThan(0)
+    const body = modelSource.slice(start, start + 800)
+    // 取数链路 = 归一化生效名 → 组织 ID（与 collegeScope 上报查询的归口解析同款）
+    expect(body).toContain('resolveDepartmentIdByName(collegeDispatchDeptEffective.value)')
+    // 单例导出（视图消费）
+    expect(modelSource).toContain('collegeDispatchDeptOrgId,')
+  })
+
+  it('2026-11-17：视图门禁未选归口 / 归口解析失败都拦，并把归口名传给 lib 文案', () => {
+    const start = viewSource.indexOf('const collegeTabImportDisabledReason = computed')
+    expect(start).toBeGreaterThan(0)
+    const body = viewSource.slice(start, start + 2600)
+    // 未选归口：点名「归口部门」（与上报页「请先选择归属部门」引导范式一致）
+    expect(body).toContain('请先选择职能部门（归口部门）：学院子指标表按归口部门分别导入')
+    // 选了部门但解析不出组织 ID → 引导重选（拿不到 functionalOrgId 无法定位线）
+    expect(body).toContain('无法解析所选职能部门')
+    // lib gating 收到归口名（已下发文案点名归口）
+    expect(body).toContain('functionalDeptName: collegeSelectedFunctionalDeptName.value')
+  })
+
+  it('2026-11-17：导入弹窗接线带 functional-org-id / functional-org-name（学院页签专属）', () => {
+    const dialogStart = viewSource.indexOf('<BusinessImportDialog')
+    expect(dialogStart).toBeGreaterThan(0)
+    const dialogBody = viewSource.slice(dialogStart, dialogStart + 1600)
+    expect(dialogBody).toContain(
+      ":functional-org-id=\"\n        activeTaskTabName === 'college' ? (collegeDispatchDeptOrgId ?? undefined) : undefined\n      \""
+    )
+    expect(dialogBody).toContain(
+      ":functional-org-name=\"\n        activeTaskTabName === 'college' ? collegeDispatchDeptEffective : undefined\n      \""
+    )
+  })
+
+  it('2026-11-17：点击兜底不再单独校验部门（统一收敛 collegeTabImportDisabledReason 单一口径）', () => {
+    const start = viewSource.indexOf('const openStrategicImportDialog = () =>')
+    expect(start).toBeGreaterThan(0)
+    const body = viewSource.slice(start, start + 2400)
+    // 旧的双条件独立守卫（未选部门单独 warning）已并入单一口径
+    expect(body).not.toContain("ElMessage.warning('请先选择职能部门')")
+    expect(body).toContain('importBlockedReason')
   })
 })

@@ -206,6 +206,13 @@ export interface DistributionApprovalProgressDrawerProps {
     entityType: 'PLAN' | 'PLAN_REPORT'
     entityId: number | string
   }>
+  /**
+   * 2026-11-17（学院线粒度改造 · 用户拍板「保持两段，只在详情里带归口」）：
+   * 「审批流程详情」详情区的归口部门行（页面按生效计划的 functionalOrgId 反查名称传入）。
+   * 空串/缺省 = 解析不到归口 → 该行整体不渲染（不放空值占位）。
+   * 卡片标题（routeTitle「源 -> 目标」两段）不消费本字段，保持不变。
+   */
+  functionalOrgName?: string
 }
 
 export interface DistributionApprovalProgressDrawerEmit {

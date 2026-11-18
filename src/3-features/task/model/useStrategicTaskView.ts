@@ -71,13 +71,15 @@ import {
   type CollegeDeptPlanStatusPlanLike
 } from '@/features/task/lib/collegeDispatchEligibility'
 import {
+  hasCollegeLineMutationApprovalInFlight,
   hasCollegeMutationApprovalInFlight,
   isReportApprovalStatusInFlight,
   mergeReturnedMutationChains,
   resolveCollegeReportApprovalStatusMeta,
   resolveCollegeReturnedChainOwnerOrgId,
   resolveMutationGateWeightTotal,
-  resolveViewScopedMutationPendingApprovals
+  resolveViewScopedMutationPendingApprovals,
+  type CollegeMutationApprovalEntryLike
 } from '@/features/task/lib/collegeTabDistribute'
 import {
   resolveCollegeReportPlanScope,
@@ -5158,8 +5160,25 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
   }
 
+  /**
+   * 2026-11-17 用户反馈第 3.3 条：指标总表可滚动区域只占半屏（1620×900 下约 10 行），
+   * 一屏看不完全部指标。这里按视口高度给表格算一个上限高度，让滚动区尽量铺满首屏；
+   * 页面整体允许纵向滚动（.strategic-task-container 同步改为自适应高度）。
+   * （承接 PR #122 @Nerdlet369 的表格高度部分）
+   */
+  const taskTableMaxHeight = ref(560)
+
+  function syncTaskTableMaxHeight() {
+    if (typeof window === 'undefined') return
+    // 表格上方还有页头 + 页签导航 + 卡片标题/工具栏/页签/表头，实测约 420px；
+    // 其余高度都给表格，让滚动区正好铺到首屏底部（表头 sticky，页面本身不滚动）
+    taskTableMaxHeight.value = Math.max(360, Math.round(window.innerHeight - 420))
+  }
+
   // 挂载和卸载全局点击监听
   onMounted(async () => {
+    syncTaskTableMaxHeight()
+
     await Promise.all([
       (async () => {
         if (orgStore.departments.length === 0) {
@@ -5193,12 +5212,14 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       // 2026-10-24 跨窗口数据同步：别人改了哪条指标，本窗就局部刷哪条——
       // 单行拉取 + patch，权重合计 chip 是 computed 会自动重算
       window.addEventListener('indicator-data-changed', handleIndicatorDataChanged as EventListener)
+      window.addEventListener('resize', syncTaskTableMaxHeight)
     }
   })
 
   onUnmounted(() => {
     document.removeEventListener('click', handleGlobalClick, true)
     if (typeof window !== 'undefined') {
+      window.removeEventListener('resize', syncTaskTableMaxHeight)
       window.removeEventListener(
         GLOBAL_DATA_REFRESH_REQUEST_EVENT,
         handleGlobalDataRefreshRequest as EventListener
@@ -6181,6 +6202,23 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   )
 
   /**
+   * 2026-11-17（学院线粒度改造 · 规格书 4.9①）：学院页签右侧下拉所选**归口部门**
+   * 的组织 ID。
+   *
+   * <p>学院子指标导入按「学院 × 归口部门」定位计划（线）——同一个学院在同一考核年度
+   * 可以有多条归口部门各自的线。后端按 {@code functionalOrgId} 定位/新建该线并与
+   * 文件父级反查做交叉校验，所以前端必须把页面上已选中的归口部门作为入参传下去。</p>
+   *
+   * <p>取数链路复用既有解析（与 collegeScope 上报查询的归口解析同款）：
+   * {@code resolveDepartmentIdByName(collegeDispatchDeptEffective)} —— 归一化名 →
+   * 组织 ID。未选部门（effective 为空串）或部门名解析不出组织 ID 时返回 null
+   * （调用方据此拦下导入，不传 functionalOrgId）。</p>
+   */
+  const collegeDispatchDeptOrgId = computed<number | null>(() =>
+    resolveDepartmentIdByName(collegeDispatchDeptEffective.value)
+  )
+
+  /**
    * 当前选中的下拉项（用于在箭头右侧显示「当前是哪个部门」的小字）。
    *
    * <p>2026-11-13 回显缺陷修复：旧实现只在 collegeDeptDispatchOptions 里找——
@@ -6495,6 +6533,27 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         selectedDepartment.value ||
         ''
     )
+  })
+
+  /**
+   * 2026-11-17（学院线粒度改造 · 规格书 4.9③ / 用户拍板「保持两段，只在详情里带归口」）：
+   * 审批中心抽屉「审批流程详情」的归口部门行数据源。
+   *
+   * <p>取数链路复用既有字段（零新增接口调用）：生效计划（学院页签 = FUNC_TO_COLLEGE
+   * 子计划；职能页签 = 职能部门自身计划）的 {@code functionalOrgId} —— 后端
+   * PlanResponse 自 V104 起已暴露该字段（planApi 映射为驼峰），再经
+   * {@code departmentIdNameMap}（orgStore id→name 既有映射）反查部门名。</p>
+   *
+   * <p>找不到归口（legacy 计划 functional_org_id 为空 / 部门名解析不出）→ 返回空串，
+   * 抽屉详情按 v-if 不渲染该行（规格书要求：找不到归口不显示该行，不放空值占位）。</p>
+   */
+  const approvalDrawerFunctionalOrgName = computed<string>(() => {
+    const plan = effectivePlanContext.value.plan as { functionalOrgId?: unknown } | null
+    const functionalOrgId = Number(plan?.functionalOrgId ?? NaN)
+    if (!Number.isFinite(functionalOrgId) || functionalOrgId <= 0) {
+      return ''
+    }
+    return departmentIdNameMap.value.get(String(functionalOrgId)) || ''
   })
 
   // 学院页签下 flow6 实例的 business entity = 子计划本身；职能页签沿用现行 primary 解析。
@@ -7046,6 +7105,90 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       ],
       resolveDepartmentIdByName(selectedCollege.value)
     )
+  )
+
+  /**
+   * 计划 id → 归口部门组织 id（plan.functional_org_id，2026-11-17 e2e 缺陷①修复）。
+   *
+   * <p>线级互斥判定需要「在审异动所在线的归口」：条目 entityId（异动指标 id）→
+   * 指标行 → taskId → backendTaskPlanMap（task.plan_id）→ 本映射取归口。
+   * 归口字段读取沿用 collegeScopePlanFunctionalOrgId 的防坑口径——
+   * Number(null) === 0 会把「归口为空」误判成「归口=0」，null/undefined/空串
+   * 一律按无值（存 null），正数才入表。</p>
+   */
+  const planFunctionalOrgIdById = computed(() => {
+    const map = new Map<number, number | null>()
+    for (const plan of planStore.plans as Array<Record<string, unknown>>) {
+      const planId = Number(plan?.id)
+      if (!Number.isFinite(planId) || planId <= 0) {
+        continue
+      }
+      const raw = plan.functionalOrgId ?? plan.functional_org_id
+      if (raw === null || raw === undefined || raw === '') {
+        map.set(planId, null)
+        continue
+      }
+      const functionalOrgId = Number(raw)
+      map.set(planId, Number.isFinite(functionalOrgId) && functionalOrgId > 0 ? functionalOrgId : null)
+    }
+    return map
+  })
+
+  /**
+   * 在审异动条目 → 其异动指标所属线的归口组织 id（判不出返回 null）。
+   *
+   * <p>解析链与 isIndicatorInCollegePlanScope 同源：entityId（后端 indicator.id，
+   * 与表格行 id 同一 id 空间——isEntityMutationInFlight('INDICATOR', row.id) 同款）→
+   * indicatorById 指标行 → getIndicatorTaskId（子指标沿父链回溯 task_id）→
+   * backendTaskPlanMap（task.plan_id）→ planFunctionalOrgIdById（plan 归口）。
+   * TASK 型条目（entityId=任务 id）在指标映射里查不到 → null（按冲突保守处理，
+   * 与既有学院级锁对 TASK 条目的拦截行为一致）。任何一环缺失都返回 null，
+   * 由 lib hasCollegeLineMutationApprovalInFlight 按 fail-safe 收口。</p>
+   */
+  const resolveMutationEntryLineFunctionalOrgId = (
+    entry: CollegeMutationApprovalEntryLike
+  ): number | null => {
+    const indicatorId = Number(entry?.entityId)
+    if (!Number.isFinite(indicatorId) || indicatorId <= 0) {
+      return null
+    }
+    // indicatorById 的键是指标行 id 原始形态（strategic indicator id 为字符串），
+    // 必须按字符串取，数字键会 miss（同 compareCollegeTableRows 的 String() 口径）
+    const row = indicatorById.value.get(String(indicatorId))
+    if (!row) {
+      return null
+    }
+    const taskId = getIndicatorTaskId(row as StrategicIndicator)
+    if (!taskId) {
+      return null
+    }
+    const planId = Number(backendTaskPlanMap.value[taskId] ?? Number.NaN)
+    if (!Number.isFinite(planId) || planId <= 0) {
+      return null
+    }
+    return planFunctionalOrgIdById.value.get(planId) ?? null
+  }
+
+  // 2026-11-17（e2e 缺陷①修复：学院线级互斥，对齐后端 CollegeDispatchGuardService
+  // 2026-11-17 线级收窄）：学院页签「本线」在审异动判定——在审异动所在线的归口
+  // （其 plan.functional_org_id）等于当前选中归口（collegeDispatchDeptOrgId）才算
+  // 冲突；同学院别归口（别线）的异动不再锁本线「导入 / 新增行」。消费方仅学院
+  // 页签两处（StrategicTaskView 的 collegeTabImportDisabledReason 与「新增行」按钮），
+  // 职能页签互斥锁（isMutationApprovalInFlight）与本判定（isCollegeMutationApprovalInFlight
+  // 学院级口径，保留供回退）均不变。归口未选/解析失败时保守回退学院级口径
+  // （宁可多锁）——且该场景下导入/新增行本就被「请先选择职能部门」前置守卫拦下。
+  // 注意 collegeDispatchDeptOrgId 声明在本文件更后位置（学院页签下拉区）——computed
+  // 惰性求值，getter 运行期取值，无 TDZ（同 line 1554/3364 既有取数口径）。
+  const isCollegeLineMutationApprovalInFlight = computed(() =>
+    hasCollegeLineMutationApprovalInFlight({
+      entries: [
+        ...departmentMutationPendingApprovals.value,
+        ...departmentChainMutationPendingApprovals.value
+      ],
+      collegeOrgId: resolveDepartmentIdByName(selectedCollege.value),
+      functionalOrgId: collegeDispatchDeptOrgId.value,
+      resolveEntryFunctionalOrgId: resolveMutationEntryLineFunctionalOrgId
+    })
   )
 
   // 2026-10-30（多态撤回·异动分支）：工具栏「撤回」在异动在审时是否按「撤回异动」处理。
@@ -8776,6 +8919,11 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   return {
     PLAN_APPROVAL_HISTORY_WORKFLOW_CODES,
     PLAN_APPROVAL_SUBMIT_WORKFLOW_CODE,
+    // 2026-11-17 用户反馈第 2.2 条：导出必须与页面同口径取数。
+    // 页面表格（indicators）套了 reportDetail 覆盖层（自评进度/进度说明/附件），
+    // 而导出取的是未套覆盖层的 normalizedIndicators，导致导出的「自评进度」「进度说明」恒为空。
+    // （承接 PR #122 @Nerdlet369 的导出 overlay 部分）
+    applyReportDetailOverlayToRow,
     _addIndicatorToCategory,
     _currentDate,
     _currentTask,
@@ -8918,6 +9066,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     // 2026-11-09（用户要求）：学院页签右侧的「职能部门」下拉筛选器
     collegeDispatchDeptFilter,
     collegeDispatchDeptEffective,
+    // 2026-11-17（学院线粒度改造）：所选归口部门的组织 ID（导入请求 functionalOrgId）
+    collegeDispatchDeptOrgId,
+    // 2026-11-17（学院线粒度改造）：审批中心抽屉详情的归口部门行（卡片标题保持两段不变）
+    approvalDrawerFunctionalOrgName,
     collegeDeptDispatchOptions,
     collegeDeptDropdownItems,
     collegeDeptCurrent,
@@ -8932,6 +9084,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     // 2026-11-12（C3-D1）：学院页签退回链补拉 + 学院口径在审异动判定（新增行互斥）
     loadCollegeReturnedMutationChains,
     isCollegeMutationApprovalInFlight,
+    // 2026-11-17（e2e 缺陷①修复）：学院线级在审异动判定（归口维度收窄，导入/新增行）
+    isCollegeLineMutationApprovalInFlight,
     // 2026-11-11（学院页签按钮体系修正）：学院页签按钮按子计划相位分流所需——
     // 生效计划上下文（学院页签 → FUNC_TO_COLLEGE 子计划）与异动在审可撤判定/执行体
     effectivePlanContext,
@@ -9122,6 +9276,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     taskSpanMetaMap,
     taskTypeMap,
     taskTypeMapLoading,
+    taskTableMaxHeight,
     timeContext,
     triggerApprovalForDistribution,
     updateEditTime,

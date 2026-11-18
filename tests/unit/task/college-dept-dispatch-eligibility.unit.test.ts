@@ -446,11 +446,13 @@ describe('task/lib/collegeDispatchEligibility（学院页签部门下发资格�
         ).toEqual({ label: '未下发', tagType: 'warning' })
       })
 
-      it('计划 DRAFT / WITHDRAWN（含回退态按归一表落 DRAFT）→ 「草稿」(info)，不看上报侧', () => {
-        expect(badge('DRAFT')).toEqual({ label: '草稿', tagType: 'info' })
-        expect(badge(' WITHDRAWN ')).toEqual({ label: '草稿', tagType: 'info' })
+      it('2026-11-17（学院线粒度改造 · 两态口径）：计划 DRAFT / WITHDRAWN（含回退态按归一表落 DRAFT）→ 「未下发」(warning)，不看上报侧', () => {
+        // 规格书 4.9②：线已存在但状态是 DRAFT（未走下发审批）仍显示「未下发」，
+        // 不再显示「草稿」；与「无计划」兜底常量同一口径同一配色。
+        expect(badge('DRAFT')).toEqual({ label: '未下发', tagType: 'warning' })
+        expect(badge(' WITHDRAWN ')).toEqual({ label: '未下发', tagType: 'warning' })
         // 即使有已归档上报（理论上不可能：未下发不能上报），计划侧语义优先
-        expect(badge('DRAFT', 'APPROVED')).toEqual({ label: '草稿', tagType: 'info' })
+        expect(badge('DRAFT', 'APPROVED')).toEqual({ label: '未下发', tagType: 'warning' })
       })
 
       it('计划下发审批中（PENDING / IN_REVIEW / SUBMITTED）→ 「审批中」(warning)，不看上报侧', () => {
@@ -616,6 +618,28 @@ describe('task/lib/collegeDispatchEligibility（学院页签部门下发资格�
         const winners = buildCollegeDeptPlanWinnerByDept(plans, ['教务处'], context)
         const statuses = buildCollegeDeptPlanStatusByDept(plans, ['教务处'], context)
         expect(statuses.get('教务处')).toBe(winners.get('教务处')?.status)
+      })
+
+      it('2026-11-17（学院线粒度改造 · statusRank 归一化回归）：APPROVED 等价状态优先于 id 更大的 DRAFT 线', () => {
+        // 旧实现 statusRank 只认 raw 'DISTRIBUTED'：APPROVED 与 DRAFT 同为 0 分，
+        // id 更大的 DRAFT 线获胜 → 徽标把「已下发」误显示成「未下发」（两态口径硬错）。
+        // 归一表（planStatus.ts）把 APPROVED / PUBLISHED / ACTIVE 都算作已下发。
+        const approvedLine = plan({ id: 405063, status: 'APPROVED' })
+        const draftLine = plan({ id: 405999, status: 'DRAFT' })
+        const winners = buildCollegeDeptPlanWinnerByDept(
+          [approvedLine, draftLine],
+          ['教务处'],
+          makeContext()
+        )
+        expect(winners.get('教务处')).toEqual({ planId: 405063, status: 'APPROVED' })
+
+        const publishedLine = plan({ id: 405063, status: 'PUBLISHED' })
+        const winnersPublished = buildCollegeDeptPlanWinnerByDept(
+          [draftLine, publishedLine],
+          ['教务处'],
+          makeContext()
+        )
+        expect(winnersPublished.get('教务处')).toEqual({ planId: 405063, status: 'PUBLISHED' })
       })
     })
 

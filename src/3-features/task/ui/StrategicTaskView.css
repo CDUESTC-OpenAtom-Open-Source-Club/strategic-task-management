@@ -18,12 +18,15 @@
 }
 
 /* 页面主容器：高度取视口减去页头/页签导航/主区留白/页脚的合计开销，
-   让卡片正好铺满首屏，整页不出现滚动条 */
+   让卡片正好铺满首屏；2026-11-17 用户反馈第 3.3 条起改为「至少铺满首屏、内容多则继续撑高」，
+   表格区高度按视口单独计算（见 useStrategicTaskView 的 taskTableMaxHeight），
+   这样一屏能看到更多指标，超出部分由页面纵向滚动承担
+   （承接 PR #122 @Nerdlet369 的表格高度部分） */
 .strategic-task-container {
   display: flex;
   gap: 0;
-  height: calc(100vh - 264px);
-  min-height: 0;
+  height: auto;
+  min-height: calc(100vh - 264px);
   position: relative;
   overflow: hidden;
 }
