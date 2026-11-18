@@ -1,41 +1,61 @@
-import type { Indicator } from '@/shared/types'
 import type {
   DashboardCollegeLevelStat,
-  DashboardCollegeLevelsMonth
+  DashboardCollegeLevelsMonth,
+  DashboardMonthState
 } from '@/features/dashboard/api/dashboardApi'
 
-export type DashboardIndicatorStatus = 'normal' | 'ahead' | 'warning' | 'delayed'
+// ============================================================================
+// 月份快照状态解析（2026-11-18 按月快照口径）
+// 契约：monthState ∈ APPROVED / IN_REVIEW / NOT_REPORTED，只有 APPROVED 出鉴定值；
+// 兜底优先级：行级 monthState → 月级 monthState → reported=false → APPROVED（旧响应兼容）。
+// ============================================================================
 
 /**
- * 指标在某月的执行状态（兜底口径）。
- *
- * 2026-10-31 数据看板新口径：
- * - 看板的等级统计（学院柱形图 / 月度趋势 / 分院排名 / 总览等级分布）已改由后端
- *   `college-levels` 系列接口供数（只算已提交/已审批月报、鉴定等级三档），
- *   本函数仅服务「职能部门堆叠图 / 指标明细清单」等无接口数据源的兜底场景。
- * - 手动预警等级（manualAlertSeverity / alert_event）彻底退出看板统计，
- *   原读取 manualAlertLevel 的分支为死代码（Indicator 上不存在该字段），已删除。
- *
- * 判定规则：
- * 1. 未下发（DRAFT）/已驳回（REJECTED）→ warning（不算完成，不虚报为正常）
- * 2. 其余 → normal
+ * monthState 兜底解析（返回值保证非空）。
+ * 优先级：行级 monthState > 行级 reported=false > 月级 monthState > 响应级 monthState
+ * > APPROVED（旧响应兼容）。行内明确字段（含 reported）优先于整月/响应级包裹，
+ * 避免「整月 APPROVED」把个别未填报部门解除置灰。
  */
-export const getIndicatorStatusAtMonth = (
-  indicator: Indicator,
-  _month: number,
-  _year: number
-): DashboardIndicatorStatus => {
-  const status = String(indicator.workflowStatus ?? indicator.status ?? '').toUpperCase()
-  if (status === 'DRAFT' || status === 'REJECTED') {
-    return 'warning'
+export const resolveMonthState = (
+  row: { monthState?: DashboardMonthState; reported?: boolean } | undefined,
+  monthEnvelope?: { monthState?: DashboardMonthState } | null,
+  responseEnvelope?: { monthState?: DashboardMonthState } | null
+): DashboardMonthState => {
+  if (row?.monthState) {
+    return row.monthState
   }
-  return 'normal'
+  if (row?.reported === false) {
+    return 'NOT_REPORTED'
+  }
+  if (monthEnvelope?.monthState) {
+    return monthEnvelope.monthState
+  }
+  if (responseEnvelope?.monthState) {
+    return responseEnvelope.monthState
+  }
+  return 'APPROVED'
 }
+
+/** 非 APPROVED 月份一律置灰（#C0C4CC），不出鉴定柱 */
+export const isGrayMonth = (state: DashboardMonthState): boolean => state !== 'APPROVED'
+
+/** 置灰柱/条上的短标签（学院图与排名图共用） */
+export const monthStateGrayLabel = (state: DashboardMonthState): string =>
+  state === 'IN_REVIEW' ? '审批中' : '未填报'
+
+/** 学院图灰柱 tooltip 状态行 */
+export const monthStateCollegeTooltip = (state: DashboardMonthState): string =>
+  state === 'IN_REVIEW' ? '本月上报审批中（灰柱督办）' : '本月未填报（灰柱督办）'
+
+/** 部门图灰柱 tooltip 状态行 */
+export const monthStateDeptTooltip = (state: DashboardMonthState): string =>
+  state === 'IN_REVIEW' ? '该部门本月上报审批中' : '该部门本月未填报'
 
 // ============================================================================
 // 学院等级统计映射（2026-11-17 新口径：后端契约数据 → 看板图表行）
 // 口径：未填报学院（reported=false）照常出列，画灰柱「下发 n 项·未填报」督办；
 //       等级三档来自月报鉴定（appraisal_level 优先 self_rating 兜底，后端已算好）。
+// 2026-11-18 按月快照口径：行带 monthState，非 APPROVED 月份由图表置灰、不出鉴定柱。
 // ============================================================================
 
 const shortenOrgName = (orgName: string): string =>
@@ -56,6 +76,8 @@ export interface CollegeLevelBarRow {
   undispatchedCount: number
   /** 未填报标记：false → 灰柱督办 */
   reported: boolean
+  /** 该学院该月快照状态（非 APPROVED → 图表置灰） */
+  monthState: DashboardMonthState
 }
 
 /** 学院月度趋势行（第二层：学院月度视图） */
@@ -79,6 +101,8 @@ export interface CollegeRankingRow {
   delayed: number
   /** 未填报标记（未填报学院按 0 分垫底，督办可见） */
   reported: boolean
+  /** 该学院该月快照状态（非 APPROVED → 排名条置灰） */
+  monthState: DashboardMonthState
 }
 
 /** 契约学院统计 → 柱形图行（含未填报学院，未填报时 reported=false） */
@@ -93,12 +117,15 @@ export const toCollegeBarRows = (colleges: DashboardCollegeLevelStat[]): College
     total: college.total,
     dispatchedCount: college.dispatchedCount ?? 0,
     undispatchedCount: college.undispatchedCount ?? 0,
-    reported: college.reported ?? true
+    reported: college.reported ?? true,
+    monthState: resolveMonthState(college)
   }))
 
 /**
  * 契约月度趋势 → 单学院趋势行（2026-11-17 口径：接口固定返回 1-12 月全量，
  * 每月都画；某月 colleges 未含该学院时按 0 值灰柱绘制（该月未填报）。
+ * 2026-11-18 按月快照口径：行级 monthState 优先，其次月级 monthState，
+ * 最后按 reported 兜底（缺行=该月未填报）。
  */
 export const toCollegeTrendRows = (
   months: DashboardCollegeLevelsMonth[],
@@ -106,8 +133,10 @@ export const toCollegeTrendRows = (
 ): CollegeLevelTrendRow[] =>
   [...months]
     .sort((a, b) => a.month - b.month)
-    .map(({ month, colleges }) => {
+    .map(({ month, colleges, monthState }) => {
       const stat = colleges.find(college => college.orgName === collegeName)
+      // 某月未含该学院 → 按未填报兜底（reported=false → NOT_REPORTED 灰柱）
+      const reported = stat?.reported ?? false
       return {
         name: `${month}月`,
         month,
@@ -119,7 +148,8 @@ export const toCollegeTrendRows = (
         total: stat?.total ?? 0,
         dispatchedCount: stat?.dispatchedCount ?? 0,
         undispatchedCount: stat?.undispatchedCount ?? 0,
-        reported: stat?.reported ?? false
+        reported,
+        monthState: resolveMonthState({ monthState: stat?.monthState, reported }, { monthState })
       }
     })
 
@@ -144,7 +174,8 @@ export const toCollegeRankingRows = (colleges: DashboardCollegeLevelStat[]): Col
         ahead: college.ahead,
         normal: college.normal,
         delayed: college.delayed,
-        reported: college.reported ?? true
+        reported: college.reported ?? true,
+        monthState: resolveMonthState(college)
       }
     })
     .sort((a, b) => b.value - a.value || b.completed - a.completed)
@@ -164,7 +195,9 @@ export interface CollegeLevelAggregate {
   unreportedColleges: number
 }
 
-export const aggregateCollegeLevels = (colleges: DashboardCollegeLevelStat[]): CollegeLevelAggregate => {
+export const aggregateCollegeLevels = (
+  colleges: DashboardCollegeLevelStat[]
+): CollegeLevelAggregate => {
   const aggregate: CollegeLevelAggregate = {
     ahead: 0,
     normal: 0,
