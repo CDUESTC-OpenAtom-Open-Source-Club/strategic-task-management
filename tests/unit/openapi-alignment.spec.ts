@@ -39,7 +39,10 @@ const compatibilityWhitelist = [
   { method: 'get', path: '/api/v1/dashboard/college-levels-trend' },
   // 2026-11-17 滞后任务清单（前端在用但评审发现漏挂白名单；后端 openapi 基线
   // 已随集成树重新生成覆盖本条，挂白名单兜底 CI checkout 旧基线的场景）
-  { method: 'get', path: '/api/v1/dashboard/delayed-indicators' }
+  { method: 'get', path: '/api/v1/dashboard/delayed-indicators' },
+  // 2026-11-18 部门分布图改吃审核鉴定汇总（后端 appraisal-summary 已合入 develop，
+  // 此处兜底 CI checkout 的 openapi 基线尚未覆盖本条的场景）
+  { method: 'get', path: '/api/v1/dashboard/appraisal-summary' }
 ] as const
 
 function normalizePathLiteral(rawPath: string): string | null {

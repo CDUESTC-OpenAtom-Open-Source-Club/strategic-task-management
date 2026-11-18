@@ -79,12 +79,50 @@ const contractColleges: DashboardCollegeLevelStat[] = [
 const contractTrend: DashboardCollegeLevelsTrendResponse = {
   year: 2026,
   months: [
-    { month: 9, colleges: [{ orgId: 57, orgName: '计算机学院', month: 9, ahead: 2, normal: 0, delayed: 1, total: 3, dispatchedCount: 4, undispatchedCount: 0, reported: true }] },
+    {
+      month: 9,
+      colleges: [
+        {
+          orgId: 57,
+          orgName: '计算机学院',
+          month: 9,
+          ahead: 2,
+          normal: 0,
+          delayed: 1,
+          total: 3,
+          dispatchedCount: 4,
+          undispatchedCount: 0,
+          reported: true
+        }
+      ]
+    },
     {
       month: 10,
       colleges: [
-        { orgId: 57, orgName: '计算机学院', month: 10, ahead: 3, normal: 1, delayed: 0, total: 4, dispatchedCount: 5, undispatchedCount: 1, reported: true },
-        { orgId: 58, orgName: '电子信息学院', month: 10, ahead: 0, normal: 0, delayed: 0, total: 0, dispatchedCount: 4, undispatchedCount: 2, reported: false }
+        {
+          orgId: 57,
+          orgName: '计算机学院',
+          month: 10,
+          ahead: 3,
+          normal: 1,
+          delayed: 0,
+          total: 4,
+          dispatchedCount: 5,
+          undispatchedCount: 1,
+          reported: true
+        },
+        {
+          orgId: 58,
+          orgName: '电子信息学院',
+          month: 10,
+          ahead: 0,
+          normal: 0,
+          delayed: 0,
+          total: 0,
+          dispatchedCount: 4,
+          undispatchedCount: 2,
+          reported: false
+        }
       ]
     }
   ]
@@ -272,8 +310,22 @@ describe('summaryMetrics 学院等级映射（2026-11-17 新口径：契约数�
     const rows = toCollegeTrendRows(contractTrend.months, '计算机学院')
 
     expect(rows.map(row => row.month)).toEqual([9, 10])
-    expect(rows[0]).toMatchObject({ month: 9, ahead: 2, normal: 0, delayed: 1, total: 3, reported: true })
-    expect(rows[1]).toMatchObject({ month: 10, ahead: 3, normal: 1, delayed: 0, total: 4, reported: true })
+    expect(rows[0]).toMatchObject({
+      month: 9,
+      ahead: 2,
+      normal: 0,
+      delayed: 1,
+      total: 3,
+      reported: true
+    })
+    expect(rows[1]).toMatchObject({
+      month: 10,
+      ahead: 3,
+      normal: 1,
+      delayed: 0,
+      total: 4,
+      reported: true
+    })
   })
 
   it('toCollegeTrendRows 某月未含该学院时按 0 值+未填报绘制（灰柱月）', () => {
@@ -297,9 +349,39 @@ describe('summaryMetrics 学院等级映射（2026-11-17 新口径：契约数�
 
   it('toCollegeRankingRows 同分按完成数降序、已下发数为 0 时分数为 0', () => {
     const rows = toCollegeRankingRows([
-      { orgId: 1, orgName: 'A学院', ahead: 1, normal: 1, delayed: 0, total: 4, dispatchedCount: 4, undispatchedCount: 0, reported: true },
-      { orgId: 2, orgName: 'B学院', ahead: 2, normal: 0, delayed: 0, total: 4, dispatchedCount: 4, undispatchedCount: 0, reported: true },
-      { orgId: 3, orgName: 'C学院', ahead: 0, normal: 0, delayed: 0, total: 0, dispatchedCount: 0, undispatchedCount: 3, reported: false }
+      {
+        orgId: 1,
+        orgName: 'A学院',
+        ahead: 1,
+        normal: 1,
+        delayed: 0,
+        total: 4,
+        dispatchedCount: 4,
+        undispatchedCount: 0,
+        reported: true
+      },
+      {
+        orgId: 2,
+        orgName: 'B学院',
+        ahead: 2,
+        normal: 0,
+        delayed: 0,
+        total: 4,
+        dispatchedCount: 4,
+        undispatchedCount: 0,
+        reported: true
+      },
+      {
+        orgId: 3,
+        orgName: 'C学院',
+        ahead: 0,
+        normal: 0,
+        delayed: 0,
+        total: 0,
+        dispatchedCount: 0,
+        undispatchedCount: 3,
+        reported: false
+      }
     ])
 
     expect(rows.map(row => row.fullName)).toEqual(['A学院', 'B学院', 'C学院'])
@@ -410,6 +492,9 @@ describe('useDashboardView 学院等级/滞后任务数据流（API 供数 + 切
       appraisalLevel: 'DELAYED'
     }))
     mockedGet.mockImplementation(async (url: string) => {
+      if (url === '/dashboard/appraisal-summary') {
+        return { year: 2026, month: 10, latestMonth: 0, departments: [], departmentMonths: [] }
+      }
       if (url === '/dashboard/delayed-indicators') {
         return { year: 2026, month: 10, items }
       }
@@ -420,9 +505,10 @@ describe('useDashboardView 学院等级/滞后任务数据流（API 供数 + 切
     await view.loadDelayedTasks()
     await flushPromises()
 
+    // 2026-11-18：滞后清单与分布图同源，月份跟 selectedMonth（原跟学院卡 collegeSelectedMonth）
     expect(mockedGet).toHaveBeenCalledWith('/dashboard/delayed-indicators', {
       year: view.timeContext.currentYear,
-      month: view.collegeSelectedMonth.value
+      month: view.selectedMonth.value
     })
     expect(view.delayedTasks.value).toHaveLength(5)
     expect(view.delayedTasks.value[0]).toMatchObject({
@@ -432,16 +518,18 @@ describe('useDashboardView 学院等级/滞后任务数据流（API 供数 + 切
       levelText: '滞后'
     })
 
-    // 切月：滞后清单随学院看板同月重拉
+    // 切月：滞后清单与分布图同源重拉（selectedMonth 变化触发）
     mockedGet.mockClear()
     mockedGet.mockImplementation(async (url: string) => {
+      if (url === '/dashboard/appraisal-summary') {
+        return { year: 2026, month: 11, latestMonth: 0, departments: [], departmentMonths: [] }
+      }
       if (url === '/dashboard/delayed-indicators') {
         return { year: 2026, month: 11, items: [] }
       }
       return { year: 2026, month: 11, colleges: [] }
     })
-    view.collegeSelectedMonth.value = 11
-    view.handleCollegeMonthChange()
+    view.selectedMonth.value = 11
     await flushPromises()
 
     expect(mockedGet).toHaveBeenCalledWith('/dashboard/delayed-indicators', {
