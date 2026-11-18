@@ -1148,6 +1148,46 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     )
   })
 
+  /** 计划线上的归口组织 ID（后端 PlanResponse.functionalOrgId，V105 起线身份含归口） */
+  const readPlanFunctionalOrgId = (plan: Plan | null | undefined): number | null => {
+    const raw =
+      (plan as (Plan & { functional_org_id?: number | string }) | null | undefined)
+        ?.functionalOrgId ??
+      (plan as (Plan & { functional_org_id?: number | string }) | null | undefined)
+        ?.functional_org_id
+    const orgId = Number(raw ?? NaN)
+    return Number.isFinite(orgId) && orgId > 0 ? orgId : null
+  }
+
+  /**
+   * 2026-11-18（用户反馈：学院有多条下发线时「归属部门」只显示一个）：
+   * 多线基座——同一学院可能被多个职能部门分别下发成多条计划线（V105 起
+   * 线身份 = 学院 × 归口），而 currentPlanIndicators 只含**当前锚定**那一条线的
+   * 指标，按它聚合选项必然只剩一个部门。这里直接从候选计划的 functionalOrgId
+   * 反查组织名，把全部线补齐；行集聚合在 downstream 作为历史数据兜底合并。
+   */
+  const collegePlanLineOptions = computed<FunctionalDeptOption[]>(() => {
+    if (!isSecondaryCollege.value) {
+      return []
+    }
+
+    const byName = new Map<string, FunctionalDeptOption>()
+    collegePlanCandidates.value.forEach(plan => {
+      const orgId = readPlanFunctionalOrgId(plan)
+      if (orgId === null) {
+        return
+      }
+      const dept = orgStore.departments.find(item => Number(item.id) === orgId)
+      const name = String(dept?.name ?? '').trim()
+      if (!name || byName.has(name)) {
+        return
+      }
+      byName.set(name, { name, orgId })
+    })
+
+    return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
+  })
+
   // （2026-11-13 归属部门选项聚合的 computeds 移至 hasCurrentUserPlan/currentPlanIndicators
   // 声明之后统一收口——watch 注册即求值 source，放本处会在 setup 期触发
   // collegeFunctionalDeptRows → hasCurrentUserPlan 的 TDZ，见下方实现区注释。）
@@ -1216,6 +1256,24 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     }
 
     const selectedSourceDept = filterOwnerDept.value.trim()
+
+    // 2026-11-18：多线下每条计划线的 created_by 都是战略发展部（来源部门同名），
+    // 按来源部门名无法区分线——先按「归口组织 ID」锚定所选归属部门对应的计划线，
+    // 再回退原有的来源部门名匹配（单线/历史数据行为不变）。
+    if (selectedSourceDept) {
+      const lineOrgId =
+        collegePlanLineOptions.value.find(option => option.name === selectedSourceDept)?.orgId ??
+        null
+      if (lineOrgId !== null) {
+        const linePlan = collegePlanCandidates.value.find(
+          plan => readPlanFunctionalOrgId(plan) === lineOrgId
+        )
+        if (linePlan) {
+          return linePlan
+        }
+      }
+    }
+
     const matchedPlan = collegePlanCandidates.value.find(plan => {
       const cachedPlan = collegePlanDetailsMap.value[String(plan.id)]
       const sourceDept = resolveCollegePlanSourceDept((cachedPlan || plan) as Plan)
@@ -2027,9 +2085,27 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     if (!isSecondaryCollege.value || !effectiveViewingDept.value) {
       return []
     }
-    return aggregateFunctionalDeptOptions(collegeFunctionalDeptRows.value, row =>
+
+    // 2026-11-18（用户反馈：多线只显示一个归属部门）：以「全部候选计划线的归口」
+    // 为主基座（collegePlanLineOptions），行集聚合结果作为历史数据兜底合并——
+    // 行集只覆盖当前锚定线，单靠它会导致其余归口部门在选项里消失。
+    const merged = new Map<string, FunctionalDeptOption>()
+    collegePlanLineOptions.value.forEach(option => merged.set(option.name, option))
+
+    aggregateFunctionalDeptOptions(collegeFunctionalDeptRows.value, row =>
       resolveParentIndicator(row as { parentIndicatorId?: string | number | null })
-    )
+    ).forEach(option => {
+      const existing = merged.get(option.name)
+      if (!existing) {
+        merged.set(option.name, option)
+        return
+      }
+      if (existing.orgId === null && option.orgId !== null) {
+        merged.set(option.name, option)
+      }
+    })
+
+    return Array.from(merged.values()).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
   })
 
   // 学院「归属部门」名称列表（选项的名称投影；保持既有消费方形状不变：
