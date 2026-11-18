@@ -142,39 +142,6 @@
   flex-shrink: 0;
 }
 
-.mini-stat {
-  padding: var(--spacing-sm) var(--spacing-lg);
-  background: var(--bg-page);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border-color);
-  text-align: center;
-  min-width: 80px;
-}
-
-.mini-label {
-  font-size: 10px;
-  color: var(--text-placeholder);
-  text-transform: uppercase;
-  font-weight: 700;
-  margin-bottom: 4px;
-  letter-spacing: 0.5px;
-}
-
-.mini-value {
-  font-size: 20px;
-  font-weight: 800;
-}
-
-.mini-value.success {
-  color: var(--color-success);
-}
-.mini-value.warning {
-  color: var(--color-warning);
-}
-.mini-value.primary {
-  color: var(--color-primary);
-}
-
 /* ========== 工具栏 ========== */
 .dashboard-toolbar {
   display: flex;
