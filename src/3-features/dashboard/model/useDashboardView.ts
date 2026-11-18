@@ -1034,6 +1034,28 @@ export function useDashboardView(props: DashboardViewProps) {
     }
   })
 
+  // 任务完成简报空态判定（2026-11-18 折中方案，PR #131 采纳内核）：
+  // 选中月快照无 APPROVED 鉴定内容时，简报正文替换为「本月尚未审定」空态文案，
+  // 只保留「已下发 n」（永远真实）与未填报督办提示。
+  // 判定口径（按数据结构取最稳）：
+  // ① collegeLevels 为空（当月无任何学院数据）→ 空态；
+  // ② 所有行 resolveMonthState != APPROVED（整月未填报/审批中）→ 空态；
+  // ③ 兼容旧响应（无 monthState 字段）：鉴定三档全 0 且无未填报督办 → 无审定内容，空态。
+  const briefMonthApproved = computed(() => {
+    const rows = collegeLevels.value
+    if (rows.length === 0) {
+      return false
+    }
+    if (!rows.some(row => resolveMonthState(row) === 'APPROVED')) {
+      return false
+    }
+    const aggregate = aggregateCollegeLevels(rows)
+    return (
+      aggregate.ahead + aggregate.normal + aggregate.delayed > 0 ||
+      aggregate.unreportedColleges > 0
+    )
+  })
+
   // 应用筛选
   const applyFilters = () => {
     const filter: Record<string, string | undefined> = {}
@@ -2672,6 +2694,7 @@ export function useDashboardView(props: DashboardViewProps) {
     benchmarkData,
     benchmarkChartHasData,
     benchmarkChartEmptyText,
+    briefMonthApproved,
     canViewAllDepartments,
     collegeBarData,
     collegeChartHasData,
