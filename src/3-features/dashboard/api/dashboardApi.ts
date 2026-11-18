@@ -95,6 +95,49 @@ export interface DashboardDelayedIndicatorsResponse {
   items: DashboardDelayedIndicatorItem[]
 }
 
+// ============================================================================
+// 审核鉴定口径的部门分布（2026-11-18 数据看板分布图口径修复）
+// 后端 GET /api/v1/dashboard/appraisal-summary 一次返回部门分布 + 月度快照 + 年度简报。
+// 口径：每个指标取不晚于选中月份的最近一次 plan_report_indicator.appraisal_level，
+//      当月未上报的部门沿用上次结论（不会因为某月没提交就把整图清零）。
+// ============================================================================
+
+/** 单个职能部门的鉴定等级计数 */
+export interface DashboardDepartmentLevelStat {
+  /** 部门组织 ID */
+  orgId: number
+  /** 部门名称 */
+  orgName: string
+  /** 超前完成数 */
+  ahead: number
+  /** 正常数 */
+  normal: number
+  /** 滞后数（上级鉴定 DELAYED） */
+  delayed: number
+  /** 总计（ahead + normal + delayed） */
+  total: number
+}
+
+/** 部门等级月度快照（下钻趋势用） */
+export interface DashboardDepartmentLevelMonth {
+  /** 月份（1-12） */
+  month: number
+  /** 该月截止口径下的部门分布 */
+  departments: DashboardDepartmentLevelStat[]
+}
+
+/** GET /api/v1/dashboard/appraisal-summary?year=&month= 响应 */
+export interface DashboardAppraisalSummaryResponse {
+  year: number
+  month: number
+  /** 该年度最近一个有鉴定数据的月份（0 表示该年度无鉴定数据） */
+  latestMonth: number
+  /** 选中月份的部门分布（含「最近一次鉴定」口径，未上报部门沿用上次结论） */
+  departments: DashboardDepartmentLevelStat[]
+  /** 1..选中月份的月度快照 */
+  departmentMonths: DashboardDepartmentLevelMonth[]
+}
+
 /**
  * 兼容两种返回形态：契约裸形态 { year, month, colleges } 与后端统一
  * ApiResponse 包裹形态 { code, message, data }（DashboardSummaryController 同款）。
@@ -305,6 +348,33 @@ export const dashboardApi = {
       return data
     } catch (error) {
       logger.error('[dashboardApi] Failed to fetch delayed indicators:', error)
+      throw error
+    }
+  },
+
+  /**
+   * 审核鉴定口径的部门分布（职能部门堆叠图 / 下钻月度趋势）
+   * GET /api/v1/dashboard/appraisal-summary?year=&month=
+   * 2026-11-18：替换原前端启发式（getDeptStatsAtMonth），解决分布图不随审核鉴定变化、
+   * 且各月份图形完全一样（原判定根本没用到 month）的问题。
+   */
+  async getAppraisalSummary(params: {
+    year: number
+    month: number
+  }): Promise<DashboardAppraisalSummaryResponse> {
+    try {
+      logger.debug('[dashboardApi] Fetching appraisal summary:', params)
+      const payload = await apiClient.get<unknown>('/dashboard/appraisal-summary', {
+        year: params.year,
+        month: params.month
+      })
+      const data = unwrapDashboardPayload<DashboardAppraisalSummaryResponse>(payload)
+      if (!data || !Array.isArray(data.departments) || !Array.isArray(data.departmentMonths)) {
+        throw new Error('审核鉴定汇总接口返回格式异常')
+      }
+      return data
+    } catch (error) {
+      logger.error('[dashboardApi] Failed to fetch appraisal summary:', error)
       throw error
     }
   },
