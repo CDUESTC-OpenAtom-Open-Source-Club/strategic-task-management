@@ -279,67 +279,9 @@ function openApprovalCenterFromDashboard() {
 
     <!-- 正常数据展示 -->
     <template v-else>
-      <!-- AI 智能摘要卡片 -->
-      <section class="ai-summary-card">
-        <div class="summary-icon">
-          <el-icon :size="28"><Aim /></el-icon>
-        </div>
-        <div class="summary-content">
-          <div class="summary-header">
-            <span class="summary-tag">任务完成简报</span>
-            <span class="summary-time"
-              >| {{ timeContext.currentYear }} 年度 · 更新于
-              {{ new Date().toLocaleDateString() }}</span
-            >
-          </div>
-          <p class="summary-text">
-            {{ timeContext.currentYear }} 年度当前已下发
-            <span class="highlight-primary">{{ collegeSupervision.dispatchedTotal }}</span>
-            项指标：超前完成
-            <span class="highlight-primary">{{ collegeSupervision.ahead }}</span>
-            项、正常推进 {{ collegeSupervision.normal }} 项、滞后
-            {{ collegeSupervision.delayed }} 项。
-            <!-- H3（2026-09-19 定案）：滞后口径统一为人工鉴定三档（levelDistribution），与圆环图同源；
-                 2026-11-17 起数据来自月报鉴定（appraisal 优先 self），审核完成后随看板同步刷新 -->
-            <template v-if="(collegeSupervision.delayed ?? 0) > 0">
-              其中
-              <span class="highlight-danger">{{ collegeSupervision.delayed }} 项</span>
-              已鉴定为滞后。
-            </template>
-            <template v-else> 暂无滞后鉴定。 </template>
-            <!-- 2026-11-17 新口径：未填报学院灰柱督办（可见谁没报，审核/上报后自动消除） -->
-            <template v-if="(collegeSupervision.unreportedColleges ?? 0) > 0">
-              本月
-              <span class="highlight-danger"
-                >{{ collegeSupervision.unreportedColleges }} 个学院</span
-              >
-              未填报（{{ collegeSupervision.unreportedNames.join('、') }}），已灰柱督办。
-            </template>
-            总体完成率
-            <span class="highlight-success">{{ collegeSupervision.completionRate }}%</span>。
-            <button type="button" class="drill-btn" @click.prevent="handleSummaryDrillClick">
-              查看分布明细 →
-            </button>
-          </p>
-        </div>
-        <div class="summary-stats">
-          <div class="mini-stat">
-            <div class="mini-label">健康度</div>
-            <div
-              class="mini-value"
-              :class="dashboardData.completionRate >= 70 ? 'success' : 'warning'"
-            >
-              {{ Math.min(100, dashboardData.completionRate + 10) }}%
-            </div>
-          </div>
-          <div class="mini-stat">
-            <div class="mini-label">响应率</div>
-            <div class="mini-value primary">
-              {{ (2.4 - dashboardData.alertIndicators.severe * 0.1).toFixed(1) }}h
-            </div>
-          </div>
-        </div>
-      </section>
+      <!-- 2026-11-18 用户手测需求：「任务完成简报」的已下发/完成率与月报鉴定同步不上
+           （恒显示 超前 0 / 正常 0 / 滞后 0 / 完成率 0%），按用户要求整块移除该卡片，
+           不再展示误导性的汇总数字；分布图、学院卡、滞后清单等其余模块不受影响。 -->
       <!-- 面包屑导航 -->
       <BreadcrumbNav
         v-if="dashboardStore.breadcrumbs.length > 1"
