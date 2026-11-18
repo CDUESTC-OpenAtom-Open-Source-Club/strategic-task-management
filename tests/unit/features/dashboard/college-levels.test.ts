@@ -1,5 +1,5 @@
 /**
- * 数据看板学院等级统计单测（2026-11-17 新口径）
+ * 数据看板学院等级统计单测（2026-11-17 新口径 + 2026-11-18 按月快照）
  *
  * 契约：
  * - GET /api/v1/dashboard/college-levels?year=&month=
@@ -10,6 +10,8 @@
  *      ③等级 appraisal_level 优先 self_rating 兜底三档（后端已聚合）
  *      ④手动预警等级（alert_event/manualAlertSeverity）退出看板统计
  *      ⑤完成率/排名分母 = 已下发指标数
+ *      ⑥按月快照：行带 monthState（APPROVED/IN_REVIEW/NOT_REPORTED），
+ *        只有 APPROVED 出鉴定值，非 APPROVED 前端一律置灰（行级 > 月级 > reported 兜底）
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
@@ -33,7 +35,6 @@ import { apiClient } from '@/shared/api/client'
 import { dashboardApi } from '@/features/dashboard/api/dashboardApi'
 import {
   aggregateCollegeLevels,
-  getIndicatorStatusAtMonth,
   toCollegeBarRows,
   toCollegeRankingRows,
   toCollegeTrendRows
@@ -42,7 +43,6 @@ import type {
   DashboardCollegeLevelStat,
   DashboardCollegeLevelsTrendResponse
 } from '@/features/dashboard/api/dashboardApi'
-import type { Indicator } from '@/shared/types'
 import { useDashboardView } from '@/features/dashboard/model/useDashboardView'
 
 const mockedGet = vi.mocked(apiClient.get)
@@ -127,16 +127,6 @@ const contractTrend: DashboardCollegeLevelsTrendResponse = {
     }
   ]
 }
-
-/** 构造最小可用 Indicator（测试只关心 workflowStatus 字段的兜底口径） */
-const buildIndicator = (overrides: Record<string, unknown> = {}): Indicator =>
-  ({
-    indicatorId: 1,
-    workflowStatus: 'APPROVED',
-    status: 'active',
-    progress: 50,
-    ...overrides
-  }) as unknown as Indicator
 
 beforeEach(() => {
   mockedGet.mockReset()
@@ -254,8 +244,8 @@ describe('dashboardApi 学院等级/滞后清单契约（GET /dashboard/*）', (
   })
 })
 
-describe('summaryMetrics 学院等级映射（2026-11-17 新口径：契约数据 → 看板图表行）', () => {
-  it('toCollegeBarRows 逐字段映射契约数据（含灰柱字段），不产生 warning 桶', () => {
+describe('summaryMetrics 学院等级映射（2026-11-17 新口径 + 2026-11-18 按月快照）', () => {
+  it('toCollegeBarRows 逐字段映射契约数据（含灰柱字段与 monthState），不产生 warning 桶', () => {
     const rows = toCollegeBarRows(contractColleges)
 
     expect(rows).toEqual([
@@ -269,7 +259,8 @@ describe('summaryMetrics 学院等级映射（2026-11-17 新口径：契约数�
         total: 4,
         dispatchedCount: 5,
         undispatchedCount: 1,
-        reported: true
+        reported: true,
+        monthState: 'APPROVED'
       },
       {
         name: '电子信息学院',
@@ -281,10 +272,31 @@ describe('summaryMetrics 学院等级映射（2026-11-17 新口径：契约数�
         total: 0,
         dispatchedCount: 4,
         undispatchedCount: 2,
-        reported: false
+        reported: false,
+        monthState: 'NOT_REPORTED'
       }
     ])
     expect(rows.some(row => 'warning' in row)).toBe(false)
+  })
+
+  it('toCollegeBarRows 契约行带 monthState 时优先于 reported 兜底（IN_REVIEW → 灰柱）', () => {
+    const rows = toCollegeBarRows([
+      {
+        orgId: 60,
+        orgName: '经济管理学院',
+        ahead: 0,
+        normal: 0,
+        delayed: 0,
+        total: 0,
+        dispatchedCount: 3,
+        undispatchedCount: 0,
+        reported: false,
+        monthState: 'IN_REVIEW'
+      }
+    ])
+
+    expect(rows[0]?.monthState).toBe('IN_REVIEW')
+    expect(rows[0]?.reported).toBe(false)
   })
 
   it('toCollegeBarRows 超长学院名截断为 8 字符 + 省略号', () => {
@@ -316,7 +328,8 @@ describe('summaryMetrics 学院等级映射（2026-11-17 新口径：契约数�
       normal: 0,
       delayed: 1,
       total: 3,
-      reported: true
+      reported: true,
+      monthState: 'APPROVED'
     })
     expect(rows[1]).toMatchObject({
       month: 10,
@@ -324,7 +337,8 @@ describe('summaryMetrics 学院等级映射（2026-11-17 新口径：契约数�
       normal: 1,
       delayed: 0,
       total: 4,
-      reported: true
+      reported: true,
+      monthState: 'APPROVED'
     })
   })
 
@@ -334,6 +348,58 @@ describe('summaryMetrics 学院等级映射（2026-11-17 新口径：契约数�
     expect(rows.map(row => row.month)).toEqual([9, 10])
     expect(rows.every(row => row.total === 0)).toBe(true)
     expect(rows.every(row => row.reported === false)).toBe(true)
+    expect(rows.every(row => row.monthState === 'NOT_REPORTED')).toBe(true)
+  })
+
+  it('toCollegeTrendRows 月级 monthState 优先于行级 reported 兜底（IN_REVIEW 月 → 灰柱）', () => {
+    const months = [
+      {
+        month: 11,
+        monthState: 'IN_REVIEW' as const,
+        colleges: [
+          {
+            orgId: 57,
+            orgName: '计算机学院',
+            month: 11,
+            ahead: 1,
+            normal: 1,
+            delayed: 0,
+            total: 2,
+            dispatchedCount: 4,
+            undispatchedCount: 0,
+            reported: true
+          }
+        ]
+      }
+    ]
+
+    const rows = toCollegeTrendRows(months, '计算机学院')
+    expect(rows[0]?.monthState).toBe('IN_REVIEW')
+
+    // 行级 monthState 比月级更优先
+    const monthsWithRowState = [
+      {
+        month: 12,
+        monthState: 'IN_REVIEW' as const,
+        colleges: [
+          {
+            orgId: 57,
+            orgName: '计算机学院',
+            month: 12,
+            ahead: 0,
+            normal: 0,
+            delayed: 0,
+            total: 0,
+            dispatchedCount: 4,
+            undispatchedCount: 0,
+            reported: false,
+            monthState: 'NOT_REPORTED' as const
+          }
+        ]
+      }
+    ]
+    const rowsWithRowState = toCollegeTrendRows(monthsWithRowState, '计算机学院')
+    expect(rowsWithRowState[0]?.monthState).toBe('NOT_REPORTED')
   })
 
   it('toCollegeRankingRows 分数 = (超前+正常)/已下发数×100 并按分数降序', () => {
@@ -409,23 +475,6 @@ describe('summaryMetrics 学院等级映射（2026-11-17 新口径：契约数�
       undispatchedTotal: 0,
       unreportedColleges: 0
     })
-  })
-})
-
-describe('getIndicatorStatusAtMonth（口径④：手动预警等级退出看板统计）', () => {
-  it('不再读取 manualAlertSeverity：已审批指标即使被鉴定为滞后也按兜底口径返回 normal', () => {
-    const indicator = buildIndicator({ manualAlertSeverity: 'CRITICAL' })
-
-    expect(getIndicatorStatusAtMonth(indicator, 10, 2026)).toBe('normal')
-  })
-
-  it('未下发（DRAFT）/已驳回（REJECTED）不算完成，返回 warning', () => {
-    expect(getIndicatorStatusAtMonth(buildIndicator({ workflowStatus: 'DRAFT' }), 10, 2026)).toBe(
-      'warning'
-    )
-    expect(
-      getIndicatorStatusAtMonth(buildIndicator({ workflowStatus: 'REJECTED' }), 10, 2026)
-    ).toBe('warning')
   })
 })
 
