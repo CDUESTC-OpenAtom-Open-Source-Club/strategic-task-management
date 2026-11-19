@@ -3932,6 +3932,80 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   )
 
   /**
+   * 2026-11-19（学院全部导入）：该学院**全部归口部门**的核心指标锚点全集（按归口分组）。
+   *
+   * <p>单条导入的模板只预填「当前所选归口」的锚点（{@link collegeImportParentIndicators}）；
+   * 全部导入的模板必须预填**所有归口**的锚点——否则用户下载的模板里看不到其它归口的
+   * 锚点行，文件里就没法同时写多个职能部门，拆批无从谈起。</p>
+   *
+   * <p>数据源复用既有锚点基座 {@link buildCollegeParentAnchorIndicators}：把「右侧下拉
+   * 所选归口」换成「该学院全部可选归口」逐个跑一遍同一过滤口径（已下发根核心指标 +
+   * owner=战略发展部 + 目标部门=该归口 + 按 id 升序）。</p>
+   *
+   * <p>归口清单取 {@link collegeDeptDropdownItems}（该学院可见的全部职能部门选项），
+   * 顺序按组织机构顺序（与下拉一致），保证模板里的组顺序稳定可预期。</p>
+   */
+  const collegeAllDeptAnchorGroups = computed(() => {
+    const groups: Array<{
+      dept: string
+      anchors: Array<{
+        id: number | string | null
+        name: string
+        taskContent: string
+        type1: string
+        type2: string
+      }>
+    }> = []
+
+    for (const item of collegeDeptDropdownItems.value) {
+      const dept = String(item?.dept ?? '').trim()
+      if (!dept) {
+        continue
+      }
+      const anchors = buildCollegeParentAnchorIndicators(normalizedIndicators.value, {
+        ownerDept: dept,
+        strategicDeptName: strategicDeptName.value,
+        normalize: normalizeDepartmentName
+      }) as Array<StrategicIndicator & { taskContent?: string }>
+      if (anchors.length === 0) {
+        continue
+      }
+      groups.push({
+        dept,
+        anchors: anchors.map(anchor => {
+          const typed = anchor as { type1?: string }
+          return {
+            id: anchor.id ?? null,
+            name: String(anchor.name || ''),
+            taskContent: String(anchor.taskContent || ''),
+            type1: String(typed.type1 || ''),
+            type2: getIndicatorCategoryLabel(anchor)
+          }
+        })
+      })
+    }
+    return groups
+  })
+
+  /**
+   * 2026-11-19（学院全部导入）：全部导入模板的父级预填 seeds（该学院全部归口锚点全集）。
+   *
+   * <p>形状与 {@link collegeImportParentIndicators} 一致，额外带 functionalDeptName
+   * （模板「职能部门」列预填 = 拆批依据）。</p>
+   */
+  const collegeAllImportParentIndicators = computed(() =>
+    collegeAllDeptAnchorGroups.value.flatMap(group =>
+      group.anchors.map(anchor => ({
+        name: anchor.name,
+        taskContent: anchor.taskContent,
+        type1: anchor.type1,
+        type2: anchor.type2,
+        functionalDeptName: group.dept
+      }))
+    )
+  )
+
+  /**
    * 2026-11-14（用户定案：新增行不落库）二级学院 tab 新增子指标：校验 →
    * **写入内存草稿**（不调 createIndicator、不落库、无后端请求）。
    *
@@ -9278,6 +9352,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     // （右侧下拉所选部门已接收的已下发核心指标 seeds，id 升序）。
     selectedCollegeDispatchPlanId,
     collegeImportParentIndicators,
+    // 2026-11-19（学院全部导入）：该学院全部归口的核心指标锚点全集 + 对应模板 seeds
+    collegeAllDeptAnchorGroups,
+    collegeAllImportParentIndicators,
     preloadedPlanWorkflowDetail,
     preservePrefilledTaskBindingOnce,
     primaryApprovalWorkflowEntityId,

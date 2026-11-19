@@ -292,6 +292,8 @@ const {
   // 2026-11-13（方案甲恢复）：学院页签「导入」模板父级预填 seeds（右侧下拉所选部门
   // 已接收的已下发核心指标，id 升序）
   collegeImportParentIndicators,
+  // 2026-11-19（学院全部导入）：该学院全部归口的核心指标锚点全集（模板 seeds）
+  collegeAllImportParentIndicators,
   isStrategicDeptLogin,
   strategicDeptOrgId,
   strategicDeptName,
@@ -1312,6 +1314,12 @@ watch(
 const strategicBatchExportDialogVisible = ref(false)
 const selectedStrategicExportDepartments = ref<string[]>([])
 const strategicImportDialogVisible = ref(false)
+/**
+ * 2026-11-19（学院全部导入）：全部导入弹窗可见性（与单条导入弹窗**独立实例**——
+ * 两者的 props（mode / functionalOrgId / parentIndicators）口径完全不同，
+ * 复用同一个实例会让「归口部门必填」与「归口由文件解析」两套规则互相打架）。
+ */
+const strategicAllImportDialogVisible = ref(false)
 // 2026-10-31 定稿：等级选项收敛到共享 appraisalGate（只有超前完成/正常/滞后三档），
 // 「未评定」退为初始空白显示态（不是选项），三视图同构。
 const getManualAlertLabel = (severity?: ManualAlertSeverity) =>
@@ -1962,6 +1970,60 @@ const openStrategicImportDialog = () => {
   strategicImportDialogVisible.value = true
 }
 
+/**
+ * 2026-11-19（学院全部导入）：「全部导入」入口的置灰口径。
+ *
+ * <p>与单条导入（{@link collegeTabImportDisabledReason}）**刻意不同**：
+ * 全部导入不要求先选职能部门——归口由文件内「职能部门」列解析后分组，
+ * 所以「先选职能部门」这道门槛对全部导入没有意义（用户正是要一次导入多个归口）。
+ * 全部导入只要求：① 已选学院；② 周期可用；③ 当前角色可写。</p>
+ *
+ * <p>不套用「当前归口线已下发 → 拦」的口径：全部导入里各组状态不同（有的已下发要跳过、
+ * 有的可下发），真正的判定在分组预览阶段由后端逐组给出。</p>
+ */
+const collegeAllImportDisabledReason = computed(() => {
+  if (!isStrategicDeptLogin.value) {
+    return '学院指标下发由战略发展部操作'
+  }
+  if (!selectedCollege.value) {
+    return '请先在左侧选择学院'
+  }
+  if (!collegeDispatchCycleId.value) {
+    return '当前周期信息不可用，暂不能导入'
+  }
+  if (isReadOnly.value) {
+    return '历史快照为只读状态'
+  }
+  if (!canWriteStrategicTask.value) {
+    return '当前角色仅可查看，不能导入指标'
+  }
+  return ''
+})
+
+/** 全部导入按钮是否可点（学院页签专用） */
+const collegeAllImportReady = computed(() => collegeAllImportDisabledReason.value === '')
+
+/**
+ * 2026-11-19（学院全部导入）：打开「全部导入」弹窗。
+ *
+ * <p>前置守卫与按钮置灰同口径（单一口径，防键盘/编程式调用绕过置灰）。</p>
+ */
+const openStrategicAllImportDialog = () => {
+  if (activeTaskTabName.value !== 'college') {
+    return
+  }
+  const reason = collegeAllImportDisabledReason.value
+  if (reason) {
+    ElMessage.warning(reason)
+    return
+  }
+  if (!collegeDispatchCollegeOrgId.value) {
+    ElMessage.warning('请先在左侧选择要下发的学院')
+    return
+  }
+  strategicAllImportDialogVisible.value = true
+}
+
 const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => {
   // 2026-11-12（中⑤·A1 缺陷 C）：导入 commit 成功后「计划状态」徽标不实时刷新（70s+
   // 轮询期间仍显「草稿」，手动刷新页面才变「已下发」）。两条刷新路径的差异：
@@ -1986,6 +2048,20 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
     await refreshApprovalWorkflowSummaries()
     await preloadApprovalWorkflowDetail()
   }
+}
+
+/**
+ * 2026-11-19（学院全部导入）：全部导入提交后的刷新。
+ *
+ * <p>与单条导入的刷新链一致：失效 plan.list + workflow 缓存 → 重拉当前视图。
+ * 全部导入可能同时影响**多个归口**的线，故重拉必须带 force（不能命中 SWR 快照）。</p>
+ */
+const handleStrategicAllImportCommitted = async () => {
+  invalidateQueries(['plan.list'])
+  invalidateQueries(['workflow.detail', 'workflow.todo'])
+  await refreshCurrentDepartmentView({ showLoading: true, force: true, reloadIndicators: true })
+  resetApprovalWorkflowStateCache()
+  await refreshApprovalWorkflowSummaries()
 }
 </script>
 
@@ -2090,6 +2166,23 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
       <div class="excel-header">
         <h2 class="excel-title">战略任务指标总表</h2>
         <div class="excel-header-status">
+          <!-- 2026-11-19（学院全部导入 · 规划书第二节）：学院页签工具栏新增「全部导入」，
+               位于「全部导出」左侧（用户拍板的位置）。仅学院页签显示——
+               职能部门页签不需要（职能部门指标表是「战略部 → 职能部门」一条链，
+               没有多归口拆分语义）。
+               全部导入不要求先选职能部门（归口由文件内「职能部门」列解析），
+               故置灰口径与「全部导出」的两步门槛**不同**：只需选中学院。 -->
+          <el-button
+            v-if="activeTaskTabName === 'college'"
+            type="primary"
+            size="small"
+            :icon="Upload"
+            :disabled="!collegeAllImportReady"
+            :title="collegeAllImportReady ? '' : collegeAllImportDisabledReason"
+            @click="openStrategicAllImportDialog"
+          >
+            全部导入
+          </el-button>
           <el-button
             type="primary"
             plain
@@ -3931,6 +4024,25 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
         activeTaskTabName === 'college' ? collegeImportParentIndicators : undefined
       "
       @committed="handleStrategicImportCommitted"
+    />
+
+    <!-- 2026-11-19（学院全部导入）：**独立实例**的「全部导入」弹窗（mode=all）。
+         与上面的单条导入弹窗 props 口径不同，故不共用实例：
+         · 不传 functional-org-id（归口由文件内「职能部门」列解析 → 自动拆批）；
+         · parent-indicators 传该学院**全部归口**的核心指标全集
+           （collegeAllImportParentIndicators，带 functionalDeptName → 「职能部门」列预填）；
+         · 提交回调走 all-committed（逐组结果），与单条导入的 committed 互不影响。 -->
+    <BusinessImportDialog
+      v-model:visible="strategicAllImportDialogVisible"
+      mode="all"
+      type="distribution"
+      :target-org-id="collegeDispatchCollegeOrgId"
+      :target-org-name="selectedCollege"
+      :source-org-id="strategicDeptOrgId"
+      :source-org-name="strategicDeptName"
+      :cycle-id="collegeDispatchCycleId"
+      :parent-indicators="collegeAllImportParentIndicators"
+      @all-committed="handleStrategicAllImportCommitted"
     />
 
     <el-dialog

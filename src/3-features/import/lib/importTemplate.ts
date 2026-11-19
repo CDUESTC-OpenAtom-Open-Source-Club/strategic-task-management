@@ -13,6 +13,16 @@ import {
  */
 export const WEIGHT_COLUMN_HEADER = '权重（纯数字）'
 
+/**
+ * 2026-11-19（学院全部导入）：「职能部门」列头文案（模板/后端别名表统一引用）。
+ *
+ * <p>该列是「全部导入」的**拆批依据**——后端按此列 groupBy 分组；也是交叉校验
+ * 依据（该列填的部门 ≠ 父级核心指标 target_org → 行级错误「职能部门与核心指标
+ * 归属不符」）。文案漂移会导致整列不映射 → 全部行落进「无法识别归属部门」组。</p>
+ */
+export const FUNCTIONAL_DEPT_COLUMN_HEADER = '职能部门'
+
+
 export interface ImportTemplateGuideColumn {
   key: string
   label: string
@@ -38,6 +48,15 @@ export interface ImportTemplateGuide {
   rows: Record<string, string>[]
   rules: string[]
 }
+
+/**
+ * 2026-11-19（学院全部导入）：导入模式。
+ *
+ * <p>single = 既有单条导入（学院子指标表按「学院 × 归口」一条线导入，8 列，无职能部门列）；
+ * all = 全部导入（一份文件含多个职能部门给同一学院的指标行，9 列，多「职能部门」列）。</p>
+ */
+export type ImportTemplateMode = 'single' | 'all'
+
 
 // 2026-10-31 用户拍板（导入模板层级化改造，终版表头）：
 // - 职能部门模板 7 列：序号|部门|战略任务|任务类型|核心指标|指标类型|权重
@@ -253,7 +272,101 @@ const distributionImportGuide: ImportTemplateGuide = {
   ]
 }
 
-export function getImportTemplateGuide(type: BusinessImportType): ImportTemplateGuide {
+/**
+ * 2026-11-19（学院全部导入 · 规划书第一节）：全部导入模板 —— **9 列**。
+ *
+ * <p>与单条学院模板（8 列）同骨架 + 新增「职能部门」列（插在「学院」列之后）：
+ * 序号|学院|**职能部门**|任务类型|核心指标|核心指标类型|子指标名称|指标类型|权重</p>
+ *
+ * <p>「职能部门」列的三重作用（规划书第一节）：
+ * ① 拆批依据（显式 groupBy）——不再隐式靠父级反查推导；
+ * ② 交叉校验（防呆）——该列填的部门 ≠ 父级核心指标 target_org → 行级错误；
+ * ③ 用户可读——Excel 里一眼看到每行由哪个部门下发。</p>
+ *
+ * <p>「职能部门」列**随组竖向合并**（一个父级锚点 = 一个归口部门，组内一致；
+ * 延续行留空 = 同上，与既有 sticky 口径一致）。用户若把同一锚点的行填成不同部门，
+ * 后端会按行级错误点名「职能部门与核心指标归属不符」。</p>
+ */
+const distributionAllImportGuide: ImportTemplateGuide = {
+  title: '学院子指标表（全部导入）示例',
+  targetName: '学院',
+  columns: [
+    { key: 'serial', label: '序号', required: true, mergeGroup: true },
+    // 学院列整列合并（一份导入锁定一个学院）
+    { key: 'college', label: '学院', mergeAll: true },
+    // 2026-11-19 新增：职能部门列（拆批依据 + 交叉校验依据），随组竖向合并
+    { key: 'functionalDept', label: FUNCTIONAL_DEPT_COLUMN_HEADER, required: true, mergeGroup: true },
+    { key: 'taskType', label: '任务类型', required: true, mergeGroup: true },
+    { key: 'parentIndicator', label: '核心指标', required: true, mergeGroup: true },
+    { key: 'parentIndicatorType', label: '核心指标类型', required: true, mergeGroup: true },
+    { key: 'indicatorName', label: '子指标名称', required: true },
+    { key: 'indicatorType', label: '指标类型', required: true },
+    { key: 'weight', label: WEIGHT_COLUMN_HEADER }
+  ],
+  rows: [
+    // 示例演示「一份文件两个职能部门」：第 1-2 行教务处，第 3 行数字校园建设办公室
+    {
+      serial: '1',
+      college: '文理学院',
+      functionalDept: '教务处',
+      taskType: '基础性',
+      parentIndicator: '推进课堂教学改革与课程思政建设',
+      parentIndicatorType: '定量',
+      indicatorName: '课堂教学改革专项',
+      indicatorType: '定量',
+      weight: '60'
+    },
+    {
+      serial: '',
+      college: '',
+      functionalDept: '',
+      taskType: '',
+      parentIndicator: '',
+      parentIndicatorType: '',
+      indicatorName: '课程思政示范课建设',
+      indicatorType: '定性',
+      weight: '40'
+    },
+    {
+      serial: '2',
+      college: '',
+      functionalDept: '数字校园建设办公室',
+      taskType: '发展性',
+      parentIndicator: '建设数字化校园管理平台',
+      parentIndicatorType: '定量',
+      indicatorName: '数据治理平台建设',
+      indicatorType: '定量',
+      weight: '100'
+    }
+  ],
+  rules: [
+    '「序号」为父级核心指标（即「核心指标」列）组号：按 1、2、3… 顺序给每个父级核心指标编号；序号或组列留空 = 延续上一组父级指标（留空=同上），一个父级指标可拆多个子指标（多行延续）。',
+    '模板已按组竖向合并「序号」「职能部门」「任务类型」「核心指标」「核心指标类型」单元格（组内多行共用一格），「学院」列整列合并（一份导入锁定一个学院，不逐行重复）；也可以不合并单元格、把延续行的组列直接留空（留空=同上），两种写法都能导入。',
+    // 2026-11-19 新增：拆分规则（规划书第一节）
+    '「职能部门」列是本次导入的**拆分依据**：系统按该列把文件拆成若干组，每组单独成为一个「学院 × 归口部门」的线并独立下发；同一职能部门的多行会归为一组，不同职能部门不会串组。该列已按每个父级核心指标的归属部门预填，请勿修改。',
+    '「职能部门」列填写必须与该行「核心指标」的实际归属部门一致（不一致会阻断导入并点名对应行，防止张冠李戴）；该列留空时系统会按核心指标反查归属部门，反查不出则该行归入「无法识别归属部门」并阻断整单。',
+    '每组（每个职能部门）**各自独立**做权重校验：基础性任务及其指标的权重，该组内合计须为 100；某一组不达标只影响该组，其它组不受牵连，但会阻断本次整单提交，需修正后重新上传。',
+    '「任务类型」为父级核心指标所属战略任务的类型（基础性/发展性），模板已按系统数据预填，只读校验——与系统不一致会阻断导入并点名对应行，请勿修改；子指标的“任务类别”由所属任务决定，无需填写。',
+    '「核心指标」「核心指标类型」两列模板已按系统已下发数据预填（父级核心指标名称与其自身类型，定量/定性），只读校验、请勿修改：名称或类型与系统下发内容不一致（含尚未下发/同名多条）会阻断导入并点名对应行，核心指标按名称精确关联、请勿改名。',
+    '必填列：每行的子指标名称与指标类型、以及权重；「序号 / 职能部门 / 任务类型 / 核心指标 / 核心指标类型 / 学院」均由模板按当前所选学院预填，用户只需在父级行下填写子指标名称、指标类型与权重（可加「组列留空」延续行拆多个子指标）。',
+    '同一父级组内子指标同名 = 更新该子指标（内容列以本次填写为准），新名称 = 新增；不支持通过导入修改子指标名称，改名请在界面修改。',
+    '权重填写纯数字（如 40，不要带 % 或小数）；基础性任务及其指标的权重，按「职能部门」分组后每组合计须为 100（自动下发时仍会按最终权重校验拦截）。'
+  ]
+}
+
+/**
+ * 取得导入模板的列定义与规则说明。
+ *
+ * @param type 导入类型（职能部门指标表 / 学院子指标表）
+ * @param mode 导入模式（single = 单条导入默认；all = 全部导入，9 列带职能部门列）
+ */
+export function getImportTemplateGuide(
+  type: BusinessImportType,
+  mode: ImportTemplateMode = 'single'
+): ImportTemplateGuide {
+  if (mode === 'all') {
+    return type === 'strategic-task' ? strategicImportGuide : distributionAllImportGuide
+  }
   return type === 'strategic-task' ? strategicImportGuide : distributionImportGuide
 }
 
@@ -266,7 +379,14 @@ export interface ImportTemplateParentSeed {
   parentIndicatorType?: string
   /** 父级核心指标所属任务的类型（基础性/发展性，用于「任务类型」列预填，2026-10-31 终版表头加列） */
   taskType?: string
+  /**
+   * 2026-11-19（学院全部导入）：该父级核心指标所属的**归口部门名称**（职能部门列预填）。
+   *
+   * <p>全部导入模式必填（该列是拆批依据）；单条导入模式忽略（单条已选归口，冗余）。</p>
+   */
+  functionalDept?: string
 }
+
 
 /**
  * 2026-10-14 用户定案（P10）：下载模板时自动带出当前职能部门/学院已有的父级核心指标——
@@ -280,9 +400,11 @@ export interface ImportTemplateParentSeed {
  */
 export function buildImportTemplateSheet(
   type: BusinessImportType,
-  parentSeeds?: ImportTemplateParentSeed[]
+  parentSeeds?: ImportTemplateParentSeed[],
+  mode: ImportTemplateMode = 'single'
 ): ExcelExportSheet<Record<string, string>> {
-  const guide = getImportTemplateGuide(type)
+  const guide = getImportTemplateGuide(type, mode)
+  const isAllMode = mode === 'all' && type !== 'strategic-task'
 
   const seedRows: Record<string, string>[] =
     type !== 'strategic-task' && parentSeeds?.length
@@ -290,6 +412,9 @@ export function buildImportTemplateSheet(
           // 序号 = 父级核心指标组号（1、2、3…）
           serial: String(index + 1),
           college: seed.college ?? '',
+          // 2026-11-19（全部导入）：职能部门列预填（拆批依据 + 交叉校验依据）；
+          // 单条导入模式无该列（已选归口，冗余）→ 不带该键。
+          ...(isAllMode ? { functionalDept: seed.functionalDept ?? '' } : {}),
           taskType: seed.taskType ?? '',
           parentIndicator: seed.parentIndicator,
           parentIndicatorType: seed.parentIndicatorType ?? '',
@@ -340,14 +465,21 @@ export function buildImportTemplateSheet(
   }))
 
   return {
-    sheetName: type === 'strategic-task' ? '职能部门指标模板' : '学院子指标模板',
+    sheetName: isAllMode
+      ? '学院子指标模板（全部导入）'
+      : type === 'strategic-task'
+        ? '职能部门指标模板'
+        : '学院子指标模板',
     rows,
     columns: exportColumns
   }
 }
 
-export function buildImportTemplateFileName(type: BusinessImportType): string {
-  return buildExportFileName(
+export function buildImportTemplateFileName(
+  type: BusinessImportType,
+  mode: ImportTemplateMode = 'single'
+): string {
+  const base =
     type === 'strategic-task' ? '职能部门指标导入模板' : '学院子指标导入模板'
-  )
+  return buildExportFileName(mode === 'all' ? `${base}（全部导入）` : base)
 }
