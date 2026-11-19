@@ -1,106 +1,68 @@
-import { defineComponent, h, ref } from 'vue'
-import { ElMessage, ElMessageBox, ElOption, ElSelect } from 'element-plus'
+import { ref, type Ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { indicatorFillApi, type IndicatorAppraisalContextVO } from '@/features/plan/api/planApi'
 import { logger } from '@/shared/lib/utils/logger'
-import {
-  APPRAISAL_LEVEL_OPTIONS,
-  getAppraisalGateMessage,
-  type AppraisalGateContextLike
-} from '@/features/indicator/lib/appraisalGate'
+import { getAppraisalGateMessage } from '@/features/indicator/lib/appraisalGate'
 
 /**
- * 审批链上的审核进度（2026-10-28 用户定案；2026-10-31 评定门禁定稿）。
+ * 审批链上的审核进度（2026-10-28 用户定案；2026-10-31 评定门禁定稿；
+ * 2026-11-19 用户定案：统一为**行内下拉**，去掉弹窗层）。
  *
  * 规则：
  * ① 三条件全满足才可评定：上报审批期间 + 有评定权限的角色 + 是当前审批节点的评定人；
- *    点击格子先单条重查 context，canAppraise=false 当场弹原因，绝不进入「选择→保存失败」空转；
+ *    点击格子先单条重查 context，canAppraise=false 当场提示原因，绝不进入「选择→保存失败」空转；
  * ② 上级覆盖下级：改了就覆盖当前报告轮次的 appraisal_level，不改则沿用；
- * ③ 后端同时把等级同步到 Alert，列表/看板展示保持一致。
+ * ③ 后端同时把等级同步到 Alert，列表/看板展示保持一致；
+ * ④ 交互统一走共享组件 AppraisalLevelCell（行内下拉）：点击解锁 → 选三档 → 选完即存。
  */
 export type IndicatorAppraisalLevel = 'AHEAD' | 'NORMAL' | 'DELAYED' | null
 
-export interface AppraisalLevelPickerResult {
-  /** true=用户点了「确认调整」；false=取消/关闭 */
-  confirmed: boolean
-  level: IndicatorAppraisalLevel
+/** 非空等级值（「未评定」不是值，只是初始空白显示态） */
+export type IndicatorAppraisalLevelValue = Exclude<IndicatorAppraisalLevel, null>
+
+/** 行内下拉保存结果 */
+export interface IndicatorAppraisalCommitResult {
+  /** true=写库成功；false=失败（error 带失败原因） */
+  ok: boolean
+  level: IndicatorAppraisalLevelValue
+  error?: string
 }
 
 /**
- * 轻量等级选择器（2026-10-31 定稿）：替代三视图各自的行内 dropdown——
- * 点击格子 → 门禁通过后统一弹出本选择器（三视图同构）。
- * 只有三档等级可选；「未评定」是初始空白显示态，不是选项。
+ * 共享模型层对外契约（2026-11-19）：三视图（战略任务管理页 / 指标填报页 / 指标分发页）
+ * 共用同一套模型 + 同一个行内下拉组件 AppraisalLevelCell，交互完全同构。
  */
-export async function openAppraisalLevelPicker(options: {
-  indicatorName?: string | null
-  currentLevel?: IndicatorAppraisalLevel
-}): Promise<AppraisalLevelPickerResult> {
-  const initialLevel = options.currentLevel ?? null
-  const indicatorName = String(options.indicatorName || '').trim() || '该指标'
-
-  // 选中值放在组件外的 ref 上：defineComponent 的渲染函数读取它，
-  // ElMessageBox 挂载的内容保持响应式（h(ElSelect, { modelValue: ref.value }) 捕获值的方式不更新）。
-  const selected = ref<IndicatorAppraisalLevel>(initialLevel)
-
-  const AppraisalLevelPickerContent = defineComponent({
-    name: 'AppraisalLevelPickerContent',
-    setup() {
-      return () =>
-        h('div', { class: 'appraisal-level-picker' }, [
-          h(
-            'p',
-            { style: 'margin: 0 0 12px; line-height: 1.6; color: #606266;' },
-            `请选择「${indicatorName}」的审核进度等级（调整后立即生效并同步看板）：`
-          ),
-          h(
-            ElSelect,
-            {
-              modelValue: selected.value,
-              'onUpdate:modelValue': (value: unknown) => {
-                selected.value =
-                  typeof value === 'string' && value !== ''
-                    ? (value as Exclude<IndicatorAppraisalLevel, null>)
-                    : null
-              },
-              placeholder: '请选择审核进度等级',
-              style: 'width: 100%'
-            },
-            () =>
-              APPRAISAL_LEVEL_OPTIONS.map(option =>
-                h(ElOption, {
-                  key: option.value,
-                  value: option.value,
-                  label: option.label
-                })
-              )
-          )
-        ])
-    }
-  })
-
-  try {
-    await ElMessageBox({
-      title: '调整审核进度',
-      message: h(AppraisalLevelPickerContent),
-      confirmButtonText: '确认调整',
-      cancelButtonText: '取消',
-      showCancelButton: true,
-      type: 'warning',
-      beforeClose: (action, _instance, done) => {
-        // 未选择等级时不允许空确认——「未评定」不是选项，不允许借空值绕过
-        if (action === 'confirm' && !selected.value) {
-          ElMessage.warning('请先选择审核进度等级')
-          return
-        }
-        done()
-      }
-    })
-    return { confirmed: true, level: selected.value }
-  } catch {
-    return { confirmed: false, level: initialLevel }
-  }
+export interface IndicatorAppraisalApi {
+  contexts: Ref<Record<string, IndicatorAppraisalContextVO>>
+  loading: Ref<boolean>
+  savingId: Ref<string | null>
+  load: (indicatorIds: Array<string | number | null | undefined>) => Promise<void>
+  getContext: (
+    indicatorId: string | number | null | undefined
+  ) => IndicatorAppraisalContextVO | null
+  reloadOne: (
+    indicatorId: string | number | null | undefined
+  ) => Promise<IndicatorAppraisalContextVO | null>
+  canAppraise: (indicatorId: string | number | null | undefined) => boolean
+  getLevel: (
+    indicatorId: string | number | null | undefined,
+    fallback?: string | null
+  ) => IndicatorAppraisalLevel
+  getLockHint: (indicatorId: string | number | null | undefined) => string
+  save: (
+    indicatorId: string | number,
+    level: IndicatorAppraisalLevel
+  ) => Promise<IndicatorAppraisalContextVO | null>
+  /** 点击格子 → 单条重查 context → 有权评定返回 true（行内下拉解锁）；否则当场提示原因 */
+  unlockAppraisal: (indicatorId: string | number | null | undefined) => Promise<boolean>
+  /** 行内下拉选完即存：成功 success 提示、失败 error 提示 */
+  commitAppraisalLevel: (
+    indicatorId: string | number,
+    level: IndicatorAppraisalLevelValue
+  ) => Promise<IndicatorAppraisalCommitResult>
 }
 
-export function useIndicatorAppraisal() {
+export function useIndicatorAppraisal(): IndicatorAppraisalApi {
   const contexts = ref<Record<string, IndicatorAppraisalContextVO>>({})
   const loading = ref(false)
   const savingId = ref<string | null>(null)
@@ -239,57 +201,52 @@ export function useIndicatorAppraisal() {
   }
 
   /**
-   * 统一评定入口（2026-10-31 定稿，三视图同构）：
-   * 点击审核进度格子 → ①单条重查该行 context → ②canAppraise=false 当场弹原因
-   * （优先后端 lockHint，空缺时按 ①非上报期间/②无角色权限/③非当前环节评定人 兜底）→
-   * ③canAppraise=true 才弹轻量等级选择器 → ④确认后保存（写入端 409/403 兜底保留）。
+   * 行内解锁（2026-11-19 用户定案：统一行内下拉，去掉弹窗层）：
+   * 点击审核进度格子 → ①单条重查该行 context（批量缓存会陈旧）→ ②canAppraise=true 返回 true
+   * （行内下拉解锁，由共享组件 AppraisalLevelCell 渲染）→ ③canAppraise=false 当场提示原因
+   * （优先后端 lockHint，空缺时按 ①非上报期间/②无角色权限/③非当前环节评定人 兜底）。
+   * 「点击后既不下拉也不提示」的路径一律消灭。
    */
-  const openAppraisalGate = async (
-    indicatorId: string | number | null | undefined,
-    options: {
-      indicatorName?: string | null
-      /** 保存成功后的视图侧同步（如 strategicStore.patchIndicator） */
-      onSaved?: (level: Exclude<IndicatorAppraisalLevel, null>) => void
-    } = {}
-  ): Promise<void> => {
+  const unlockAppraisal = async (
+    indicatorId: string | number | null | undefined
+  ): Promise<boolean> => {
     const key = String(indicatorId ?? '').trim()
     if (!/^\d+$/.test(key)) {
       // 2026-10-31 线上 P0 回归：行数据异常（缺 id / 非数字 id）也不允许静默 return——
       // 「点击格子后既不开选择器也不提示」的路径全部消灭，统一给兜底提示。
       ElMessage.warning('未获取到有效指标，无法评定审核进度')
-      return
+      return false
     }
 
     // ① 先重查该行 context——批量加载的缓存会陈旧
     const context = await reloadOne(key)
 
-    // ② 门禁：不满足条件当场弹原因，绝不进入选择/保存空转
-    const gateContext: AppraisalGateContextLike = context ?? { canAppraise: false, lockHint: '' }
+    // ② 门禁：不满足条件当场提示原因，绝不进入选择/保存空转
     if (!context?.canAppraise) {
-      ElMessage.info(getAppraisalGateMessage(gateContext))
-      return
+      ElMessage.info(getAppraisalGateMessage(context ?? { canAppraise: false, lockHint: '' }))
+      return false
     }
 
-    // ③ 轻量等级选择（替代直接开 dropdown）
-    const currentLevel = getLevel(key)
-    const picked = await openAppraisalLevelPicker({
-      indicatorName: options.indicatorName,
-      currentLevel
-    })
-    if (!picked.confirmed || picked.level === null) {
-      return
-    }
-    if (picked.level === currentLevel) {
-      return
-    }
+    return true
+  }
 
-    // ④ 保存：写入端点保留在途 409 / 权限 403 兜底
+  /**
+   * 选完即存（2026-11-19 用户定案：行内下拉，无「确认调整」二次确认）：
+   * 写入端点保留在途 409 / 权限 403 兜底；成功 success 提示、失败 error 提示并带出原因，
+   * 失败时行内下拉保持展开，用户可直接改选其它档位。
+   */
+  const commitAppraisalLevel = async (
+    indicatorId: string | number,
+    level: IndicatorAppraisalLevelValue
+  ): Promise<IndicatorAppraisalCommitResult> => {
     try {
-      await save(key, picked.level)
-      options.onSaved?.(picked.level)
+      await save(indicatorId, level)
       ElMessage.success('审核进度已调整')
+      return { ok: true, level }
     } catch (error) {
-      ElMessage.error(error instanceof Error ? error.message : '调整审核进度失败')
+      const message = error instanceof Error ? error.message : '调整审核进度失败'
+      ElMessage.error(message)
+      return { ok: false, level, error: message }
     }
   }
 
@@ -304,6 +261,7 @@ export function useIndicatorAppraisal() {
     getLevel,
     getLockHint,
     save,
-    openAppraisalGate
+    unlockAppraisal,
+    commitAppraisalLevel
   }
 }
