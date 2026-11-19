@@ -76,8 +76,18 @@ export const formatImportLineStatus = (status: ImportGroupLineStatus | null | un
  *       （后端语义：线已 DISTRIBUTED）；</li>
  *   <li>将下发组：其余（willDispatch=true）→ 常规展示。</li>
  * </ul>
- * 组级错误优先于跳过原因——一条线若同时「已下发」且「组内权重合计≠100」，
- * 报错更有指导意义（用户必须先修权重），且错误组会阻断整单。</p>
+ *
+ * <p><b>三态互斥</b>：一个组只会落进其中一类（error / skip / dispatch），
+ * 所以「错误组」计数与「将跳过」计数**不会重复统计同一个组**——
+ * 「错误 N 组 / 将跳过 M 组」两个数字加上「将下发 K 组」等于分组总数。</p>
+ *
+ * <p><b>2026-11-19 后端修正后的契约</b>：后端把「线已下发」判定提到组级权重/行级错误
+ * <b>之前</b>——已下发的线一律只给 skipReason、<b>groupError 恒为 null</b>（跳过就是跳过，
+ * 不该拦住别的组）。因此「已下发线 + 组内权重不足/行级错误」在前端稳定归为
+ * <b>skip</b>（黄色、不阻断），而不是被算成 error 组把整单置灰。</p>
+ *
+ * <p>这里的「groupError 优先于 skipReason」是**防御性**顺序：若后端异常地同时给出两者
+ * （数据异常），按 error 处理更安全（宁可拦住也不误放行）。</p>
  */
 export const resolveImportGroupKind = (group: ImportGroupPreview): ImportGroupKind => {
   if (String(group?.groupError ?? '').trim()) {
@@ -128,6 +138,10 @@ export interface ImportExecutionPlan {
  *
  * <p>blocking 口径：后端给的 blocking 为准，**或**前端检出错误组 / 无法识别归属部门的行
  * （两处都阻断——后端漏给时前端仍守住「不能确认提交」）。</p>
+ *
+ * <p><b>三态互斥</b>：dispatch / skip / error 三个清单两两不相交，且三者之和 = 分组总数
+ * （每个组由 {@link resolveImportGroupKind} 唯一归类）。所以「错误组」与「将跳过」
+ * 两个计数不会重复统计同一个组。</p>
  */
 export const buildImportExecutionPlan = (
   groups: readonly ImportGroupPreview[] | null | undefined,

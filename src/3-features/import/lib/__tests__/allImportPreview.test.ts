@@ -85,11 +85,112 @@ describe('allImportPreview · 分组归类（三类信息）', () => {
     expect(view.groupError).toContain('85/100')
   })
 
-  it('组级错误优先于跳过原因（同时命中时归错误类 —— 错误会阻断整单，必须先修权重）', () => {
+  it('组级错误优先于跳过原因（后端异常地同时给出两者时，按错误处理更安全）', () => {
     const group = buildGroup({
       groupError: '权重合计 85/100',
       skipReason: '该线已下发'
     })
+    expect(resolveImportGroupKind(group)).toBe('error')
+  })
+
+  // ==================== 2026-11-19：已下发线归「将跳过」，不阻断整单 ====================
+  //
+  // 后端修正：线状态判定提到组级权重/行级错误之前——已下发的线只给 skipReason，
+  // groupError 恒为 null。前端必须把它稳定归为 skip（黄色、不阻断），
+  // 而不是算成 error 组把确认按钮置灰。
+
+  it('已下发线（groupError=null + skipReason 非空）→ 归 skip，不归 error', () => {
+    const group = buildGroup({
+      willDispatch: false,
+      lineStatus: 'DISTRIBUTED',
+      skipReason: '该学院 2026 年度的「教务处」这条线已下发，本次将跳过',
+      groupError: null
+    })
+
+    expect(resolveImportGroupKind(group)).toBe('skip')
+    expect(toImportGroupView(group).kind).toBe('skip')
+    expect(toImportGroupView(group).groupError).toBeNull()
+  })
+
+  it('已下发线 + 组内权重不足（后端仍只给 skipReason）→ 归 skip、错误组计数为 0、不阻断', () => {
+    const group = buildGroup({
+      willDispatch: false,
+      lineStatus: 'DISTRIBUTED',
+      basicWeightTotal: 60,
+      skipReason: '该学院 2026 年度的「教务处」这条线已下发，本次将跳过',
+      groupError: null
+    })
+
+    const view = toImportGroupView(group)
+    expect(view.kind).toBe('skip')
+    expect(view.basicWeightTotal).toBe(60)
+    expect(view.groupError).toBeNull()
+  })
+
+  it('已下发线 + 组内行级错误 → 仍归 skip、不阻断；行级错误在行上照常可见', () => {
+    const group = buildGroup({
+      willDispatch: false,
+      lineStatus: 'DISTRIBUTED',
+      skipReason: '该学院 2026 年度的「教务处」这条线已下发，本次将跳过',
+      groupError: null,
+      rows: [buildRow({ rowNo: 1, errors: ['第 1 行父级核心指标与上级下发内容不一致'] })]
+    })
+
+    const view = toImportGroupView(group)
+    expect(view.kind).toBe('skip')
+    expect(view.groupError).toBeNull()
+    expect(view.rows[0].errors).toHaveLength(1)
+  })
+
+  it('两条线都已下发 → 错误组 0、将跳过 2、blocking=false（确认按钮可点）', () => {
+    const plan = buildImportExecutionPlan(
+      [
+        buildGroup({
+          functionalOrgId: 1,
+          functionalOrgName: '教务处',
+          willDispatch: false,
+          lineStatus: 'DISTRIBUTED',
+          skipReason: '该学院 2026 年度的「教务处」这条线已下发，本次将跳过'
+        }),
+        buildGroup({
+          functionalOrgId: 2,
+          functionalOrgName: '数字校园建设办公室',
+          willDispatch: false,
+          lineStatus: 'DISTRIBUTED',
+          skipReason: '该学院 2026 年度的「数字校园建设办公室」这条线已下发，本次将跳过'
+        })
+      ],
+      { blocking: false }
+    )
+
+    expect(plan.errorGroups).toHaveLength(0)
+    expect(plan.skipGroups).toHaveLength(2)
+    expect(plan.dispatchGroups).toHaveLength(0)
+    expect(plan.blocking).toBe(false)
+    const summary = formatImportExecutionPlanSummary(plan)
+    expect(summary).toContain('将跳过 2 组')
+    expect(summary).not.toContain('错误')
+  })
+
+  it('在审线（groupError 含「正在审批中」）→ 归 error、阻断整单', () => {
+    const group = buildGroup({
+      willDispatch: false,
+      lineStatus: 'IN_REVIEW',
+      groupError: '该学院 2026 年度的「教务处」这条线正在审批中，不能下发；请等审批结束或撤回后再操作'
+    })
+
+    expect(resolveImportGroupKind(group)).toBe('error')
+    expect(toImportGroupView(group).groupError).toContain('正在审批中')
+  })
+
+  it('无线 + 权重 60/100（groupError 非空）→ 归 error、阻断整单', () => {
+    const group = buildGroup({
+      willDispatch: false,
+      lineStatus: 'NONE',
+      basicWeightTotal: 60,
+      groupError: '教务处组基础性权重合计 60/100，不能下发；请修正该组权重或删除该组行后重新上传'
+    })
+
     expect(resolveImportGroupKind(group)).toBe('error')
   })
 
@@ -200,6 +301,57 @@ describe('allImportPreview · 执行清单（确认页内容）', () => {
     })
     expect(plan.blocking).toBe(false)
     expect(plan.dispatchGroups).toHaveLength(2)
+  })
+
+  // ==================== 2026-11-19：计数互斥断言（错误组 / 将跳过不重复统计） ====================
+
+  it('三态互斥：dispatch / skip / error 三个清单两两不相交，合计 = 分组总数', () => {
+    const plan = buildImportExecutionPlan([
+      buildGroup({ functionalOrgId: 1, functionalOrgName: '教务处' }),
+      buildGroup({
+        functionalOrgId: 2,
+        functionalOrgName: '数字校园建设办公室',
+        willDispatch: false,
+        lineStatus: 'DISTRIBUTED',
+        skipReason: '该线已下发'
+      }),
+      buildGroup({
+        functionalOrgId: 3,
+        functionalOrgName: '人事处',
+        willDispatch: false,
+        groupError: '权重合计 60/100'
+      })
+    ])
+
+    const dispatchIds = plan.dispatchGroups.map(group => group.functionalOrgId)
+    const skipIds = plan.skipGroups.map(group => group.functionalOrgId)
+    const errorIds = plan.errorGroups.map(group => group.functionalOrgId)
+
+    expect(dispatchIds).not.toContain(2)
+    expect(dispatchIds).not.toContain(3)
+    expect(skipIds).not.toContain(1)
+    expect(skipIds).not.toContain(3)
+    expect(errorIds).not.toContain(1)
+    expect(errorIds).not.toContain(2)
+    expect(dispatchIds.length + skipIds.length + errorIds.length).toBe(plan.totalGroups)
+  })
+
+  it('同一个组不会同时被算进「错误组」与「将跳过」两个计数', () => {
+    // 后端修正后：已下发线只给 skipReason、groupError=null → 只进 skip 清单
+    const plan = buildImportExecutionPlan([
+      buildGroup({
+        functionalOrgId: 1,
+        functionalOrgName: '教务处',
+        willDispatch: false,
+        lineStatus: 'DISTRIBUTED',
+        basicWeightTotal: 60,
+        skipReason: '该线已下发，本次将跳过'
+      })
+    ])
+
+    expect(plan.skipGroups).toHaveLength(1)
+    expect(plan.errorGroups).toHaveLength(0)
+    expect(plan.blocking).toBe(false)
   })
 })
 
