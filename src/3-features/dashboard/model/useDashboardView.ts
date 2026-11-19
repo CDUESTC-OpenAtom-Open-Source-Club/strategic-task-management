@@ -1035,7 +1035,8 @@ export function useDashboardView(props: DashboardViewProps) {
   })
 
   // 任务完成简报空态判定（2026-11-18 折中方案，PR #131 采纳内核）：
-  // 选中月快照无 APPROVED 鉴定内容时，简报正文替换为「本月尚未审定」空态文案，
+  // 选中月快照无 APPROVED 鉴定内容时，简报正文替换为「当月简报尚未审定」空态文案
+  // （2026-11-18 措辞微调：原「本月尚未审定」与未填报督办句连排两个「本月」开头重复），
   // 只保留「已下发 n」（永远真实）与未填报督办提示。
   // 判定口径（按数据结构取最稳）：
   // ① collegeLevels 为空（当月无任何学院数据）→ 空态；
@@ -1051,8 +1052,7 @@ export function useDashboardView(props: DashboardViewProps) {
     }
     const aggregate = aggregateCollegeLevels(rows)
     return (
-      aggregate.ahead + aggregate.normal + aggregate.delayed > 0 ||
-      aggregate.unreportedColleges > 0
+      aggregate.ahead + aggregate.normal + aggregate.delayed > 0 || aggregate.unreportedColleges > 0
     )
   })
 

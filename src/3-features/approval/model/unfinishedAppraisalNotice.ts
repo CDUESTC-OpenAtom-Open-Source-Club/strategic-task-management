@@ -97,7 +97,49 @@ export function resolveUnfinishedAppraisalJumpRoute(
 }
 
 /**
- * 弹「未完成审核」拦截通知：后端原文 + 「去完成鉴定」按钮。
+ * 「未完成审核」拦截的操作指引文案（2026-11-18 用户定案：指引必须指对页面）。
+ *
+ * 背景（实测结论）：后端 buildUnappraisedAuditMessage 的原文写「请到 XX 的**指标填报页**
+ * 完成全部指标的审核进度鉴定」——但「指标填报页」（/indicators）对**职能部门审批人**
+ * 并不显示待鉴定的学院子指标行（该页只列本部门指标；实测归口部门账号在 /indicators
+ * 只有本部门 5 行、看不到上报学院的 2 行），按原文指引会走到**无法完成鉴定的页面**。
+ * 职能部门审批人的评级入口实际在「**指标审批**」页（/distribution，选学院后逐行点
+ * 「审核进度」）；战略发展部审批人的评级入口在「战略任务管理 → 二级学院战略任务管理」
+ * 页签（逐行点「审核进度」）；学院侧在「指标填报」页。
+ *
+ * 因此这里按查看者角色给出一行**明确的操作指引**（含页签与点击位置），
+ * 后端原文仍原样展示在上方（不改写后端文案，审计口径不变）。
+ *
+ * @param viewerRole 当前查看者角色（登录角色优先，与审批卡片跳转落点同口径）
+ */
+export function buildAppraisalGuidanceText(viewerRole?: UserRole | string | null): string {
+  const normalized = String(viewerRole || '')
+    .trim()
+    .toLowerCase()
+
+  if (normalized === 'strategic_dept') {
+    return (
+      '操作指引：请到「战略任务管理 → 二级学院战略任务管理」页签，选中对应学院后，' +
+      '逐行点击「审核进度」选定等级（超前完成 / 正常 / 滞后），再回到审批中心通过。'
+    )
+  }
+
+  if (normalized === 'secondary_college') {
+    return (
+      '操作指引：请到「指标填报」页签，选中对应指标后，逐行点击「审核进度」选定等级' +
+      '（超前完成 / 正常 / 滞后），再回到审批中心通过。'
+    )
+  }
+
+  // 职能部门审批人（上报链第 3/4 环评级节点）——默认口径
+  return (
+    '操作指引：请到顶部「指标审批」页签，在左侧学院列表选中该学院后，' +
+    '逐行点击「审核进度」选定等级（超前完成 / 正常 / 滞后），再回到审批中心通过。'
+  )
+}
+
+/**
+ * 弹「未完成审核」拦截通知：后端原文 + 操作指引 + 「去完成鉴定」按钮。
  *
  * 2026-10-31 统一走共享 criticalErrorNotice（critical=true → duration 0 常驻、
  * 右上角可手动关闭，与三族关键报错同一形态）；点击按钮先关通知再执行 onJump
@@ -106,6 +148,8 @@ export function resolveUnfinishedAppraisalJumpRoute(
 export function showUnfinishedAppraisalNotice(options: {
   /** 后端原文（原样展示，不改写） */
   message: string
+  /** 操作指引（后端原文指路含糊时补一行明确指引，见 buildAppraisalGuidanceText） */
+  guidance?: string
   /** 点击「去完成鉴定」要跳的路由（resolveUnfinishedAppraisalJumpRoute 的结果） */
   routeTarget: string
   /** 执行跳转（如 router.push） */
@@ -127,6 +171,15 @@ export function showUnfinishedAppraisalNotice(options: {
         { style: 'margin: 0 0 10px; line-height: 1.7; white-space: normal;' },
         options.message
       ),
+      options.guidance
+        ? h(
+            'p',
+            {
+              style: 'margin: 0 0 10px; line-height: 1.7; white-space: normal; color: #606266;'
+            },
+            options.guidance
+          )
+        : null,
       h(
         ElButton,
         { type: 'primary', size: 'small', onClick: jumpToIndicatorFillPage },

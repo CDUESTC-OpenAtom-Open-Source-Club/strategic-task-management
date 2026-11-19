@@ -21,6 +21,7 @@ vi.mock('element-plus', () => ({
 }))
 
 import {
+  buildAppraisalGuidanceText,
   isUnfinishedAppraisalMessage,
   resolveUnfinishedAppraisalJumpRoute,
   showUnfinishedAppraisalNotice
@@ -163,5 +164,58 @@ describe('showUnfinishedAppraisalNotice', () => {
     // message 是 VNode（原文 + 「去完成鉴定」按钮），且原文原样保留在其中
     expect(typeof options.message).toBe('object')
     expect(JSON.stringify(options.message)).toContain('未完成审核')
+  })
+
+  it('renders the extra operation guidance when provided', () => {
+    const onJump = vi.fn()
+    showUnfinishedAppraisalNotice({
+      message: BACKEND_BLOCK_MESSAGE,
+      guidance: '操作指引：请到顶部「指标审批」页签……',
+      routeTarget: '/distribution?openApproval=1',
+      onJump
+    })
+
+    const options = mocks.elNotification.mock.calls[0][0] as { message: VNode }
+    expect(JSON.stringify(options.message)).toContain('指标审批')
+  })
+})
+
+/**
+ * 2026-11-18（用户定案：指引必须指对页面）——操作指引文案锁定。
+ *
+ * 背景（实测）：后端 buildUnappraisedAuditMessage 的原文写「请到 XX 的**指标填报页**
+ * 完成全部指标的审核进度鉴定」，但「指标填报页」（/indicators）对职能部门审批人
+ * **不显示**待鉴定的学院子指标行（实测：归口部门账号在 /indicators 只有本部门 5 行，
+ * 看不到上报学院的 2 行），按原文指引会走到无法完成鉴定的页面。
+ * 各角色真实的评级入口：
+ * ① 职能部门审批人 → 顶部「指标审批」页签（/distribution），选学院后逐行点「审核进度」；
+ * ② 战略发展部审批人 → 「战略任务管理 → 二级学院战略任务管理」页签，逐行点「审核进度」；
+ * ③ 二级学院 → 「指标填报」页签。
+ */
+describe('buildAppraisalGuidanceText', () => {
+  it('职能部门审批人：指向「指标审批」页签（不是「指标填报页」）', () => {
+    const text = buildAppraisalGuidanceText('functional_dept')
+    expect(text).toContain('指标审批')
+    expect(text).toContain('审核进度')
+    expect(text).not.toContain('指标填报')
+  })
+
+  it('战略发展部：指向「战略任务管理 → 二级学院战略任务管理」页签', () => {
+    const text = buildAppraisalGuidanceText('strategic_dept')
+    expect(text).toContain('战略任务管理')
+    expect(text).toContain('二级学院战略任务管理')
+    expect(text).toContain('审核进度')
+  })
+
+  it('二级学院：指向「指标填报」页签', () => {
+    const text = buildAppraisalGuidanceText('secondary_college')
+    expect(text).toContain('指标填报')
+    expect(text).toContain('审核进度')
+  })
+
+  it('角色缺失/未知时回退到职能部门口径（上报链最常见的评级节点）', () => {
+    expect(buildAppraisalGuidanceText(null)).toContain('指标审批')
+    expect(buildAppraisalGuidanceText(undefined)).toContain('指标审批')
+    expect(buildAppraisalGuidanceText('unknown_role')).toContain('指标审批')
   })
 })
