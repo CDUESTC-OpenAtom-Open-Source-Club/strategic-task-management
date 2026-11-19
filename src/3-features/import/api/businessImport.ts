@@ -97,6 +97,82 @@ export interface ImportCommitResponse {
   workflow: ImportWorkflowResult
 }
 
+/**
+ * 2026-11-19（学院全部导入 · 规划书 3.1③）：「全部导入」分组预览与逐组提交的 DTO。
+ *
+ * <p>后端把一份 Excel 按「职能部门」列拆成 N 组（每组 = 一个归口部门 = 一条
+ * 「学院 × 归口」线），逐组独立校验与下发。前端只负责：分组预览渲染 → 执行清单 →
+ * 逐组结果汇报，**不做任何本地业务判定**（组级权重、线状态、错误一律以后端为准）。</p>
+ */
+
+/** 单组线状态（后端 lineStatus） */
+export type ImportGroupLineStatus = 'NONE' | 'DRAFT' | 'PENDING' | 'IN_REVIEW' | 'DISTRIBUTED'
+
+/** 单组预览（后端 groups[] 元素） */
+export interface ImportGroupPreview {
+  /** 归口部门组织 ID；无法识别归属部门时为 null */
+  functionalOrgId: number | null
+  /** 归口部门名称；无法识别时为 null */
+  functionalOrgName: string | null
+  /** 该组对应的「学院 × 归口」线的状态 */
+  lineStatus: ImportGroupLineStatus
+  /** 本组是否会下发（true=常规下发；false=跳过或错误） */
+  willDispatch: boolean
+  /** 跳过原因（该线已下发等）；不下发时可能为 null */
+  skipReason: string | null
+  /** 组级错误（组内基础性权重合计 ≠ 100、该线在审等）；无错时为 null */
+  groupError: string | null
+  /** 组内基础性权重合计 */
+  basicWeightTotal: number
+  /** 组内行数 */
+  rowsCount: number
+  /** 组内行预览（形状同既有 ImportRowPreview） */
+  rows: ImportRowPreview[]
+}
+
+/** 全部导入预览响应（后端 all-preview） */
+export interface ImportAllPreviewResponse {
+  batchId: string
+  cycleId: number
+  targetCollegeOrgId: number
+  targetCollegeName: string
+  groups: ImportGroupPreview[]
+  /** 无法识别归属部门的行（反查不出归口） */
+  unassignedRows: ImportRowPreview[]
+  /** 是否存在阻断项（存在错误组时为 true → 前端置灰确认按钮） */
+  blocking: boolean
+  /** 提交凭证（commit 时回传，后端校验分组快照一致） */
+  confirmToken?: string
+}
+
+/** 全部导入提交请求（后端 all-commit） */
+export interface ImportAllCommitRequest {
+  confirmToken: string
+  autoSubmitAndApprove?: boolean
+}
+
+/** 单组提交结果（后端 results[] 元素） */
+export interface ImportAllGroupResult {
+  functionalOrgId: number | null
+  functionalOrgName: string | null
+  status: 'SUCCESS' | 'SKIPPED' | 'FAILED'
+  /** 成功组的计划（线）ID */
+  planId: number | null
+  rowsCount: number
+  /** 跳过/失败原因 */
+  message: string | null
+}
+
+/** 全部导入提交响应（后端 all-commit） */
+export interface ImportAllCommitResponse {
+  results: ImportAllGroupResult[]
+  summary: {
+    success: number
+    skipped: number
+    failed: number
+  }
+}
+
 export interface StrategicImportPreviewParams {
   cycleId: number
   targetOrgId: number
@@ -119,6 +195,19 @@ export interface DistributionImportPreviewParams {
    * 组织 ID。未选归口部门时不传（undefined）——但前端门禁本就不允许未选归口发起导入。</p>
    */
   functionalOrgId?: number | null
+  sheetName?: string
+}
+
+/**
+ * 2026-11-19（学院全部导入）：全部导入预览入参。
+ *
+ * <p>与单条 {@link DistributionImportPreviewParams} 的差别：**不传 functionalOrgId**
+ * （归口由文件内「职能部门」列解析，前端不做前置选择）；其余字段口径一致。</p>
+ */
+export interface DistributionAllImportPreviewParams {
+  cycleId: number
+  targetCollegeOrgId: number
+  sourceOrgId?: number
   sheetName?: string
 }
 
@@ -175,6 +264,32 @@ export const businessImportApi = {
   async commitDistributionImport(batchId: string, request: ImportCommitRequest) {
     const response = await apiClient.post<ApiResponse<ImportCommitResponse>>(
       `/imports/distribution/${encodeURIComponent(batchId)}/commit`,
+      request
+    )
+    return unwrap(response)
+  },
+
+  /**
+   * 2026-11-19（学院全部导入）：分组解析预览——后端按「职能部门」列把文件拆成 N 组。
+   *
+   * <p>入参沿用 {@link compactUploadParams} 清洗：null/undefined 键整个不出现
+   * （apiClient.upload 会把 null 序列化成字符串 "null" 导致后端 400）。</p>
+   */
+  async previewDistributionAll(file: File, params: DistributionAllImportPreviewParams) {
+    const response = await apiClient.upload<ApiResponse<ImportAllPreviewResponse>>(
+      '/imports/distribution/all-preview',
+      file,
+      compactUploadParams(params as unknown as Record<string, unknown>)
+    )
+    return unwrap(response)
+  },
+
+  /**
+   * 2026-11-19（学院全部导入）：逐组提交——后端按分组快照逐组建线/下发。
+   */
+  async commitDistributionAll(batchId: string, request: ImportAllCommitRequest) {
+    const response = await apiClient.post<ApiResponse<ImportAllCommitResponse>>(
+      `/imports/distribution/${encodeURIComponent(batchId)}/all-commit`,
       request
     )
     return unwrap(response)

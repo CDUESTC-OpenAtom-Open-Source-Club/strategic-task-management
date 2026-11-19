@@ -96,6 +96,8 @@ import {
   businessImportApi,
   type BusinessImportType,
   type ConflictMode,
+  type ImportAllCommitResponse,
+  type ImportAllPreviewResponse,
   type ImportCommitResponse,
   type ImportPreviewResponse,
   type ImportRowPreview
@@ -106,6 +108,14 @@ import {
   getImportTemplateGuide,
   type ImportTemplateParentSeed
 } from '@/features/import/lib/importTemplate'
+import {
+  buildImportExecutionPlan,
+  formatImportExecutionPlanSummary,
+  summarizeImportAllResults,
+  toImportGroupResultView,
+  toImportGroupView,
+  type ImportGroupView
+} from '@/features/import/lib/allImportPreview'
 import { buildPreviewGroupSpans } from '@/features/import/lib/previewGroupSpan'
 import { exportSheetsToExcel, type ExcelExportSheet } from '@/shared/lib/export/excel'
 import { showCriticalErrorNotice } from '@/shared/lib/criticalErrorNotice'
@@ -121,6 +131,16 @@ const props = defineProps<{
   sourceOrgId?: number | null
   sourceOrgName?: string | null
   cycleId?: number | null
+  /**
+   * 2026-11-19（学院全部导入）：导入模式。
+   *
+   * <p>single（默认）= 既有单条导入：学院子指标表按「学院 × 归口部门」一条线导入，
+   * 需先选归口（functionalOrgId 必填），模板 8 列。</p>
+   *
+   * <p>all = 全部导入：一份文件可含多个职能部门给同一学院的指标行，后端按文件内
+   * 「职能部门」列拆批；**不要求先选归口**（归口由文件解析），模板 9 列（多「职能部门」列）。</p>
+   */
+  mode?: 'single' | 'all'
   /**
    * 2026-11-17（学院线粒度改造 · 规格书 4.9①）：归口部门组织 ID（学院子指标表导入用）。
    *
@@ -141,12 +161,19 @@ const props = defineProps<{
     taskContent?: string
     type1?: string
     type2?: string
+    /** 2026-11-19（全部导入）：该锚点所属的归口部门名（用于「职能部门」列预填） */
+    functionalDeptName?: string
   }> | null
 }>()
 
 const emit = defineEmits<{
   (event: 'update:visible', value: boolean): void
   (event: 'committed', value: ImportCommitResponse): void
+  /**
+   * 2026-11-19（学院全部导入）：全部导入提交成功回调（逐组结果）。
+   * 单条导入走既有的 committed 事件，两条链路互不影响。
+   */
+  (event: 'all-committed', value: ImportAllCommitResponse): void
 }>()
 
 const dialogVisible = computed({
@@ -157,6 +184,10 @@ const dialogVisible = computed({
 const fileList = ref<UploadFile[]>([])
 const selectedFile = ref<UploadFile | null>(null)
 const previewResult = ref<ImportPreviewResponse | null>(null)
+/** 2026-11-19（学院全部导入）：分组预览结果（与单条 previewResult 互斥，互不影响） */
+const allPreviewResult = ref<ImportAllPreviewResponse | null>(null)
+/** 2026-11-19（学院全部导入）：逐组提交结果（结果页渲染） */
+const allCommitResult = ref<ImportAllCommitResponse | null>(null)
 const previewing = ref(false)
 const committing = ref(false)
 const uploadRef = ref<UploadInstance>()
@@ -167,8 +198,17 @@ const overwriteExisting = ref(false)
 const templateDownloading = ref(false)
 
 const isStrategicImport = computed(() => props.type === 'strategic-task')
-const dialogTitle = computed(() =>
-  isStrategicImport.value ? '导入职能部门指标表' : '导入学院子指标表'
+/** 2026-11-19（学院全部导入）：是否全部导入模式 */
+const isAllImport = computed(() => props.mode === 'all')
+const dialogTitle = computed(() => {
+  if (isAllImport.value) {
+    return '全部导入学院子指标表'
+  }
+  return isStrategicImport.value ? '导入职能部门指标表' : '导入学院子指标表'
+})
+/** 2026-11-19（全部导入）：提示语——一次导入一个学院，自动按归口部门拆分 */
+const importModeTip = computed(() =>
+  isAllImport.value ? '一次导入一个学院，自动按归口部门拆分' : ''
 )
 const authStore = useAuthStore()
 // 2026-11-12（低⑪）：周期展示名（优先 cycleName，回退「{year}年度」，最后回退 id）
@@ -187,19 +227,53 @@ const targetLabel = computed(() => (isStrategicImport.value ? '当前职能部�
  * <p>未选归口 → 导入请求拿不到 functionalOrgId，后端无法定位「学院 × 归口」这条线，
  * 会按旧的「学院级」口径误命中别的归口的线（规格书第二节缺陷根因）。所以前端先拦一道：
  * 未选归口不启用「解析预览」，并在点击时给出明确提示。</p>
+ *
+ * <p>2026-11-19（全部导入）：全部导入**不需要**先选归口——归口由文件内「职能部门」列
+ * 解析后分组，故该前提在 all 模式下一律跳过（归口不是前置条件）。</p>
  */
 const hasFunctionalOrg = computed(() => {
   const numeric = Number(props.functionalOrgId)
   return Number.isFinite(numeric) && numeric > 0
 })
+/** 2026-11-19（全部导入）：分组预览结果是否存在 */
+const hasAllPreview = computed(() => Boolean(allPreviewResult.value))
+/** 2026-11-19（全部导入）：执行清单（确认页） */
+const executionPlan = computed(() =>
+  buildImportExecutionPlan(allPreviewResult.value?.groups, {
+    unassignedRows: allPreviewResult.value?.unassignedRows,
+    blocking: allPreviewResult.value?.blocking
+  })
+)
+/** 2026-11-19（全部导入）：分组视图（模板渲染用） */
+const groupViews = computed<ImportGroupView[]>(() =>
+  (allPreviewResult.value?.groups ?? []).map(toImportGroupView)
+)
+/** 2026-11-19（全部导入）：执行清单总述文案 */
+const executionPlanSummary = computed(() => formatImportExecutionPlanSummary(executionPlan.value))
+/** 2026-11-19（全部导入）：逐组结果卡片 + 汇总 */
+const allResultViews = computed(() =>
+  (allCommitResult.value?.results ?? []).map(toImportGroupResultView)
+)
+const allResultSummary = computed(() => summarizeImportAllResults(allCommitResult.value))
+
 const canPreview = computed(
   () =>
     Boolean(selectedFile.value?.raw) &&
     Boolean(props.targetOrgId) &&
     Boolean(props.cycleId) &&
-    (isStrategicImport.value || hasFunctionalOrg.value)
+    // 全部导入不要求先选归口（归口由文件「职能部门」列解析）
+    (isStrategicImport.value || isAllImport.value || hasFunctionalOrg.value)
 )
 const importStepActive = computed(() => {
+  if (isAllImport.value) {
+    if (allCommitResult.value) {
+      return 3
+    }
+    if (allPreviewResult.value) {
+      return executionPlan.value.blocking ? 1 : 2
+    }
+    return selectedFile.value ? 1 : 0
+  }
   if (previewResult.value) {
     return previewResult.value.blocking ? 1 : 2
   }
@@ -208,6 +282,17 @@ const importStepActive = computed(() => {
 const nextActionTip = computed(() => {
   if (!selectedFile.value) {
     return ''
+  }
+  if (isAllImport.value) {
+    if (!allPreviewResult.value) {
+      return '文件已选择，请先点击“解析预览”。系统会按文件内「职能部门」列自动拆分分组。'
+    }
+    if (executionPlan.value.blocking) {
+      return '分组预览发现阻断错误，请修正 Excel 后重新上传并解析。'
+    }
+    return autoSubmitAndApprove.value
+      ? '分组预览已通过，点击“确认全部导入”后会按组下发并自动审批。'
+      : '分组预览已通过，点击“确认全部导入”写入数据。'
   }
   if (!previewResult.value) {
     return '文件已选择，请先点击“解析预览”。预览通过后，确认按钮才会启用。'
@@ -222,6 +307,15 @@ const nextActionTip = computed(() => {
 const footerActionTip = computed(() => {
   if (!selectedFile.value) {
     return '上传文件后先解析预览。'
+  }
+  if (isAllImport.value) {
+    if (!allPreviewResult.value) {
+      return '先点“解析预览”，按归口部门分组后通过才能确认导入。'
+    }
+    if (executionPlan.value.blocking) {
+      return '存在错误组或无法归组的行，暂不能确认导入。'
+    }
+    return '分组预览通过，可以确认导入。'
   }
   if (!previewResult.value) {
     return '先点“解析预览”，通过后才能确认导入或自动审批。'
@@ -288,19 +382,24 @@ const downloadTemplate = async () => {
   }
   templateDownloading.value = true
   try {
-    const guide = getImportTemplateGuide(props.type)
+    const guide = getImportTemplateGuide(props.type, isAllImport.value ? 'all' : 'single')
 
     // 2026-10-14 用户定案（P10）：学院子指标模板自动带出"当前职能部门已接收的父级核心指标"行
     // （由父页面传入 availableParentIndicators，与导入校验的父级匹配口径完全一致）；
     // 2026-10-31 层级化定案：预填行带序号（=组号）与当前选中学院，用户在行内补写子指标，
     // 再向下加「序号/组列留空」延续行即可拆多个子指标。未传/为空时退回通用示例行，不阻断下载。
     // 2026-10-31 终版表头加列：type2 →「任务类型」列预填（父级所属任务类型，锚点只读）。
+    // 2026-11-19（全部导入）：seeds 额外带 functionalDeptName →「职能部门」列预填
+    // （该列是拆批依据 + 交叉校验依据，单条导入模式不带该列）。
     const parentSeeds: ImportTemplateParentSeed[] | undefined = props.parentIndicators?.length
       ? props.parentIndicators.map(item => ({
           parentIndicator: String(item.name || '').trim(),
           college: String(props.targetOrgName || '').trim(),
           parentIndicatorType: String(item.type1 || '').trim(),
-          taskType: String(item.type2 || '').trim()
+          taskType: String(item.type2 || '').trim(),
+          ...(isAllImport.value
+            ? { functionalDept: String(item.functionalDeptName || '').trim() }
+            : {})
         }))
       : undefined
 
@@ -319,11 +418,23 @@ const downloadTemplate = async () => {
     await exportSheetsToExcel(
       // 2026-10-19：两个 guide 的 rows 键集不同，联合类型经协变检查无法直接赋给 unknown，显式断言
       [
-        buildImportTemplateSheet(props.type, parentSeeds) as ExcelExportSheet<unknown>,
+        buildImportTemplateSheet(
+          props.type,
+          parentSeeds,
+          isAllImport.value ? 'all' : 'single'
+        ) as ExcelExportSheet<unknown>,
         rulesSheet as ExcelExportSheet<unknown>
       ],
-      buildImportTemplateFileName(props.type)
+      buildImportTemplateFileName(props.type, isAllImport.value ? 'all' : 'single')
     )
+    if (isAllImport.value) {
+      ElMessage.success(
+        parentSeeds?.length
+          ? `模板下载成功：已自动带出 ${parentSeeds.length} 个父级核心指标（含「职能部门」列，系统将按该列自动拆分成多个归口分组），请在行内补写子指标名称、指标类型与权重`
+          : '模板下载成功（全部导入）：请按模板填写并在「职能部门」列标明每行由哪个部门下发'
+      )
+      return
+    }
     ElMessage.success(
       parentSeeds?.length
         ? `模板下载成功：已自动带出 ${parentSeeds.length} 个父级核心指标（序号=组号，任务类型/核心指标/核心指标类型已预填），在行内补写第一个子指标，拆多个子指标时向下加“序号与组列留空”的延续行`
@@ -342,6 +453,9 @@ const handleFileChange = (uploadFile: UploadFile, uploadFiles: UploadFiles) => {
   fileList.value = uploadFiles.slice(-1)
   selectedFile.value = fileList.value[0] ?? uploadFile
   previewResult.value = null
+  // 2026-11-19（全部导入）：同样重置分组预览与结果（避免沿用旧文件的分组确认新文件）
+  allPreviewResult.value = null
+  allCommitResult.value = null
 }
 
 // 2026-10-31 用户定案：limit=1 下未删除旧文件就再选新文件时，el-upload 触发的是 exceed 而非
@@ -361,6 +475,9 @@ const handleFileRemove = (_uploadFile: UploadFile, uploadFiles: UploadFiles) => 
   fileList.value = uploadFiles
   selectedFile.value = uploadFiles[0] ?? null
   previewResult.value = null
+  // 2026-11-19（全部导入）：同步重置分组预览与结果
+  allPreviewResult.value = null
+  allCommitResult.value = null
 }
 
 const handlePreview = async () => {
@@ -374,13 +491,27 @@ const handlePreview = async () => {
   }
   // 2026-11-17（学院线粒度改造）：学院子指标表必须带归口部门——否则后端无法定位
   // 「学院 × 归口部门」这条线，会按旧的学院级口径误命中别的归口的线。前端先拦一道。
-  if (!isStrategicImport.value && !hasFunctionalOrg.value) {
+  // 2026-11-19（全部导入）：全部导入的归口由文件内「职能部门」列解析 → **不拦**。
+  if (!isStrategicImport.value && !isAllImport.value && !hasFunctionalOrg.value) {
     ElMessage.warning(COLLEGE_IMPORT_FUNCTIONAL_ORG_REQUIRED)
     return
   }
 
   previewing.value = true
   try {
+    // 2026-11-19（全部导入）：重置上一次的分组结果，避免旧分组残留
+    allCommitResult.value = null
+    if (isAllImport.value) {
+      allPreviewResult.value = await businessImportApi.previewDistributionAll(
+        selectedFile.value.raw,
+        {
+          cycleId: props.cycleId,
+          sourceOrgId: props.sourceOrgId || undefined,
+          targetCollegeOrgId: props.targetOrgId
+        }
+      )
+      return
+    }
     // 2026-10-31 层级化定案：不再传序号→内部ID 映射，落库匹配键按名称
     // （职能部门=任务+核心指标名，学院=父级核心指标+子指标名），同名更新、新名新增。
     previewResult.value = isStrategicImport.value
@@ -410,7 +541,121 @@ const handlePreview = async () => {
   }
 }
 
+/**
+ * 2026-11-19（学院全部导入）：执行清单确认框（规划书第二节第 4 条）。
+ *
+ * <p>确认框正文 = 完整执行清单：「将下发 N 组（列明职能部门）/ 将跳过 M 组（列明原因）」。
+ * 用户确认无误才提交；提交后**严格按清单执行**（后端逐组处理）。</p>
+ */
+const confirmAllImportExecution = async (): Promise<boolean> => {
+  const plan = executionPlan.value
+  const dispatchLines = plan.dispatchGroups.map(
+    group => `· ${group.title}（${group.rowsCount} 行，基础性权重合计 ${group.basicWeightTotal}）`
+  )
+  const skipLines = plan.skipGroups.map(
+    group => `· ${group.title}：${group.skipReason || '本次将跳过'}`
+  )
+  const errorLines = plan.errorGroups.map(group => `· ${group.title}：${group.groupError || '存在错误'}`)
+  const body = [
+    '本次「全部导入」执行清单：',
+    '',
+    `将下发 ${plan.dispatchGroups.length} 组：`,
+    ...(dispatchLines.length ? dispatchLines : ['· 无']),
+    '',
+    `将跳过 ${plan.skipGroups.length} 组：`,
+    ...(skipLines.length ? skipLines : ['· 无']),
+    ...(errorLines.length ? ['', `错误 ${plan.errorGroups.length} 组：`, ...errorLines] : []),
+    ...(plan.unassignedRowsCount > 0
+      ? ['', `另有 ${plan.unassignedRowsCount} 行无法归组（已阻断提交）。`]
+      : []),
+    '',
+    autoSubmitAndApprove.value
+      ? '确认后将按组写入数据并自动发起审批流程；审批通过后任务将正式下发。是否继续？'
+      : '确认后将按组写入数据。是否继续？'
+  ].join('\n')
+
+  try {
+    await ElMessageBox.confirm(body, '确认全部导入', {
+      confirmButtonText: '确认全部导入',
+      cancelButtonText: '再想想',
+      type: plan.errorGroups.length > 0 ? 'error' : 'warning',
+      customClass: 'business-import-execution-plan'
+    })
+    return true
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') {
+      return false
+    }
+    console.error('[BusinessImportDialog] 全部导入确认框异常:', error)
+    const msg = (error as { message?: string })?.message
+    showCriticalErrorNotice({
+      title: '确认导入失败',
+      message: msg || '确认导入失败，请稍后重试',
+      critical: true
+    })
+    return false
+  }
+}
+
+/**
+ * 2026-11-19（学院全部导入）：逐组提交 + 结果页。
+ *
+ * <p>提交严格按执行清单执行（后端按分组快照逐组处理，组间独立：一组失败不影响他组）。
+ * 结果页逐组汇报：成功（附 planId）/ 跳过（原因）/ 失败（原因） + 汇总行。</p>
+ */
+const handleAllCommit = async () => {
+  const preview = allPreviewResult.value
+  if (!preview) {
+    ElMessage.warning('请先解析预览')
+    return
+  }
+  if (executionPlan.value.blocking) {
+    ElMessage.warning('当前导入存在错误组，请修正后重新上传')
+    return
+  }
+  if (!(await confirmAllImportExecution())) {
+    return
+  }
+
+  committing.value = true
+  try {
+    const result = await businessImportApi.commitDistributionAll(preview.batchId, {
+      confirmToken: preview.confirmToken ?? '',
+      autoSubmitAndApprove: autoSubmitAndApprove.value
+    })
+    allCommitResult.value = result
+    const summary = summarizeImportAllResults(result)
+    if (summary.allFailed) {
+      ElMessage.error('全部导入失败：所有分组均未下发，请查看逐组结果')
+    } else if (summary.failed > 0) {
+      ElMessage.warning(
+        `全部导入部分完成：成功 ${summary.success} 组、跳过 ${summary.skipped} 组、失败 ${summary.failed} 组`
+      )
+    } else {
+      ElMessage.success(
+        `全部导入完成：成功 ${summary.success} 组、跳过 ${summary.skipped} 组、失败 ${summary.failed} 组`
+      )
+    }
+    emit('all-committed', result)
+  } catch (error) {
+    markErrorHandled(error)
+    const msg = (error as { message?: string })?.message
+    showCriticalErrorNotice({
+      title: '确认导入失败',
+      message: msg || '确认导入失败，请稍后重试',
+      critical: true
+    })
+  } finally {
+    committing.value = false
+  }
+}
+
 const handleCommit = async () => {
+  // 2026-11-19（全部导入）：走独立的分组提交链路（逐组结果汇报）
+  if (isAllImport.value) {
+    await handleAllCommit()
+    return
+  }
   if (!previewResult.value) {
     ElMessage.warning('请先解析预览')
     return
@@ -536,6 +781,9 @@ watch(
       fileList.value = []
       selectedFile.value = null
       previewResult.value = null
+      // 2026-11-19（全部导入）：同步清空分组预览与逐组结果
+      allPreviewResult.value = null
+      allCommitResult.value = null
       previewing.value = false
       committing.value = false
       autoSubmitAndApprove.value = true
@@ -571,8 +819,10 @@ watch(
           <strong>{{ sourceOrgName || '当前账号部门' }}</strong>
         </div>
         <!-- 2026-11-17（学院线粒度改造）：归口部门回显——导入按「学院 × 归口部门」
-             定位计划，用户必须在上传前就能确认本次导入属于哪条线。 -->
-        <div v-if="!isStrategicImport">
+             定位计划，用户必须在上传前就能确认本次导入属于哪条线。
+             2026-11-19（全部导入）：归口由文件「职能部门」列解析 → 不显示本项，
+             改为在解析预览里按组列出（每组一个职能部门）。 -->
+        <div v-if="!isStrategicImport && !isAllImport">
           <span class="summary-label">归口部门</span>
           <strong>{{ functionalOrgName || '未选择' }}</strong>
         </div>
@@ -581,6 +831,16 @@ watch(
           <strong :title="`周期ID: ${cycleId ?? '-'}`">{{ cycleDisplayLabel }}</strong>
         </div>
       </div>
+
+      <!-- 2026-11-19（全部导入）：提示语——一次导入一个学院，自动按归口部门拆分 -->
+      <el-alert
+        v-if="isAllImport"
+        class="all-import-mode-tip"
+        type="info"
+        :closable="false"
+        show-icon
+        :title="importModeTip"
+      />
 
       <el-steps
         class="business-import-steps"
@@ -608,7 +868,11 @@ watch(
         <div class="el-upload__text">拖拽 Excel 文件到这里，或点击选择</div>
         <template #tip>
           <div class="upload-tip-row">
-            <span class="el-upload__tip">仅支持 .xlsx，一次只导入当前选中的部门或学院。</span>
+            <span class="el-upload__tip">{{
+              isAllImport
+                ? '仅支持 .xlsx，一次导入一个学院，文件内可含多个职能部门（按「职能部门」列自动拆分）。'
+                : '仅支持 .xlsx，一次只导入当前选中的部门或学院。'
+            }}</span>
             <el-button
               class="download-template-button"
               type="primary"
@@ -625,9 +889,21 @@ watch(
 
       <div class="business-import-actions">
         <el-alert
-          v-if="selectedFile || previewResult"
+          v-if="selectedFile || previewResult || hasAllPreview"
           class="next-action-tip"
-          :type="previewResult?.blocking ? 'error' : previewResult ? 'success' : 'info'"
+          :type="
+            isAllImport
+              ? executionPlan.blocking
+                ? 'error'
+                : hasAllPreview
+                  ? 'success'
+                  : 'info'
+              : previewResult?.blocking
+                ? 'error'
+                : previewResult
+                  ? 'success'
+                  : 'info'
+          "
           :closable="false"
           show-icon
           :title="nextActionTip"
@@ -639,11 +915,251 @@ watch(
           :disabled="!canPreview"
           @click="handlePreview"
         >
-          {{ previewResult ? '重新解析预览' : '解析预览' }}
+          {{ previewResult || hasAllPreview ? '重新解析预览' : '解析预览' }}
         </el-button>
       </div>
 
-      <template v-if="previewResult">
+      <!-- ================================================================
+           2026-11-19（学院全部导入）：分组预览 + 执行清单 + 逐组结果
+           ================================================================ -->
+      <template v-if="isAllImport">
+        <!-- 第 2 步：分组预览（三类信息：将下发 / 将跳过 / 错误组） -->
+        <template v-if="hasAllPreview && !allCommitResult">
+          <el-divider />
+          <div class="preview-stat-grid">
+            <div class="preview-stat">
+              <span>分组总数</span>
+              <strong>{{ executionPlan.totalGroups }}</strong>
+            </div>
+            <div class="preview-stat">
+              <span>将下发</span>
+              <strong>{{ executionPlan.dispatchGroups.length }}</strong>
+            </div>
+            <div class="preview-stat" :class="{ warning: executionPlan.skipGroups.length > 0 }">
+              <span>将跳过</span>
+              <strong>{{ executionPlan.skipGroups.length }}</strong>
+            </div>
+            <div class="preview-stat" :class="{ danger: executionPlan.errorGroups.length > 0 }">
+              <span>错误组</span>
+              <strong>{{ executionPlan.errorGroups.length }}</strong>
+            </div>
+            <div
+              class="preview-stat"
+              :class="{ danger: executionPlan.unassignedRowsCount > 0 }"
+            >
+              <span>无法归组行</span>
+              <strong>{{ executionPlan.unassignedRowsCount }}</strong>
+            </div>
+          </div>
+
+          <el-alert
+            v-if="executionPlan.blocking"
+            type="error"
+            :closable="false"
+            show-icon
+            title="存在错误组或无法归组的行，不能确认导入"
+          />
+          <el-alert
+            v-else
+            type="success"
+            :closable="false"
+            show-icon
+            title="分组预览通过，可以确认导入"
+          />
+
+          <!-- 执行清单（第 3 步内容预览，与确认框内容一致） -->
+          <div class="execution-plan">
+            <div class="execution-plan-title">执行清单</div>
+            <div class="execution-plan-summary">{{ executionPlanSummary }}</div>
+            <ul class="execution-plan-list">
+              <li v-for="group in executionPlan.dispatchGroups" :key="`d-${group.title}`">
+                <el-tag type="success" size="small">将下发</el-tag>
+                {{ group.title }}（{{ group.rowsCount }} 行，本组基础性权重合计
+                {{ group.basicWeightTotal }}，线状态：{{ group.lineStatusLabel }}）
+              </li>
+              <li v-for="group in executionPlan.skipGroups" :key="`s-${group.title}`">
+                <el-tag type="warning" size="small">将跳过</el-tag>
+                {{ group.title }}：{{ group.skipReason || '本次将跳过' }}
+              </li>
+              <li v-for="group in executionPlan.errorGroups" :key="`e-${group.title}`">
+                <el-tag type="danger" size="small">错误</el-tag>
+                {{ group.title }}：{{ group.groupError || '存在错误' }}
+              </li>
+            </ul>
+          </div>
+
+          <!-- 分组明细：每组一张卡片（组标题 + 行数 + 权重合计 + 线状态标记） -->
+          <div class="group-list">
+            <div
+              v-for="group in groupViews"
+              :key="`g-${group.functionalOrgId ?? 'na'}-${group.title}`"
+              class="group-card"
+              :class="`group-card--${group.kind}`"
+            >
+              <div class="group-card-header">
+                <span class="group-card-title">{{ group.title }}</span>
+                <el-tag
+                  v-if="group.kind === 'dispatch'"
+                  type="success"
+                  size="small"
+                >
+                  将下发
+                </el-tag>
+                <el-tag
+                  v-else-if="group.kind === 'skip'"
+                  type="warning"
+                  size="small"
+                >
+                  已下发 · 本次将跳过
+                </el-tag>
+                <el-tag v-else type="danger" size="small">错误组</el-tag>
+                <span class="group-card-meta">
+                  {{ group.rowsCount }} 行 · 本组基础性权重合计 {{ group.basicWeightTotal }} · 线状态
+                  {{ group.lineStatusLabel }}
+                </span>
+              </div>
+              <el-alert
+                v-if="group.kind === 'skip'"
+                class="group-card-alert"
+                type="warning"
+                :closable="false"
+                show-icon
+                :title="group.skipReason || '该线已下发，本次将跳过'"
+              />
+              <el-alert
+                v-if="group.kind === 'error'"
+                class="group-card-alert"
+                type="error"
+                :closable="false"
+                show-icon
+                :title="group.groupError || '该组存在错误，请修正后重新上传'"
+              />
+              <el-table :data="group.rows" max-height="240" class="preview-table">
+                <el-table-column prop="rowNo" label="序号" width="70" />
+                <el-table-column label="动作" width="80">
+                  <template #default="{ row }">
+                    <el-tag :type="actionTagType(row.action)" size="small">
+                      {{ actionText(row.action) }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="父级指标" min-width="180" show-overflow-tooltip>
+                  <template #default="{ row }">{{ row.normalized.parentIndicator }}</template>
+                </el-table-column>
+                <el-table-column label="指标" min-width="180" show-overflow-tooltip>
+                  <template #default="{ row }">{{ row.normalized.indicatorName }}</template>
+                </el-table-column>
+                <el-table-column label="类型" width="90">
+                  <template #default="{ row }">{{ row.normalized.indicatorType }}</template>
+                </el-table-column>
+                <el-table-column label="权重" width="90">
+                  <template #default="{ row }">{{ row.normalized.weight || '-' }}</template>
+                </el-table-column>
+                <el-table-column label="问题" min-width="220" show-overflow-tooltip>
+                  <template #default="{ row }">
+                    <span v-if="row.errors?.length" class="preview-error">{{
+                      row.errors.join('；')
+                    }}</span>
+                    <span v-else-if="row.warnings?.length" class="preview-warning">
+                      {{ row.warnings.join('；') }}
+                    </span>
+                    <span v-else>-</span>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+          </div>
+
+          <!-- 无法归组的行（独立错误区，阻断整单）：
+               后端语义 = 「职能部门与核心指标归属不符」+「无法识别归属部门」两类**无法归组**的行，
+               不是"未分组"的普通行 → 红色独立区，绝不混进 groups。 -->
+          <div v-if="executionPlan.unassignedRowsCount > 0" class="group-card group-card--error">
+            <div class="group-card-header">
+              <span class="group-card-title">无法归组的行</span>
+              <el-tag type="danger" size="small">错误</el-tag>
+              <span class="group-card-meta">{{ executionPlan.unassignedRowsCount }} 行</span>
+            </div>
+            <el-alert
+              class="group-card-alert"
+              type="error"
+              :closable="false"
+              show-icon
+              title="这些行无法归组（「职能部门」列与核心指标归属不符，或无法识别归属部门），请修正后重新上传"
+            />
+            <el-table :data="allPreviewResult?.unassignedRows ?? []" max-height="200" class="preview-table">
+              <el-table-column prop="rowNo" label="序号" width="70" />
+              <el-table-column label="父级指标" min-width="180" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.normalized.parentIndicator }}</template>
+              </el-table-column>
+              <el-table-column label="指标" min-width="180" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.normalized.indicatorName }}</template>
+              </el-table-column>
+              <el-table-column label="问题" min-width="220" show-overflow-tooltip>
+                <template #default="{ row }">
+                  <span v-if="row.errors?.length" class="preview-error">{{
+                    row.errors.join('；')
+                  }}</span>
+                  <span v-else>-</span>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </template>
+
+        <!-- 结果页：逐组卡片 + 汇总行 -->
+        <template v-if="allCommitResult">
+          <el-divider />
+          <div class="preview-stat-grid">
+            <div class="preview-stat">
+              <span>成功</span>
+              <strong class="result-success">{{ allResultSummary.success }}</strong>
+            </div>
+            <div class="preview-stat" :class="{ warning: allResultSummary.skipped > 0 }">
+              <span>跳过</span>
+              <strong>{{ allResultSummary.skipped }}</strong>
+            </div>
+            <div class="preview-stat" :class="{ danger: allResultSummary.failed > 0 }">
+              <span>失败</span>
+              <strong>{{ allResultSummary.failed }}</strong>
+            </div>
+          </div>
+          <el-alert
+            v-if="allResultSummary.allFailed"
+            type="error"
+            :closable="false"
+            show-icon
+            title="全部组均未下发，本次导入整体失败"
+          />
+          <div class="group-list">
+            <div
+              v-for="result in allResultViews"
+              :key="`r-${result.functionalOrgName ?? 'na'}`"
+              class="group-card"
+              :class="`group-card--${result.status.toLowerCase()}`"
+            >
+              <div class="group-card-header">
+                <span class="group-card-title">{{ result.title }}</span>
+                <el-tag :type="result.tagType" size="small">{{ result.statusLabel }}</el-tag>
+                <span class="group-card-meta">
+                  {{ result.rowsCount }} 行
+                  <template v-if="result.planId"> · 计划ID {{ result.planId }}</template>
+                </span>
+              </div>
+              <el-alert
+                v-if="result.message"
+                class="group-card-alert"
+                :type="result.status === 'SUCCESS' ? 'success' : result.status === 'SKIPPED' ? 'warning' : 'error'"
+                :closable="false"
+                show-icon
+                :title="result.message"
+              />
+            </div>
+          </div>
+        </template>
+      </template>
+
+      <!-- 单条导入既有预览（mode !== 'all' 时行为逐字不变） -->
+      <template v-else-if="previewResult">
         <el-divider />
         <div class="preview-stat-grid">
           <div class="preview-stat">
@@ -734,7 +1250,9 @@ watch(
       </template>
 
       <div class="commit-options">
+        <!-- 2026-11-19（全部导入）：覆盖已有数据不适用于分组提交（后端按组逐组 upsert） -->
         <el-tooltip
+          v-if="!isAllImport"
           content="同名指标=更新、新名称=新增始终生效；勾选后，当前范围内未出现在文件中的既有指标会被删除（真覆盖）。"
           placement="top"
         >
@@ -754,9 +1272,20 @@ watch(
         <div class="footer-action-tip">{{ footerActionTip }}</div>
         <div class="footer-actions">
           <el-button :disabled="previewing || committing" @click="dialogVisible = false">
-            取消
+            {{ isAllImport && allCommitResult ? '关闭' : '取消' }}
+          </el-button>
+          <!-- 2026-11-19（全部导入）：确认按钮置灰条件 = 无分组预览 / 有阻断项 / 已出结果 -->
+          <el-button
+            v-if="isAllImport"
+            type="primary"
+            :loading="committing"
+            :disabled="!hasAllPreview || executionPlan.blocking || Boolean(allCommitResult)"
+            @click="handleCommit"
+          >
+            {{ autoSubmitAndApprove ? '确认全部导入并下发' : '确认全部导入' }}
           </el-button>
           <el-button
+            v-else
             type="primary"
             :loading="committing"
             :disabled="!previewResult || previewResult.blocking"
@@ -869,6 +1398,111 @@ watch(
 
 .preview-warning {
   color: #d97706;
+}
+
+/* ============ 2026-11-19（学院全部导入）：分组预览 / 执行清单 / 逐组结果 ============ */
+
+.all-import-mode-tip {
+  margin: 0;
+}
+
+.execution-plan {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 12px 14px;
+  background: #f9fafb;
+}
+
+.execution-plan-title {
+  color: #111827;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 22px;
+}
+
+.execution-plan-summary {
+  margin-top: 4px;
+  color: #374151;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.execution-plan-list {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  color: #4b5563;
+  font-size: 13px;
+  line-height: 22px;
+}
+
+.group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.group-card {
+  border: 1px solid #e5e7eb;
+  border-left-width: 4px;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #ffffff;
+}
+
+.group-card--dispatch {
+  border-left-color: #16a34a;
+}
+
+.group-card--skip {
+  border-left-color: #d97706;
+  background: #fffdf5;
+}
+
+.group-card--error {
+  border-left-color: #dc2626;
+  background: #fff7f6;
+}
+
+.group-card--success {
+  border-left-color: #16a34a;
+}
+
+.group-card--skipped {
+  border-left-color: #d97706;
+  background: #fffdf5;
+}
+
+.group-card--failed {
+  border-left-color: #dc2626;
+  background: #fff7f6;
+}
+
+.group-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.group-card-title {
+  color: #111827;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 22px;
+}
+
+.group-card-meta {
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.group-card-alert {
+  margin: 8px 0;
+}
+
+.result-success {
+  color: #16a34a;
 }
 
 .commit-options {

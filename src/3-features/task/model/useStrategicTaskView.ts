@@ -3932,6 +3932,80 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   )
 
   /**
+   * 2026-11-19（学院全部导入）：该学院**全部归口部门**的核心指标锚点全集（按归口分组）。
+   *
+   * <p>单条导入的模板只预填「当前所选归口」的锚点（{@link collegeImportParentIndicators}）；
+   * 全部导入的模板必须预填**所有归口**的锚点——否则用户下载的模板里看不到其它归口的
+   * 锚点行，文件里就没法同时写多个职能部门，拆批无从谈起。</p>
+   *
+   * <p>数据源复用既有锚点基座 {@link buildCollegeParentAnchorIndicators}：把「右侧下拉
+   * 所选归口」换成「该学院全部可选归口」逐个跑一遍同一过滤口径（已下发根核心指标 +
+   * owner=战略发展部 + 目标部门=该归口 + 按 id 升序）。</p>
+   *
+   * <p>归口清单取 {@link collegeDeptDropdownItems}（该学院可见的全部职能部门选项），
+   * 顺序按组织机构顺序（与下拉一致），保证模板里的组顺序稳定可预期。</p>
+   */
+  const collegeAllDeptAnchorGroups = computed(() => {
+    const groups: Array<{
+      dept: string
+      anchors: Array<{
+        id: number | string | null
+        name: string
+        taskContent: string
+        type1: string
+        type2: string
+      }>
+    }> = []
+
+    for (const item of collegeDeptDropdownItems.value) {
+      const dept = String(item?.dept ?? '').trim()
+      if (!dept) {
+        continue
+      }
+      const anchors = buildCollegeParentAnchorIndicators(normalizedIndicators.value, {
+        ownerDept: dept,
+        strategicDeptName: strategicDeptName.value,
+        normalize: normalizeDepartmentName
+      }) as Array<StrategicIndicator & { taskContent?: string }>
+      if (anchors.length === 0) {
+        continue
+      }
+      groups.push({
+        dept,
+        anchors: anchors.map(anchor => {
+          const typed = anchor as { type1?: string }
+          return {
+            id: anchor.id ?? null,
+            name: String(anchor.name || ''),
+            taskContent: String(anchor.taskContent || ''),
+            type1: String(typed.type1 || ''),
+            type2: getIndicatorCategoryLabel(anchor)
+          }
+        })
+      })
+    }
+    return groups
+  })
+
+  /**
+   * 2026-11-19（学院全部导入）：全部导入模板的父级预填 seeds（该学院全部归口锚点全集）。
+   *
+   * <p>形状与 {@link collegeImportParentIndicators} 一致，额外带 functionalDeptName
+   * （模板「职能部门」列预填 = 拆批依据）。</p>
+   */
+  const collegeAllImportParentIndicators = computed(() =>
+    collegeAllDeptAnchorGroups.value.flatMap(group =>
+      group.anchors.map(anchor => ({
+        name: anchor.name,
+        taskContent: anchor.taskContent,
+        type1: anchor.type1,
+        type2: anchor.type2,
+        functionalDeptName: group.dept
+      }))
+    )
+  )
+
+  /**
    * 2026-11-14（用户定案：新增行不落库）二级学院 tab 新增子指标：校验 →
    * **写入内存草稿**（不调 createIndicator、不落库、无后端请求）。
    *
@@ -6389,6 +6463,140 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     // 权重合计（collegeBasicWeightTotal 读本行集）实时计入
     return [...storeRows, ...collegeCreateDraftRows.value].sort(compareCollegeTableRows)
   })
+
+  /**
+   * 2026-11-19（用户拍板 · 学院页签「全部导出」改造）：某学院**跨全部归口线**的指标行集。
+   *
+   * <p>与 {@link collegeTableIndicators} 的差别：**不按右侧下拉所选归口过滤**——
+   * 导出要的是「这个学院与它所有归口部门之间的全部指标」，用户点了「全部导出」
+   * 就不该还被「先选职能部门」这道门槛卡住。</p>
+   *
+   * <p>过滤口径只保留两条硬约束（其余与表格同源）：
+   * ① target = 该学院（跨线合并的前提）；② 可见性（isDispatchOwnerVisible，
+   * 战略部登录恒可见、职能部门登录按归属部门收口）。</p>
+   *
+   * <p>行级归口部门名由 {@link resolveRowOwnerDept} 给出（战略部自有行 → 父级核心指标
+   * 的目标部门 = 真正的归口），与页面「归属部门」列同源。</p>
+   */
+  const collegeAllLineIndicators = computed(() => {
+    if (!selectedCollege.value) {
+      return []
+    }
+    const target = normalizeDepartmentName(selectedCollege.value)
+    const storeRows = normalizedIndicators.value
+      .map(item => applyReportDetailOverlayToRow(item))
+      .filter(item => {
+        const ownerMatches = isDispatchOwnerVisible({
+          loginRole: authStore.userRole,
+          ownerMatchesCurrentDept: true
+        })
+        if (!ownerMatches) {
+          return false
+        }
+        const candidate = item as {
+          responsibleDept?: string
+          targetDepartment?: string
+          targetOrgName?: string
+        }
+        const deptName = normalizeDepartmentName(
+          String(
+            candidate.targetDepartment ?? candidate.targetOrgName ?? candidate.responsibleDept ?? ''
+          )
+        )
+        return deptName === target || deptName.includes(target)
+      })
+    return [...storeRows, ...collegeCreateDraftRows.value].sort(compareCollegeTableRows)
+  })
+
+  /**
+   * 2026-11-19（学院页签「全部导出」改造）：**所有学院**的导出分组（一学院一组）。
+   *
+   * <p>「全部导出」= 每个学院一张表——故数据源不能只取当前选中的学院，而要把
+   * 全量指标行按「target = 哪个学院」分组，得到「学院 → 该学院全部归口线的指标行」。</p>
+   *
+   * <p>与 {@link collegeAllLineIndicators} 同口径（不按归口过滤），只是不收口到单学院。
+   * 学院名取 target 字段（targetOrgName / targetDepartment / responsibleDept），
+   * 与 {@link collegeDepartmentsScoped} 的学院识别口径一致。</p>
+   *
+   * <p>⚠️ **只收「真学院」**：核心指标的 target 是职能部门（如「教务处」），
+   * 若不按学院清单过滤，导出会把每个职能部门也导成一张「学院表」（实测 26 个包内目录
+   * 里混了 19 个职能部门）。这里用学院清单（orgStore.colleges，归一化名集合）收口。</p>
+   */
+  const collegeAllCollegesExportGroups = computed(() => {
+    // 学院白名单（归一化名）——只有清单里的 target 才算「学院」
+    const collegeNames = new Set(
+      collegeDepartments.value.map(college => normalizeDepartmentName(college)).filter(Boolean)
+    )
+    const groups = new Map<string, StrategicIndicator[]>()
+    const push = (college: string, row: StrategicIndicator) => {
+      if (!college) {
+        return
+      }
+      const bucket = groups.get(college)
+      if (bucket) {
+        bucket.push(row)
+      } else {
+        groups.set(college, [row])
+      }
+    }
+
+    for (const item of normalizedIndicators.value) {
+      if (!isDispatchOwnerVisible({ loginRole: authStore.userRole, ownerMatchesCurrentDept: true })) {
+        continue
+      }
+      const candidate = item as {
+        responsibleDept?: string
+        targetDepartment?: string
+        targetOrgName?: string
+      }
+      const target = normalizeDepartmentName(
+        String(
+          candidate.targetOrgName ?? candidate.targetDepartment ?? candidate.responsibleDept ?? ''
+        )
+      )
+      // 只收真学院（职能部门 target 的核心指标不进学院表）
+      if (!target || !collegeNames.has(target)) {
+        continue
+      }
+      push(target, item)
+    }
+
+    // 学院名归一后与组织机构清单对齐（还原展示名），顺序按学院清单（组织机构顺序）
+    const displayNameByNormalized = new Map<string, string>()
+    for (const college of collegeDepartments.value) {
+      displayNameByNormalized.set(normalizeDepartmentName(college), college)
+    }
+
+    return [...groups.entries()]
+      .map(([normalized, rows]) => ({
+        college: displayNameByNormalized.get(normalized) ?? normalized,
+        rows: rows.sort(compareCollegeTableRows)
+      }))
+      .sort((left, right) => left.college.localeCompare(right.college, 'zh-Hans-CN'))
+  })
+
+  /**
+   * 2026-11-19（学院页签「全部导出」改造）：行级「归口部门」名解析器（导出列用）。
+   *
+   * <p>口径与页面表格的「归属部门」列完全一致（{@link resolveRowOwnerDept}）：
+   * 战略部自有行（owner=战略发展部）→ 父级核心指标的目标部门 = 真正的归口部门。</p>
+   */
+  const resolveCollegeRowFunctionalDeptName = (row: StrategicIndicator): string => {
+    const owner = resolveRowOwnerDept(row)
+    if (owner) {
+      return owner
+    }
+    const candidate = row as {
+      responsibleDept?: string
+      targetDepartment?: string
+      targetOrgName?: string
+    }
+    return normalizeDepartmentName(
+      String(
+        candidate.targetDepartment ?? candidate.targetOrgName ?? candidate.responsibleDept ?? ''
+      )
+    )
+  }
 
   /**
    * 2026-11-09（页签分流）：一行学院指标是否属于「该学院的当前计划」。
@@ -9103,6 +9311,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     selectedCollege,
     selectCollege,
     collegeTableIndicators,
+    // 2026-11-19（学院页签「全部导出」改造）：某学院跨全部归口线的指标行集 + 行级归口解析
+    collegeAllLineIndicators,
+    collegeAllCollegesExportGroups,
+    resolveCollegeRowFunctionalDeptName,
     // 2026-11-09（用户要求）：学院页签右侧的「职能部门」下拉筛选器
     collegeDispatchDeptFilter,
     collegeDispatchDeptEffective,
@@ -9278,6 +9490,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     // （右侧下拉所选部门已接收的已下发核心指标 seeds，id 升序）。
     selectedCollegeDispatchPlanId,
     collegeImportParentIndicators,
+    // 2026-11-19（学院全部导入）：该学院全部归口的核心指标锚点全集 + 对应模板 seeds
+    collegeAllDeptAnchorGroups,
+    collegeAllImportParentIndicators,
     preloadedPlanWorkflowDetail,
     preservePrefilledTaskBindingOnce,
     primaryApprovalWorkflowEntityId,
