@@ -363,6 +363,18 @@ export function toStrategicIndicator(raw: unknown): StrategicIndicator {
     ;(normalizedIndicator as StrategicIndicator & { taskId?: string }).taskId = taskId
   }
 
+  // 2026-11-18（学院页签权重合计口径修复）：保留后端行级任务类型（运行时字段）。
+  // /indicators 列表响应逐行富化指标**自身任务**的 task_type（服务端 SQL 直查
+  // sys_task，不经过 /tasks 列表的 org 权限过滤）；学院链（FUNC_TO_COLLEGE）任务
+  // createdByOrg=战略部，学院/职能部门填报人登录时 /tasks/by-cycle、/tasks/by-plan
+  // 被 filterTasksByPermission 过滤成空，此前行级 taskType 被丢弃、任务映射恒空，
+  // 任务类别只能落到 type2 兜底（后端库表已移除 type2，前端缺省『基础性』）——
+  // 发展性行被误计进学院页签「基础性权重合计」（实测 200/100 的根因）。
+  const rowTaskType = getString(item, 'taskType')
+  if (rowTaskType) {
+    ;(normalizedIndicator as StrategicIndicator & { taskType?: string }).taskType = rowTaskType
+  }
+
   // 保留后端组织字段（运行时字段），供页面按稳定的部门 ID 做可见性/筛选判断。
   const runtimeIndicator = normalizedIndicator as StrategicIndicator & {
     targetOrgId?: number
