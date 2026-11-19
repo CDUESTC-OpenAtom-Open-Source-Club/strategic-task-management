@@ -168,6 +168,21 @@ const main = async () => {
       await clickPreview(page)
       await page.screenshot({ path: resolve(dir, '03-分组预览.png') })
       await page.screenshot({ path: resolve(dir, '04-分组预览-整页.png'), fullPage: true })
+      // 滚到分组明细 / 无法归组区（截图取「组卡片 + 独立错误区」）
+      const groupCard = page.locator('.el-dialog .group-card').first()
+      if (await groupCard.count()) {
+        await groupCard.evaluate(node => node.scrollIntoView({ block: 'start' }))
+        await page.waitForTimeout(600)
+      }
+      await page.screenshot({ path: resolve(dir, '05-分组明细-组卡片.png') })
+      const unassigned = page.locator('.el-dialog .group-card--error').last()
+      if (await unassigned.count()) {
+        await unassigned.evaluate(node => node.scrollIntoView({ block: 'center' }))
+        await page.waitForTimeout(600)
+      }
+      await page.screenshot({ path: resolve(dir, '06-无法归组行-独立错误区.png') })
+      await page.locator('.el-dialog').evaluate(node => node.scrollTo({ top: 0 }))
+      await page.waitForTimeout(400)
 
       const dialogText = await page.locator('.el-dialog').innerText()
       const missing = scenario.expect.filter(text => !dialogText.includes(text))
@@ -196,9 +211,9 @@ const main = async () => {
     const resultDir = resolve(EVIDENCE_ROOT, '场景A2-提交后逐组结果')
     ensureDir(resultDir)
     await switchToCollegeTab(page)
-    await selectCollege(page, '计算机学院')
+    await selectCollege(page, '艺术与科技学院')
     await openAllImportDialog(page)
-    await uploadFile(page, resolve(FIXTURE_DIR, '场景A-双组将下发-计算机学院.xlsx'))
+    await uploadFile(page, resolve(FIXTURE_DIR, '场景A2-成功下发-艺术与科技学院.xlsx'))
     await clickPreview(page)
     const confirmButton = page
       .locator('.el-dialog button')
