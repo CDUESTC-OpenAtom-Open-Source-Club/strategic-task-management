@@ -49,6 +49,8 @@ import {
 import { ApprovalProgressDrawer } from '@/features/approval'
 import { useIndicatorAppraisal } from '@/features/indicator/model/useIndicatorAppraisal'
 import { getAppraisalLevelDisplay } from '@/features/indicator/lib/appraisalGate'
+// 2026-11-19 用户定案：审核进度行内下拉共享组件（三视图同构）
+import AppraisalLevelCell from '@/features/indicator/ui/AppraisalLevelCell.vue'
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
 import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
@@ -643,13 +645,15 @@ const getManualAlertTagType = (severity?: ManualAlertSeverity) =>
 // 导致「上报链可评级节点要求全部指标已评定」与「无人能评级」构成死锁
 // （本地上报实例实测 409：存在未评定的审核进度拦截，2026-10-30 起文案改报指标名与操作指引）。
 // 此处复用 useIndicatorAppraisal（后端 canAppraise 判定谁能改），与战略任务页同构。
-// 2026-10-31 定稿：点击格子先单条重查 context，canAppraise=true 才弹轻量等级选择器。
+// 2026-11-19 用户定案：统一为**行内下拉**（共享组件 AppraisalLevelCell），
+// 点击解锁 → 选三档 → 选完即存；原先的「调整审核进度」弹窗层已下线。
 // ============================================================================
+const appraisalApi = useIndicatorAppraisal()
 const {
   load: loadIndicatorAppraisalContexts,
   getLevel: getIndicatorAppraisalLevel,
-  openAppraisalGate: openIndicatorAppraisalGate
-} = useIndicatorAppraisal()
+  getContext: getIndicatorAppraisalContext
+} = appraisalApi
 
 watch(
   () => (indicators.value ?? []).map(item => String(item.id)).join(','),
@@ -659,19 +663,6 @@ watch(
   { immediate: true }
 )
 
-/**
- * 2026-10-31 定稿：点击审核进度格子的统一入口（三视图同构）。
- * 先单条重查该行 context → canAppraise=false 当场弹对应原因 → 通过才弹等级选择器。
- */
-const handleAppraisalCellClick = async (row: {
-  id: string | number
-  name?: string
-  indicatorDesc?: string
-}) => {
-  await openIndicatorAppraisalGate(row.id, {
-    indicatorName: row.name || row.indicatorDesc
-  })
-}
 const getMonthlyExpectedProgress = () => {
   const month = new Date().getMonth() + 1
   return Math.min(100, Math.round((month / 12) * 100))
@@ -1160,41 +1151,15 @@ const handleExportIndicatorList = async () => {
                 label-class-name="manual-level-header"
               >
                 <template #default="{ row }">
-                  <!-- 2026-10-30 P0-3 → 2026-10-31 定稿：审批链行内鉴定（三视图同构）。
-                       点击格子先单条重查 context，canAppraise=true 才弹等级选择器，
-                       不满足条件当场弹对应原因；未评定统一显示「—」（空值显示分支保留）。 -->
-                  <div class="manual-alert-cell">
-                    <el-tag
-                      v-if="getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)"
-                      :type="
-                        getManualAlertTagType(
-                          getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
-                        )
-                      "
-                      :style="
-                        getProgressLevelTagStyle(
-                          getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
-                        )
-                      "
-                      size="small"
-                      class="manual-alert-tag--clickable"
-                      @click="handleAppraisalCellClick(row)"
-                    >
-                      {{
-                        getManualAlertLabel(
-                          getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
-                        )
-                      }}
-                    </el-tag>
-                    <span
-                      v-else
-                      style="color: #909399"
-                      class="manual-alert-tag--clickable"
-                      @click="handleAppraisalCellClick(row)"
-                    >
-                      —
-                    </span>
-                  </div>
+                  <!-- 2026-10-30 P0-3 → 2026-11-19 定稿：审批链行内鉴定（三视图同构）。
+                       统一为共享行内下拉组件：点击格子才解锁下拉，选完即存，无弹窗层；
+                       不可评定时显示只读值 + 悬停说明原因；空值显示「未评定」。 -->
+                  <AppraisalLevelCell
+                    :indicator-id="row.id"
+                    :level="getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)"
+                    :context="getIndicatorAppraisalContext(row.id)"
+                    :appraisal="appraisalApi"
+                  />
                 </template>
               </el-table-column>
               <!-- 2026-10-26 用户定案：上报资料列悬浮显示附件卡片（序号+文件名+类型），
