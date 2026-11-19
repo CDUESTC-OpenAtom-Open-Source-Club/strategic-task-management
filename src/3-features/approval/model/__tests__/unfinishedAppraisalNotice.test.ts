@@ -30,7 +30,7 @@ import {
 /** 后端 buildUnappraisedAuditMessage 的原文样例（BusinessConflictException 透传） */
 const BACKEND_BLOCK_MESSAGE =
   '未完成审核：还有 2 项指标的审核进度未鉴定（『教学运行质量』『科研产出增长率』）。' +
-  '请到 计算机学院 的指标填报页完成全部指标的审核进度鉴定，再回到审批中心通过。'
+  '请为计算机学院的全部指标完成审核进度鉴定（超前完成 / 正常 / 滞后），再回到审批中心通过。'
 
 describe('isUnfinishedAppraisalMessage', () => {
   it('matches the backend interception message', () => {

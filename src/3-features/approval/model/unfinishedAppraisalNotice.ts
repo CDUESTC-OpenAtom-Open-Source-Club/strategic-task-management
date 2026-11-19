@@ -4,12 +4,13 @@
  * 后端在上报链（PLAN_APPROVAL_*）可评级节点通过前校验「全部指标审核进度已鉴定」，
  * 未完成时以 BusinessConflictException 原样透传 HTTP 409 文案（见后端
  * BusinessWorkflowApplicationService.buildUnappraisedAuditMessage）：
- * 「未完成审核：还有 N 项指标的审核进度未鉴定（『指标名』…）。请到 {部门} 的指标填报页
+ * 「未完成审核：还有 N 项指标的审核进度未鉴定（『指标名』…）。请为 {部门} 的全部指标
  * 完成全部指标的审核进度鉴定，再回到审批中心通过。」
  *
  * 本模块把这类拦截从普通 toast 升级为 ElNotification（不阻塞、可操作）：
  * - title「未完成审核」，message 展示后端原文（原样，不改写）；
- * - 附「去完成鉴定」按钮，点击落到**该报告填报部门的指标填报页**。
+ * - 后端原文不再点名具体页面（2026-11-18 修正：原指引写「指标填报页」，但职能部门审批人在该页看不到待鉴定的学院子指标行）；
+ *   页面名由本文件的按角色指引（buildAppraisalGuidanceText）给出，「去完成鉴定」按钮落到对应角色的评级入口。
  *
  * 跳转路由复用审批卡片 routeTarget 的同一套口径——useApprovalProgressState 的
  * pendingPlanApprovalPreviewItems → resolveApprovalRoute（上报审批卡跳填报页带部门参数：
