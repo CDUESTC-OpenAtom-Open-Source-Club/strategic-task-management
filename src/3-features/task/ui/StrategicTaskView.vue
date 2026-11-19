@@ -6,6 +6,11 @@ import {
   COLLEGE_DEPT_INELIGIBLE_WARNING,
   resolveCollegeDeptFilterSelection
 } from '@/features/task/lib/collegeDispatchEligibility'
+// 2026-11-19（用户拍板 · 学院页签「全部导出」改造）：一学院一张表 + 行级「职能部门」列
+import {
+  buildCollegeExportColumns,
+  resolveCollegeExportPackaging
+} from '@/features/task/lib/collegeAllExport'
 import { useLatestIndicatorFill } from '@/features/indicator/model/useLatestIndicatorFill'
 import {
   useIndicatorAppraisal,
@@ -65,6 +70,7 @@ import {
   buildExportFileName,
   buildWholeColumnMergedCell,
   exportRowsToExcel,
+  exportSheetsToExcel,
   normalizeExportAttachments,
   type ExcelExportColumn,
   type ExcelExportSheet,
@@ -255,6 +261,9 @@ const {
   selectedCollege,
   selectCollege,
   collegeTableIndicators,
+  // 2026-11-19（学院页签「全部导出」改造）：所有学院的导出分组 + 行级归口解析
+  collegeAllCollegesExportGroups,
+  resolveCollegeRowFunctionalDeptName,
   // 2026-11-09（用户要求）：学院页签右侧「职能部门」下拉筛选器
   collegeDispatchDeptFilter,
   collegeDispatchDeptEffective,
@@ -292,6 +301,8 @@ const {
   // 2026-11-13（方案甲恢复）：学院页签「导入」模板父级预填 seeds（右侧下拉所选部门
   // 已接收的已下发核心指标，id 升序）
   collegeImportParentIndicators,
+  // 2026-11-19（学院全部导入）：该学院全部归口的核心指标锚点全集（模板 seeds）
+  collegeAllImportParentIndicators,
   isStrategicDeptLogin,
   strategicDeptOrgId,
   strategicDeptName,
@@ -1312,6 +1323,12 @@ watch(
 const strategicBatchExportDialogVisible = ref(false)
 const selectedStrategicExportDepartments = ref<string[]>([])
 const strategicImportDialogVisible = ref(false)
+/**
+ * 2026-11-19（学院全部导入）：全部导入弹窗可见性（与单条导入弹窗**独立实例**——
+ * 两者的 props（mode / functionalOrgId / parentIndicators）口径完全不同，
+ * 复用同一个实例会让「归口部门必填」与「归口由文件解析」两套规则互相打架）。
+ */
+const strategicAllImportDialogVisible = ref(false)
 // 2026-10-31 定稿：等级选项收敛到共享 appraisalGate（只有超前完成/正常/滞后三档），
 // 「未评定」退为初始空白显示态（不是选项），三视图同构。
 const getManualAlertLabel = (severity?: ManualAlertSeverity) =>
@@ -1744,6 +1761,77 @@ const handleExportCollegeIndicators = async () => {
   }
 }
 
+/**
+ * 2026-11-19（用户拍板 · 学院页签「全部导出」改造）：学院页签「全部导出」= **一学院一张表**。
+ *
+ * <p>与改造前的三处差别：</p>
+ * <ul>
+ *   <li><b>范围</b>：改造前只导「当前学院 × 当前选中归口」一条线；现在导**每个学院**
+ *       与其**所有归口部门**之间的全部指标（跨线合并，不再受「先选职能部门」门槛限制）；</li>
+ *   <li><b>列</b>：新增「职能部门」列（行级标明该行由哪个归口部门下发）；</li>
+ *   <li><b>文件组织</b>：一学院一个 Excel；多学院时沿用既有 zip 逻辑打成包
+ *       （把 zipExport 的「部门」位换成「学院」）。</li>
+ * </ul>
+ *
+ * <p>单条「导出」按钮（{@link handleExportCollegeIndicators}）行为**不变**——仍是
+ * 「当前学院 × 当前选中归口」，仍然受两步门槛限制。</p>
+ */
+const handleExportAllCollegeIndicators = async () => {
+  const groups = collegeAllCollegesExportGroups.value.filter(group => group.rows.length > 0)
+  if (groups.length === 0) {
+    ElMessage.warning('当前周期内暂无可导出的学院指标数据')
+    return
+  }
+
+  strategicExporting.value = true
+  try {
+    const payloads = groups.map(group => ({
+      // zipExport 的「department」位在学院场景下装学院名（目录名 = 学院名）
+      department: group.college,
+      sheets: [
+        {
+          sheetName: '指标下发与管理',
+          rows: group.rows,
+          columns: buildCollegeExportColumns({
+            rows: group.rows,
+            getFunctionalDept: row => resolveCollegeRowFunctionalDeptName(row),
+            getSelfRatingLabel: row => getExportSelfRatingLabel(row),
+            getAppraisalLabel: row =>
+              getAppraisalLevelDisplay(
+                getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
+              ).label,
+            getRemarkText: row => getExportRemarkText(row)
+          }),
+          emptyMessage: '该学院暂无可导出的指标数据'
+        } as ExcelExportSheet<unknown>
+      ]
+    }))
+
+    const packaging = resolveCollegeExportPackaging(payloads.length)
+    if (packaging.mode === 'single') {
+      const single = payloads[0]
+      if (!single) {
+        ElMessage.warning('当前周期内暂无可导出的学院指标数据')
+        return
+      }
+      await exportSheetsToExcel(single.sheets, buildExportFileName('指标下发与管理', single.department))
+      ElMessage.success(`导出成功：${single.department}`)
+      return
+    }
+
+    await exportDepartmentsAsZip(
+      payloads,
+      `指标下发与管理_全部学院_${formatLocalDateTag()}.zip`,
+      { onProgress: text => ElMessage({ message: text, duration: 1200, grouping: true }) }
+    )
+    ElMessage.success(`导出成功：共 ${payloads.length} 个学院，每院一张表`)
+  } catch {
+    ElMessage.error('导出失败，请稍后重试')
+  } finally {
+    strategicExporting.value = false
+  }
+}
+
 const handleExportCurrentStrategicDepartment = async () => {
   // 2026-11-08（单层下发）：页签分流——学院页签导出的是「战略部 → 当前所选学院」的指标表，
   // 与职能部门页签的「按部门导出战略任务」不是同一份数据，故在此分流而非新增按钮。
@@ -1802,12 +1890,12 @@ const handleExportCurrentStrategicDepartment = async () => {
 }
 
 const openStrategicBatchExportDialog = () => {
-  // 2026-11-09（页签分流）：二级学院页签的「全部导出」导出的是该学院的指标数据，
-  // 与工具栏「导出」完全同口径（复用同一个 handleExportCollegeIndicators，数据源同为
-  // collegeTableIndicators），不再弹职能部门多选框——学院页签根本没有「职能部门维度」
-  // 可选。职能部门页签行为保持原样，一行都不改。
+  // 2026-11-19（用户拍板 · 学院页签「全部导出」改造）：学院页签的「全部导出」=
+  // **每个学院一张表**（含该学院与其所有归口部门的全部指标 + 行级「职能部门」列），
+  // 不再受「先选职能部门」两步门槛限制，也不再复用单条导出。
+  // 职能部门页签行为保持原样（部门多选框 → zip），一行都不改。
   if (activeTaskTabName.value === 'college') {
-    void handleExportCollegeIndicators()
+    void handleExportAllCollegeIndicators()
     return
   }
   // 2026-11-12（低⑧·A1 缺陷 E）：部门清单未加载（orgs 未就绪）时弹窗会变成
@@ -1962,6 +2050,79 @@ const openStrategicImportDialog = () => {
   strategicImportDialogVisible.value = true
 }
 
+/**
+ * 2026-11-19（用户拍板 · 学院页签「全部导出」改造）：学院页签「全部导出」的置灰口径。
+ *
+ * <p>改造后「全部导出」= 每个学院一张表（该学院与其**所有归口部门**的全部指标），
+ * 不再需要「先选职能部门」这道门槛——只要求已选学院（用户得知道导哪所学院的数据，
+ * 左侧列表没选时没有明确对象）。</p>
+ *
+ * <p>职能部门页签不走这里（维持 collegeTabTwoStepReady 原口径，逐字不变）。</p>
+ */
+const collegeAllExportDisabledReason = computed(() => {
+  if (!selectedCollege.value) {
+    return '请先在左侧选择学院'
+  }
+  return ''
+})
+
+/** 学院页签「全部导出」按钮是否可点 */
+const collegeAllExportReady = computed(() => collegeAllExportDisabledReason.value === '')
+
+/**
+ * 2026-11-19（学院全部导入）：「全部导入」入口的置灰口径。
+ *
+ * <p>与单条导入（{@link collegeTabImportDisabledReason}）**刻意不同**：
+ * 全部导入不要求先选职能部门——归口由文件内「职能部门」列解析后分组，
+ * 所以「先选职能部门」这道门槛对全部导入没有意义（用户正是要一次导入多个归口）。
+ * 全部导入只要求：① 已选学院；② 周期可用；③ 当前角色可写。</p>
+ *
+ * <p>不套用「当前归口线已下发 → 拦」的口径：全部导入里各组状态不同（有的已下发要跳过、
+ * 有的可下发），真正的判定在分组预览阶段由后端逐组给出。</p>
+ */
+const collegeAllImportDisabledReason = computed(() => {
+  if (!isStrategicDeptLogin.value) {
+    return '学院指标下发由战略发展部操作'
+  }
+  if (!selectedCollege.value) {
+    return '请先在左侧选择学院'
+  }
+  if (!collegeDispatchCycleId.value) {
+    return '当前周期信息不可用，暂不能导入'
+  }
+  if (isReadOnly.value) {
+    return '历史快照为只读状态'
+  }
+  if (!canWriteStrategicTask.value) {
+    return '当前角色仅可查看，不能导入指标'
+  }
+  return ''
+})
+
+/** 全部导入按钮是否可点（学院页签专用） */
+const collegeAllImportReady = computed(() => collegeAllImportDisabledReason.value === '')
+
+/**
+ * 2026-11-19（学院全部导入）：打开「全部导入」弹窗。
+ *
+ * <p>前置守卫与按钮置灰同口径（单一口径，防键盘/编程式调用绕过置灰）。</p>
+ */
+const openStrategicAllImportDialog = () => {
+  if (activeTaskTabName.value !== 'college') {
+    return
+  }
+  const reason = collegeAllImportDisabledReason.value
+  if (reason) {
+    ElMessage.warning(reason)
+    return
+  }
+  if (!collegeDispatchCollegeOrgId.value) {
+    ElMessage.warning('请先在左侧选择要下发的学院')
+    return
+  }
+  strategicAllImportDialogVisible.value = true
+}
+
 const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => {
   // 2026-11-12（中⑤·A1 缺陷 C）：导入 commit 成功后「计划状态」徽标不实时刷新（70s+
   // 轮询期间仍显「草稿」，手动刷新页面才变「已下发」）。两条刷新路径的差异：
@@ -1986,6 +2147,20 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
     await refreshApprovalWorkflowSummaries()
     await preloadApprovalWorkflowDetail()
   }
+}
+
+/**
+ * 2026-11-19（学院全部导入）：全部导入提交后的刷新。
+ *
+ * <p>与单条导入的刷新链一致：失效 plan.list + workflow 缓存 → 重拉当前视图。
+ * 全部导入可能同时影响**多个归口**的线，故重拉必须带 force（不能命中 SWR 快照）。</p>
+ */
+const handleStrategicAllImportCommitted = async () => {
+  invalidateQueries(['plan.list'])
+  invalidateQueries(['workflow.detail', 'workflow.todo'])
+  await refreshCurrentDepartmentView({ showLoading: true, force: true, reloadIndicators: true })
+  resetApprovalWorkflowStateCache()
+  await refreshApprovalWorkflowSummaries()
 }
 </script>
 
@@ -2090,13 +2265,42 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
       <div class="excel-header">
         <h2 class="excel-title">战略任务指标总表</h2>
         <div class="excel-header-status">
+          <!-- 2026-11-19（学院全部导入 · 规划书第二节）：学院页签工具栏新增「全部导入」，
+               位于「全部导出」左侧（用户拍板的位置）。仅学院页签显示——
+               职能部门页签不需要（职能部门指标表是「战略部 → 职能部门」一条链，
+               没有多归口拆分语义）。
+               全部导入不要求先选职能部门（归口由文件内「职能部门」列解析），
+               故置灰口径与「全部导出」的两步门槛**不同**：只需选中学院。 -->
+          <el-button
+            v-if="activeTaskTabName === 'college'"
+            type="primary"
+            size="small"
+            :icon="Upload"
+            :disabled="!collegeAllImportReady"
+            :title="collegeAllImportReady ? '' : collegeAllImportDisabledReason"
+            @click="openStrategicAllImportDialog"
+          >
+            全部导入
+          </el-button>
+          <!-- 2026-11-19（用户拍板 · 学院页签「全部导出」改造）：学院页签的「全部导出」
+               不再要求先选职能部门（导出的是每个学院与其所有归口部门的全部指标），
+               故置灰口径与「导出」按钮的两步门槛**不同**：只要求已选学院。
+               职能部门页签维持原有门槛与行为（逐字不变）。 -->
           <el-button
             type="primary"
             plain
             size="small"
             :loading="strategicExporting"
-            :disabled="!collegeTabTwoStepReady"
-            :title="collegeTabTwoStepReady ? '' : collegeTabTwoStepGuideTip"
+            :disabled="activeTaskTabName === 'college' ? !collegeAllExportReady : !collegeTabTwoStepReady"
+            :title="
+              activeTaskTabName === 'college'
+                ? collegeAllExportReady
+                  ? ''
+                  : collegeAllExportDisabledReason
+                : collegeTabTwoStepReady
+                  ? ''
+                  : collegeTabTwoStepGuideTip
+            "
             @click="openStrategicBatchExportDialog"
           >
             <el-icon><Download /></el-icon>
@@ -3931,6 +4135,25 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
         activeTaskTabName === 'college' ? collegeImportParentIndicators : undefined
       "
       @committed="handleStrategicImportCommitted"
+    />
+
+    <!-- 2026-11-19（学院全部导入）：**独立实例**的「全部导入」弹窗（mode=all）。
+         与上面的单条导入弹窗 props 口径不同，故不共用实例：
+         · 不传 functional-org-id（归口由文件内「职能部门」列解析 → 自动拆批）；
+         · parent-indicators 传该学院**全部归口**的核心指标全集
+           （collegeAllImportParentIndicators，带 functionalDeptName → 「职能部门」列预填）；
+         · 提交回调走 all-committed（逐组结果），与单条导入的 committed 互不影响。 -->
+    <BusinessImportDialog
+      v-model:visible="strategicAllImportDialogVisible"
+      mode="all"
+      type="distribution"
+      :target-org-id="collegeDispatchCollegeOrgId"
+      :target-org-name="selectedCollege"
+      :source-org-id="strategicDeptOrgId"
+      :source-org-name="strategicDeptName"
+      :cycle-id="collegeDispatchCycleId"
+      :parent-indicators="collegeAllImportParentIndicators"
+      @all-committed="handleStrategicAllImportCommitted"
     />
 
     <el-dialog

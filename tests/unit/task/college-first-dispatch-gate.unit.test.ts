@@ -415,6 +415,14 @@ const switchToCollegeTab = async (wrapper: VueWrapper) => {
 const findButtonByText = (wrapper: VueWrapper, text: string) =>
   wrapper.findAll('button').find(button => button.text().includes(text))
 
+/**
+ * 2026-11-19（学院全部导入）：学院页签新增「全部导入」按钮，其文案包含「导入」二字
+ * —— 上面这个 findButtonByText('导入') 会先命中「全部导入」（工具栏在导入按钮之前），
+ * 导致单条导入按钮的置灰断言打到错误的按钮上。故这里按**精确文案**再查一次。
+ */
+const findButtonByExactText = (wrapper: VueWrapper, text: string) =>
+  wrapper.findAll('button').find(button => button.text().trim() === text)
+
 beforeEach(() => {
   elMessageWarning.mockClear()
   elMessageInfo.mockClear()
@@ -434,7 +442,7 @@ describe('D1 组件接线 · 尚无计划组合（首次下发死锁解锁）', 
     })
     await switchToCollegeTab(wrapper)
 
-    const importBtn = findButtonByText(wrapper, '导入')
+    const importBtn = findButtonByExactText(wrapper, '导入')
     expect(importBtn).toBeDefined()
     expect(importBtn!.attributes('disabled')).toBeUndefined()
     expect(importBtn!.attributes('title')).toBe('')
@@ -507,7 +515,7 @@ describe('D1 组件接线 · DRAFT 存量计划组合（B4 口径保留 + 发起
     })
     await switchToCollegeTab(wrapper)
 
-    const importBtn = findButtonByText(wrapper, '导入')
+    const importBtn = findButtonByExactText(wrapper, '导入')
     expect(importBtn).toBeDefined()
     expect(importBtn!.attributes('disabled')).toBeDefined()
     expect(importBtn!.attributes('title')).toBe(
@@ -520,7 +528,7 @@ describe('D1 组件接线 · DRAFT 存量计划组合（B4 口径保留 + 发起
     const wrapper = mountView({ ...draftPlanContext, collegeTableIndicators: ref([]) })
     await switchToCollegeTab(wrapper)
 
-    const importBtn = findButtonByText(wrapper, '导入')
+    const importBtn = findButtonByExactText(wrapper, '导入')
     expect(importBtn).toBeDefined()
     expect(importBtn!.attributes('disabled')).toBeUndefined()
     expect(importBtn!.attributes('title')).toBe('')
@@ -568,7 +576,7 @@ describe('2026-11-17 组件接线 · DISTRIBUTED 组合（线已下发 → 导�
     const wrapper = mountView(distributedContext)
     await switchToCollegeTab(wrapper)
 
-    const importBtn = findButtonByText(wrapper, '导入')
+    const importBtn = findButtonByExactText(wrapper, '导入')
     expect(importBtn).toBeDefined()
     expect(importBtn!.attributes('disabled')).toBeDefined()
     expect(importBtn!.attributes('title')).toBe(
@@ -601,7 +609,7 @@ describe('D1 组件接线 · 计划在审/审批中（互斥拦导入）', () =>
     })
     await switchToCollegeTab(wrapper)
 
-    const importBtn = findButtonByText(wrapper, '导入')
+    const importBtn = findButtonByExactText(wrapper, '导入')
     expect(importBtn).toBeDefined()
     expect(importBtn!.attributes('disabled')).toBeDefined()
     expect(importBtn!.attributes('title')).toBe(
@@ -620,7 +628,7 @@ describe('D3 组件接线 · 学院线级异动在审 → 导入置灰（2026-11
     })
     await switchToCollegeTab(wrapper)
 
-    const importBtn = findButtonByText(wrapper, '导入')
+    const importBtn = findButtonByExactText(wrapper, '导入')
     expect(importBtn).toBeDefined()
     expect(importBtn!.attributes('disabled')).toBeDefined()
     expect(importBtn!.attributes('title')).toBe(
@@ -639,7 +647,7 @@ describe('D3 组件接线 · 学院线级异动在审 → 导入置灰（2026-11
     })
     await switchToCollegeTab(wrapper)
 
-    const importBtn = findButtonByText(wrapper, '导入')
+    const importBtn = findButtonByExactText(wrapper, '导入')
     expect(importBtn).toBeDefined()
     expect(importBtn!.attributes('disabled')).toBeUndefined()
     wrapper.unmount()

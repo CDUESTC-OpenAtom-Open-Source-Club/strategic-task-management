@@ -615,6 +615,14 @@ const switchToCollegeTab = async (wrapper: VueWrapper) => {
 const findButtonByText = (wrapper: VueWrapper, text: string) =>
   wrapper.findAll('button').find(button => button.text().includes(text))
 
+/**
+ * 2026-11-19（学院全部导入）：学院页签新增「全部导入」按钮，其文案包含「导入」二字
+ * —— 上面这个 findButtonByText('导入') 会先命中「全部导入」（工具栏在导入按钮之前），
+ * 导致单条导入按钮的置灰断言打到错误的按钮上。故这里按**精确文案**再查一次。
+ */
+const findButtonByExactText = (wrapper: VueWrapper, text: string) =>
+  wrapper.findAll('button').find(button => button.text().trim() === text)
+
 /** 学院页签两选齐的基础 mock（战略部登录、可写、已选学院与职能部门） */
 const collegeTabReady = (extra: Record<string, unknown> = {}) => ({
   collegeFillStatusScope: ref(true),
@@ -812,7 +820,7 @@ describe('学院页签按钮分流与互斥守卫（2026-11-11 组件接线）',
     )
     await switchToCollegeTab(wrapper)
 
-    const importBtn = findButtonByText(wrapper, '导入')
+    const importBtn = findButtonByExactText(wrapper, '导入')
     expect(importBtn).toBeDefined()
     expect(importBtn!.attributes('disabled')).toBeDefined()
     expect(importBtn!.attributes('title')).toBe(
@@ -824,7 +832,7 @@ describe('学院页签按钮分流与互斥守卫（2026-11-11 组件接线）',
     const wrapper2 = mountView(collegeTabReady({}))
     await switchToCollegeTab(wrapper2)
 
-    const importBtn2 = findButtonByText(wrapper2, '导入')
+    const importBtn2 = findButtonByExactText(wrapper2, '导入')
     expect(importBtn2).toBeDefined()
     expect(importBtn2!.attributes('disabled')).toBeUndefined()
     expect(importBtn2!.attributes('title')).toBe('')
@@ -839,7 +847,7 @@ describe('学院页签按钮分流与互斥守卫（2026-11-11 组件接线）',
       isMutationApprovalInFlight: ref(true)
     })
 
-    const importBtn = findButtonByText(wrapper, '导入')
+    const importBtn = findButtonByExactText(wrapper, '导入')
     expect(importBtn).toBeDefined()
     expect(importBtn!.attributes('disabled')).toBeUndefined()
     wrapper.unmount()

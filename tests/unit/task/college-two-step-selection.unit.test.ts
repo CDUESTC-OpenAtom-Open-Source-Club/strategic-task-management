@@ -197,6 +197,14 @@ const switchToCollegeTab = async (wrapper: VueWrapper) => {
 const findButtonByText = (wrapper: VueWrapper, text: string) =>
   wrapper.findAll('button').find(button => button.text().includes(text))
 
+/**
+ * 2026-11-19（学院全部导入）：学院页签新增「全部导入」按钮，其文案包含「导入」二字
+ * —— 上面这个 findButtonByText('导入') 会先命中「全部导入」（工具栏在导入按钮之前），
+ * 导致单条导入按钮的置灰断言打到错误的按钮上。故这里按**精确文案**再查一次。
+ */
+const findButtonByExactText = (wrapper: VueWrapper, text: string) =>
+  wrapper.findAll('button').find(button => button.text().trim() === text)
+
 describe('学院页签两步显式选择（2026-11-09 用户拍板）', () => {
   it('职能部门页签（默认）行为零变化：工具栏可用、状态签照常显示', () => {
     const wrapper = mountView({
@@ -229,7 +237,7 @@ describe('学院页签两步显式选择（2026-11-09 用户拍板）', () => {
 
     expect(findButtonByText(wrapper, '全部导出')?.attributes('disabled')).toBeDefined()
     expect(findButtonByText(wrapper, '导出')?.attributes('disabled')).toBeDefined()
-    expect(findButtonByText(wrapper, '导入')?.attributes('disabled')).toBeDefined()
+    expect(findButtonByExactText(wrapper, '导入')?.attributes('disabled')).toBeDefined()
     expect(findButtonByText(wrapper, '新增行')?.attributes('disabled')).toBeDefined()
     wrapper.unmount()
   })
@@ -254,8 +262,11 @@ describe('学院页签两步显式选择（2026-11-09 用户拍板）', () => {
     expect(distribute).toBeDefined()
     expect(distribute?.attributes('disabled')).toBeDefined()
 
-    expect(findButtonByText(wrapper, '全部导出')?.attributes('disabled')).toBeDefined()
-    expect(findButtonByText(wrapper, '导入')?.attributes('disabled')).toBeDefined()
+    // 2026-11-19（用户拍板 · 学院页签「全部导出」改造）：「全部导出」= 每个学院一张表
+    // （该学院与其所有归口部门的全部指标）→ **不再受「先选职能部门」两步门槛限制**，
+    // 只要已选学院就可点。其余按钮（发起审批 / 单条导入）仍受两步门槛约束。
+    expect(findButtonByText(wrapper, '全部导出')?.attributes('disabled')).toBeUndefined()
+    expect(findButtonByExactText(wrapper, '导入')?.attributes('disabled')).toBeDefined()
     expect(wrapper.text()).not.toContain('计划状态')
     expect(wrapper.text()).not.toContain('基础性权重合计')
     wrapper.unmount()
@@ -280,7 +291,7 @@ describe('学院页签两步显式选择（2026-11-09 用户拍板）', () => {
 
     expect(findButtonByText(wrapper, '全部导出')?.attributes('disabled')).toBeUndefined()
     expect(findButtonByText(wrapper, '导出')?.attributes('disabled')).toBeUndefined()
-    expect(findButtonByText(wrapper, '导入')?.attributes('disabled')).toBeUndefined()
+    expect(findButtonByExactText(wrapper, '导入')?.attributes('disabled')).toBeUndefined()
 
     // 两选齐后「发起审批」不再有置灰原因（tooltip 为空、按钮可点）
     const distribute = wrapper
