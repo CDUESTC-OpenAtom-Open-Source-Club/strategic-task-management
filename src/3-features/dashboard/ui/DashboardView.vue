@@ -315,7 +315,10 @@ function openApprovalCenterFromDashboard() {
               总体完成率
               <span class="highlight-success">{{ collegeSupervision.completionRate }}%</span>。
             </template>
-            <template v-else> 本月尚未审定，完成后自动更新。 </template>
+            <!-- 2026-11-18 措辞微调：原「本月尚未审定…」与紧随的「本月 N 个学院未填报…」
+                 督办句连排时两个「本月」开头重复；改「当月简报」起句避免重复，
+                 语义不变（选中月无 APPROVED 鉴定内容时简报不展开，审定后自动更新） -->
+            <template v-else> 当月简报尚未审定，完成后自动更新。 </template>
             <!-- 2026-11-17 新口径：未填报学院灰柱督办（可见谁没报，审核/上报后自动消除） -->
             <template v-if="(collegeSupervision.unreportedColleges ?? 0) > 0">
               本月
