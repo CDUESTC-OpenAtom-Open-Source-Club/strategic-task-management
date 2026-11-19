@@ -179,7 +179,11 @@ vi.mock('@/features/indicator/model/useIndicatorAppraisal', () => ({
     canAppraise: () => false,
     getLockHint: () => '',
     save: async () => null,
-    openAppraisalGate: async () => {}
+    unlockAppraisal: async () => false,
+    commitAppraisalLevel: async (indicatorId: string | number, level: string) => ({
+      ok: true,
+      level
+    })
   })
 }))
 
