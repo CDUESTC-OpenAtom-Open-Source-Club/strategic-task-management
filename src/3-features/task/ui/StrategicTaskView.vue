@@ -1664,8 +1664,18 @@ const buildStrategicExportAttachmentGroups = (
  * 2026-11-08（单层下发）：二级学院页签的导出 =「战略发展部 → 当前所选学院」的指标表。
  *
  * <p>数据源直接用页面学院表格同一份 collegeTableIndicators，保证「看到什么就导出什么」。
- * 列按新口径给出：指标名称 / 指标类型 / 任务类型 / 权重 / 状态 —— 单层结构下学院指标
- * 没有父级核心指标，因此不再有「核心指标」列。</p>
+ * 列按新口径给出：指标名称 / 指标类型 / 权重 / 状态 —— 单层结构下学院指标
+ * 没有父级核心指标，因此不再有「核心指标」列；2026-11-18 用户拍板删「任务类型」列
+ * （填报人视角整列缺省『基础性』，误导），见下方删列说明。</p>
+ */
+/**
+ * 2026-11-18（用户拍板·学院删列第 2 批）：学院页签导出删「任务类型」列。
+ *
+ * 背景：后端库表已移除 type2，学院链行的任务类型映射在填报人视角恒缺省
+ * （strategic.ts mapper 兜底『基础性』），导出的「任务类型」列整列显示缺省值，
+ * 对学院侧读者是误导信息；学院页签页面表格本就无此列，导出与表格同口径后
+ * 该列在全学院视角消失。职能部门页签导出（buildStrategicExportColumns）的
+ * 「任务类型」列不动——职能/战略部视角零变化（视角不变铁律）。
  */
 const handleExportCollegeIndicators = async () => {
   const college = selectedCollege.value
@@ -1698,12 +1708,9 @@ const handleExportCollegeIndicators = async () => {
             align: 'center',
             getValue: row => String(row.type1 || '定量')
           },
-          {
-            header: '任务类型',
-            width: 12,
-            align: 'center',
-            getValue: row => getCategoryText(getIndicatorCategoryLabel(row))
-          },
+          // 2026-11-18（用户拍板·学院删列第 2 批）：「任务类型」列删除——
+          // 填报人视角该列整列缺省『基础性』（后端 type2 已移除、映射恒缺省），
+          // 导出不再输出误导列；学院页签页面表格本就无此列，界面无需同步改动。
           { header: '权重', width: 10, align: 'center', getValue: row => String(row.weight ?? '') },
           // 2026-11-17 用户反馈第 2.2 条：学院页签的导出同样缺「填报的内容」，
           // 与页面表格对齐补 自评进度 / 审核进度 / 进度说明 三列。
