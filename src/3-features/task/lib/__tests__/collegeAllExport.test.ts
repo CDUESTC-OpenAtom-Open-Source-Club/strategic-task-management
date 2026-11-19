@@ -156,6 +156,7 @@ describe('collegeAllExport · 文件组织', () => {
 
 describe('StrategicTaskView · 学院页签「全部导出」改造（源码契约锁）', () => {
   const viewSource = readSource('src/3-features/task/ui/StrategicTaskView.vue')
+  const modelSource = readSource('src/3-features/task/model/useStrategicTaskView.ts')
 
   it('学院页签「全部导出」走新的 handleExportAllCollegeIndicators（不再复用单条导出）', () => {
     const handlerStart = viewSource.indexOf('const openStrategicBatchExportDialog')
@@ -198,5 +199,12 @@ describe('StrategicTaskView · 学院页签「全部导出」改造（源码契�
   it('导出数据源 = 该学院跨全部归口线的行集（模型侧 collegeAllCollegesExportGroups）', () => {
     expect(viewSource).toContain('collegeAllCollegesExportGroups')
     expect(viewSource).toContain('resolveCollegeRowFunctionalDeptName')
+  })
+
+  it('⚠️ 只收「真学院」：按学院清单白名单过滤（核心指标的 target 是职能部门，不得当成学院）', () => {
+    const start = modelSource.indexOf('const collegeAllCollegesExportGroups = computed')
+    const block = modelSource.slice(start, start + 2000)
+    expect(block).toContain('collegeNames.has(target)')
+    expect(block).toContain('collegeDepartments.value.map')
   })
 })

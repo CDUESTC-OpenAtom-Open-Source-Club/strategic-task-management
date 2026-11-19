@@ -313,7 +313,7 @@ const footerActionTip = computed(() => {
       return '先点“解析预览”，按归口部门分组后通过才能确认导入。'
     }
     if (executionPlan.value.blocking) {
-      return '存在错误组或无法识别归属部门的行，暂不能确认导入。'
+      return '存在错误组或无法归组的行，暂不能确认导入。'
     }
     return '分组预览通过，可以确认导入。'
   }
@@ -566,7 +566,7 @@ const confirmAllImportExecution = async (): Promise<boolean> => {
     ...(skipLines.length ? skipLines : ['· 无']),
     ...(errorLines.length ? ['', `错误 ${plan.errorGroups.length} 组：`, ...errorLines] : []),
     ...(plan.unassignedRowsCount > 0
-      ? ['', `另有 ${plan.unassignedRowsCount} 行无法识别归属部门（已阻断提交）。`]
+      ? ['', `另有 ${plan.unassignedRowsCount} 行无法归组（已阻断提交）。`]
       : []),
     '',
     autoSubmitAndApprove.value
@@ -947,7 +947,7 @@ watch(
               class="preview-stat"
               :class="{ danger: executionPlan.unassignedRowsCount > 0 }"
             >
-              <span>无法识别行</span>
+              <span>无法归组行</span>
               <strong>{{ executionPlan.unassignedRowsCount }}</strong>
             </div>
           </div>
@@ -957,7 +957,7 @@ watch(
             type="error"
             :closable="false"
             show-icon
-            title="存在错误组或无法识别归属部门的行，不能确认导入"
+            title="存在错误组或无法归组的行，不能确认导入"
           />
           <el-alert
             v-else
@@ -974,7 +974,7 @@ watch(
             <ul class="execution-plan-list">
               <li v-for="group in executionPlan.dispatchGroups" :key="`d-${group.title}`">
                 <el-tag type="success" size="small">将下发</el-tag>
-                {{ group.title }}（{{ group.rowsCount }} 行，基础性权重合计
+                {{ group.title }}（{{ group.rowsCount }} 行，本组基础性权重合计
                 {{ group.basicWeightTotal }}，线状态：{{ group.lineStatusLabel }}）
               </li>
               <li v-for="group in executionPlan.skipGroups" :key="`s-${group.title}`">
@@ -1014,7 +1014,7 @@ watch(
                 </el-tag>
                 <el-tag v-else type="danger" size="small">错误组</el-tag>
                 <span class="group-card-meta">
-                  {{ group.rowsCount }} 行 · 基础性权重合计 {{ group.basicWeightTotal }} · 线状态
+                  {{ group.rowsCount }} 行 · 本组基础性权重合计 {{ group.basicWeightTotal }} · 线状态
                   {{ group.lineStatusLabel }}
                 </span>
               </div>
@@ -1070,10 +1070,12 @@ watch(
             </div>
           </div>
 
-          <!-- 无法识别归属部门的行（阻断整单） -->
+          <!-- 无法归组的行（独立错误区，阻断整单）：
+               后端语义 = 「职能部门与核心指标归属不符」+「无法识别归属部门」两类**无法归组**的行，
+               不是"未分组"的普通行 → 红色独立区，绝不混进 groups。 -->
           <div v-if="executionPlan.unassignedRowsCount > 0" class="group-card group-card--error">
             <div class="group-card-header">
-              <span class="group-card-title">无法识别归属部门</span>
+              <span class="group-card-title">无法归组的行</span>
               <el-tag type="danger" size="small">错误</el-tag>
               <span class="group-card-meta">{{ executionPlan.unassignedRowsCount }} 行</span>
             </div>
@@ -1082,7 +1084,7 @@ watch(
               type="error"
               :closable="false"
               show-icon
-              title="这些行无法识别归属部门，请检查「职能部门」列或核心指标名称后重新上传"
+              title="这些行无法归组（「职能部门」列与核心指标归属不符，或无法识别归属部门），请修正后重新上传"
             />
             <el-table :data="allPreviewResult?.unassignedRows ?? []" max-height="200" class="preview-table">
               <el-table-column prop="rowNo" label="序号" width="70" />

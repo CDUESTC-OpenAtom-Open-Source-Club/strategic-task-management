@@ -6517,8 +6517,16 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
    * <p>与 {@link collegeAllLineIndicators} 同口径（不按归口过滤），只是不收口到单学院。
    * 学院名取 target 字段（targetOrgName / targetDepartment / responsibleDept），
    * 与 {@link collegeDepartmentsScoped} 的学院识别口径一致。</p>
+   *
+   * <p>⚠️ **只收「真学院」**：核心指标的 target 是职能部门（如「教务处」），
+   * 若不按学院清单过滤，导出会把每个职能部门也导成一张「学院表」（实测 26 个包内目录
+   * 里混了 19 个职能部门）。这里用学院清单（orgStore.colleges，归一化名集合）收口。</p>
    */
   const collegeAllCollegesExportGroups = computed(() => {
+    // 学院白名单（归一化名）——只有清单里的 target 才算「学院」
+    const collegeNames = new Set(
+      collegeDepartments.value.map(college => normalizeDepartmentName(college)).filter(Boolean)
+    )
     const groups = new Map<string, StrategicIndicator[]>()
     const push = (college: string, row: StrategicIndicator) => {
       if (!college) {
@@ -6546,7 +6554,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
           candidate.targetOrgName ?? candidate.targetDepartment ?? candidate.responsibleDept ?? ''
         )
       )
-      if (!target) {
+      // 只收真学院（职能部门 target 的核心指标不进学院表）
+      if (!target || !collegeNames.has(target)) {
         continue
       }
       push(target, item)

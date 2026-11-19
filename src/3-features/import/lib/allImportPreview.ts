@@ -67,10 +67,13 @@ export const formatImportLineStatus = (status: ImportGroupLineStatus | null | un
 /**
  * 分组归类：先看组级错误，再看跳过原因，最后才是常规下发。
  *
- * <p>口径（规划书第二节）：
+ * <p>口径（规划书第二节 + 后端 2026-11-19 实证）：
  * <ul>
- *   <li>错误组：groupError 非空 → 红色，阻断整单提交；</li>
- *   <li>跳过组：skipReason 非空 → 黄色「已下发 · 本次将跳过」，不影响其他组；</li>
+ *   <li>错误组：groupError 非空 → 红色，阻断整单提交。后端在三种情形置 groupError：
+ *       ① 组内有行级错误；② 该组基础性权重合计 ≠ 100；③ 该线在审（PENDING/IN_REVIEW）；
+ *       </li>
+ *   <li>跳过组：skipReason 非空 → 黄色「已下发 · 本次将跳过」，不影响其他组
+ *       （后端语义：线已 DISTRIBUTED）；</li>
  *   <li>将下发组：其余（willDispatch=true）→ 常规展示。</li>
  * </ul>
  * 组级错误优先于跳过原因——一条线若同时「已下发」且「组内权重合计≠100」，
@@ -170,7 +173,7 @@ export const formatImportExecutionPlanSummary = (plan: ImportExecutionPlan): str
     parts.push(`错误 ${plan.errorGroups.length} 组`)
   }
   if (plan.unassignedRowsCount > 0) {
-    parts.push(`无法识别归属部门 ${plan.unassignedRowsCount} 行`)
+    parts.push(`无法归组 ${plan.unassignedRowsCount} 行`)
   }
   return parts.join('；')
 }
