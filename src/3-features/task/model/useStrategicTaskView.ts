@@ -73,13 +73,16 @@ import {
 import {
   hasCollegeLineMutationApprovalInFlight,
   hasCollegeMutationApprovalInFlight,
+  isCollegeTabBasicWeightRow,
   isReportApprovalStatusInFlight,
   mergeReturnedMutationChains,
   resolveCollegeReportApprovalStatusMeta,
   resolveCollegeReturnedChainOwnerOrgId,
   resolveMutationGateWeightTotal,
   resolveViewScopedMutationPendingApprovals,
-  type CollegeMutationApprovalEntryLike
+  sumCollegeTabBasicWeight,
+  type CollegeMutationApprovalEntryLike,
+  type CollegeTabWeightRowLike
 } from '@/features/task/lib/collegeTabDistribute'
 import {
   resolveCollegeReportPlanScope,
@@ -406,7 +409,8 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       const parent = normalizedIndicators.value.find(
         candidate => Number(candidate.id ?? NaN) === parentId
       ) as
-        { responsibleDept?: string; targetDepartment?: string; targetOrgName?: string } | undefined
+        | { responsibleDept?: string; targetDepartment?: string; targetOrgName?: string }
+        | undefined
       parentTarget = normalizeDepartmentName(
         String(parent?.responsibleDept ?? parent?.targetDepartment ?? parent?.targetOrgName ?? '')
       )
@@ -630,6 +634,19 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   }
 
   const getIndicatorMappedTaskType = (indicator: StrategicIndicator): string => {
+    // 2026-11-18（学院页签权重合计口径修复）：优先读行级后端富化 taskType。
+    // /indicators 列表逐行携带指标自身任务的 task_type（服务端直查 sys_task，无
+    // /tasks 列表的 org 权限过滤），与下方两个任务映射读的是同一个库字段——
+    // 职能部门/战略部登录时映射本就命中（值相同，零变化）；学院填报人登录时
+    // /tasks/by-cycle、/tasks/by-plan 被 filterTasksByPermission 过滤（学院链任务
+    // createdByOrg=战略部 ≠ 填报人 org），映射对学院行恒空，旧逻辑落到 type2 兜底
+    // （后端库表已移除 type2，前端缺省『基础性』），发展性行被误判为基础性。
+    const rowTaskType = String(
+      (indicator as StrategicIndicator & { taskType?: string }).taskType || ''
+    ).trim()
+    if (rowTaskType) {
+      return rowTaskType
+    }
     const indicatorTaskId = getIndicatorTaskId(indicator)
     if (!indicatorTaskId) {
       return ''
@@ -1537,12 +1554,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       options.collegeScope === true
         ? Number(collegeScope?.orgId ?? NaN)
         : Number(currentDepartmentOrgId.value ?? NaN)
-    if (!(
-      Number.isFinite(planId) &&
-      planId > 0 &&
-      Number.isFinite(reportOrgId) &&
-      reportOrgId > 0
-    )) {
+    if (
+      !(Number.isFinite(planId) && planId > 0 && Number.isFinite(reportOrgId) && reportOrgId > 0)
+    ) {
       currentPlanReportSummary.value = null
       latestPlanReportSummary.value = null
       // 2026-11-11（D-02）：collegeScope 查询目标解析失败（未选学院 / 子计划未匹配）
@@ -2423,7 +2437,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         return
       }
       retainedRouteApprovalEntityType.value = routeApprovalEntityType.value as
-        'PLAN' | 'PLAN_REPORT' | undefined
+        | 'PLAN'
+        | 'PLAN_REPORT'
+        | undefined
       retainedRouteApprovalEntityId.value = routeApprovalEntityId.value
       try {
         await syncSelectedDepartmentFromRoute()
@@ -3984,6 +4000,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
       isQualitative: childIndicatorType === '定性',
       type1: childIndicatorType,
       type2: getIndicatorCategoryLabel(parentRow as StrategicIndicator),
+      // 2026-11-18（权重合计口径修复）：草稿行继承父级行级 taskType——父级真实行带
+      // 后端富化的任务类型，草稿行并入 collegeTableIndicators 后权重合计按同一
+      // 行级口径判定（学院填报人视角任务映射恒空，无此字段会落到 type2 兜底）。
+      taskType: String(
+        (parentRow as (StrategicIndicator & { taskType?: string }) | undefined)?.taskType || ''
+      ).trim(),
       progress: 0,
       createTime: new Date().toLocaleDateString('zh-CN'),
       weight,
@@ -4135,6 +4157,12 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
   interface PendingCreateDraft extends StrategicIndicator {
     tempId: string
     taskId: number
+    /**
+     * 2026-11-18（权重合计口径修复）：继承父级行的**行级任务类型**（BASIC/DEVELOPMENT，
+     * /indicators 列表后端富化）。草稿行没有自己的后端响应可富化，学院填报人视角任务
+     * 映射又被权限过滤为空，不继承会把权重合计的行级判定落到 type2 兜底。
+     */
+    taskType?: string
     parentIndicatorId: number
     ownerOrgId: number
     targetOrgId: number
@@ -6405,9 +6433,18 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     // 原实现额外叠加 isIndicatorInCollegePlanScope（只看当前计划），会出现
     // 「表格显示 1 条 100、合计却算另一个计划的 0」的割裂；学院页签现在由部门下拉决定行集，
     // 合计必须跟着同一个行集走，用户看到的数字才对得上。
-    return collegeTableIndicators.value
-      .filter(row => isBasicIndicatorForCurrentRules(row as StrategicIndicator))
-      .reduce((sum, row) => sum + Number(row.weight || 0), 0)
+    // 2026-11-18（权重合计口径修复）：行级基础性判定改走 lib 纯函数
+    // isCollegeTabBasicWeightRow（行级 taskType → 任务映射 → type2 三级优先）——
+    // 旧链 isBasicIndicatorForCurrentRules 对学院行判不出任务类别（任务列表被
+    // 后端 org 权限过滤，映射恒空，type2 缺省『基础性』），发展性子指标被误计入，
+    // 学院页签头部实测 200/100。与后端 sumCollegeBasicWeight（只算 BASIC 任务）对齐。
+    return sumCollegeTabBasicWeight(
+      collegeTableIndicators.value as CollegeTabWeightRowLike[],
+      row =>
+        isCollegeTabBasicWeightRow(row, mapped =>
+          getIndicatorMappedTaskType(mapped as StrategicIndicator)
+        )
+    )
   })
 
   // PR#83 头部「审批状态」与二级学院页签「上报状态」列一致性：
@@ -7129,7 +7166,10 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         continue
       }
       const functionalOrgId = Number(raw)
-      map.set(planId, Number.isFinite(functionalOrgId) && functionalOrgId > 0 ? functionalOrgId : null)
+      map.set(
+        planId,
+        Number.isFinite(functionalOrgId) && functionalOrgId > 0 ? functionalOrgId : null
+      )
     }
     return map
   })

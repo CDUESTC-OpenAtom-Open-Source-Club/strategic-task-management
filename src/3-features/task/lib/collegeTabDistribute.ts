@@ -198,6 +198,64 @@ export interface MutationGateWeightTotalInput {
 export const resolveMutationGateWeightTotal = (input: MutationGateWeightTotalInput): number =>
   input.collegeScopeActive ? input.collegeBasicWeightTotal : input.departmentTotalWeight
 
+/** 学院页签「基础性权重合计」行级判定的最小行形状（与 StrategicIndicator 运行时字段对齐） */
+export interface CollegeTabWeightRowLike {
+  /** 行级后端富化任务类型（/indicators 逐行 taskType：BASIC / DEVELOPMENT） */
+  taskType?: string | null
+  /** 行展示标签（后端库表已移除，前端映射缺省『基础性』——仅末位兜底） */
+  type2?: string | null
+  /** 权重（百分数） */
+  weight?: number | string | null
+  [key: string]: unknown
+}
+
+/**
+ * 学院页签「基础性权重合计」的行级基础性判定（2026-11-18 口径修复）。
+ *
+ * <p>后端口径（BasicTaskWeightValidationService.sumCollegeBasicWeight）：本计划
+ * BASIC 任务的指标权重合计，发展性（DEVELOPMENT）任务的指标不计入。此前前端对
+ * 学院行判不出任务类别：学院填报人登录时 /tasks 列表被后端按 org 权限过滤
+ * （学院链任务 createdByOrg=战略部），任务映射恒空，判定落到 type2 兜底——
+ * 而后端库表已移除 type2，前端映射缺省『基础性』，发展性子指标被误计入合计
+ * （实测 200/100）。</p>
+ *
+ * <p>判定优先级（与后端 sys_task.task_type 对齐）：</p>
+ * <ol>
+ *   <li>行级后端富化 taskType（/indicators 列表逐行携带指标自身任务的 task_type，
+ *       服务端直查 sys_task，无任务列表的 org 权限过滤）——学院链行的权威来源；</li>
+ *   <li>任务类型映射解析值（resolveMappedTaskType：currentPlanTaskTypeMap /
+ *       backendTaskTypeMap，职能部门/战略部登录命中；判空交给调用方，空串回退）；</li>
+ *   <li>type2 展示标签（mock/存量无任务数据兜底，保持既有行为）。</li>
+ * </ol>
+ */
+export const isCollegeTabBasicWeightRow = (
+  row: CollegeTabWeightRowLike,
+  resolveMappedTaskType: (row: CollegeTabWeightRowLike) => string
+): boolean => {
+  const rowTaskType = String(row.taskType ?? '')
+    .trim()
+    .toUpperCase()
+  if (rowTaskType) {
+    return rowTaskType === 'BASIC'
+  }
+  const mappedTaskType = String(resolveMappedTaskType(row) ?? '')
+    .trim()
+    .toUpperCase()
+  if (mappedTaskType) {
+    return mappedTaskType === 'BASIC'
+  }
+  return String(row.type2 ?? '').trim() === '基础性'
+}
+
+/**
+ * 学院页签「基础性权重合计」：行集内基础性行的权重之和（分母固定 100，由调用方展示）。
+ * 与「发起异动」门禁（resolveMutationGateWeightTotal 学院分支）同一数据源，纯函数便于单测。
+ */
+export const sumCollegeTabBasicWeight = (
+  rows: CollegeTabWeightRowLike[],
+  isBasicRow: (row: CollegeTabWeightRowLike) => boolean
+): number => rows.filter(isBasicRow).reduce((sum, row) => sum + Number(row.weight || 0), 0)
+
 /** 「退回待重报」异动链条目的最小结构（与 mutationApi.ReturnedMutationChainItem 对齐） */
 export interface ReturnedMutationChainLike {
   instance_id: number | string
