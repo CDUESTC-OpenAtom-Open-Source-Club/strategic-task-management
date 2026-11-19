@@ -4163,7 +4163,7 @@ export function useIndicatorDistributeView(props: IndicatorDistributeViewProps) 
 
   /**
    * 「发起下发审批」点击门禁（2026-10-31 用户定案「灰而可点」，同
-   * useIndicatorAppraisal.openAppraisalGate 范式：点击 → 校验 → 不满足当场弹原因，
+   * useIndicatorAppraisal.unlockAppraisal 范式：点击 → 校验 → 不满足当场弹原因，
    * 满足才走原流程）。按钮不再用原生 disabled（原生 disabled 会吞掉点击事件），
    * 置灰观感由 is-disabled 样式类保持；点击进本 gate：
    * - 有条件不满足 → toast 弹第一条命中的原因（条件与优先级同按钮置灰判定，单一事实源）；

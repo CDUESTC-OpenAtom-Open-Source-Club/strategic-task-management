@@ -49,7 +49,12 @@ import { WEIGHT_COLUMN_HEADER } from '@/features/import/lib/importTemplate'
 import MutationBadgePopover from '@/features/indicator/ui/MutationBadgePopover.vue'
 import { MUTATION_FIELDS_INDICATOR_NAME } from '@/features/indicator/model/mutationHistory'
 import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
-import { useIndicatorAppraisal } from '@/features/indicator/model/useIndicatorAppraisal'
+// 2026-11-19 用户定案：审核进度行内下拉共享组件（三视图同构）
+import AppraisalLevelCell from '@/features/indicator/ui/AppraisalLevelCell.vue'
+import {
+  useIndicatorAppraisal,
+  type IndicatorAppraisalLevelValue
+} from '@/features/indicator/model/useIndicatorAppraisal'
 import { getAppraisalLevelDisplay } from '@/features/indicator/lib/appraisalGate'
 import { buildDistributionExportRowGrouping } from '@/features/indicator/lib/distributionExportGroups'
 import IndicatorFillHistory from '@/features/plan/ui/IndicatorFillHistory.vue'
@@ -299,12 +304,14 @@ const { latestFillNote, latestFillAttachments } = useLatestIndicatorFill(
 )
 
 // 2026-10-28：审批链行内鉴定——只有当前审批节点负责人可改（后端 canAppraise 判定）
-// 2026-10-31 定稿：点击格子先单条重查 context，canAppraise=true 才弹轻量等级选择器
+// 2026-11-19 用户定案：审核进度统一为**行内下拉**（共享组件 AppraisalLevelCell），
+// 点击解锁 → 选三档 → 选完即存；原先的「调整审核进度」弹窗层已下线（与战略任务管理页同构）。
+const appraisalApi = useIndicatorAppraisal()
 const {
   load: loadIndicatorAppraisalContexts,
   getLevel: getIndicatorAppraisalLevel,
-  openAppraisalGate: openIndicatorAppraisalGate
-} = useIndicatorAppraisal()
+  getContext: getIndicatorAppraisalContext
+} = appraisalApi
 
 watch(
   () =>
@@ -339,22 +346,16 @@ const getChildAppraisalDisplay = (level: string | null | undefined) =>
   getAppraisalLevelDisplay(level)
 
 /**
- * 2026-10-31 定稿：点击审核进度格子的统一入口（三视图同构）。
- * 先单条重查该行 context → canAppraise=false 当场弹对应原因 → 通过才弹等级选择器。
- * 2026-10-31 线上 P0 回归：取消本地静默 return——无效 id 统一交给 openAppraisalGate
- * 兜底提示，三视图一致性核对结论：点击入口不允许存在「既不开选择器也不提示」的分支。
+ * 2026-11-19 用户定案：行内下拉保存成功后的行数据同步
+ * （共享组件 AppraisalLevelCell 负责解锁/选值/保存/提示，这里只回写行数据）。
  */
-const handleAppraisalCellClick = async (
-  child: DistributionExportChild | StrategicIndicator | null | undefined
+const handleAppraisalSaved = (
+  child: DistributionExportChild | StrategicIndicator | null | undefined,
+  level: IndicatorAppraisalLevelValue
 ) => {
-  await openIndicatorAppraisalGate(child?.id, {
-    indicatorName: child?.name,
-    onSaved: level => {
-      if (child?.id !== undefined && child?.id !== null) {
-        strategicStore.patchIndicator(String(child.id), { manualAlertSeverity: level })
-      }
-    }
-  })
+  if (child?.id !== undefined && child?.id !== null) {
+    strategicStore.patchIndicator(String(child.id), { manualAlertSeverity: level })
+  }
 }
 
 interface DistributionExportRow {
@@ -1062,7 +1063,7 @@ const handleDistributionImportCommitted = async () => {
                          点击统一进 handleDistributionSubmitGate 门禁——条件不满足当场 toast
                          第一条命中的原因（异动锁报「学院名 · 环节名」），全满足才走
                          handleBatchDistribute 原下发流程（其内部守卫保留作双保险）。
-                         同范式先例：useIndicatorAppraisal.openAppraisalGate。 -->
+                         同范式先例：useIndicatorAppraisal.unlockAppraisal。 -->
                     <el-button
                       :type="distributionSubmitButtonType"
                       :loading="isBatchDistributing"
@@ -1260,41 +1261,20 @@ const handleDistributionImportCommitted = async () => {
                       <span class="manual-alert-placeholder">-</span>
                     </template>
                     <template v-else>
-                      <div class="manual-alert-cell">
-                        <!-- 2026-10-31 定稿：点击格子先单条重查 context，canAppraise=true
-                             才弹等级选择器，不满足条件当场弹对应原因（三视图同构）；
-                             DELAYED 经共享 getAppraisalLevelDisplay 正确显示「滞后」。 -->
-                        <el-tag
-                          :type="
-                            getChildAppraisalDisplay(
-                              getIndicatorAppraisalLevel(
-                                row.child?.id,
-                                getChildManualAlertSeverity(row.child)
-                              )
-                            ).type
-                          "
-                          :style="
-                            getProgressLevelTagStyle(
-                              getIndicatorAppraisalLevel(
-                                row.child?.id,
-                                getChildManualAlertSeverity(row.child)
-                              )
-                            )
-                          "
-                          size="small"
-                          class="manual-alert-tag--clickable"
-                          @click="handleAppraisalCellClick(row.child)"
-                        >
-                          {{
-                            getChildAppraisalDisplay(
-                              getIndicatorAppraisalLevel(
-                                row.child?.id,
-                                getChildManualAlertSeverity(row.child)
-                              )
-                            ).label
-                          }}
-                        </el-tag>
-                      </div>
+                      <!-- 2026-11-19 用户定案：审核进度统一为行内下拉（共享组件）——
+                           点击格子才解锁下拉，选完即存，无弹窗层；与战略任务管理页完全同构。 -->
+                      <AppraisalLevelCell
+                        :indicator-id="row.child?.id ?? ''"
+                        :level="
+                          getIndicatorAppraisalLevel(
+                            row.child?.id,
+                            getChildManualAlertSeverity(row.child)
+                          )
+                        "
+                        :context="getIndicatorAppraisalContext(row.child?.id)"
+                        :appraisal="appraisalApi"
+                        @saved="level => handleAppraisalSaved(row.child, level)"
+                      />
                     </template>
                   </template>
                 </el-table-column>

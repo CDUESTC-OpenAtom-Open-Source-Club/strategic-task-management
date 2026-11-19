@@ -7,8 +7,13 @@ import {
   resolveCollegeDeptFilterSelection
 } from '@/features/task/lib/collegeDispatchEligibility'
 import { useLatestIndicatorFill } from '@/features/indicator/model/useLatestIndicatorFill'
-import { useIndicatorAppraisal } from '@/features/indicator/model/useIndicatorAppraisal'
+import {
+  useIndicatorAppraisal,
+  type IndicatorAppraisalLevelValue
+} from '@/features/indicator/model/useIndicatorAppraisal'
 import { getAppraisalLevelDisplay } from '@/features/indicator/lib/appraisalGate'
+// 2026-11-19 用户定案：审核进度行内下拉共享组件（三视图同构）
+import AppraisalLevelCell from '@/features/indicator/ui/AppraisalLevelCell.vue'
 // 2026-11-12 防漂移：导出列头与导入模板共用同一权重文案（后端按表头全等匹配，改文案需同步后端别名表）
 import { WEIGHT_COLUMN_HEADER } from '@/features/import/lib/importTemplate'
 import TaskIndicatorTree from './TaskIndicatorTree.vue'
@@ -520,12 +525,14 @@ const { latestFillNote, latestFillAttachments } = useLatestIndicatorFill(
 )
 
 // 2026-10-28：审批链行内鉴定——只有当前审批节点负责人可改（后端 canAppraise 判定）
-// 2026-10-31 定稿：点击格子先单条重查 context，canAppraise=true 才弹轻量等级选择器
+// 2026-11-19 用户定案：审核进度统一为**行内下拉**（共享组件 AppraisalLevelCell），
+// 点击解锁 → 选三档 → 选完即存；原先的「调整审核进度」弹窗层已下线（与指标分发页同构）。
+const appraisalApi = useIndicatorAppraisal()
 const {
   load: loadIndicatorAppraisalContexts,
   getLevel: getIndicatorAppraisalLevel,
-  openAppraisalGate: openIndicatorAppraisalGate
-} = useIndicatorAppraisal()
+  getContext: getIndicatorAppraisalContext
+} = appraisalApi
 
 watch(
   () => (normalizedIndicators?.value ?? []).map(item => String(item.id)).join(','),
@@ -1314,21 +1321,14 @@ const getManualAlertTagType = (severity?: ManualAlertSeverity) =>
   getAppraisalLevelDisplay(severity).type
 
 /**
- * 2026-10-31 定稿：点击审核进度格子的统一入口（三视图同构）。
- * 先单条重查该行 context → canAppraise=false 当场弹对应原因
- * （优先后端 lockHint）→ 通过才弹轻量等级选择器 → 确认后保存并同步行数据。
+ * 2026-11-19 用户定案：行内下拉保存成功后的行数据同步
+ * （共享组件 AppraisalLevelCell 负责解锁/选值/保存/提示，这里只回写行数据）。
  */
-const handleAppraisalCellClick = async (row: {
-  id: string | number
-  name?: string
-  manualAlertSeverity?: ManualAlertSeverity
-}) => {
-  await openIndicatorAppraisalGate(row.id, {
-    indicatorName: row.name,
-    onSaved: level => {
-      strategicStore.patchIndicator(String(row.id), { manualAlertSeverity: level })
-    }
-  })
+const handleAppraisalSaved = (
+  row: { id: string | number; manualAlertSeverity?: ManualAlertSeverity },
+  level: IndicatorAppraisalLevelValue
+) => {
+  strategicStore.patchIndicator(String(row.id), { manualAlertSeverity: level })
 }
 
 const allStrategicExportDepartmentsSelected = computed({
@@ -1664,8 +1664,18 @@ const buildStrategicExportAttachmentGroups = (
  * 2026-11-08（单层下发）：二级学院页签的导出 =「战略发展部 → 当前所选学院」的指标表。
  *
  * <p>数据源直接用页面学院表格同一份 collegeTableIndicators，保证「看到什么就导出什么」。
- * 列按新口径给出：指标名称 / 指标类型 / 任务类型 / 权重 / 状态 —— 单层结构下学院指标
- * 没有父级核心指标，因此不再有「核心指标」列。</p>
+ * 列按新口径给出：指标名称 / 指标类型 / 权重 / 状态 —— 单层结构下学院指标
+ * 没有父级核心指标，因此不再有「核心指标」列；2026-11-18 用户拍板删「任务类型」列
+ * （填报人视角整列缺省『基础性』，误导），见下方删列说明。</p>
+ */
+/**
+ * 2026-11-18（用户拍板·学院删列第 2 批）：学院页签导出删「任务类型」列。
+ *
+ * 背景：后端库表已移除 type2，学院链行的任务类型映射在填报人视角恒缺省
+ * （strategic.ts mapper 兜底『基础性』），导出的「任务类型」列整列显示缺省值，
+ * 对学院侧读者是误导信息；学院页签页面表格本就无此列，导出与表格同口径后
+ * 该列在全学院视角消失。职能部门页签导出（buildStrategicExportColumns）的
+ * 「任务类型」列不动——职能/战略部视角零变化（视角不变铁律）。
  */
 const handleExportCollegeIndicators = async () => {
   const college = selectedCollege.value
@@ -1698,12 +1708,9 @@ const handleExportCollegeIndicators = async () => {
             align: 'center',
             getValue: row => String(row.type1 || '定量')
           },
-          {
-            header: '任务类型',
-            width: 12,
-            align: 'center',
-            getValue: row => getCategoryText(getIndicatorCategoryLabel(row))
-          },
+          // 2026-11-18（用户拍板·学院删列第 2 批）：「任务类型」列删除——
+          // 填报人视角该列整列缺省『基础性』（后端 type2 已移除、映射恒缺省），
+          // 导出不再输出误导列；学院页签页面表格本就无此列，界面无需同步改动。
           { header: '权重', width: 10, align: 'center', getValue: row => String(row.weight ?? '') },
           // 2026-11-17 用户反馈第 2.2 条：学院页签的导出同样缺「填报的内容」，
           // 与页面表格对齐补 自评进度 / 审核进度 / 进度说明 三列。
@@ -2734,36 +2741,21 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                   </el-table-column>
                   <!-- 2026-10-28 用户定案（恢复行内鉴定）：鉴定是审批手段——
                        只有当前审批节点的负责人可改；其他角色/节点只读。
-                       数据写当前报告轮次的 appraisal_level，后端同步 Alert。 -->
+                       2026-11-19 用户定案：统一为行内下拉（共享组件 AppraisalLevelCell）——
+                       点击格子才解锁下拉，选完即存，无弹窗层；与指标下发与审批页完全同构。 -->
                   <el-table-column
                     label="审核进度"
                     :width="TASK_TABLE_COLUMN_WIDTH.appraisalLevel"
                     align="center"
                   >
                     <template #default="{ row }">
-                      <div class="manual-alert-cell">
-                        <el-tag
-                          :type="
-                            getManualAlertTagType(
-                              getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
-                            )
-                          "
-                          :style="
-                            getProgressLevelTagStyle(
-                              getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
-                            )
-                          "
-                          size="small"
-                          class="manual-alert-tag--clickable"
-                          @click="handleAppraisalCellClick(row)"
-                        >
-                          {{
-                            getManualAlertLabel(
-                              getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
-                            )
-                          }}
-                        </el-tag>
-                      </div>
+                      <AppraisalLevelCell
+                        :indicator-id="row.id"
+                        :level="getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)"
+                        :context="getIndicatorAppraisalContext(row.id)"
+                        :appraisal="appraisalApi"
+                        @saved="level => handleAppraisalSaved(row, level)"
+                      />
                     </template>
                   </el-table-column>
                   <!-- 2026-10-26 用户定案：上报资料列统一用 ReportMaterialsCell——
@@ -3440,29 +3432,13 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
                     align="center"
                   >
                     <template #default="{ row }">
-                      <div class="manual-alert-cell">
-                        <el-tag
-                          :type="
-                            getManualAlertTagType(
-                              getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
-                            )
-                          "
-                          :style="
-                            getProgressLevelTagStyle(
-                              getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
-                            )
-                          "
-                          size="small"
-                          class="manual-alert-tag--clickable"
-                          @click="handleAppraisalCellClick(row)"
-                        >
-                          {{
-                            getManualAlertLabel(
-                              getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
-                            )
-                          }}
-                        </el-tag>
-                      </div>
+                      <AppraisalLevelCell
+                        :indicator-id="row.id"
+                        :level="getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)"
+                        :context="getIndicatorAppraisalContext(row.id)"
+                        :appraisal="appraisalApi"
+                        @saved="level => handleAppraisalSaved(row, level)"
+                      />
                     </template>
                   </el-table-column>
                   <el-table-column

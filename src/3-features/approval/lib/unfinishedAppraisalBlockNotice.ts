@@ -13,6 +13,7 @@
 import { getActivePinia } from 'pinia'
 import { useAuthStore } from '@/features/auth/model/store'
 import {
+  buildAppraisalGuidanceText,
   isUnfinishedAppraisalMessage,
   resolveUnfinishedAppraisalJumpRoute,
   showUnfinishedAppraisalNotice
@@ -104,6 +105,9 @@ export function showUnfinishedAppraisalBlockNotice(
   }
   showUnfinishedAppraisalNotice({
     message: options.message,
+    // 2026-11-18：后端原文指路含糊（「指标填报页」对职能部门审批人并非评级入口所在页），
+    // 按查看者角色补一行明确操作指引（页签 + 点击位置），后端原文仍原样展示不改写。
+    guidance: buildAppraisalGuidanceText(options.viewerRole ?? authContext.viewerRole),
     routeTarget,
     onJump: options.onJump
   })
