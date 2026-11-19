@@ -262,7 +262,10 @@ describe('学院页签两步显式选择（2026-11-09 用户拍板）', () => {
     expect(distribute).toBeDefined()
     expect(distribute?.attributes('disabled')).toBeDefined()
 
-    expect(findButtonByText(wrapper, '全部导出')?.attributes('disabled')).toBeDefined()
+    // 2026-11-19（用户拍板 · 学院页签「全部导出」改造）：「全部导出」= 每个学院一张表
+    // （该学院与其所有归口部门的全部指标）→ **不再受「先选职能部门」两步门槛限制**，
+    // 只要已选学院就可点。其余按钮（发起审批 / 单条导入）仍受两步门槛约束。
+    expect(findButtonByText(wrapper, '全部导出')?.attributes('disabled')).toBeUndefined()
     expect(findButtonByExactText(wrapper, '导入')?.attributes('disabled')).toBeDefined()
     expect(wrapper.text()).not.toContain('计划状态')
     expect(wrapper.text()).not.toContain('基础性权重合计')
