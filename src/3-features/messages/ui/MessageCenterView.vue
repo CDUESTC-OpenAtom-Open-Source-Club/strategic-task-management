@@ -459,13 +459,24 @@ function getMessageMetadataValue(message: Message, key: string): string {
   if (typeof value === 'string') {
     return value.trim()
   }
+  // 2026-11-20 消息跳转修复：metadataJson 里的 indicatorId 等是数值型，
+  // 数值也统一转字符串返回，供告警/催办跳转构造指标定位参数
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value)
+  }
 
   const metadataJsonRaw = message.metadata?.metadataJson
   if (typeof metadataJsonRaw === 'string' && metadataJsonRaw.trim()) {
     try {
       const parsed = JSON.parse(metadataJsonRaw) as Record<string, unknown>
       const nestedValue = parsed[key]
-      return typeof nestedValue === 'string' ? nestedValue.trim() : ''
+      if (typeof nestedValue === 'string') {
+        return nestedValue.trim()
+      }
+      if (typeof nestedValue === 'number' && Number.isFinite(nestedValue)) {
+        return String(nestedValue)
+      }
+      return ''
     } catch {
       return ''
     }
@@ -626,6 +637,27 @@ function buildApprovalPayload(message: Message) {
   }
 }
 
+// 2026-11-20 告警/催办跳转修复：/alerts 路由已随页面重构移除（原 action_url 点击落 404），
+// 指标相关操作统一收敛在 /strategic-tasks 工作台（见 router.ts 旧入口兼容注释）。
+// 告警/催办通知的 metadata 都携带 indicatorId/indicatorName，统一构造工作台深链 +
+// 指标定位参数，落地后由 5-shared/lib/indicatorRouteFocus 滚动/高亮到对应指标行。
+function buildIndicatorFocusTarget(message: Message, fallbackIndicatorId?: string): string {
+  const metadataIndicatorId = getMessageMetadataValue(message, 'indicatorId')
+  const indicatorId = /^\d+$/.test(metadataIndicatorId)
+    ? metadataIndicatorId
+    : (fallbackIndicatorId ?? '')
+  const query = new URLSearchParams()
+  if (indicatorId) {
+    query.set('indicatorId', indicatorId)
+  }
+  const indicatorName = getMessageMetadataValue(message, 'indicatorName')
+  if (indicatorName) {
+    query.set('indicatorName', indicatorName)
+  }
+  const queryString = query.toString()
+  return queryString ? `/strategic-tasks?${queryString}` : '/strategic-tasks'
+}
+
 function resolveMessageRouteTarget(message?: Message | null): string | null {
   if (!message) {
     return null
@@ -641,6 +673,11 @@ function resolveMessageRouteTarget(message?: Message | null): string | null {
   }
 
   if (message.actionUrl) {
+    // 2026-11-20 告警跳转修复：/alerts?alertId=N 是死链（前端无 /alerts 路由，点击 404），
+    // 改为落工作台并携带指标定位参数；存量告警通知由 metadata.indicatorId 兜底定位
+    if (/^\/alerts(?:\?|$)/.test(message.actionUrl)) {
+      return buildIndicatorFocusTarget(message)
+    }
     // 2026-10-28 兼容映射：存量催办通知的 action_url 是 /indicators/{id}（非有效路由），
     // 统一补 /progress 跳到该指标的填报进度页；/announcements/{id} 无独立详情页，
     // 公告全文已在详情抽屉展示，回消息中心即可
