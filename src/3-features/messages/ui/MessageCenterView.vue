@@ -220,7 +220,8 @@ import {
 import { useMessageStore } from '@/features/messages/model/message'
 import {
   requiresApprovalCenterFallback,
-  resolveApprovalRoute
+  resolveApprovalRoute,
+  resolveCurrentViewerRole
 } from '@/features/approval/lib/approvalNotifications'
 import { useApprovalCenter } from '@/features/approval'
 import { useAuthStore } from '@/features/auth/model/store'
@@ -661,14 +662,18 @@ function buildApprovalPayload(message: Message) {
 }
 
 // 2026-11-20 告警/催办跳转修复：/alerts 路由已随页面重构移除（原 action_url 点击落 404），
-// 指标相关操作统一收敛在 /strategic-tasks 工作台（见 router.ts 旧入口兼容注释）。
-// 告警/催办通知的 metadata 都携带 indicatorId/indicatorName，统一构造工作台深链 +
-// 指标定位参数，落地后由 5-shared/lib/indicatorRouteFocus 滚动/高亮到对应指标行。
+// 催办 /indicators/{id}/progress 被 redirect 且不带 query（上下文丢失）。
+// 通知 metadata 都携带 indicatorId/indicatorName，统一构造「工作台 + 指标定位参数」深链，
+// 落地后由 5-shared/lib/indicatorRouteFocus 滚动/高亮到对应指标行。
+// 落地页按真实登录角色选择：学院用户无 /strategic-tasks 权限（router.ts meta.roles），
+// 直接进会被守卫弹回首页丢上下文，故落 /indicators（指标填报列表）；其余角色落工作台。
 function buildIndicatorFocusTarget(message: Message, fallbackIndicatorId?: string): string {
   const metadataIndicatorId = getMessageMetadataValue(message, 'indicatorId')
   const indicatorId = /^\d+$/.test(metadataIndicatorId)
     ? metadataIndicatorId
     : (fallbackIndicatorId ?? '')
+  const basePath =
+    resolveCurrentViewerRole() === 'secondary_college' ? '/indicators' : '/strategic-tasks'
   const query = new URLSearchParams()
   if (indicatorId) {
     query.set('indicatorId', indicatorId)
@@ -678,7 +683,7 @@ function buildIndicatorFocusTarget(message: Message, fallbackIndicatorId?: strin
     query.set('indicatorName', indicatorName)
   }
   const queryString = query.toString()
-  return queryString ? `/strategic-tasks?${queryString}` : '/strategic-tasks'
+  return queryString ? `${basePath}?${queryString}` : basePath
 }
 
 function resolveMessageRouteTarget(message?: Message | null): string | null {
@@ -697,8 +702,13 @@ function resolveMessageRouteTarget(message?: Message | null): string | null {
 
   if (message.actionUrl) {
     // 2026-11-20 告警跳转修复：/alerts?alertId=N 是死链（前端无 /alerts 路由，点击 404），
-    // 改为落工作台并携带指标定位参数；存量告警通知由 metadata.indicatorId 兜底定位
-    if (/^\/alerts(?:\?|$)/.test(message.actionUrl)) {
+    // 改为落「角色对应工作台 + 指标定位参数」；存量告警由 metadata.indicatorId 兜底定位。
+    // 新后端已改产 /strategic-tasks?indicatorId=N（源头修复），这里同样按角色重映射，
+    // 学院用户落到 /indicators 避免被守卫弹回首页
+    if (
+      /^\/alerts(?:\?|$)/.test(message.actionUrl) ||
+      /^\/strategic-tasks\?.*indicatorId=/.test(message.actionUrl)
+    ) {
       return buildIndicatorFocusTarget(message)
     }
     // 2026-11-20 催办跳转修复：/indicators/{id}/progress（及存量 /indicators/{id}）
