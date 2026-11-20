@@ -417,26 +417,49 @@ function normalizeResultKeywordTarget(message: Message): string {
     .toUpperCase()
 }
 
-function isApprovedMessage(message: Message): boolean {
+// 2026-11-20 分类重构（与后端同步）：审批结果判定优先按结构化字段——
+// metadata.result（后端 buildApprovalResultMetadataJson 落的 APPROVED/REJECTED），
+// 仅对缺结构化结果的存量通知回退到标题/正文关键词匹配，
+// 避免文案调整（如口吻修正）改变「已通过/已回退」筛选结果
+function resolveApprovalResultKind(message: Message): 'approved' | 'rejected' | null {
+  if (message.bizType !== 'APPROVAL_RESULT') {
+    return null
+  }
+
+  const structuredResult = getMessageMetadataValue(message, 'result').toUpperCase()
+  if (structuredResult === 'APPROVED' || structuredResult === 'SUCCESS') {
+    return 'approved'
+  }
+  if (structuredResult === 'REJECTED') {
+    return 'rejected'
+  }
+
   const normalized = normalizeResultKeywordTarget(message)
-  return (
-    message.bizType === 'APPROVAL_RESULT' &&
-    (normalized.includes('通过') ||
-      normalized.includes('已通过') ||
-      normalized.includes('APPROVED') ||
-      normalized.includes('SUCCESS'))
-  )
+  if (
+    normalized.includes('通过') ||
+    normalized.includes('已通过') ||
+    normalized.includes('APPROVED') ||
+    normalized.includes('SUCCESS')
+  ) {
+    return 'approved'
+  }
+  if (
+    normalized.includes('驳回') ||
+    normalized.includes('已回退') ||
+    normalized.includes('REJECTED') ||
+    normalized.includes('REJECT')
+  ) {
+    return 'rejected'
+  }
+  return null
+}
+
+function isApprovedMessage(message: Message): boolean {
+  return resolveApprovalResultKind(message) === 'approved'
 }
 
 function isRejectedMessage(message: Message): boolean {
-  const normalized = normalizeResultKeywordTarget(message)
-  return (
-    message.bizType === 'APPROVAL_RESULT' &&
-    (normalized.includes('驳回') ||
-      normalized.includes('已回退') ||
-      normalized.includes('REJECTED') ||
-      normalized.includes('REJECT'))
-  )
+  return resolveApprovalResultKind(message) === 'rejected'
 }
 
 function matchesProcessedResultFilter(
