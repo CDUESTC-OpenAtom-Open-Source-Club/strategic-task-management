@@ -220,7 +220,8 @@ import {
 import { useMessageStore } from '@/features/messages/model/message'
 import {
   requiresApprovalCenterFallback,
-  resolveApprovalRoute
+  resolveApprovalRoute,
+  resolveCurrentViewerRole
 } from '@/features/approval/lib/approvalNotifications'
 import { useApprovalCenter } from '@/features/approval'
 import { useAuthStore } from '@/features/auth/model/store'
@@ -417,26 +418,49 @@ function normalizeResultKeywordTarget(message: Message): string {
     .toUpperCase()
 }
 
-function isApprovedMessage(message: Message): boolean {
+// 2026-11-20 分类重构（与后端同步）：审批结果判定优先按结构化字段——
+// metadata.result（后端 buildApprovalResultMetadataJson 落的 APPROVED/REJECTED），
+// 仅对缺结构化结果的存量通知回退到标题/正文关键词匹配，
+// 避免文案调整（如口吻修正）改变「已通过/已回退」筛选结果
+function resolveApprovalResultKind(message: Message): 'approved' | 'rejected' | null {
+  if (message.bizType !== 'APPROVAL_RESULT') {
+    return null
+  }
+
+  const structuredResult = getMessageMetadataValue(message, 'result').toUpperCase()
+  if (structuredResult === 'APPROVED' || structuredResult === 'SUCCESS') {
+    return 'approved'
+  }
+  if (structuredResult === 'REJECTED') {
+    return 'rejected'
+  }
+
   const normalized = normalizeResultKeywordTarget(message)
-  return (
-    message.bizType === 'APPROVAL_RESULT' &&
-    (normalized.includes('通过') ||
-      normalized.includes('已通过') ||
-      normalized.includes('APPROVED') ||
-      normalized.includes('SUCCESS'))
-  )
+  if (
+    normalized.includes('通过') ||
+    normalized.includes('已通过') ||
+    normalized.includes('APPROVED') ||
+    normalized.includes('SUCCESS')
+  ) {
+    return 'approved'
+  }
+  if (
+    normalized.includes('驳回') ||
+    normalized.includes('已回退') ||
+    normalized.includes('REJECTED') ||
+    normalized.includes('REJECT')
+  ) {
+    return 'rejected'
+  }
+  return null
+}
+
+function isApprovedMessage(message: Message): boolean {
+  return resolveApprovalResultKind(message) === 'approved'
 }
 
 function isRejectedMessage(message: Message): boolean {
-  const normalized = normalizeResultKeywordTarget(message)
-  return (
-    message.bizType === 'APPROVAL_RESULT' &&
-    (normalized.includes('驳回') ||
-      normalized.includes('已回退') ||
-      normalized.includes('REJECTED') ||
-      normalized.includes('REJECT'))
-  )
+  return resolveApprovalResultKind(message) === 'rejected'
 }
 
 function matchesProcessedResultFilter(
@@ -459,13 +483,24 @@ function getMessageMetadataValue(message: Message, key: string): string {
   if (typeof value === 'string') {
     return value.trim()
   }
+  // 2026-11-20 消息跳转修复：metadataJson 里的 indicatorId 等是数值型，
+  // 数值也统一转字符串返回，供告警/催办跳转构造指标定位参数
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value)
+  }
 
   const metadataJsonRaw = message.metadata?.metadataJson
   if (typeof metadataJsonRaw === 'string' && metadataJsonRaw.trim()) {
     try {
       const parsed = JSON.parse(metadataJsonRaw) as Record<string, unknown>
       const nestedValue = parsed[key]
-      return typeof nestedValue === 'string' ? nestedValue.trim() : ''
+      if (typeof nestedValue === 'string') {
+        return nestedValue.trim()
+      }
+      if (typeof nestedValue === 'number' && Number.isFinite(nestedValue)) {
+        return String(nestedValue)
+      }
+      return ''
     } catch {
       return ''
     }
@@ -626,6 +661,31 @@ function buildApprovalPayload(message: Message) {
   }
 }
 
+// 2026-11-20 告警/催办跳转修复：/alerts 路由已随页面重构移除（原 action_url 点击落 404），
+// 催办 /indicators/{id}/progress 被 redirect 且不带 query（上下文丢失）。
+// 通知 metadata 都携带 indicatorId/indicatorName，统一构造「工作台 + 指标定位参数」深链，
+// 落地后由 5-shared/lib/indicatorRouteFocus 滚动/高亮到对应指标行。
+// 落地页按真实登录角色选择：学院用户无 /strategic-tasks 权限（router.ts meta.roles），
+// 直接进会被守卫弹回首页丢上下文，故落 /indicators（指标填报列表）；其余角色落工作台。
+function buildIndicatorFocusTarget(message: Message, fallbackIndicatorId?: string): string {
+  const metadataIndicatorId = getMessageMetadataValue(message, 'indicatorId')
+  const indicatorId = /^\d+$/.test(metadataIndicatorId)
+    ? metadataIndicatorId
+    : (fallbackIndicatorId ?? '')
+  const basePath =
+    resolveCurrentViewerRole() === 'secondary_college' ? '/indicators' : '/strategic-tasks'
+  const query = new URLSearchParams()
+  if (indicatorId) {
+    query.set('indicatorId', indicatorId)
+  }
+  const indicatorName = getMessageMetadataValue(message, 'indicatorName')
+  if (indicatorName) {
+    query.set('indicatorName', indicatorName)
+  }
+  const queryString = query.toString()
+  return queryString ? `${basePath}?${queryString}` : basePath
+}
+
 function resolveMessageRouteTarget(message?: Message | null): string | null {
   if (!message) {
     return null
@@ -641,12 +701,23 @@ function resolveMessageRouteTarget(message?: Message | null): string | null {
   }
 
   if (message.actionUrl) {
-    // 2026-10-28 兼容映射：存量催办通知的 action_url 是 /indicators/{id}（非有效路由），
-    // 统一补 /progress 跳到该指标的填报进度页；/announcements/{id} 无独立详情页，
-    // 公告全文已在详情抽屉展示，回消息中心即可
-    const legacyIndicatorMatch = message.actionUrl.match(/^\/indicators\/(\d+)$/)
-    if (legacyIndicatorMatch) {
-      return `/indicators/${legacyIndicatorMatch[1]}/progress`
+    // 2026-11-20 告警跳转修复：/alerts?alertId=N 是死链（前端无 /alerts 路由，点击 404），
+    // 改为落「角色对应工作台 + 指标定位参数」；存量告警由 metadata.indicatorId 兜底定位。
+    // 新后端已改产 /strategic-tasks?indicatorId=N（源头修复），这里同样按角色重映射，
+    // 学院用户落到 /indicators 避免被守卫弹回首页
+    if (
+      /^\/alerts(?:\?|$)/.test(message.actionUrl) ||
+      /^\/strategic-tasks\?.*indicatorId=/.test(message.actionUrl)
+    ) {
+      return buildIndicatorFocusTarget(message)
+    }
+    // 2026-11-20 催办跳转修复：/indicators/{id}/progress（及存量 /indicators/{id}）
+    // 会被重定向到 /strategic-tasks 且 redirect 不带 query，指标上下文丢失；
+    // 改为直接落工作台并携带指标定位参数（indicatorId 优先取 action_url 中的 id，
+    // indicatorName 取 metadata），落地后由 indicatorRouteFocus 滚动/高亮到该指标行
+    const indicatorUrlMatch = message.actionUrl.match(/^\/indicators\/(\d+)(?:\/progress)?$/)
+    if (indicatorUrlMatch) {
+      return buildIndicatorFocusTarget(message, indicatorUrlMatch[1])
     }
     if (message.actionUrl.startsWith('/announcements/')) {
       return '/messages'
