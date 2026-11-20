@@ -26,10 +26,15 @@ import {
 } from '@/features/approval/lib/approvalNotifications'
 import { disconnectWebSocket } from '@/shared/api/websocket'
 import { useTimeContextStore } from '@/shared/lib/timeContext'
+import { useIndicatorRouteFocus } from '@/shared/lib/indicatorRouteFocus'
 import { useAuthStore } from '@/features/auth/model/store'
 
 const router = useRouter()
 const authStore = useAuthStore()
+
+// 2026-11-20 消息中心催办/告警跳转修复：消费工作台深链 ?indicatorId= 定位参数，
+// 滚动/高亮到对应指标行（催办/告警通知跳转不再丢上下文）
+useIndicatorRouteFocus()
 
 // 开发环境检测
 const isDev = import.meta.env.DEV
@@ -955,5 +960,16 @@ const goToProfile = () => {
   .dept-switcher {
     display: none;
   }
+}
+</style>
+
+<!-- 2026-11-20 消息中心催办/告警跳转修复：指标定位深链的行高亮样式。
+     高亮类由 indicatorRouteFocus 动态加在落地页（/strategic-tasks、/indicators）
+     的 el-table 行上，AppLayout 的 scoped 样式作用不到子路由视图，
+     因此单独开非 scoped 块声明全局样式。 -->
+<style>
+.el-table .el-table__row.sism-indicator-row-focus > td.el-table__cell {
+  background-color: var(--el-color-primary-light-8);
+  transition: background-color 0.4s ease;
 }
 </style>

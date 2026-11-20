@@ -150,6 +150,25 @@ export function useNotificationCenter() {
       }
       const workbenchRoute = resolveApprovalRoute(payload)
       if (workbenchRoute) {
+        // 2026-11-20 催办跳转修复：催办/告警类通知无审批实例但有指标实体，
+        // 工作台路由追加 indicatorId/indicatorName 定位参数（与消息中心跳转矩阵同口径），
+        // 落地后由 indicatorRouteFocus 滚动/高亮到对应指标行
+        if (
+          message.bizType === 'REMINDER_NOTICE' &&
+          message.entityId &&
+          workbenchRoute.startsWith('/strategic-tasks')
+        ) {
+          router.push({
+            path: workbenchRoute,
+            query: {
+              indicatorId: message.entityId,
+              ...(getMessageMetadataValue(message, 'indicatorName')
+                ? { indicatorName: getMessageMetadataValue(message, 'indicatorName') }
+                : {})
+            }
+          })
+          return
+        }
         router.push(workbenchRoute)
         return
       }

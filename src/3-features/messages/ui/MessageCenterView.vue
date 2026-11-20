@@ -678,12 +678,13 @@ function resolveMessageRouteTarget(message?: Message | null): string | null {
     if (/^\/alerts(?:\?|$)/.test(message.actionUrl)) {
       return buildIndicatorFocusTarget(message)
     }
-    // 2026-10-28 兼容映射：存量催办通知的 action_url 是 /indicators/{id}（非有效路由），
-    // 统一补 /progress 跳到该指标的填报进度页；/announcements/{id} 无独立详情页，
-    // 公告全文已在详情抽屉展示，回消息中心即可
-    const legacyIndicatorMatch = message.actionUrl.match(/^\/indicators\/(\d+)$/)
-    if (legacyIndicatorMatch) {
-      return `/indicators/${legacyIndicatorMatch[1]}/progress`
+    // 2026-11-20 催办跳转修复：/indicators/{id}/progress（及存量 /indicators/{id}）
+    // 会被重定向到 /strategic-tasks 且 redirect 不带 query，指标上下文丢失；
+    // 改为直接落工作台并携带指标定位参数（indicatorId 优先取 action_url 中的 id，
+    // indicatorName 取 metadata），落地后由 indicatorRouteFocus 滚动/高亮到该指标行
+    const indicatorUrlMatch = message.actionUrl.match(/^\/indicators\/(\d+)(?:\/progress)?$/)
+    if (indicatorUrlMatch) {
+      return buildIndicatorFocusTarget(message, indicatorUrlMatch[1])
     }
     if (message.actionUrl.startsWith('/announcements/')) {
       return '/messages'
