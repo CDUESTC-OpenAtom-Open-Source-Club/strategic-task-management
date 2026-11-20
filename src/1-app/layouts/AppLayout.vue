@@ -969,7 +969,8 @@ const goToProfile = () => {
      因此单独开非 scoped 块声明全局样式。 -->
 <style>
 .el-table .el-table__row.sism-indicator-row-focus > td.el-table__cell {
-  background-color: var(--el-color-primary-light-8);
+  /* !important：el-table 的 hover/斑马纹/单元格底色优先级较高，不加会被覆盖 */
+  background-color: var(--el-color-primary-light-8) !important;
   transition: background-color 0.4s ease;
 }
 </style>

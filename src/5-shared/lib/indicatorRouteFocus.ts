@@ -21,9 +21,9 @@ const FOCUS_ROUTE_PATHS = new Set(['/strategic-tasks', '/indicators'])
 
 const HIGHLIGHT_CLASS = 'sism-indicator-row-focus'
 const HIGHLIGHT_DURATION_MS = 6000
-// 工作台首屏数据加载 + 渲染需要时间：轮询定位最多约 8 秒
-const LOCATE_POLL_INTERVAL_MS = 400
-const LOCATE_MAX_POLLS = 20
+// 工作台首屏数据加载 + 渲染需要时间（实测首帧可达 10s+）：轮询定位最多约 20 秒
+const LOCATE_POLL_INTERVAL_MS = 500
+const LOCATE_MAX_POLLS = 40
 
 let locateTimer: number | null = null
 
@@ -95,6 +95,9 @@ export function useIndicatorRouteFocus(): void {
       void nextTick(() => {
         locateIndicatorRow(indicatorName)
       })
-    }
+    },
+    // immediate：整页直开/刷新带定位参数的深链（如钉钉 applink、F5）时
+    // query 不会发生变化，没有 immediate 就永远不会触发定位
+    { immediate: true }
   )
 }
