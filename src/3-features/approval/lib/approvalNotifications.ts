@@ -73,7 +73,10 @@ function normalizeViewerRole(role?: UserRole | string | null): UserRole | null {
   return null
 }
 
-function resolveCurrentViewerRole(): UserRole | null {
+// 2026-11-20 消息中心催办/告警跳转修复：导出给消息跳转矩阵（MessageCenterView）与
+// 铃铛（useNotificationCenter）复用——指标定位深链的落地页按真实登录角色选择
+// （学院用户无 /strategic-tasks 权限，落地须走 /indicators，否则被路由守卫弹回首页丢上下文）
+export function resolveCurrentViewerRole(): UserRole | null {
   try {
     if (getActivePinia()) {
       const authStore = useAuthStore()

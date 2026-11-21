@@ -144,13 +144,18 @@ describe('import/ui/BusinessImportDialog · 归口入参接线（源码契约锁
     expect(dialogSource).toContain('functionalOrgName?: string | null')
   })
 
-  it('未选归口 → 解析预览不启用（canPreview 对学院导入追加归口前提）', () => {
-    expect(dialogSource).toContain('(isStrategicImport.value || hasFunctionalOrg.value)')
+  it('未选归口 → 解析预览不启用（canPreview 对学院导入追加归口前提；全部导入除外）', () => {
+    // 2026-11-19（学院全部导入）：全部导入不要求先选归口（归口由文件「职能部门」列解析）
+    expect(dialogSource).toContain(
+      '(isStrategicImport.value || isAllImport.value || hasFunctionalOrg.value)'
+    )
   })
 
-  it('handlePreview 未选归口先拦并提示（不发起请求）', () => {
+  it('handlePreview 未选归口先拦并提示（不发起请求）；全部导入模式不拦', () => {
+    // 2026-11-19（学院全部导入）：单条导入仍要求先选归口；全部导入的归口由文件内
+    // 「职能部门」列解析 → 不拦。故条件里多了 `!isAllImport.value`。
     expect(dialogSource).toContain(
-      "if (!isStrategicImport.value && !hasFunctionalOrg.value) {\n    ElMessage.warning(COLLEGE_IMPORT_FUNCTIONAL_ORG_REQUIRED)"
+      "if (!isStrategicImport.value && !isAllImport.value && !hasFunctionalOrg.value) {\n    ElMessage.warning(COLLEGE_IMPORT_FUNCTIONAL_ORG_REQUIRED)"
     )
     expect(dialogSource).toContain('functionalOrgId: props.functionalOrgId ?? undefined')
   })
