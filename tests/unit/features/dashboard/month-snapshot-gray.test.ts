@@ -5,7 +5,9 @@
  * - appraisal-summary / college-levels 响应携带 monthState（APPROVED/IN_REVIEW/NOT_REPORTED）
  *   与 reported 标记；只有 APPROVED 月份出鉴定值。
  * - 前端渲染：部门分布图非 APPROVED 月份柱形一律置灰（#C0C4CC 系）+ tooltip 状态说明；
- *   学院卡 2026-11-22 起改按线分段混色（灰段=已下发−三档合计，灰彩同柱并存）。
+ *   学院卡 2026-11-22 起改按线分段混色（灰段=已下发−三档合计，灰彩同柱并存），
+ *   tooltip 为单行四段计数「已下发 X 项 ｜ 超前 a · 正常 b · 滞后 c · 未走完 d」（和=X），
+ *   不提示未下发数；X=0 或无数据不出 tooltip。
  *   monthState 兜底优先级 = 行级 > 月级 > 响应级 > reported=false → NOT_REPORTED > APPROVED。
  * - PR #127 评审意见 A：appraisal-summary 接口失败一律空态 + 错误提示，
  *   不再回退前端启发式（getDeptStatsAtMonth 已删除）。
@@ -30,6 +32,7 @@ vi.mock('@/shared/api/monitoringApi', () => ({
 import { apiClient } from '@/shared/api/client'
 import {
   collegeGraySegmentCount,
+  collegeTooltipCountsLine,
   isGrayMonth,
   monthStateDeptTooltip,
   monthStateGrayLabel,
@@ -142,6 +145,39 @@ describe('月份快照状态解析（resolveMonthState / isGrayMonth / 文案）
     // 缺省字段（旧响应兼容）按 0 处理
     expect(collegeGraySegmentCount({})).toBe(0)
     expect(collegeGraySegmentCount({ ahead: 2 })).toBe(0)
+  })
+
+  // 2026-11-22 tooltip 定稿：单行四段计数，和 = 已下发 = 柱高；不提示未下发；X=0 不出 tooltip
+  it('collegeTooltipCountsLine 单行四段计数（和=已下发、不含未下发、X=0/缺省返回 null）', () => {
+    // 四学院场景逐字断言（与截图渲染一致）
+    expect(collegeTooltipCountsLine({ dispatchedCount: 6, ahead: 2, normal: 3, delayed: 1 })).toBe(
+      '已下发 6 项 ｜ 超前 2 · 正常 3 · 滞后 1 · 未走完 0'
+    )
+    expect(collegeTooltipCountsLine({ dispatchedCount: 5, ahead: 1, normal: 0, delayed: 0 })).toBe(
+      '已下发 5 项 ｜ 超前 1 · 正常 0 · 滞后 0 · 未走完 4'
+    )
+    expect(collegeTooltipCountsLine({ dispatchedCount: 4, ahead: 0, normal: 0, delayed: 0 })).toBe(
+      '已下发 4 项 ｜ 超前 0 · 正常 0 · 滞后 0 · 未走完 4'
+    )
+    expect(collegeTooltipCountsLine({ dispatchedCount: 5, ahead: 0, normal: 3, delayed: 2 })).toBe(
+      '已下发 5 项 ｜ 超前 0 · 正常 3 · 滞后 2 · 未走完 0'
+    )
+
+    // 四段计数之和 = 已下发（正好对应柱高彩段+灰段）
+    const line = collegeTooltipCountsLine({ dispatchedCount: 5, ahead: 0, normal: 3, delayed: 2 })
+    const nums = (line ?? '').match(/\d+/g)?.map(Number) ?? []
+    expect(nums).toHaveLength(5)
+    expect(nums[1] + nums[2] + nums[3] + nums[4]).toBe(nums[0])
+
+    // 不再提示未下发数（口径：未下发不在柱子上，看板不重复提示）
+    expect(line).not.toContain('未下发')
+
+    // X=0 或无数据（缺省）→ null（调用方不出 tooltip）
+    expect(
+      collegeTooltipCountsLine({ dispatchedCount: 0, ahead: 0, normal: 0, delayed: 0 })
+    ).toBeNull()
+    expect(collegeTooltipCountsLine({})).toBeNull()
+    expect(collegeTooltipCountsLine({ undispatchedCount: 3 })).toBeNull()
   })
 })
 

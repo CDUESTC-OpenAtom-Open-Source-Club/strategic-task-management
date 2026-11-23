@@ -15,6 +15,7 @@ import { logger } from '@/shared/lib/utils/logger'
 import {
   aggregateCollegeLevels,
   collegeGraySegmentCount,
+  collegeTooltipCountsLine,
   isGrayMonth,
   monthStateDeptTooltip,
   monthStateGrayLabel,
@@ -2175,9 +2176,10 @@ export function useDashboardView(props: DashboardViewProps) {
           }
           const name = dataItem.fullName || dataItem.name || params[0].name
 
-          // 2026-11-22 按线分段混色口径：已下发 0 项或无数据不出 tooltip
-          const dispatched = dataItem.dispatchedCount || 0
-          if (dispatched <= 0) {
+          // 2026-11-22 按线分段混色口径：单行四段计数（和 = 已下发数 = 柱高彩段+灰段），
+          // 不提示未下发数；X=0 或无数据不出 tooltip（collegeTooltipCountsLine 返回 null）
+          const countsLine = collegeTooltipCountsLine(dataItem)
+          if (!countsLine) {
             return ''
           }
 
@@ -2185,11 +2187,7 @@ export function useDashboardView(props: DashboardViewProps) {
           if (isCollegeDrillDown.value) {
             tooltip += `${params[0].name}<br/>`
           }
-          tooltip += `已下发: ${dispatched} 项 · 未下发: ${dataItem.undispatchedCount || 0} 项<br/>`
-          tooltip += `<span style="color: ${statusColors.ahead}">●</span> 超前: ${dataItem.ahead || 0}&nbsp;&nbsp;`
-          tooltip += `<span style="color: ${statusColors.normal}">●</span> 正常: ${dataItem.normal || 0}&nbsp;&nbsp;`
-          tooltip += `<span style="color: ${statusColors.delayed}">●</span> 滞后: ${dataItem.delayed || 0}&nbsp;&nbsp;`
-          tooltip += `<span style="color: ${MONTH_GRAY_COLOR}">●</span> 未走完: ${collegeGraySegmentCount(dataItem)}`
+          tooltip += countsLine
           if (!isCollegeDrillDown.value) {
             tooltip += `<br/><span style="color: #409eff; font-size: 11px;">点击查看月度趋势</span>`
           }

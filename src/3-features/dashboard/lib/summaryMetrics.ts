@@ -70,6 +70,25 @@ export const collegeGraySegmentCount = (row: {
     (row.dispatchedCount || 0) - ((row.ahead || 0) + (row.normal || 0) + (row.delayed || 0))
   )
 
+/**
+ * 学院卡 tooltip 分段计数行（2026-11-22 定稿）：
+ * `已下发 X 项 ｜ 超前 a · 正常 b · 滞后 c · 未走完 d`，四段之和 = X = 柱高（彩段+灰段）。
+ * 不提示未下发数——未下发不在柱子上（下发进度信号分发页徽标已有），看板不重复提示。
+ * X = 0 或无数据（缺省 dispatchedCount）返回 null，调用方不出 tooltip。
+ */
+export const collegeTooltipCountsLine = (row: {
+  dispatchedCount?: number
+  ahead?: number
+  normal?: number
+  delayed?: number
+}): string | null => {
+  const dispatched = row.dispatchedCount || 0
+  if (dispatched <= 0) {
+    return null
+  }
+  return `已下发 ${dispatched} 项 ｜ 超前 ${row.ahead || 0} · 正常 ${row.normal || 0} · 滞后 ${row.delayed || 0} · 未走完 ${collegeGraySegmentCount(row)}`
+}
+
 // ============================================================================
 // 学院等级统计映射（2026-11-17 新口径：后端契约数据 → 看板图表行）
 // 口径：未填报学院（reported=false）照常出列，画灰柱「下发 n 项·未填报」督办；
