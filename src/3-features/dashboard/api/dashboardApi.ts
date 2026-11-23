@@ -27,8 +27,10 @@ import type { DashboardData, DepartmentProgress, AlertSummary } from '@/shared/t
 /**
  * 月份快照状态（2026-11-18 按月快照口径，后端契约字段，禁止改名）。
  *
- * 只有 APPROVED 月份出鉴定值；IN_REVIEW=该月上报仍在审批中、NOT_REPORTED=该月未填报，
- * 两种状态下前端一律置灰显示（#C0C4CC 灰柱 + tooltip 状态说明），不画鉴定柱。
+ * 只有 APPROVED 月份出鉴定值；IN_REVIEW=该月上报仍在审批中、NOT_REPORTED=该月未填报。
+ * 部门分布图：非 APPROVED 一律整柱置灰（#C0C4CC + tooltip 状态说明），不画鉴定柱；
+ * 学院卡（2026-11-22 按线分段混色口径）：三档计数=走完审批线数直接出彩段，
+ * 灰段 = 已下发 − 三档合计（前端可算，后端零改动）。
  * 字段缺省（后端未合并 month-snapshot 分支时）按 reported 兜底：
  * reported=false → NOT_REPORTED，否则视为 APPROVED（兼容旧响应）。
  */

@@ -14,8 +14,9 @@ import { useLoadingState } from '@/shared/lib/loading/useLoadingState'
 import { logger } from '@/shared/lib/utils/logger'
 import {
   aggregateCollegeLevels,
+  collegeGraySegmentCount,
+  collegeTooltipCountsLine,
   isGrayMonth,
-  monthStateCollegeTooltip,
   monthStateDeptTooltip,
   monthStateGrayLabel,
   resolveMonthState,
@@ -2170,34 +2171,31 @@ export function useDashboardView(props: DashboardViewProps) {
           }
           const dataIndex = params[0].dataIndex
           const dataItem = data[dataIndex]
-          const name = dataItem?.fullName || dataItem?.name || params[0].name
+          if (!dataItem) {
+            return ''
+          }
+          const name = dataItem.fullName || dataItem.name || params[0].name
+
+          // 2026-11-22 按线分段混色口径：单行四段计数（和 = 已下发数 = 柱高彩段+灰段），
+          // 不提示未下发数；X=0 或无数据不出 tooltip（collegeTooltipCountsLine 返回 null）
+          const countsLine = collegeTooltipCountsLine(dataItem)
+          if (!countsLine) {
+            return ''
+          }
 
           let tooltip = `<strong>${name}</strong><br/>`
-
-          // 2026-11-18 按月快照口径：非 APPROVED（未填报/审批中）灰柱督办，
-          // tooltip 给状态说明 + 下发/未下发数（既有 reported=false 逻辑并入 monthState 统一处理）
-          if (dataItem && isGrayMonth(dataItem.monthState)) {
-            tooltip += `<span style="color: #909399; font-weight: bold;">■ ${monthStateCollegeTooltip(dataItem.monthState)}</span><br/>`
-            tooltip += `已下发: ${dataItem.dispatchedCount || 0} 项 · 未下发: ${dataItem.undispatchedCount || 0} 项<br/>`
-          } else if (isCollegeDrillDown.value) {
+          if (isCollegeDrillDown.value) {
             tooltip += `${params[0].name}<br/>`
-            tooltip += `<span style="color: ${statusColors.ahead}">●</span> 超前: ${dataItem?.ahead || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.normal}">●</span> 正常: ${dataItem?.normal || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.delayed}">●</span> 滞后: ${dataItem?.delayed || 0}<br/>`
-            tooltip += `总计: ${dataItem?.total || 0}`
-          } else {
-            tooltip += `${collegeSelectedMonth.value}月完成情况<br/>`
-            tooltip += `<span style="color: ${statusColors.ahead}">■</span> 超前: ${dataItem?.ahead || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.normal}">■</span> 正常: ${dataItem?.normal || 0}<br/>`
-            tooltip += `<span style="color: ${statusColors.delayed}">■</span> 滞后: ${dataItem?.delayed || 0}<br/>`
-            tooltip += `总计: ${dataItem?.total || 0}<br/>`
-            tooltip += `<span style="color: #409eff; font-size: 11px;">点击查看月度趋势</span>`
+          }
+          tooltip += countsLine
+          if (!isCollegeDrillDown.value) {
+            tooltip += `<br/><span style="color: #409eff; font-size: 11px;">点击查看月度趋势</span>`
           }
           return tooltip
         }
       },
       legend: {
-        data: ['超前完成', '正常', '滞后', '未出鉴定'],
+        data: ['超前完成', '正常', '滞后', '未走完'],
         bottom: 0,
         left: 'center',
         itemWidth: 12,
@@ -2251,8 +2249,9 @@ export function useDashboardView(props: DashboardViewProps) {
             color: statusColors.ahead,
             borderRadius: isCollegeDrillDown.value ? [0, 0, 0, 0] : [4, 0, 0, 4]
           },
-          // 按月快照口径：只有 APPROVED 月份出鉴定值
-          data: data.map(d => (isGrayMonth(d.monthState) ? 0 : d.ahead || 0))
+          // 2026-11-22 按线分段混色：三档计数即「走完审批」的线数，直接出彩段，
+          // 不再按 monthState 整柱置灰（一条线走完亮一段，其余保持灰）
+          data: data.map(d => d.ahead || 0)
         },
         {
           name: '正常',
@@ -2262,7 +2261,7 @@ export function useDashboardView(props: DashboardViewProps) {
           itemStyle: {
             color: statusColors.normal
           },
-          data: data.map(d => (isGrayMonth(d.monthState) ? 0 : d.normal || 0))
+          data: data.map(d => d.normal || 0)
         },
         {
           // 三档口径：滞后直接来自接口 delayed（月报鉴定，appraisal 优先 self 兜底）
@@ -2271,15 +2270,22 @@ export function useDashboardView(props: DashboardViewProps) {
           stack: 'total',
           barWidth: isCollegeDrillDown.value ? 40 : 30,
           itemStyle: {
-            color: statusColors.delayed,
-            borderRadius: isCollegeDrillDown.value ? [0, 0, 0, 0] : [0, 4, 4, 0]
+            color: statusColors.delayed
           },
-          data: data.map(d => (isGrayMonth(d.monthState) ? 0 : d.delayed || 0))
+          // 按线分段混色：滞后上方可能叠灰段（灰彩并存），只有灰段为 0（全彩柱顶）才做右侧圆角
+          data: data.map(d =>
+            isCollegeDrillDown.value || collegeGraySegmentCount(d) > 0
+              ? d.delayed || 0
+              : {
+                  value: d.delayed || 0,
+                  itemStyle: { borderRadius: [0, 4, 4, 0] as [number, number, number, number] }
+                }
+          )
         },
         {
-          // 2026-11-18 按月快照口径：非 APPROVED（未填报/审批中）灰柱督办
-          // （柱高=已下发数；既有 reported=false「未填报」逻辑并入 monthState 统一处理）
-          name: '未出鉴定',
+          // 2026-11-22 按线分段混色：灰段 = 已下发数 − (超前+正常+滞后) 合计，
+          // 与彩段同柱并存；柱子总高 = 已下发指标总数
+          name: '未走完',
           type: 'bar',
           stack: 'total',
           barWidth: isCollegeDrillDown.value ? 40 : 30,
@@ -2287,7 +2293,7 @@ export function useDashboardView(props: DashboardViewProps) {
             color: MONTH_GRAY_COLOR,
             borderRadius: isCollegeDrillDown.value ? [0, 0, 0, 0] : [0, 4, 4, 0]
           },
-          data: data.map(d => (isGrayMonth(d.monthState) ? d.dispatchedCount || 0 : 0))
+          data: data.map(d => collegeGraySegmentCount(d))
         }
       ]
     })
