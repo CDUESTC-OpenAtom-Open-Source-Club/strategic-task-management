@@ -4,7 +4,8 @@
  * 契约（后端 fix/dashboard-month-snapshot 分支，联调前以本契约开发）：
  * - appraisal-summary / college-levels 响应携带 monthState（APPROVED/IN_REVIEW/NOT_REPORTED）
  *   与 reported 标记；只有 APPROVED 月份出鉴定值。
- * - 前端渲染：非 APPROVED 月份柱形一律置灰（#C0C4CC 系）+ tooltip 状态说明；
+ * - 前端渲染：部门分布图非 APPROVED 月份柱形一律置灰（#C0C4CC 系）+ tooltip 状态说明；
+ *   学院卡 2026-11-22 起改按线分段混色（灰段=已下发−三档合计，灰彩同柱并存）。
  *   monthState 兜底优先级 = 行级 > 月级 > 响应级 > reported=false → NOT_REPORTED > APPROVED。
  * - PR #127 评审意见 A：appraisal-summary 接口失败一律空态 + 错误提示，
  *   不再回退前端启发式（getDeptStatsAtMonth 已删除）。
@@ -28,8 +29,8 @@ vi.mock('@/shared/api/monitoringApi', () => ({
 
 import { apiClient } from '@/shared/api/client'
 import {
+  collegeGraySegmentCount,
   isGrayMonth,
-  monthStateCollegeTooltip,
   monthStateDeptTooltip,
   monthStateGrayLabel,
   resolveMonthState
@@ -119,13 +120,28 @@ describe('月份快照状态解析（resolveMonthState / isGrayMonth / 文案）
     expect(isGrayMonth('NOT_REPORTED')).toBe(true)
   })
 
-  it('置灰文案：部门=该部门本月…，学院=本月…，排名条短标签=未填报/审批中', () => {
+  it('置灰文案：部门=该部门本月…，排名条短标签=未填报/审批中', () => {
     expect(monthStateDeptTooltip('NOT_REPORTED')).toBe('该部门本月未填报')
     expect(monthStateDeptTooltip('IN_REVIEW')).toBe('该部门本月上报审批中')
-    expect(monthStateCollegeTooltip('NOT_REPORTED')).toBe('本月未填报（灰柱督办）')
-    expect(monthStateCollegeTooltip('IN_REVIEW')).toBe('本月上报审批中（灰柱督办）')
     expect(monthStateGrayLabel('NOT_REPORTED')).toBe('未填报')
     expect(monthStateGrayLabel('IN_REVIEW')).toBe('审批中')
+  })
+
+  // 2026-11-22 学院卡按线分段混色：灰段 = 已下发 − (超前+正常+滞后)，灰彩可同柱并存
+  it('collegeGraySegmentCount 灰段数 = 已下发 − 三档合计（负数截 0、缺省按 0）', () => {
+    // 部分线走完：1 彩 + 4 灰并存（文理学院场景）
+    expect(collegeGraySegmentCount({ dispatchedCount: 5, ahead: 1, normal: 0, delayed: 0 })).toBe(4)
+    // 全彩无灰：三档合计 = 已下发（计算机学院场景）
+    expect(collegeGraySegmentCount({ dispatchedCount: 6, ahead: 2, normal: 3, delayed: 1 })).toBe(0)
+    // 零走完全灰（航空学院场景）
+    expect(collegeGraySegmentCount({ dispatchedCount: 4, ahead: 0, normal: 0, delayed: 0 })).toBe(4)
+    // 绿红并存无灰（工学院场景）
+    expect(collegeGraySegmentCount({ dispatchedCount: 5, ahead: 0, normal: 3, delayed: 2 })).toBe(0)
+    // 数据异常（三档 > 已下发）防御性截 0，不出负灰段
+    expect(collegeGraySegmentCount({ dispatchedCount: 2, ahead: 3, normal: 1, delayed: 0 })).toBe(0)
+    // 缺省字段（旧响应兼容）按 0 处理
+    expect(collegeGraySegmentCount({})).toBe(0)
+    expect(collegeGraySegmentCount({ ahead: 2 })).toBe(0)
   })
 })
 
@@ -291,9 +307,7 @@ describe('useDashboardView 简报空态判定 briefMonthApproved（2026-11-18 �
     colleges: DashboardCollegeLevelsResponse['colleges']
   ): DashboardCollegeLevelsResponse => ({ year: 2026, month: 10, colleges })
 
-  const loadLevels = async (
-    colleges: DashboardCollegeLevelsResponse['colleges']
-  ) => {
+  const loadLevels = async (colleges: DashboardCollegeLevelsResponse['colleges']) => {
     setActivePinia(createPinia())
     mockedGet.mockImplementation(async (url: string) => {
       if (url === '/dashboard/college-levels') {
@@ -309,8 +323,26 @@ describe('useDashboardView 简报空态判定 briefMonthApproved（2026-11-18 �
 
   it('全部行非 APPROVED（未填报/审批中）→ 空态（briefMonthApproved=false）', async () => {
     const view = await loadLevels([
-      { orgId: 1, orgName: '计算机学院', ahead: 0, normal: 0, delayed: 0, total: 0, reported: false },
-      { orgId: 2, orgName: '电子信息学院', ahead: 0, normal: 0, delayed: 0, total: 0, reported: true, monthState: 'IN_REVIEW', dispatchedCount: 4 }
+      {
+        orgId: 1,
+        orgName: '计算机学院',
+        ahead: 0,
+        normal: 0,
+        delayed: 0,
+        total: 0,
+        reported: false
+      },
+      {
+        orgId: 2,
+        orgName: '电子信息学院',
+        ahead: 0,
+        normal: 0,
+        delayed: 0,
+        total: 0,
+        reported: true,
+        monthState: 'IN_REVIEW',
+        dispatchedCount: 4
+      }
     ])
     expect(view.briefMonthApproved.value).toBe(false)
   })
@@ -322,8 +354,28 @@ describe('useDashboardView 简报空态判定 briefMonthApproved（2026-11-18 �
 
   it('含 APPROVED 行且有鉴定值 → 完整简报（briefMonthApproved=true）', async () => {
     const view = await loadLevels([
-      { orgId: 1, orgName: '计算机学院', ahead: 3, normal: 1, delayed: 0, total: 4, reported: true, monthState: 'APPROVED', dispatchedCount: 5 },
-      { orgId: 2, orgName: '电子信息学院', ahead: 0, normal: 0, delayed: 0, total: 0, reported: false, monthState: 'NOT_REPORTED', dispatchedCount: 4 }
+      {
+        orgId: 1,
+        orgName: '计算机学院',
+        ahead: 3,
+        normal: 1,
+        delayed: 0,
+        total: 4,
+        reported: true,
+        monthState: 'APPROVED',
+        dispatchedCount: 5
+      },
+      {
+        orgId: 2,
+        orgName: '电子信息学院',
+        ahead: 0,
+        normal: 0,
+        delayed: 0,
+        total: 0,
+        reported: false,
+        monthState: 'NOT_REPORTED',
+        dispatchedCount: 4
+      }
     ])
     expect(view.briefMonthApproved.value).toBe(true)
     // 未填报督办提示两条状态都保留（简报正文外独立渲染）
