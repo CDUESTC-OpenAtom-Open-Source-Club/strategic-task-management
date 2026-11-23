@@ -39,23 +39,44 @@ export const resolveMonthState = (
 /** 非 APPROVED 月份一律置灰（#C0C4CC），不出鉴定柱 */
 export const isGrayMonth = (state: DashboardMonthState): boolean => state !== 'APPROVED'
 
-/** 置灰柱/条上的短标签（学院图与排名图共用） */
+/** 置灰柱/条上的短标签（排名图用；学院图 2026-11-22 起改按线分段混色，不再整柱置灰） */
 export const monthStateGrayLabel = (state: DashboardMonthState): string =>
   state === 'IN_REVIEW' ? '审批中' : '未填报'
-
-/** 学院图灰柱 tooltip 状态行 */
-export const monthStateCollegeTooltip = (state: DashboardMonthState): string =>
-  state === 'IN_REVIEW' ? '本月上报审批中（灰柱督办）' : '本月未填报（灰柱督办）'
 
 /** 部门图灰柱 tooltip 状态行 */
 export const monthStateDeptTooltip = (state: DashboardMonthState): string =>
   state === 'IN_REVIEW' ? '该部门本月上报审批中' : '该部门本月未填报'
 
 // ============================================================================
+// 学院卡按线分段混色口径（2026-11-22 用户拍板）
+// 柱子总高 = 已下发指标数；走完审批（整链到终点、月报 APPROVED）的线按鉴定等级
+// 出彩段（超前/正常/滞后），其余（已下发未走完）出灰段，灰彩可同柱并存——
+// 一条线走完即亮一段，不再「整月未全部走完=整根灰柱」。
+// 灰段数前端可算：已下发数 − (超前+正常+滞后) 合计，后端零改动。
+// ============================================================================
+
+/**
+ * 学院柱「未走完」灰段数 = 已下发数 − (超前+正常+滞后) 合计（负数防御性截为 0）。
+ * 三档计数本身即后端已算好的「走完审批」线数，无需区分 monthState。
+ */
+export const collegeGraySegmentCount = (row: {
+  dispatchedCount?: number
+  ahead?: number
+  normal?: number
+  delayed?: number
+}): number =>
+  Math.max(
+    0,
+    (row.dispatchedCount || 0) - ((row.ahead || 0) + (row.normal || 0) + (row.delayed || 0))
+  )
+
+// ============================================================================
 // 学院等级统计映射（2026-11-17 新口径：后端契约数据 → 看板图表行）
 // 口径：未填报学院（reported=false）照常出列，画灰柱「下发 n 项·未填报」督办；
 //       等级三档来自月报鉴定（appraisal_level 优先 self_rating 兜底，后端已算好）。
 // 2026-11-18 按月快照口径：行带 monthState，非 APPROVED 月份由图表置灰、不出鉴定柱。
+// 2026-11-22 按线分段混色（学院卡）：三档计数即「走完审批」线数直接出彩段，
+//       灰段 = 已下发 − 三档合计（collegeGraySegmentCount），灰彩同柱并存。
 // ============================================================================
 
 const shortenOrgName = (orgName: string): string =>
@@ -70,7 +91,7 @@ export interface CollegeLevelBarRow {
   normal: number
   delayed: number
   total: number
-  /** 已下发指标数（未填报灰柱显示「下发 n 项·未填报」） */
+  /** 已下发指标数（按线分段混色：柱子总高 / 灰段数=已下发−三档合计的数据源） */
   dispatchedCount: number
   /** 未下发指标数 */
   undispatchedCount: number
