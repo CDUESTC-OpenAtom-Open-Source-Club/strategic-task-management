@@ -549,13 +549,14 @@ const handlePreview = async () => {
  */
 const confirmAllImportExecution = async (): Promise<boolean> => {
   const plan = executionPlan.value
-  const dispatchLines = plan.dispatchGroups.map(
-    group => `· ${group.title}（${group.rowsCount} 行，基础性权重合计 ${group.basicWeightTotal}）`
-  )
+  const dispatchLines = plan.dispatchGroups.map(group => `· ${group.title}：${group.rowsCount} 条`)
   const skipLines = plan.skipGroups.map(
-    group => `· ${group.title}：${group.skipReason || '本次将跳过'}`
+    group =>
+      `· ${group.title}：${group.rowsCount} 条（${group.skipReason || '线已下发，本次跳过'}）`
   )
-  const errorLines = plan.errorGroups.map(group => `· ${group.title}：${group.groupError || '存在错误'}`)
+  const errorLines = plan.errorGroups.map(
+    group => `· ${group.title}：${group.groupError || '存在错误'}`
+  )
   const body = [
     '本次「全部导入」执行清单：',
     '',
@@ -704,9 +705,7 @@ const handleCommit = async () => {
       // 2026-11-17（学院线粒度改造）：学院子指标表按「学院 × 归口部门」定位计划，
       // commit 阶段同样带上归口部门（与 preview 同一入参口径）。
       // 职能部门指标表导入不适用该字段，一律不传。
-      ...(isStrategicImport.value
-        ? {}
-        : { functionalOrgId: props.functionalOrgId ?? undefined })
+      ...(isStrategicImport.value ? {} : { functionalOrgId: props.functionalOrgId ?? undefined })
     }
     const result = isStrategicImport.value
       ? await businessImportApi.commitStrategicTaskImport(previewResult.value.batchId, request)
@@ -943,10 +942,7 @@ watch(
               <span>错误组</span>
               <strong>{{ executionPlan.errorGroups.length }}</strong>
             </div>
-            <div
-              class="preview-stat"
-              :class="{ danger: executionPlan.unassignedRowsCount > 0 }"
-            >
+            <div class="preview-stat" :class="{ danger: executionPlan.unassignedRowsCount > 0 }">
               <span>无法归组行</span>
               <strong>{{ executionPlan.unassignedRowsCount }}</strong>
             </div>
@@ -974,12 +970,13 @@ watch(
             <ul class="execution-plan-list">
               <li v-for="group in executionPlan.dispatchGroups" :key="`d-${group.title}`">
                 <el-tag type="success" size="small">将下发</el-tag>
-                {{ group.title }}（{{ group.rowsCount }} 行，本组基础性权重合计
-                {{ group.basicWeightTotal }}，线状态：{{ group.lineStatusLabel }}）
+                {{ group.title }}（{{ group.rowsCount }} 条，线状态：{{ group.lineStatusLabel }}）
               </li>
               <li v-for="group in executionPlan.skipGroups" :key="`s-${group.title}`">
                 <el-tag type="warning" size="small">将跳过</el-tag>
-                {{ group.title }}：{{ group.skipReason || '本次将跳过' }}
+                {{ group.title }}：{{ group.rowsCount }} 条（{{
+                  group.skipReason || '线已下发，本次跳过'
+                }}）
               </li>
               <li v-for="group in executionPlan.errorGroups" :key="`e-${group.title}`">
                 <el-tag type="danger" size="small">错误</el-tag>
@@ -988,7 +985,7 @@ watch(
             </ul>
           </div>
 
-          <!-- 分组明细：每组一张卡片（组标题 + 行数 + 权重合计 + 线状态标记） -->
+          <!-- 分组明细：每组一张卡片（组标题 + 条数 + 线状态标记） -->
           <div class="group-list">
             <div
               v-for="group in groupViews"
@@ -998,23 +995,15 @@ watch(
             >
               <div class="group-card-header">
                 <span class="group-card-title">{{ group.title }}</span>
-                <el-tag
-                  v-if="group.kind === 'dispatch'"
-                  type="success"
-                  size="small"
-                >
+                <el-tag v-if="group.kind === 'dispatch'" type="success" size="small">
                   将下发
                 </el-tag>
-                <el-tag
-                  v-else-if="group.kind === 'skip'"
-                  type="warning"
-                  size="small"
-                >
+                <el-tag v-else-if="group.kind === 'skip'" type="warning" size="small">
                   已下发 · 本次将跳过
                 </el-tag>
                 <el-tag v-else type="danger" size="small">错误组</el-tag>
                 <span class="group-card-meta">
-                  {{ group.rowsCount }} 行 · 本组基础性权重合计 {{ group.basicWeightTotal }} · 线状态
+                  {{ group.rowsCount }} 条 · 线状态
                   {{ group.lineStatusLabel }}
                 </span>
               </div>
@@ -1086,7 +1075,11 @@ watch(
               show-icon
               title="这些行无法归组（「职能部门」列与核心指标归属不符，或无法识别归属部门），请修正后重新上传"
             />
-            <el-table :data="allPreviewResult?.unassignedRows ?? []" max-height="200" class="preview-table">
+            <el-table
+              :data="allPreviewResult?.unassignedRows ?? []"
+              max-height="200"
+              class="preview-table"
+            >
               <el-table-column prop="rowNo" label="序号" width="70" />
               <el-table-column label="父级指标" min-width="180" show-overflow-tooltip>
                 <template #default="{ row }">{{ row.normalized.parentIndicator }}</template>
@@ -1148,7 +1141,13 @@ watch(
               <el-alert
                 v-if="result.message"
                 class="group-card-alert"
-                :type="result.status === 'SUCCESS' ? 'success' : result.status === 'SKIPPED' ? 'warning' : 'error'"
+                :type="
+                  result.status === 'SUCCESS'
+                    ? 'success'
+                    : result.status === 'SKIPPED'
+                      ? 'warning'
+                      : 'error'
+                "
                 :closable="false"
                 show-icon
                 :title="result.message"
