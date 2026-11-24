@@ -10,7 +10,8 @@ import { describe, expect, it } from 'vitest'
 import {
   STRATEGIC_DEPT_ORG_ID,
   isStrategicOrgAccount,
-  isStrategicOrgId
+  isStrategicOrgId,
+  resolveEffectiveLoginRole
 } from '@/shared/lib/permissions/strategicOrgAccess'
 
 describe('isStrategicOrgId', () => {
@@ -53,5 +54,44 @@ describe('isStrategicOrgAccount', () => {
   it('空用户不命中', () => {
     expect(isStrategicOrgAccount(null)).toBe(false)
     expect(isStrategicOrgAccount(undefined)).toBe(false)
+  })
+})
+
+describe('resolveEffectiveLoginRole（导航/路由层身份唯一归一入口 · 2026-11-24 返修）', () => {
+  it('zlb_admin 口径：orgId=35 + 角色码解析失败（null）→ 导航层归一 strategic_dept', () => {
+    expect(resolveEffectiveLoginRole({ orgType: null, orgId: 35 }, null)).toBe('strategic_dept')
+    expect(resolveEffectiveLoginRole({ orgType: undefined, orgId: '35' }, null)).toBe(
+      'strategic_dept'
+    )
+  })
+
+  it('orgType=admin（本地载荷形态）→ 归一 strategic_dept', () => {
+    expect(resolveEffectiveLoginRole({ orgType: 'admin', orgId: 35 }, 'strategic_dept')).toBe(
+      'strategic_dept'
+    )
+    expect(resolveEffectiveLoginRole({ orgType: 'admin', orgId: null }, null)).toBe(
+      'strategic_dept'
+    )
+  })
+
+  it('orgId=35 + 角色码解析为其他前端角色 → 组织维度仍归一 strategic_dept（导航层语义）', () => {
+    expect(resolveEffectiveLoginRole({ orgType: null, orgId: 35 }, 'secondary_college')).toBe(
+      'strategic_dept'
+    )
+  })
+
+  it('职能部门 / 学院账号：登录角色码原样透传（API 数据层身份不归一）', () => {
+    expect(resolveEffectiveLoginRole({ orgType: 'functional', orgId: 36 }, 'functional_dept')).toBe(
+      'functional_dept'
+    )
+    expect(resolveEffectiveLoginRole({ orgType: 'academic', orgId: 41 }, 'secondary_college')).toBe(
+      'secondary_college'
+    )
+  })
+
+  it('非战略部组织 + 角色码解析失败：null 原样返回（守卫按无角色弹回）', () => {
+    expect(resolveEffectiveLoginRole({ orgType: null, orgId: 44 }, null)).toBeNull()
+    expect(resolveEffectiveLoginRole(null, null)).toBeNull()
+    expect(resolveEffectiveLoginRole(null, 'functional_dept')).toBe('functional_dept')
   })
 })

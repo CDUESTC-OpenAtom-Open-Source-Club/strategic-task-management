@@ -2,6 +2,7 @@ import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/features/auth/model/store'
 import { useOrgStore } from '@/features/organization/model/store'
+import { resolveEffectiveLoginRole } from '@/shared/lib/permissions/strategicOrgAccess'
 import type { UserRole } from '@/shared/types'
 
 export interface DepartmentOption {
@@ -49,7 +50,10 @@ export function useDepartmentSwitcher() {
   })
 
   const viewingRole = computed<UserRole>(() => {
-    if (authStore.userRole !== 'strategic_dept') {
+    // 2026-11-24（返修·身份两层模型）：「登录身份是否战略部」按导航层归一口径
+    // （resolveEffectiveLoginRole）判定——战略部组织账号（如只挂 ROLE_REPORTER 的
+    // zlb_admin）同样获得切换器视角跟随；角色码原样保留给 API 数据层，不经此归一。
+    if (resolveEffectiveLoginRole(authStore.user, authStore.userRole) !== 'strategic_dept') {
       return authStore.userRole || 'secondary_college'
     }
 

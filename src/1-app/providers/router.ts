@@ -14,13 +14,18 @@ import { isDingTalkContainer, tryDingTalkAutoLogin } from '@/features/auth/lib/d
 import { tokenManager } from '@/shared/lib/utils/tokenManager'
 import { logger } from '@/shared/lib/utils/logger'
 import { hasAdminConsoleAccess } from '@/shared/lib/permissions/adminConsoleAccess'
-import { isStrategicOrgAccount } from '@/shared/lib/permissions/strategicOrgAccess'
+import { resolveEffectiveLoginRole } from '@/shared/lib/permissions/strategicOrgAccess'
 import { startProgress, doneProgress } from './router-progress'
 import { resolveProtectedRouteRedirect } from './lib/routeAccess'
 import './router-progress.css'
 
+// 2026-11-24（返修·身份两层模型）：默认落地按**导航/路由层身份**判定——
+// 战略发展部组织账号（orgType=admin / orgId=35，角色码可能只是 ROLE_REPORTER）
+// 落战略部首页，与 v1.5.3 一致；其余账号按登录角色码落工作台。
 const resolveAuthenticatedHome = (authStore: ReturnType<typeof useAuthStore>) => {
-  return authStore.userRole === 'strategic_dept' ? '/strategic-tasks' : '/dashboard'
+  return resolveEffectiveLoginRole(authStore.user, authStore.userRole) === 'strategic_dept'
+    ? '/strategic-tasks'
+    : '/dashboard'
 }
 
 // 确保从 localStorage 恢复认证状态
@@ -259,11 +264,12 @@ router.beforeEach(async (to, _from, next) => {
     requiresAuth: Boolean(to.meta['requiresAuth']),
     isAuthenticated: authStore.isAuthenticated,
     hasAdminConsoleAccess: canAccessAdminConsole,
-    userRole: authStore.userRole,
+    // 2026-11-24（返修·身份两层模型）：守卫消费**导航/路由层身份**——
+    // 战略部组织账号（含只挂 ROLE_REPORTER、载荷缺 orgType 者）经
+    // resolveEffectiveLoginRole（唯一实现，见 strategicOrgAccess.ts）归一为
+    // strategic_dept 享受超角色放行；API 数据层身份仍取 user 真实解析结果。
+    userRole: resolveEffectiveLoginRole(authStore.user, authStore.userRole),
     effectiveRole: authStore.effectiveRole,
-    // 2026-11-24（v1.5.4 登录回归修复）：战略部组织维度判定（orgType=admin / orgId=35），
-    // 保证只挂业务角色码（如 ROLE_REPORTER）的战略部账号同样享受超角色放行
-    isStrategicOrgAccount: isStrategicOrgAccount(authStore.user),
     allowedRoles: Array.isArray(to.meta['roles']) ? (to.meta['roles'] as string[]) : undefined,
     path: to.path
   })

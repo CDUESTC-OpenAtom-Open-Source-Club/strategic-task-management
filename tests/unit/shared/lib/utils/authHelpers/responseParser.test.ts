@@ -42,22 +42,39 @@ describe('responseParser', () => {
     expect(user).toBeNull()
   })
 
-  it('falls back to strategic_dept for strategic-org accounts whose role codes cannot map (v1.5.4 zlb_admin login regression)', () => {
-    // 线上 v1.5.4 实测：zlb_admin 属战略发展部组织（orgId=35），只挂 ROLE_REPORTER，
-    // 载荷缺 orgType 时角色码映射失败 → 此前整个用户解析为 null 被登出弹回。
+  it('local zlb_admin payload (orgType=admin) resolves strategic_dept via org-type mapping', () => {
+    // 本地载荷形态：orgType=admin → mapOrgTypeToRole 命中 strategic_dept。
     const user = mapBackendUser({
       userId: 188,
       username: 'zlb_admin',
       realName: '战略部管理员',
-      role: 'ROLE_REPORTER',
+      roles: ['ROLE_REPORTER'],
+      orgId: 35,
+      orgName: '战略发展部',
+      orgType: 'admin'
+    })
+
+    expect(user?.role).toBe('strategic_dept')
+    expect(user?.orgId).toBe(35)
+    expect(user?.orgType).toBe('admin')
+    expect(user?.roles).toEqual(['ROLE_REPORTER'])
+  })
+
+  it('does NOT normalize by org: unmappable role codes stay unparsed even for orgId=35 (2026-11-24 返修·身份两层模型)', () => {
+    // 返修定案：解析结果 = API 数据层身份，必须与后端真实角色一致——
+    // orgId=35 + 仅业务角色码（如 ROLE_REPORTER）+ 载荷缺 orgType 时**不做组织维度归一**，
+    // 否则 UI 按战略部调用全量接口集合会被 @PreAuthorize 拒绝刷 403（线上 zlb_admin 实证）。
+    // 战略部组织的导航/路由层归一由 resolveEffectiveLoginRole（strategicOrgAccess.ts）负责。
+    const user = mapBackendUser({
+      userId: 188,
+      username: 'zlb_admin',
+      realName: '战略部管理员',
       roles: ['ROLE_REPORTER'],
       orgId: 35,
       orgName: '战略发展部'
     })
 
-    expect(user?.role).toBe('strategic_dept')
-    expect(user?.orgId).toBe(35)
-    expect(user?.orgType).toBeNull()
+    expect(user).toBeNull()
   })
 
   it('still returns null for unmappable roles outside the strategic org (orgId !== 35)', () => {

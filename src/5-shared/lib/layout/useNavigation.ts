@@ -11,9 +11,10 @@
 
 import { computed, type ComputedRef } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import type { UserRole } from '@/shared/types'
+import type { User, UserRole } from '@/shared/types'
 import type { Component } from 'vue'
 import { DataAnalysis, Document as _Document, Edit, List, Promotion } from '@element-plus/icons-vue'
+import { resolveEffectiveLoginRole } from '@/shared/lib/permissions/strategicOrgAccess'
 
 /** 标签页配置接口 */
 export interface TabConfig {
@@ -52,7 +53,9 @@ const ROLE_BASED_TABS: Record<UserRole, TabConfig[]> = {
 
 export function useNavigation(
   viewingRole: ComputedRef<UserRole | null>,
-  loginRole?: ComputedRef<UserRole | null>
+  loginRole?: ComputedRef<UserRole | null>,
+  /** 2026-11-24（返修）：登录用户载荷，供导航层身份按组织维度归一（两层身份模型） */
+  loginUser?: ComputedRef<Pick<User, 'orgType' | 'orgId'> | null>
 ) {
   const router = useRouter()
   const route = useRoute()
@@ -66,10 +69,17 @@ export function useNavigation(
   // 与「切换器切到哪个部门，导航就是这个部门类型的导航」的用户预期一致；
   // 切换后自动跳 tabs[0] 的既有逻辑（AppLayout watch）不受影响。
   //
-  // viewingRole 为空（未切换视角）时回退登录角色组 —— 使用方传入的 viewingRole
+  // viewingRole 为空（未切换视角）时回退**导航层登录身份** —— 使用方传入的 viewingRole
   // 可能短暂为 null（如 store 尚未恢复），此时保持登录账号自己的导航不闪空。
+  // 2026-11-24（返修·身份两层模型）：登录身份经 resolveEffectiveLoginRole 归一——
+  // 战略发展部组织账号（orgType=admin / orgId=35，如只挂 ROLE_REPORTER 的 zlb_admin）
+  // 导航层恒按 strategic_dept 语义渲染战略部导航组，与角色码解析结果解耦；
+  // 该归一仅用于导航层，API 数据层身份保持真实角色（见 strategicOrgAccess.ts 文件头注）。
+  const effectiveLoginRole = computed<UserRole | null>(() =>
+    resolveEffectiveLoginRole(loginUser?.value ?? null, loginRole?.value ?? null)
+  )
   const tabs = computed<TabConfig[]>(() => {
-    const role = viewingRole.value || loginRole?.value || null
+    const role = viewingRole.value || effectiveLoginRole.value || null
     if (!role) {
       return []
     }

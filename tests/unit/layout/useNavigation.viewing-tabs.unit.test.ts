@@ -68,48 +68,63 @@ describe('useNavigation · tabs 视角单源矩阵（2026-11-24）', () => {
     expect(tabsFor(null, null)).toEqual([])
   })
 
-  // 2026-11-24（v1.5.4 登录回归修复）同族核查：zlb_admin（REPORTER@35）登录时，
-  // responseParser 按「战略发展部组织」口径兜底解析出 strategic_dept（见
-  // responseParser.ts 组织维度兜底），authStore.userRole 随之正确，
-  // useNavigation 的登录角色推导不需要再补组织维度——此处用
-  // 「mapBackendUser → 登录角色 → tabs」的组合用例钉住该链路。
-  describe('zlb_admin（REPORTER@35）组合链路', () => {
-    const zlbAdminLoginRole = () => {
-      const user = mapBackendUser({
-        userId: 188,
-        username: 'zlb_admin',
-        realName: '战略部管理员',
-        role: 'ROLE_REPORTER',
-        roles: ['ROLE_REPORTER'],
-        orgId: 35,
-        orgName: '战略发展部'
-      })
-      return (user?.role ?? null) as UserRole | null
+  // 2026-11-24（返修·身份两层模型）：zlb_admin（REPORTER@35）链路核查——
+  // API 数据层身份（mapBackendUser 解析结果）与导航层身份（resolveEffectiveLoginRole
+  // 组织维度归一）解耦：载荷带 orgType=admin 时解析为 strategic_dept（本地形态）；
+  // 载荷缺 orgType 时解析为 null（不归一，否则 UI 按战略部调用全量接口集合会被
+  // @PreAuthorize 拒绝刷 403）——但导航层仍按组织维度给出战略部导航组。
+  describe('zlb_admin（REPORTER@35）两层身份组合链路', () => {
+    const zlbAdminPayload = (orgType?: string) => ({
+      userId: 188,
+      username: 'zlb_admin',
+      realName: '战略部管理员',
+      roles: ['ROLE_REPORTER'],
+      orgId: 35,
+      orgName: '战略发展部',
+      ...(orgType ? { orgType } : {})
+    })
+    const tabsForUser = (
+      viewing: UserRole | null,
+      user: ReturnType<typeof zlbAdminPayload> | null
+    ) => {
+      const loginRole = (mapBackendUser(user as Record<string, unknown>)?.role ??
+        null) as UserRole | null
+      const navigation = useNavigation<never>(
+        ref(viewing) as never,
+        ref(loginRole) as never,
+        ref(user) as never
+      )
+      return navigation.tabs.value
     }
 
-    it('角色解析兜底为 strategic_dept，无视角导航=战略部组（数据看板/战略任务管理）', () => {
-      expect(zlbAdminLoginRole()).toBe('strategic_dept')
-      expect(tabsFor(null, zlbAdminLoginRole()).map(tab => tab.id)).toEqual([
-        'dashboard',
-        'strategic'
-      ])
+    it('本地载荷形态（orgType=admin）：解析=strategic_dept，无视角导航=战略部组', () => {
+      const user = zlbAdminPayload('admin')
+      expect(mapBackendUser(user as Record<string, unknown>)?.role).toBe('strategic_dept')
+      expect(tabsForUser(null, user).map(tab => tab.id)).toEqual(['dashboard', 'strategic'])
     })
 
-    it('切教务处视角=[看板/填报/审批]，切学院视角=[看板/填报]，切回恢复战略部组', () => {
-      const login = zlbAdminLoginRole()
-      expect(tabsFor('functional_dept', login).map(tab => tab.id)).toEqual([
-        'dashboard',
-        'indicators',
-        'distribution'
-      ])
-      expect(tabsFor('secondary_college', login).map(tab => tab.id)).toEqual([
-        'dashboard',
-        'indicators'
-      ])
-      expect(tabsFor('strategic_dept', login).map(tab => tab.id)).toEqual([
-        'dashboard',
-        'strategic'
-      ])
+    it('载荷缺 orgType（线上形态）：解析不归一，导航层仍按组织维度=战略部组', () => {
+      const user = zlbAdminPayload()
+      expect(mapBackendUser(user as Record<string, unknown>)).toBeNull()
+      expect(tabsForUser(null, user).map(tab => tab.id)).toEqual(['dashboard', 'strategic'])
+    })
+
+    it('切教务处视角=[看板/填报/审批]，切学院视角=[看板/填报]，切回恢复战略部组（两种载荷形态一致）', () => {
+      for (const user of [zlbAdminPayload('admin'), zlbAdminPayload()]) {
+        expect(tabsForUser('functional_dept', user).map(tab => tab.id)).toEqual([
+          'dashboard',
+          'indicators',
+          'distribution'
+        ])
+        expect(tabsForUser('secondary_college', user).map(tab => tab.id)).toEqual([
+          'dashboard',
+          'indicators'
+        ])
+        expect(tabsForUser('strategic_dept', user).map(tab => tab.id)).toEqual([
+          'dashboard',
+          'strategic'
+        ])
+      }
     })
   })
 })

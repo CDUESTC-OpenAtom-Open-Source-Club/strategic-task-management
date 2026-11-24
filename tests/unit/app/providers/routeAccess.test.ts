@@ -103,7 +103,11 @@ describe('resolveProtectedRouteRedirect · 切换器视角判定（2026-11-24 �
   })
 })
 
-describe('resolveProtectedRouteRedirect · 战略部组织维度判定（2026-11-24 v1.5.4 登录回归修复）', () => {
+describe('resolveProtectedRouteRedirect · 导航层身份契约（2026-11-24 返修·身份两层模型）', () => {
+  // 返修后本函数只消费**导航/路由层身份**：组织维度归一在上游 router 守卫经
+  // resolveEffectiveLoginRole（strategicOrgAccess.ts，唯一实现）完成——
+  // 战略部组织账号（orgType=admin / orgId=35，角色码可能只是 ROLE_REPORTER）在此恒为
+  // 'strategic_dept'；API 数据层身份不进本判定。
   const strategicTasksRoute = {
     requiresAuth: true,
     isAuthenticated: true,
@@ -111,24 +115,12 @@ describe('resolveProtectedRouteRedirect · 战略部组织维度判定（2026-11
     path: '/strategic-tasks'
   }
 
-  it('orgId=35 + 角色码 ROLE_REPORTER（前端角色缺失）→ 组织维度超角色放行，不再弹回登录页', () => {
+  it('战略部组织账号（上游已归一 userRole=strategic_dept）+ 无视角 → 超角色放行，不弹回', () => {
     expect(
       resolveProtectedRouteRedirect({
         ...strategicTasksRoute,
-        userRole: null,
-        effectiveRole: null,
-        isStrategicOrgAccount: true
-      })
-    ).toBeNull()
-  })
-
-  it('orgId=35 + 角色码解析为非战略角色（载荷口径异常）→ 无视角仍保持超角色放行', () => {
-    expect(
-      resolveProtectedRouteRedirect({
-        ...strategicTasksRoute,
-        userRole: 'secondary_college',
-        effectiveRole: 'secondary_college',
-        isStrategicOrgAccount: true
+        userRole: 'strategic_dept',
+        effectiveRole: null
       })
     ).toBeNull()
   })
@@ -138,19 +130,17 @@ describe('resolveProtectedRouteRedirect · 战略部组织维度判定（2026-11
       resolveProtectedRouteRedirect({
         ...strategicTasksRoute,
         userRole: 'strategic_dept',
-        effectiveRole: 'secondary_college',
-        isStrategicOrgAccount: true
+        effectiveRole: 'secondary_college'
       })
     ).toBe('/dashboard')
   })
 
-  it('非战略部组织 + 无角色码：维持弹回登录页（组织豁免不外溢）', () => {
+  it('导航层身份为 null（非战略部组织且角色码不可映射）：维持弹回登录页', () => {
     expect(
       resolveProtectedRouteRedirect({
         ...strategicTasksRoute,
         userRole: null,
-        effectiveRole: null,
-        isStrategicOrgAccount: false
+        effectiveRole: null
       })
     ).toBe('/login')
   })
