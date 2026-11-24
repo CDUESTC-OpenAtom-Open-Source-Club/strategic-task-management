@@ -51,9 +51,13 @@ const timeContext = useTimeContextStore()
 // 2026-11-24（切换器视角跟随修复）：切到哪个部门，导航就是该部门类型的导航，
 // 与该部门账号直登完全一致。登录角色仅在 viewingRole 为空时作回退，
 // 保证 store 尚未恢复时导航不闪空。
+// 2026-11-24（返修·身份两层模型）：回退身份经 useNavigation 内部
+// resolveEffectiveLoginRole 按组织维度归一（战略部组织账号=战略部导航组），
+// 此处传登录用户载荷供归一判定。
 const { tabs, activeTab, handleTabClick } = useNavigation(
   viewingRole,
-  computed(() => authStore.userRole)
+  computed(() => authStore.userRole),
+  computed(() => authStore.user)
 )
 
 const {

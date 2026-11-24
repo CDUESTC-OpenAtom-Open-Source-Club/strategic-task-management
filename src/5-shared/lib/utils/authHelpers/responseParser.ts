@@ -11,7 +11,6 @@
 
 import type { User, UserRole } from '@/shared/types'
 import { logger } from '@/shared/lib/utils/logger'
-import { isStrategicOrgId } from '@/shared/lib/permissions/strategicOrgAccess'
 
 const KNOWN_USER_ROLES: UserRole[] = ['strategic_dept', 'functional_dept', 'secondary_college']
 
@@ -137,23 +136,15 @@ function resolveUserRole(userData: Record<string, unknown>): UserRole | null {
     }
   }
 
-  const mappedByOrgType = mapOrgTypeToRole(
+  // 2026-11-24（返修·身份两层模型）：此处**不做任何组织维度归一**。
+  // 解析结果 = API 数据层身份，必须与后端真实角色一致（zlb_admin 实证：
+  // 归一成 strategic_dept 会让 UI 按战略部调用全量接口集合，被 @PreAuthorize 拒绝
+  // 刷 403）。战略部组织的导航/路由层归一在 resolveEffectiveLoginRole
+  // （strategicOrgAccess.ts）统一做，不落在本模块。
+  return mapOrgTypeToRole(
     String(userData.orgType || userData.role || '').trim(),
     String(userData.orgName || userData.department || '').trim()
   )
-  if (mappedByOrgType) {
-    return mappedByOrgType
-  }
-
-  // 2026-11-24（v1.5.4 登录回归修复）：组织维度兜底——战略发展部组织（orgId=35）的
-  // 账号只挂业务角色码（如 ROLE_REPORTER）且载荷缺失 orgType 时，角色码无法映射
-  // 前端角色，此前会因解析失败被登出弹回登录页。按「战略发展部组织的账号」口径
-  // 兜底判定为 strategic_dept（见 strategicOrgAccess.ts）。
-  if (isStrategicOrgId(userData.orgId)) {
-    return 'strategic_dept'
-  }
-
-  return null
 }
 
 /**

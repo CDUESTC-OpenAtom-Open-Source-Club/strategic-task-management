@@ -5,6 +5,7 @@ import { useMessageStore } from '@/features/messages/model/message'
 import { useApprovalStore } from '@/features/approval/model/store'
 import { APPROVAL_STATE_REFRESH_EVENT } from '@/features/approval/lib'
 import { hasAdminConsoleAccess } from '@/shared/lib/permissions/adminConsoleAccess'
+import { resolveEffectiveLoginRole } from '@/shared/lib/permissions/strategicOrgAccess'
 import {
   GLOBAL_DATA_REFRESH_REQUEST_EVENT,
   requestGlobalDataRefresh,
@@ -33,7 +34,11 @@ export function useAppLayout() {
 
   const isLoggedIn = computed(() => authStore.isAuthenticated)
   const currentUser = computed(() => authStore.user)
-  const isStrategicDept = computed(() => authStore.userRole === 'strategic_dept')
+  // 2026-11-24（返修·身份两层模型）：切换器显隐按导航层归一身份判定——
+  // 战略部组织账号（orgType=admin / orgId=35，角色码可能只是 ROLE_REPORTER）同样可见。
+  const isStrategicDept = computed(
+    () => resolveEffectiveLoginRole(authStore.user, authStore.userRole) === 'strategic_dept'
+  )
   const strategicDeptName = computed(() => orgStore.getStrategicDeptName())
   const canAccessAdminConsole = computed(() => hasAdminConsoleAccess(authStore.user))
 
