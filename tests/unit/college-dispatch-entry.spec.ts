@@ -64,6 +64,17 @@ describe('routeAccess · /distribution 按视角角色判定（2026-11-24）', (
     ).toBe('/dashboard')
   })
 
+  it('战略部组织账号（orgId=35，角色码 ROLE_REPORTER）视角=职能部门放行（v1.5.4 回归口径）', () => {
+    expect(
+      resolveProtectedRouteRedirect({
+        ...base,
+        userRole: 'strategic_dept',
+        effectiveRole: 'functional_dept',
+        isStrategicOrgAccount: true
+      })
+    ).toBeNull()
+  })
+
   it('未登录仍先去登录页', () => {
     expect(
       resolveProtectedRouteRedirect({

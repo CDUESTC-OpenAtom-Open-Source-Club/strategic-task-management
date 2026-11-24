@@ -102,3 +102,56 @@ describe('resolveProtectedRouteRedirect · 切换器视角判定（2026-11-24 �
     ).toBe('/dashboard')
   })
 })
+
+describe('resolveProtectedRouteRedirect · 战略部组织维度判定（2026-11-24 v1.5.4 登录回归修复）', () => {
+  const strategicTasksRoute = {
+    requiresAuth: true,
+    isAuthenticated: true,
+    allowedRoles: ['strategic_dept', 'functional_dept'],
+    path: '/strategic-tasks'
+  }
+
+  it('orgId=35 + 角色码 ROLE_REPORTER（前端角色缺失）→ 组织维度超角色放行，不再弹回登录页', () => {
+    expect(
+      resolveProtectedRouteRedirect({
+        ...strategicTasksRoute,
+        userRole: null,
+        effectiveRole: null,
+        isStrategicOrgAccount: true
+      })
+    ).toBeNull()
+  })
+
+  it('orgId=35 + 角色码解析为非战略角色（载荷口径异常）→ 无视角仍保持超角色放行', () => {
+    expect(
+      resolveProtectedRouteRedirect({
+        ...strategicTasksRoute,
+        userRole: 'secondary_college',
+        effectiveRole: 'secondary_college',
+        isStrategicOrgAccount: true
+      })
+    ).toBeNull()
+  })
+
+  it('战略部组织账号 + 视角=secondary_college：直闯 /strategic-tasks 仍按视角弹回', () => {
+    expect(
+      resolveProtectedRouteRedirect({
+        ...strategicTasksRoute,
+        userRole: 'strategic_dept',
+        effectiveRole: 'secondary_college',
+        isStrategicOrgAccount: true
+      })
+    ).toBe('/dashboard')
+  })
+
+  it('非战略部组织 + 无角色码：维持弹回登录页（组织豁免不外溢）', () => {
+    expect(
+      resolveProtectedRouteRedirect({
+        ...strategicTasksRoute,
+        userRole: null,
+        effectiveRole: null,
+        isStrategicOrgAccount: false
+      })
+    ).toBe('/login')
+  })
+})

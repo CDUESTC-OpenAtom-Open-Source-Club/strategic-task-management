@@ -14,6 +14,7 @@
 import { describe, expect, it } from 'vitest'
 import { ref } from 'vue'
 import { useNavigation } from '@/shared/lib/layout/useNavigation'
+import { mapBackendUser } from '@/shared/lib/utils/authHelpers/responseParser'
 import type { UserRole } from '@/shared/types'
 
 const tabsFor = (viewing: UserRole | null, login: UserRole | null) => {
@@ -65,5 +66,50 @@ describe('useNavigation · tabs 视角单源矩阵（2026-11-24）', () => {
 
   it('视角与登录角色均为 null：tabs 为空数组', () => {
     expect(tabsFor(null, null)).toEqual([])
+  })
+
+  // 2026-11-24（v1.5.4 登录回归修复）同族核查：zlb_admin（REPORTER@35）登录时，
+  // responseParser 按「战略发展部组织」口径兜底解析出 strategic_dept（见
+  // responseParser.ts 组织维度兜底），authStore.userRole 随之正确，
+  // useNavigation 的登录角色推导不需要再补组织维度——此处用
+  // 「mapBackendUser → 登录角色 → tabs」的组合用例钉住该链路。
+  describe('zlb_admin（REPORTER@35）组合链路', () => {
+    const zlbAdminLoginRole = () => {
+      const user = mapBackendUser({
+        userId: 188,
+        username: 'zlb_admin',
+        realName: '战略部管理员',
+        role: 'ROLE_REPORTER',
+        roles: ['ROLE_REPORTER'],
+        orgId: 35,
+        orgName: '战略发展部'
+      })
+      return (user?.role ?? null) as UserRole | null
+    }
+
+    it('角色解析兜底为 strategic_dept，无视角导航=战略部组（数据看板/战略任务管理）', () => {
+      expect(zlbAdminLoginRole()).toBe('strategic_dept')
+      expect(tabsFor(null, zlbAdminLoginRole()).map(tab => tab.id)).toEqual([
+        'dashboard',
+        'strategic'
+      ])
+    })
+
+    it('切教务处视角=[看板/填报/审批]，切学院视角=[看板/填报]，切回恢复战略部组', () => {
+      const login = zlbAdminLoginRole()
+      expect(tabsFor('functional_dept', login).map(tab => tab.id)).toEqual([
+        'dashboard',
+        'indicators',
+        'distribution'
+      ])
+      expect(tabsFor('secondary_college', login).map(tab => tab.id)).toEqual([
+        'dashboard',
+        'indicators'
+      ])
+      expect(tabsFor('strategic_dept', login).map(tab => tab.id)).toEqual([
+        'dashboard',
+        'strategic'
+      ])
+    })
   })
 })
