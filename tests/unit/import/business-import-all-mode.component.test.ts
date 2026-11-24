@@ -33,10 +33,9 @@ vi.mock('element-plus', async () => {
 })
 
 vi.mock('@/features/import/api/businessImport', async () => {
-  const actual =
-    await vi.importActual<typeof import('@/features/import/api/businessImport')>(
-      '@/features/import/api/businessImport'
-    )
+  const actual = await vi.importActual<typeof import('@/features/import/api/businessImport')>(
+    '@/features/import/api/businessImport'
+  )
   return {
     ...actual,
     businessImportApi: {
@@ -144,7 +143,8 @@ const mountAllDialog = async (preview = buildAllPreview()) => {
         'el-step': true,
         'el-alert': {
           props: ['title', 'type'],
-          template: '<div class="el-alert-stub"><span class="el-alert-title">{{ title }}</span><slot /></div>'
+          template:
+            '<div class="el-alert-stub"><span class="el-alert-title">{{ title }}</span><slot /></div>'
         },
         'el-tag': { template: '<span class="el-tag-stub"><slot /></span>' },
         'el-button': {
@@ -264,13 +264,14 @@ describe('BusinessImportDialog · mode=all 分组预览（三类信息）', () =
     wrapper.unmount()
   })
 
-  it('组标题带行数 / 基础性权重合计 / 线状态', async () => {
+  it('组标题带条数 / 线状态（权重合计不再展示，仅错误诊断保留）', async () => {
     const wrapper = await mountAllDialog()
     await selectFileAndPreview(wrapper)
     await flushPromisesWrapper(wrapper)
 
     const text = wrapper.text()
-    expect(text).toContain('基础性权重合计 100')
+    expect(text).toContain('1 条 · 线状态')
+    expect(text).not.toContain('本组基础性权重合计')
     expect(text).toContain('线状态')
     wrapper.unmount()
   })
@@ -309,10 +310,7 @@ describe('BusinessImportDialog · mode=all 分组预览（三类信息）', () =
 describe('BusinessImportDialog · mode=all 执行清单（第 3 步）', () => {
   it('渲染执行清单：列明将下发 N 组 / 将跳过 M 组及原因', async () => {
     const preview = buildAllPreview({
-      groups: [
-        buildAllPreview().groups[0],
-        buildAllPreview().groups[1]
-      ]
+      groups: [buildAllPreview().groups[0], buildAllPreview().groups[1]]
     })
     const wrapper = await mountAllDialog(preview)
     await selectFileAndPreview(wrapper)
@@ -382,9 +380,7 @@ describe('StrategicTaskView · 「全部导入」按钮可见性（源码契约�
   const viewSource = readSource('src/3-features/task/ui/StrategicTaskView.vue')
 
   it('「全部导入」按钮仅学院页签显示（v-if 绑定学院页签判定）', () => {
-    expect(viewSource).toContain(
-      'v-if="activeTaskTabName === \'college\'"'
-    )
+    expect(viewSource).toContain('v-if="activeTaskTabName === \'college\'"')
     expect(viewSource).toContain('全部导入')
   })
 
