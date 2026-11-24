@@ -112,8 +112,9 @@ export function useDashboardView(props: DashboardViewProps) {
   type IndicatorStatus = 'normal' | 'ahead' | 'warning' | 'delayed'
 
   // 月份筛选和下钻状态（用于堆叠柱状图）
-  // P4 口径：看板默认展示「上个月」；1 月时上个月为去年 12 月（仅月份数值，年份由 timeContext 承载）
-  const previousMonthNumber = new Date().getMonth() === 0 ? 12 : new Date().getMonth()
+  // 默认展示「当前月」（1-based，年份由 timeContext 承载）：系统启用初期上月往往没有数据，
+  // 默认当月保证首屏就有数据（2026-11-24：原「默认上月」在启用首月导致打开看板全空）
+  const currentMonthNumber = new Date().getMonth() + 1
 
   // P5 看板异动汇总：异动审批中的指标清单
   const mutationSummary = ref<
@@ -134,7 +135,7 @@ export function useDashboardView(props: DashboardViewProps) {
     }
   }
 
-  const selectedMonth = ref(previousMonthNumber) // 默认上月
+  const selectedMonth = ref(currentMonthNumber) // 默认当前月（启用初期上月无数据，保证首屏有数据）
   const isDrillDown = ref(false) // 是否处于下钻状态
   const drilledDept = ref('') // 下钻选中的部门
 
@@ -143,7 +144,7 @@ export function useDashboardView(props: DashboardViewProps) {
   const showMonthIndicatorCard = ref(false) // 控制月份指标卡片显示
 
   // ============ 学院看板状态（职能部门视角）============
-  const collegeSelectedMonth = ref(previousMonthNumber) // 学院看板选中月份（默认上月）
+  const collegeSelectedMonth = ref(currentMonthNumber) // 学院看板选中月份（默认当前月，与 selectedMonth 同口径）
   const isCollegeDrillDown = ref(false) // 学院看板下钻状态
   const drilledCollege = ref('') // 下钻选中的学院
   const selectedMonthInCollegeDrillDown = ref<number | null>(null) // 学院下钻后选中的月份
@@ -168,7 +169,7 @@ export function useDashboardView(props: DashboardViewProps) {
   const appraisalMonthAutoJumped = ref(false)
 
   // ============ 分院排名看板状态 ============
-  const collegeRankingMonth = ref(previousMonthNumber) // 分院排名选中月份（默认上月）
+  const collegeRankingMonth = ref(currentMonthNumber) // 分院排名选中月份（默认当前月，与学院看板同口径）
   // 2026-10-31 新口径：分院排名改吃 college-levels 接口（无来源部门维度），
   // 原 selectedOwnerDeptFilter 来源部门筛选随之移除
 
@@ -457,7 +458,7 @@ export function useDashboardView(props: DashboardViewProps) {
       })
       appraisalSummary.value = summary
 
-      // 首屏默认「上月」：若该月尚无任何鉴定数据，自动跳到年度最近有数据的月份，
+      // 首屏默认「当前月」：若该月尚无任何鉴定数据，自动跳到年度最近有数据的月份，
       // 保证一进看板就能看到真实分布（只跳一次，用户手动切月后不再干预）
       if (
         !appraisalMonthAutoJumped.value &&

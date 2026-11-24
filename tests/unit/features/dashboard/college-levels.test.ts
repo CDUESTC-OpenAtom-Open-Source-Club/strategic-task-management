@@ -479,6 +479,30 @@ describe('summaryMetrics 学院等级映射（2026-11-17 新口径 + 2026-11-18 
 })
 
 describe('useDashboardView 学院等级/滞后任务数据流（API 供数 + 切月/事件刷新）', () => {
+  it('看板默认选中当前月（2026-11-24：原默认上月，启用初期上月无数据导致首屏全空）', () => {
+    // 只冻结 Date（不动 setTimeout 等定时器），避免跨月边界运行时用例漂移
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      // 11 月：三个月份筛选（部门分布/学院看板/分院排名）默认值都落在当前月
+      vi.setSystemTime(new Date(2026, 10, 15, 12, 0, 0))
+      setActivePinia(createPinia())
+      const view = useDashboardView({})
+      expect(view.selectedMonth.value).toBe(11)
+      expect(view.collegeSelectedMonth.value).toBe(11)
+      expect(view.collegeRankingMonth.value).toBe(11)
+
+      // 1 月边界：默认当月 = 1（不再有「1 月默认去年 12 月」的上月特判）
+      vi.setSystemTime(new Date(2027, 0, 15, 12, 0, 0))
+      setActivePinia(createPinia())
+      const januaryView = useDashboardView({})
+      expect(januaryView.selectedMonth.value).toBe(1)
+      expect(januaryView.collegeSelectedMonth.value).toBe(1)
+      expect(januaryView.collegeRankingMonth.value).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('collegeBarData 来自契约响应；切月触发重新请求；未填报学院灰柱行保留', async () => {
     setActivePinia(createPinia())
     mockedGet.mockResolvedValue({ year: 2026, month: 10, colleges: contractColleges })
@@ -568,22 +592,30 @@ describe('useDashboardView 学院等级/滞后任务数据流（API 供数 + 切
     })
 
     // 切月：滞后清单与分布图同源重拉（selectedMonth 变化触发）
+    // 目标月不硬编码：默认月已改为当前月，切换目标只要求"与当前默认月不同"即可触发 watch
+    const switchMonth = view.selectedMonth.value === 11 ? 10 : 11
     mockedGet.mockClear()
     mockedGet.mockImplementation(async (url: string) => {
       if (url === '/dashboard/appraisal-summary') {
-        return { year: 2026, month: 11, latestMonth: 0, departments: [], departmentMonths: [] }
+        return {
+          year: 2026,
+          month: switchMonth,
+          latestMonth: 0,
+          departments: [],
+          departmentMonths: []
+        }
       }
       if (url === '/dashboard/delayed-indicators') {
-        return { year: 2026, month: 11, items: [] }
+        return { year: 2026, month: switchMonth, items: [] }
       }
-      return { year: 2026, month: 11, colleges: [] }
+      return { year: 2026, month: switchMonth, colleges: [] }
     })
-    view.selectedMonth.value = 11
+    view.selectedMonth.value = switchMonth
     await flushPromises()
 
     expect(mockedGet).toHaveBeenCalledWith('/dashboard/delayed-indicators', {
       year: 2026,
-      month: 11
+      month: switchMonth
     })
     expect(view.delayedTasks.value).toEqual([])
   })
@@ -615,9 +647,11 @@ describe('useDashboardView 学院等级/滞后任务数据流（API 供数 + 切
       total: 3
     })
 
-    // 分院排名：默认排名月与趋势同源，分数 = (超前+正常)/已下发数
-    const rankingMonth = view.collegeRankingMonth.value
-    const rankingSource = contractTrend.months.find(m => m.month === rankingMonth)
+    // 分院排名：选中排名月与趋势同源，分数 = (超前+正常)/已下发数
+    // （排名月固定取趋势 fixture 里的月份，不再依赖看板默认月——默认月已改为当前月）
+    view.collegeRankingMonth.value = 10
+    await nextTick()
+    const rankingSource = contractTrend.months.find(m => m.month === view.collegeRankingMonth.value)
     expect(view.getCollegeRankingData.value.map(row => row.fullName)).toEqual(
       (rankingSource?.colleges ?? []).map(college => college.orgName)
     )
