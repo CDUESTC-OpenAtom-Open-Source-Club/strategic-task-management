@@ -47,10 +47,10 @@ const { viewingDept, viewingRole, viewingDeptName, deptOptions } = useDepartment
 const planStore = usePlanStore()
 const timeContext = useTimeContextStore()
 
-// 标签页 = 视角角色组 ∪ 登录角色组（见 useNavigation 注释）。
-// 传登录角色是为了让战略部用部门切换器切到职能部门 / 学院视角时，
-// 仍保留「战略任务管理」与「指标下发与审批」入口 —— 否则「职能部门的操作能力
-// 补充给战略部」这条需求在切视角后就落空了。
+// 标签页 = 视角角色组（视角单源，见 useNavigation 注释）。
+// 2026-11-24（切换器视角跟随修复）：切到哪个部门，导航就是该部门类型的导航，
+// 与该部门账号直登完全一致。登录角色仅在 viewingRole 为空时作回退，
+// 保证 store 尚未恢复时导航不闪空。
 const { tabs, activeTab, handleTabClick } = useNavigation(
   viewingRole,
   computed(() => authStore.userRole)

@@ -111,13 +111,14 @@ const routes: RouteRecordRaw[] = [
         path: 'distribution',
         name: 'Distribution',
         component: () => import('@/features/indicator/ui/IndicatorDistributeView.vue'),
-        // 2026-11-05（issue #96 · 1.2/N1）：战略发展部不再有本页入口，路由层面同样收紧 ——
-        // 直接输 URL 也进不去（roles 不匹配会走统一的未授权重定向到首页）。
-        // 路由本身保留：职能部门的审批深链仍指向它（铃铛/待办跳转），删了深链会失效。
+        // 2026-11-24（切换器视角跟随修复）：路由权限完全按 roles + 视角角色判定 ——
+        // - 战略部直登（无视角）：effectiveRole=strategic_dept 不在 roles 里，输 URL 弹回首页；
+        // - 战略部视角=职能部门：放行（与职能部门直登一致，审批深链可用）；
+        // - 职能部门直登：正常进入（审批处理与撤回入口仍在本页）。
+        // 旧口径（2026-11-05 issue #96 · 1.2/N1 的 deniedLoginRoles 登录角色黑名单）
+        // 已随导航并集逻辑一并移除，见 routeAccess.ts 注释。
         meta: {
           roles: ['functional_dept'],
-          // 按登录角色关闭：战略部即使把视角切到职能部门也进不来（见 routeAccess 注释）
-          deniedLoginRoles: ['strategic_dept'],
           title: '指标下发 - 战略指标管理系统'
         }
       },
@@ -260,9 +261,6 @@ router.beforeEach(async (to, _from, next) => {
     userRole: authStore.userRole,
     effectiveRole: authStore.effectiveRole,
     allowedRoles: Array.isArray(to.meta['roles']) ? (to.meta['roles'] as string[]) : undefined,
-    deniedLoginRoles: Array.isArray(to.meta['deniedLoginRoles'])
-      ? (to.meta['deniedLoginRoles'] as string[])
-      : undefined,
     path: to.path
   })
 
