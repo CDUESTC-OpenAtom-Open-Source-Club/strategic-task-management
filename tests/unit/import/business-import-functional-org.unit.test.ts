@@ -9,7 +9,7 @@ import { resolve } from 'node:path'
  *    后端；未选归口前端先拦（不给后端误命中别的归口的线的机会）。
  * ④ 阻断文案优先展示后端原文——后端点名归口的真实原因（如「该学院 2026 年度的
  *    「教务处」这条线已下发…」）不得再被前端统一改写成
- *    「当前任务已下发，不能重复导入或下发。」（曹老师线上反馈的盖原因缺陷）；
+ *    「当前任务已下发，不能重复导入或下发。」（线上测试反馈的盖原因缺陷）；
  *    兜底文案主语按导入类型区分（学院导入说「学院计划」，不说「部门计划」）。
  */
 
@@ -87,7 +87,7 @@ describe('import/api/businessImport · 学院导入请求带归口部门（funct
 describe('import/ui/BusinessImportDialog · formatCommitBlockedMessage（后端原文优先）', () => {
   it('后端点名归口的「已下发」原因 → 原文照常展示，不再被改写成通用兜底', () => {
     // 旧实现把含「已下发」的 reason 统一改写成「当前任务已下发，不能重复导入或下发。」
-    // —— 曹老师线上反馈的「看不到真实原因」根因，此处锁死不回归。
+    // —— 线上测试反馈的「看不到真实原因」根因，此处锁死不回归。
     const legacyRewrite = '当前任务已下发，不能重复导入或下发。'
     const backendReason = '该学院 2026 年度的「教务处」这条线已下发，不能重复导入'
     const message = formatCommitBlockedMessage(
@@ -155,20 +155,22 @@ describe('import/ui/BusinessImportDialog · 归口入参接线（源码契约锁
     // 2026-11-19（学院全部导入）：单条导入仍要求先选归口；全部导入的归口由文件内
     // 「职能部门」列解析 → 不拦。故条件里多了 `!isAllImport.value`。
     expect(dialogSource).toContain(
-      "if (!isStrategicImport.value && !isAllImport.value && !hasFunctionalOrg.value) {\n    ElMessage.warning(COLLEGE_IMPORT_FUNCTIONAL_ORG_REQUIRED)"
+      'if (!isStrategicImport.value && !isAllImport.value && !hasFunctionalOrg.value) {\n    ElMessage.warning(COLLEGE_IMPORT_FUNCTIONAL_ORG_REQUIRED)'
     )
     expect(dialogSource).toContain('functionalOrgId: props.functionalOrgId ?? undefined')
   })
 
   it('commit 请求同样携带 functionalOrgId（仅学院导入；职能部门导入不传）', () => {
-    expect(dialogSource).toContain(
-      '...(isStrategicImport.value\n        ? {}\n        : { functionalOrgId: props.functionalOrgId ?? undefined })'
-    )
+    // 语义锁：只锁「职能部门导入不传 / 学院导入传归口」的条件展开存在，
+    // 不锁排版（prettier 会把多行压成单行，精确格式断言会在格式化后误报）。
+    const pattern =
+      /\.\.\.\(\s*isStrategicImport\.value\s*\?\s*\{\s*\}\s*:\s*\{\s*functionalOrgId:\s*props\.functionalOrgId \?\? undefined\s*\}\s*\)/
+    expect(pattern.test(dialogSource)).toBe(true)
   })
 
   it('弹窗摘要区回显「归口部门」（用户上传前可确认本次导入属于哪条线）', () => {
     expect(dialogSource).toContain('<span class="summary-label">归口部门</span>')
-    expect(dialogSource).toContain('{{ functionalOrgName || \'未选择\' }}')
+    expect(dialogSource).toContain("{{ functionalOrgName || '未选择' }}")
   })
 
   it('自动下发被拦的文案同样保留后端原文（不再整句替换）', () => {
@@ -192,10 +194,10 @@ describe('task/ui/StrategicTaskView · 导入弹窗归口接线（源码契约�
 
   it('view：学院页签给导入弹窗传所选归口（职能部门页签恒 undefined）', () => {
     expect(viewSource).toContain(
-      ":functional-org-id=\"\n        activeTaskTabName === 'college' ? (collegeDispatchDeptOrgId ?? undefined) : undefined\n      \""
+      ':functional-org-id="\n        activeTaskTabName === \'college\' ? (collegeDispatchDeptOrgId ?? undefined) : undefined\n      "'
     )
     expect(viewSource).toContain(
-      ":functional-org-name=\"\n        activeTaskTabName === 'college' ? collegeDispatchDeptEffective : undefined\n      \""
+      ':functional-org-name="\n        activeTaskTabName === \'college\' ? collegeDispatchDeptEffective : undefined\n      "'
     )
   })
 })
