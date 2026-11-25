@@ -2179,7 +2179,17 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return []
     }
     const planRows = hasCurrentUserPlan.value ? currentPlanIndicators.value : []
-    const base = planRows.length > 0 ? planRows : strategicStore.indicators
+    // 2026-11-25（切换器视角泄漏修复）：无计划时 store 兜底行必须按当前视角学院收口
+    // （targetOrgId == 视角学院），防止管理员切换视角后全量指标串入归口选项；
+    // 直登学院行 targetOrgId==自身，过滤为 no-op。视角学院解析失败时按空处理，
+    // 与 buildCollegeExportRowsByOwnerDept 的 null 口径一致。
+    const viewingOrgId = currentViewingOrgId.value
+    const base =
+      planRows.length > 0
+        ? planRows
+        : viewingOrgId === null
+          ? []
+          : strategicStore.indicators.filter(i => getIndicatorTargetOrgId(i) === viewingOrgId)
     const realYear = timeContext.realCurrentYear
     const currentYear = timeContext.currentYear
     return base.filter(i => resolveIndicatorYear(i, realYear) === currentYear)
