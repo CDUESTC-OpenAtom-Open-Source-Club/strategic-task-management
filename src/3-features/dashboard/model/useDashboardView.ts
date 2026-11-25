@@ -144,7 +144,17 @@ export function useDashboardView(props: DashboardViewProps) {
   const showMonthIndicatorCard = ref(false) // 控制月份指标卡片显示
 
   // ============ 学院看板状态（职能部门视角）============
-  const collegeSelectedMonth = ref(currentMonthNumber) // 学院看板选中月份（默认当前月，与 selectedMonth 同口径）
+  // 2026-11-25 月份事实源对齐：学院卡 / 分院排名 / 总览统计（完成率·等级分布·状态卡）
+  // 原先与分布图各用各的月份变量——默认值虽已统一为「当前月」，但仍是三个独立 ref，
+  // 改任一张卡的月份不影响另两张，同屏仍会出现两个月份口径（分布图 11 月、学院卡 10 月）。
+  // 现在三者同源于 selectedMonth（可写 computed，v-model 仍可用），
+  // 月份永远一致，且不再各自维护、不会再次走偏。
+  const collegeSelectedMonth = computed({
+    get: () => selectedMonth.value,
+    set: (value: number) => {
+      selectedMonth.value = value
+    }
+  })
   const isCollegeDrillDown = ref(false) // 学院看板下钻状态
   const drilledCollege = ref('') // 下钻选中的学院
   const selectedMonthInCollegeDrillDown = ref<number | null>(null) // 学院下钻后选中的月份
@@ -169,7 +179,14 @@ export function useDashboardView(props: DashboardViewProps) {
   const appraisalMonthAutoJumped = ref(false)
 
   // ============ 分院排名看板状态 ============
-  const collegeRankingMonth = ref(currentMonthNumber) // 分院排名选中月份（默认当前月，与学院看板同口径）
+  // 2026-11-25：与学院卡同源（排名数据取自 college-levels-trend 的同月数据），
+  // 同样从 selectedMonth 派生，避免排名卡与学院卡/总览统计显示不同月份。
+  const collegeRankingMonth = computed({
+    get: () => selectedMonth.value,
+    set: (value: number) => {
+      selectedMonth.value = value
+    }
+  })
   // 2026-10-31 新口径：分院排名改吃 college-levels 接口（无来源部门维度），
   // 原 selectedOwnerDeptFilter 来源部门筛选随之移除
 
@@ -450,12 +467,18 @@ export function useDashboardView(props: DashboardViewProps) {
   })
 
   const loadAppraisalSummary = async () => {
+    const requestedMonth = selectedMonth.value
     appraisalSummaryLoading.value = true
     try {
       const summary = await dashboardApi.getAppraisalSummary({
         year: timeContext.currentYear,
-        month: selectedMonth.value
+        month: requestedMonth
       })
+      // 2026-11-25：与学院等级同源的过期响应保护——月份已变则丢弃，
+      // 否则旧月份的鉴定汇总会覆盖当前月份（分布图与总览统计口径不一致）。
+      if (selectedMonth.value !== requestedMonth) {
+        return
+      }
       appraisalSummary.value = summary
 
       // 首屏默认「当前月」：若该月尚无任何鉴定数据，自动跳到年度最近有数据的月份，
@@ -468,6 +491,10 @@ export function useDashboardView(props: DashboardViewProps) {
       ) {
         appraisalMonthAutoJumped.value = true
         selectedMonth.value = summary.latestMonth
+        // 2026-11-25：auto-jump 这条改月路径不经 handleCollegeMonthChange，
+        // 学院等级数据需在此显式重拉，否则总览统计（完成率·等级分布·状态卡）
+        // 与简报「未填报学院」仍停留在跳月前的月份。
+        void loadCollegeLevels()
         return
       }
       appraisalMonthAutoJumped.value = true
@@ -753,12 +780,18 @@ export function useDashboardView(props: DashboardViewProps) {
 
   /** 加载当前选中月份的学院等级（月份切换 / 挂载 / 切年时触发重新请求） */
   const loadCollegeLevels = async () => {
+    const requestedMonth = collegeSelectedMonth.value
     collegeLevelsLoading.value = true
     try {
       const response = await dashboardApi.getCollegeLevels({
         year: timeContext.currentYear,
-        month: collegeSelectedMonth.value
+        month: requestedMonth
       })
+      // 2026-11-25：请求返回前月份可能已变（auto-jump / 快速切月），
+      // 过期响应直接丢弃，避免旧月份数据覆盖当前月份、造成统计口径错位。
+      if (collegeSelectedMonth.value !== requestedMonth) {
+        return
+      }
       collegeLevels.value = response.colleges
     } catch (error) {
       // 接口失败：清空数据走空态 + 既有错误提示，不静默回退本地计算
@@ -2028,6 +2061,9 @@ export function useDashboardView(props: DashboardViewProps) {
 
   // 2026-11-18：分布图与滞后清单同源跟随 selectedMonth 重新取数
   // （原滞后清单跟的是 collegeSelectedMonth，两处月份不同步）
+  // 2026-11-25：学院卡月份已并入 selectedMonth，用户切月时的数据重拉仍由
+  // handleCollegeMonthChange 同步发起（保持既有调用时序与单测契约）；
+  // auto-jump 这条不经 handler 的改月路径，在跳月处显式补拉学院等级。
   watch(selectedMonth, () => {
     void loadAppraisalSummary()
     void loadDelayedTasks()
@@ -2333,6 +2369,8 @@ export function useDashboardView(props: DashboardViewProps) {
   }
 
   // 处理学院看板月份变化（2026-10-31 新口径：切月触发重新请求；2026-11-17 增滞后清单同步）
+  // 2026-11-25：学院卡月份已并入 selectedMonth，本 handler 仍是「用户切月」这条路径的
+  // 数据重拉入口（同步发起，保持既有调用时序与单测契约）。
   const handleCollegeMonthChange = () => {
     showCollegeMonthIndicatorCard.value = false
     selectedMonthInCollegeDrillDown.value = null
