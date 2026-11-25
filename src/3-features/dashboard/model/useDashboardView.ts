@@ -33,6 +33,8 @@ import type {
   DashboardMonthState
 } from '@/features/dashboard/api/dashboardApi'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
+// 2026-11-25（看板来源归属修复）：导出「任务来源」列按归口职能部门归组键（父级核心指标 targetOrg）
+import { resolveTaskSourceDept } from '@/features/indicator/model/parentIndicatorCore'
 import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
 import {
   buildExcelBlob,
@@ -1341,7 +1343,9 @@ export function useDashboardView(props: DashboardViewProps) {
 
         exportData = indicators.map((item, index) => ({
           序号: index + 1,
-          任务来源: item.ownerDept || '战略发展部',
+          // 2026-11-25（看板来源归属修复）：任务来源按归口职能部门（父级核心指标
+          // targetOrg），ownerDept（战略部代发）仅作兜底——与「任务来源分布」饼图同键
+          任务来源: resolveTaskSourceDept(item, dashboardStore.parentIndicatorMap),
           战略任务: item.task,
           核心指标: item.indicator,
           指标类型: item.type,

@@ -67,6 +67,11 @@ import {
   type ParentFunctionalBrief
 } from '@/features/indicator/lib/functionalDeptScope'
 import { getUsersByOrgId } from '@/features/user/api/query'
+// 2026-11-25（看板来源归属修复）：父指标归口水合抽到共享 parentIndicatorCore，与数据看板同源避免两处漂移
+import {
+  fetchParentIndicatorCore,
+  type ParentIndicatorCore
+} from '@/features/indicator/model/parentIndicatorCore'
 import { ApprovalProgressDrawer } from '@/features/approval'
 import { approveTask, rejectTask } from '@/features/workflow/api'
 import { getWorkflowDefinitionPreviewByCode } from '@/features/workflow/api'
@@ -561,19 +566,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   // 学院的行是职能部门下发的子指标，前面要补它所属的核心指标。
   // 计划详情接口不返回父指标名称/类型，按 parentIndicatorId 逐个拉取
   // （getIndicatorById 走 fetchWithCache，同 id 不重复请求）。
-  interface ParentIndicatorBrief {
-    name: string
-    type1?: string
-    sortOrder?: number
-    /**
-     * 2026-11-13（学院上报按归口部门分批提交）：父级核心指标的归口职能部门。
-     * 口径：父级核心指标的 targetOrg 即学院子指标的「归属部门」——与后端提交时
-     * 权威反查（报告明细指标 → 父级核心指标.target_org_id）完全同源。
-     * 字段名与后端 IndicatorResponse.targetOrgId/targetOrgName 保持一致。
-     */
-    targetOrgId?: number
-    targetOrgName?: string
-  }
+  // 2026-11-25（看板来源归属修复）：字段口径（含 2026-11-13 归口 targetOrg 注记）移入共享
+  // ParentIndicatorCore，本页保留原类型名别名，水合行为不变。
+  type ParentIndicatorBrief = ParentIndicatorCore
   const parentIndicatorMap = ref<Record<string, ParentIndicatorBrief>>({})
 
   const resolveParentIndicator = (row: {
@@ -3134,34 +3129,18 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     if (pendingIds.size === 0) {
       return
     }
-    const { indicatorApi } = await import('@/features/indicator/api')
     await Promise.all(
       [...pendingIds].map(async pid => {
         try {
-          const response = await indicatorApi.getIndicatorById(pid)
-          const vo = (response?.data ?? null) as Record<string, unknown> | null
-          if (!vo) {
+          // 2026-11-25（看板来源归属修复）：字段归一化抽到共享 fetchParentIndicatorCore
+          // （逐字段同口径），看板「任务来源分布/承接任务汇总」复用同一实现。
+          const core = await fetchParentIndicatorCore(pid)
+          if (!core) {
             return
           }
-          const sortOrder = Number(vo.sortOrder ?? NaN)
-          // 2026-11-13：归口字段随父指标一并缓存（targetOrgId/targetOrgName 为后端
-          // IndicatorResponse 权威字段；responsibleDept/targetDepartment 仅作旧数据兜底）
-          const functionalOrgIdRaw = Number(vo.targetOrgId ?? NaN)
-          const targetOrgName =
-            String(vo.targetOrgName ?? vo.responsibleDept ?? vo.targetDepartment ?? '').trim() ||
-            undefined
           parentIndicatorMap.value = {
             ...parentIndicatorMap.value,
-            [pid]: {
-              name: String(vo.indicatorName ?? vo.name ?? ''),
-              type1: String(vo.indicatorType ?? vo.type1 ?? '') || undefined,
-              sortOrder: Number.isFinite(sortOrder) ? sortOrder : undefined,
-              targetOrgId:
-                Number.isFinite(functionalOrgIdRaw) && functionalOrgIdRaw > 0
-                  ? functionalOrgIdRaw
-                  : undefined,
-              targetOrgName
-            }
+            [pid]: core
           }
         } catch (parentError) {
           logger.warn('[IndicatorListView] 父指标信息拉取失败:', { pid, parentError })
