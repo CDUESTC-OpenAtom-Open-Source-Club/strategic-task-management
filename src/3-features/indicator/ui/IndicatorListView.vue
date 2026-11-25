@@ -133,6 +133,8 @@ const {
   currentApprovalApproverName,
   currentApprovalCandidateNames,
   currentApprovalFlowName,
+  // 2026-11-25（填报导入式上报）：单归口入口要传给后端的归口部门 id
+  currentFunctionalOrgId,
   currentApprovalStatusMeta,
   // 2026-11-17（e2e 缺陷②修复）：驳回退回待重报（WITHDRAWN 活链）红横幅判定
   hasReturnedReportChain,
@@ -1678,6 +1680,9 @@ const handleExportIndicatorList = async () => {
       :cycle-id="reportFillCycleId"
       :default-report-month="reportFillMonth"
       :college-name="reportFillCollegeName || '当前学院'"
+      :functional-org-id="
+        reportFillImportMode === 'single' ? (currentFunctionalOrgId ?? null) : null
+      "
       @committed="handleReportFillImported"
     />
   </div>

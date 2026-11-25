@@ -56,21 +56,8 @@
 
     <!-- ============ 第 2 步：解析预览 ============ -->
     <div v-show="activeStep === 1" class="step-panel">
-      <el-alert
-        :type="preview?.blocking ? 'error' : 'success'"
-        :closable="false"
-        show-icon
-        class="mb-12"
-      >
-        <template #title>
-          <template v-if="!preview">正在解析…</template>
-          <template v-else-if="preview.blocking">
-            解析完成，但存在错误，请按下方提示修正后重新上传
-          </template>
-          <template v-else>
-            解析完成：{{ preview.groups.length }} 条归口线、{{ totalValidRows }} 行可导入
-          </template>
-        </template>
+      <el-alert :type="previewSummaryType" :closable="false" show-icon class="mb-12">
+        <template #title>{{ previewSummaryTitle }}</template>
       </el-alert>
 
       <div v-if="preview" class="group-list">
@@ -86,13 +73,17 @@
                 group.functionalOrgName || '（未填写归口职能部门）'
               }}</span>
               <el-tag v-if="group.willSubmit" type="success" size="small">将提交</el-tag>
-              <el-tag v-else type="danger" size="small">错误组</el-tag>
+              <el-tag v-else-if="group.groupError" type="danger" size="small">错误组</el-tag>
+              <el-tag v-else type="info" size="small">将跳过</el-tag>
               <span class="group-count">共 {{ group.rowsCount }} 行</span>
             </div>
           </template>
 
           <el-alert v-if="group.groupError" type="error" :closable="false" class="mb-8">
             {{ group.groupError }}
+          </el-alert>
+          <el-alert v-else-if="group.skipReason" type="info" :closable="false" class="mb-8">
+            {{ group.skipReason }}
           </el-alert>
 
           <el-table :data="group.rows" size="small" border max-height="260">
@@ -175,7 +166,7 @@
         <el-button
           v-if="activeStep === 1"
           type="primary"
-          :disabled="!preview || preview.blocking"
+          :disabled="!preview || !preview.hasSubmittableGroup"
           :loading="committing"
           @click="handleCommit"
         >
@@ -222,6 +213,13 @@ const props = defineProps<{
   defaultReportMonth?: string
   /** 当前登录人所在学院名称（写入「学院」列 + 校验提示） */
   collegeName?: string
+  /**
+   * 单归口入口选中的归口部门 id。
+   *
+   * <p>传了 → 后端只提交该归口的线，文件内其它归口线标记为「将跳过」；
+   * 不传（批量入口）→ 文件内出现的归口线全部提交。
+   */
+  functionalOrgId?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -261,6 +259,39 @@ const totalValidRows = computed(() => {
     (sum, group) => sum + group.rows.filter(row => !row.errors?.length).length,
     0
   )
+})
+
+/**
+ * 预览总览的类型/文案。
+ *
+ * <p>阻断下沉到组级（对齐模板「一条线失败不影响其他线」）：
+ * 只有「一条可提交的线都没有」才是 error，部分线有错是 warning，全通才是 success。
+ */
+const previewSummaryType = computed<'success' | 'warning' | 'error'>(() => {
+  const current = preview.value
+  if (!current) {
+    return 'success'
+  }
+  if (!current.hasSubmittableGroup) {
+    return 'error'
+  }
+  return current.groups.some(group => !group.willSubmit) ? 'warning' : 'success'
+})
+
+const previewSummaryTitle = computed(() => {
+  const current = preview.value
+  if (!current) {
+    return '正在解析…'
+  }
+  const submittable = current.groups.filter(group => group.willSubmit).length
+  const skipped = current.groups.filter(group => !group.willSubmit).length
+  if (!current.hasSubmittableGroup) {
+    return '没有可提交的归口线：请按下方提示修正后重新上传'
+  }
+  if (skipped > 0) {
+    return `解析完成：${submittable} 条归口线将提交、${skipped} 条将跳过（${totalValidRows.value} 行可导入）`
+  }
+  return `解析完成：${current.groups.length} 条归口线、${totalValidRows.value} 行可导入`
 })
 
 const commitSummaryTitle = computed(() => {
@@ -368,7 +399,9 @@ async function handlePreview() {
   try {
     preview.value = await reportFillImportApi.preview(raw, {
       cycleId: props.cycleId,
-      reportMonth: pickedMonth.value
+      reportMonth: pickedMonth.value,
+      // 单归口入口：只提交选中的这条线；批量入口为 null（文件内全部提交）
+      functionalOrgId: props.functionalOrgId ?? null
     })
     activeStep.value = 1
   } catch (error) {

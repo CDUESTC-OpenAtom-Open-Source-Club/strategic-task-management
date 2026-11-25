@@ -34,7 +34,10 @@ export interface ReportFillGroup {
   planId: number | null
   rowsCount: number
   willSubmit: boolean
+  /** 组级错误（非空 = 该组不可提交，标红） */
   groupError: string | null
+  /** 组级跳过原因（非空且 groupError 为空 = 该组将跳过，标灰） */
+  skipReason: string | null
   rows: ReportFillRowPreview[]
 }
 
@@ -46,7 +49,9 @@ export interface ReportFillPreviewResponse {
   targetCollegeOrgId: number
   targetCollegeName: string
   groups: ReportFillGroup[]
-  unassignedRows: ReportFillRowPreview[]
+  /** 是否至少有一条可提交的归口线（前端据此决定「确认导入」能否点） */
+  hasSubmittableGroup: boolean
+  /** 整单不可提交（= 没有任何可提交的组）；单组出错不等于整单阻断 */
   blocking: boolean
   confirmToken: string
 }
@@ -77,8 +82,13 @@ export interface ReportFillPreviewParams {
   cycleId: number
   /** 归属月份（yyyyMM）——模板不含月份列，由界面选择 */
   reportMonth: string
-  /** 目标学院（仅系统管理员可指定；普通用户恒为登录人所在学院） */
-  targetCollegeOrgId?: number | null
+  /**
+   * 单归口入口选中的归口部门 id。
+   *
+   * <p>传了 → 后端只提交该归口的线，文件内其它归口线标记为「将跳过」；
+   * 不传（批量入口）→ 文件内出现的归口线全部提交。
+   */
+  functionalOrgId?: number | null
   sheetName?: string
 }
 
