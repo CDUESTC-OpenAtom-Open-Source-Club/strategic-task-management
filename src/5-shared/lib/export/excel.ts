@@ -1,7 +1,7 @@
 import type { Cell, SheetData } from 'write-excel-file/browser'
 import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
 
-export type ExcelRowTone = 'default' | 'basic' | 'development' | 'draft' | 'warning'
+export type ExcelRowTone = 'default' | 'basic' | 'development' | 'draft' | 'warning' | 'template'
 
 export interface ExcelExportColumn<T> {
   header: string
@@ -17,6 +17,14 @@ export interface ExcelExportSheet<T> {
   emptyMessage?: string
   getRowTone?: (row: T, index: number) => ExcelRowTone
   getRowTextColor?: (row: T, index: number) => string | undefined
+  /** 表头底色（默认深蓝 #1f4e78；传 '#ffffff' 可做「无底色标题区」） */
+  headerBackgroundColor?: string
+  /** 表头文字颜色（默认白色） */
+  headerTextColor?: string
+  /** 表头行高（磅），不传则用默认 */
+  headerHeight?: number
+  /** 数据行高（磅），不传则用默认 */
+  bodyRowHeight?: number
 }
 
 export interface ExportAttachment {
@@ -70,7 +78,9 @@ const toneStyleMap: Record<ExcelRowTone, Partial<CellObject>> = {
   basic: { backgroundColor: '#f3f9ec' },
   development: { backgroundColor: '#eaf4ff' },
   draft: { backgroundColor: '#fff7e6' },
-  warning: { backgroundColor: '#fff1f0' }
+  warning: { backgroundColor: '#fff1f0' },
+  // 导入模板示例数据行底色（对齐纸质模板样式）
+  template: { backgroundColor: '#fff2cc' }
 }
 
 let excelWriterPromise: Promise<typeof import('write-excel-file/browser')> | null = null
@@ -112,9 +122,14 @@ function toStyledCell(
 }
 
 export function buildSheetData<T>(sheet: ExcelExportSheet<T>): SheetData {
+  const headerBackgroundColor = sheet.headerBackgroundColor ?? headerStyle.backgroundColor
+  const headerTextColor = sheet.headerTextColor ?? headerStyle.textColor
   const headerRow = sheet.columns.map(column => ({
     value: column.header,
-    ...headerStyle
+    ...headerStyle,
+    backgroundColor: headerBackgroundColor,
+    textColor: headerTextColor,
+    ...(sheet.headerHeight ? { height: sheet.headerHeight } : {})
   }))
 
   if (sheet.rows.length === 0) {
@@ -145,7 +160,11 @@ export function buildSheetData<T>(sheet: ExcelExportSheet<T>): SheetData {
       if (value === null || value === undefined) {
         return null
       }
-      return toStyledCell(value, {}, column, rowTone, rowTextColor)
+      const cell = toStyledCell(value, {}, column, rowTone, rowTextColor)
+      if (sheet.bodyRowHeight && isCellObject(cell)) {
+        return { ...cell, height: sheet.bodyRowHeight }
+      }
+      return cell
     })
   })
 
