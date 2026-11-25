@@ -351,6 +351,14 @@ const reportFillImportVisible = ref(false)
 const reportFillImportMode = ref<'single' | 'all'>('single')
 
 const openReportFillImport = (mode: 'single' | 'all') => {
+  // 2026-11-25（防误提交）：单归口入口必须能解析出归口部门 id。
+  // 若「归属部门」已选但父级还没加载完（currentFunctionalOrgId 为空），
+  // 传给后端的就是 null —— 后端会按批量处理，把文件里所有归口线一起提交，
+  // 与「仅针对当前选中的这个职能部门」相悖。这里前置拦下。
+  if (mode === 'single' && !currentFunctionalOrgId.value) {
+    ElMessage.warning('归属部门尚未加载完成，请稍候重试或刷新页面后再导入')
+    return
+  }
   reportFillImportMode.value = mode
   reportFillImportVisible.value = true
 }

@@ -83,14 +83,22 @@ export interface ReportFillPreviewParams {
   /** 归属月份（yyyyMM）——模板不含月份列，由界面选择 */
   reportMonth: string
   /**
-   * 单归口入口选中的归口部门 id。
+   * 导入模式。
    *
-   * <p>传了 → 后端只提交该归口的线，文件内其它归口线标记为「将跳过」；
-   * 不传（批量入口）→ 文件内出现的归口线全部提交。
+   * <p>`single` = 单归口入口（必须给 functionalOrgId，后端只提交该归口线，文件内其它线标记为将跳过）；
+   * `all`（默认）= 批量入口（文件内出现的归口线全部提交）。
+   *
+   * <p>刻意用显式 mode 而不是「functionalOrgId 是否为 null」隐式表达——
+   * null 与「没传」无法区分，会让单归口静默退化成批量。
    */
+  mode: ReportFillImportModeParam
+  /** 单归口入口选中的归口部门 id（mode=single 时必填） */
   functionalOrgId?: number | null
   sheetName?: string
 }
+
+/** 导入模式参数（与后端 PreviewMode 对齐）。 */
+export type ReportFillImportModeParam = 'single' | 'all'
 
 /** 提交入参。 */
 export interface ReportFillCommitRequest {

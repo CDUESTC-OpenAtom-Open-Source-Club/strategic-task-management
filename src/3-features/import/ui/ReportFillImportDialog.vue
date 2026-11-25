@@ -255,11 +255,24 @@ const totalValidRows = computed(() => {
   if (!preview.value) {
     return 0
   }
-  return preview.value.groups.reduce(
-    (sum, group) => sum + group.rows.filter(row => !row.errors?.length).length,
-    0
-  )
+  // 只统计「将提交」的组：把将跳过的行也算进去会让用户误以为那些行也会导入
+  return preview.value.groups
+    .filter(group => group.willSubmit)
+    .reduce((sum, group) => sum + group.rows.filter(row => !row.errors?.length).length, 0)
 })
+
+/**
+ * 从错误里取后端原文。
+ *
+ * <p>响应拦截器 reject 的是统一错误对象（对象字面量，**不是 Error 实例**），
+ * 用 `instanceof Error` 判会永远走兜底文案，把后端原文（「整单拒绝导入：第 3 行…」、
+ * 「自评等级…无效」）吞掉。这里按 message 字段取，兼容 Error 与统一错误对象。
+ */
+function resolveErrorMessage(error: unknown, fallback: string): string {
+  const candidate = (error as { message?: unknown } | null | undefined)?.message
+  const text = typeof candidate === 'string' ? candidate.trim() : ''
+  return text || fallback
+}
 
 /**
  * 预览总览的类型/文案。
@@ -390,6 +403,12 @@ async function handlePreview() {
     ElMessage.warning('当前考核周期不可用，无法导入')
     return
   }
+  // 单归口模式必须能拿到归口部门 id：拿不到就明确拦下，
+  // 绝不能让后端把「mode=single 但没给 orgId」当成批量处理（会误提交多条线）。
+  if (props.mode === 'single' && !props.functionalOrgId) {
+    ElMessage.warning('归属部门尚未加载完成，请刷新页面后重试')
+    return
+  }
   if (!pickedMonth.value) {
     ElMessage.warning('请选择归属月份')
     return
@@ -400,13 +419,14 @@ async function handlePreview() {
     preview.value = await reportFillImportApi.preview(raw, {
       cycleId: props.cycleId,
       reportMonth: pickedMonth.value,
-      // 单归口入口：只提交选中的这条线；批量入口为 null（文件内全部提交）
+      // 显式模式：single = 只提交选中的这条线；all = 文件内全部提交
+      mode: props.mode,
       functionalOrgId: props.functionalOrgId ?? null
     })
     activeStep.value = 1
   } catch (error) {
     console.error('[ReportFillImportDialog] 解析预览失败:', error)
-    ElMessage.error(error instanceof Error ? error.message : '解析预览失败，请稍后重试')
+    ElMessage.error(resolveErrorMessage(error, '解析预览失败，请稍后重试'))
   } finally {
     previewing.value = false
   }
@@ -427,7 +447,7 @@ async function handleCommit() {
     emit('committed', response)
   } catch (error) {
     console.error('[ReportFillImportDialog] 确认导入失败:', error)
-    ElMessage.error(error instanceof Error ? error.message : '确认导入失败，请稍后重试')
+    ElMessage.error(resolveErrorMessage(error, '确认导入失败，请稍后重试'))
   } finally {
     committing.value = false
   }
