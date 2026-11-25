@@ -7,12 +7,13 @@ import {
 } from '../importTemplate'
 
 describe('getImportTemplateGuide 学院模板加「任务类型」列（2026-10-31 终版表头加列定案）', () => {
-  it('学院模板 8 列：任务类型位于学院之后、核心指标之前（2026-11-11 起隐藏「下发备注」列）', () => {
+  it('学院模板 9 列：归口职能部门位于学院之后、任务类型之前（2026-11-25 对齐 02 样例）', () => {
     const guide = getImportTemplateGuide('distribution')
 
     expect(guide.columns.map(column => column.label)).toEqual([
       '序号',
       '学院',
+      '归口职能部门',
       '任务类型',
       '核心指标',
       '核心指标类型',
@@ -45,7 +46,7 @@ describe('buildImportTemplateSheet 学院模板（任务类型列 + 学院整列
     const sheet = buildImportTemplateSheet('distribution')
 
     expect(sheet.rows.length).toBe(5)
-    const taskTypeColumn = sheet.columns[2]
+    const taskTypeColumn = sheet.columns.find(column => column.header === '任务类型')!
     // 组 1（前 3 行，基础性）：锚点 rowSpan=3，从属格 null
     expect(taskTypeColumn.getValue(sheet.rows[0], 0)).toMatchObject({ value: '基础性', rowSpan: 3 })
     expect(taskTypeColumn.getValue(sheet.rows[1], 1)).toBeNull()
@@ -58,7 +59,7 @@ describe('buildImportTemplateSheet 学院模板（任务类型列 + 学院整列
   it('学院列整列合并：首行 rowSpan=全部数据行，其余行 null', () => {
     const sheet = buildImportTemplateSheet('distribution')
 
-    const collegeColumn = sheet.columns[1]
+    const collegeColumn = sheet.columns.find(column => column.header === '学院')!
     expect(collegeColumn.getValue(sheet.rows[0], 0)).toMatchObject({
       value: '计算机学院',
       rowSpan: 5
@@ -124,5 +125,28 @@ describe('buildImportTemplateSheet 职能部门模板（部门列整列合并）
       '指标类型',
       WEIGHT_COLUMN_HEADER
     ])
+  })
+
+  it('部门列跟随当前下发部门（2026-11-25 用户反馈：不同部门下载到同一份「教务处」）', () => {
+    const sheet = buildImportTemplateSheet('strategic-task', [
+      { parentIndicator: '', department: '党委学工部 | 学生工作处' }
+    ])
+
+    // 示例内容不变，只有「部门」列被替换成真实目标部门
+    expect(sheet.rows.length).toBe(7)
+    expect(sheet.rows[0].department).toBe('党委学工部 | 学生工作处')
+    expect(sheet.rows[0].strategicTask).toBe('推进本科教育教学改革')
+
+    const departmentColumn = sheet.columns.find(column => column.header === '部门')!
+    expect(departmentColumn.getValue(sheet.rows[0], 0)).toMatchObject({
+      value: '党委学工部 | 学生工作处',
+      rowSpan: 7
+    })
+  })
+
+  it('未传目标部门时部门列仍回退示例值（旧调用点不受影响）', () => {
+    const sheet = buildImportTemplateSheet('strategic-task', [{ parentIndicator: '' }])
+
+    expect(sheet.rows[0].department).toBe('教务处')
   })
 })

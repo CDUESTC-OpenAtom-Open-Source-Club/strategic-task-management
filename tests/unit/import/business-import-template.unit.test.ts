@@ -26,6 +26,7 @@ const expectedHeaders: Record<BusinessImportType, string[]> = {
   distribution: [
     '序号',
     '学院',
+    '归口职能部门',
     '任务类型',
     '核心指标',
     '核心指标类型',
@@ -36,8 +37,8 @@ const expectedHeaders: Record<BusinessImportType, string[]> = {
 }
 
 const expectedSheetNames: Record<BusinessImportType, string> = {
-  'strategic-task': '职能部门指标模板',
-  distribution: '学院子指标模板'
+  'strategic-task': '职能部门指标导入模板',
+  distribution: '学院子指标导入模板'
 }
 
 describe('import/lib/importTemplate', () => {
@@ -181,8 +182,9 @@ describe('import/lib/importTemplate', () => {
   it('学院模板按组竖向合并「序号」「任务类型」「核心指标」「核心指标类型」，学院列整列合并', () => {
     const sheet = buildImportTemplateSheet('distribution')
 
-    // 组列：序号(0)、任务类型(2)、核心指标(3)、核心指标类型(4)
-    for (const columnIndex of [0, 2, 3, 4]) {
+    // 2026-11-25：第 3 列插入「归口职能部门」（随组合并），组列后移一位
+    // 组列：序号(0)、归口职能部门(2)、任务类型(3)、核心指标(4)、核心指标类型(5)
+    for (const columnIndex of [0, 2, 3, 4, 5]) {
       const column = sheet.columns[columnIndex]
       expect(column.getValue(sheet.rows[0], 0)).toMatchObject({ rowSpan: 3 })
       expect(column.getValue(sheet.rows[1], 1)).toBeNull()
@@ -192,7 +194,7 @@ describe('import/lib/importTemplate', () => {
     expect(sheet.columns[1].getValue(sheet.rows[0], 0)).toMatchObject({ rowSpan: 5 })
     expect(sheet.columns[1].getValue(sheet.rows[2], 2)).toBeNull()
     // 非组列（子指标名称）不受合并影响
-    expect(sheet.columns[5].getValue(sheet.rows[2], 2)).toBe('建成教学质量看板')
+    expect(sheet.columns[6].getValue(sheet.rows[2], 2)).toBe('建成教学质量看板')
   })
 
   it('学院模板预填行：序号=组号、任务类型/核心指标/核心指标类型预填，不再带父级战略任务', () => {
@@ -210,6 +212,7 @@ describe('import/lib/importTemplate', () => {
       {
         serial: '1',
         college: '计算机学院',
+        functionalDept: '',
         taskType: '基础性',
         parentIndicator: '父级指标甲',
         parentIndicatorType: '定量',
@@ -220,6 +223,7 @@ describe('import/lib/importTemplate', () => {
       {
         serial: '2',
         college: '',
+        functionalDept: '',
         taskType: '',
         parentIndicator: '父级指标乙',
         parentIndicatorType: '',
@@ -322,6 +326,7 @@ describe('import/lib/importTemplate', () => {
     expect(sheet.rows[0]).toEqual({
       serial: '1',
       college: '工学院',
+      functionalDept: '',
       taskType: '基础性',
       parentIndicator: '完成重点提案办理与反馈督办',
       parentIndicatorType: '定量',

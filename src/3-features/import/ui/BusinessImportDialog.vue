@@ -91,7 +91,13 @@ export default {
 import { computed, ref, watch } from 'vue'
 import { Download, Upload, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox, genFileId } from 'element-plus'
-import type { UploadFile, UploadFiles, UploadInstance, UploadRawFile } from 'element-plus'
+import type {
+  UploadFile,
+  UploadFiles,
+  UploadInstance,
+  UploadRawFile,
+  UploadUserFile
+} from 'element-plus'
 import {
   businessImportApi,
   type BusinessImportType,
@@ -104,8 +110,7 @@ import {
 } from '@/features/import/api/businessImport'
 import {
   buildImportTemplateFileName,
-  buildImportTemplateSheet,
-  getImportTemplateGuide,
+  buildImportTemplateSheets,
   type ImportTemplateParentSeed
 } from '@/features/import/lib/importTemplate'
 import {
@@ -382,51 +387,50 @@ const downloadTemplate = async () => {
   }
   templateDownloading.value = true
   try {
-    const guide = getImportTemplateGuide(props.type, isAllImport.value ? 'all' : 'single')
-
     // 2026-10-14 用户定案（P10）：学院子指标模板自动带出"当前职能部门已接收的父级核心指标"行
     // （由父页面传入 availableParentIndicators，与导入校验的父级匹配口径完全一致）；
     // 2026-10-31 层级化定案：预填行带序号（=组号）与当前选中学院，用户在行内补写子指标，
     // 再向下加「序号/组列留空」延续行即可拆多个子指标。未传/为空时退回通用示例行，不阻断下载。
     // 2026-10-31 终版表头加列：type2 →「任务类型」列预填（父级所属任务类型，锚点只读）。
     // 2026-11-19（全部导入）：seeds 额外带 functionalDeptName →「职能部门」列预填
-    // （该列是拆批依据 + 交叉校验依据，单条导入模式不带该列）。
+    // （该列是拆批依据 + 交叉校验依据）。
     const parentSeeds: ImportTemplateParentSeed[] | undefined = props.parentIndicators?.length
       ? props.parentIndicators.map(item => ({
           parentIndicator: String(item.name || '').trim(),
           college: String(props.targetOrgName || '').trim(),
           parentIndicatorType: String(item.type1 || '').trim(),
           taskType: String(item.type2 || '').trim(),
-          ...(isAllImport.value
-            ? { functionalDept: String(item.functionalDeptName || '').trim() }
-            : {})
+          // 2026-11-25 用户定案：单归口模板也带「归口职能部门」列 → 用当前选中归口预填
+          functionalDept: String(
+            (isAllImport.value ? item.functionalDeptName : props.functionalOrgName) || ''
+          ).trim()
         }))
       : undefined
 
-    const rulesSheet: ExcelExportSheet<Record<string, string>> = {
-      sheetName: '填写说明',
-      rows: guide.rules.map(rule => ({ rule })),
-      columns: [
-        {
-          header: '填写说明',
-          width: 60,
-          getValue: row => row.rule
-        }
-      ]
-    }
+    // 2026-11-25 用户反馈（01 模板部门列恒为教务处）：职能部门模板的「部门」列要跟随当前下发目标，
+    // 这里把目标部门名塞进 seeds（职能部门模板只用其中的 department 做预填，示例内容不受影响）。
+    const templateSeeds: ImportTemplateParentSeed[] | undefined =
+      props.type === 'strategic-task'
+        ? [{ parentIndicator: '', department: String(props.targetOrgName || '').trim() }]
+        : parentSeeds
+
+    // 2026-11-25 用户定案（模板对齐样例）：数据 sheet + 填写说明 sheet 由 lib 统一构建
+    const templateSheets = buildImportTemplateSheets(
+      props.type,
+      templateSeeds,
+      isAllImport.value ? 'all' : 'single'
+    )
 
     await exportSheetsToExcel(
-      // 2026-10-19：两个 guide 的 rows 键集不同，联合类型经协变检查无法直接赋给 unknown，显式断言
-      [
-        buildImportTemplateSheet(
-          props.type,
-          parentSeeds,
-          isAllImport.value ? 'all' : 'single'
-        ) as ExcelExportSheet<unknown>,
-        rulesSheet as ExcelExportSheet<unknown>
-      ],
+      templateSheets as ExcelExportSheet<unknown>[],
       buildImportTemplateFileName(props.type, isAllImport.value ? 'all' : 'single')
     )
+    if (props.type === 'strategic-task') {
+      ElMessage.success(
+        `模板下载成功：已按当前部门「${String(props.targetOrgName || '').trim() || '未选择'}」预填「部门」列，示例内容请替换后上传`
+      )
+      return
+    }
     if (isAllImport.value) {
       ElMessage.success(
         parentSeeds?.length
@@ -461,7 +465,7 @@ const handleFileChange = (uploadFile: UploadFile, uploadFiles: UploadFiles) => {
 // 2026-10-31 用户定案：limit=1 下未删除旧文件就再选新文件时，el-upload 触发的是 exceed 而非
 // change——这里手动清掉旧文件并让新文件走 handleStart（内部会 emit change），从而复用
 // handleFileChange 的「重选即重置预览态」逻辑，保证弹窗里预览结果永远对应最新选择的文件
-const handleFileExceed = (files: File[], _uploadFiles: UploadFiles) => {
+const handleFileExceed = (files: File[], _uploadFiles: UploadUserFile[]) => {
   const file = files[0] as UploadRawFile | undefined
   if (!file) {
     return
