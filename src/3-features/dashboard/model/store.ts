@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type {
   DashboardData,
   DepartmentProgress,
@@ -27,6 +27,12 @@ import { alertApi, type AlertStats, type AlertEvent } from '@/shared/api/monitor
 import { dashboardApi } from '@/features/dashboard/api/dashboardApi'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
 import { USE_MOCK } from '@/shared/config/api'
+// 2026-11-25（看板来源归属修复）：父指标归口水合 + 任务来源归组键，与指标填报页共享同一实现
+import {
+  fetchParentIndicatorCore,
+  resolveTaskSourceDept,
+  type ParentIndicatorCore
+} from '@/features/indicator/model/parentIndicatorCore'
 
 function isPersistedIndicatorId(value: unknown): boolean {
   return /^\d+$/.test(String(value ?? '').trim())
@@ -69,6 +75,11 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const currentOrgLevel = ref<OrgLevel>('strategy') // 当前组织层级
   const selectedFunctionalDept = ref<string | undefined>() // 选中的职能部门
   const selectedCollege = ref<string | undefined>() // 选中的二级学院
+
+  // 2026-11-25（看板来源归属修复）：父级核心指标归口水合缓存（pid → targetOrg）。
+  // 学院任务来源按归口职能部门（父级核心指标 targetOrg）归组，ownerDept（战略部代发）仅作兜底；
+  // 水合实现在 hydrateTaskSourceParentIndicators（本文件下方，visibleIndicators 定义之后）。
+  const parentIndicatorMap = ref<Record<string, ParentIndicatorCore>>({})
 
   // Getters
   const completionRate = computed(() => dashboardData.value?.completionRate || 0)
@@ -150,7 +161,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
     // 根据下钻状态和角色确定要显示的部门和过滤的指标
     let targetIndicators = indicators
     const targetDepartments: Set<string> = new Set()
-    let summaryGroupField: 'responsibleDept' | 'ownerDept' = 'responsibleDept'
+    // sourceDept = 任务来源归组键（归口职能部门，见 resolveTaskSourceDept）
+    let summaryGroupField: 'responsibleDept' | 'sourceDept' = 'responsibleDept'
 
     // 如果下钻到职能部门层级，只显示该部门下发任务的目标组织
     if (currentOrgLevel.value === 'functional' && selectedFunctionalDept.value) {
@@ -179,12 +191,15 @@ export const useDashboardStore = defineStore('dashboard', () => {
         })
         targetIndicators = deptIndicators
       } else {
-        // 二级学院：看“上级来源部门”给本学院下发了哪些任务（按 ownerDept 分组）
+        // 二级学院：看“上级来源部门”给本学院下发了哪些任务。
+        // 2026-11-25（看板来源归属修复）：学院任务来源按归口职能部门（父级核心指标
+        // targetOrg）归组——战略发展部只是代发通道，不再把来源算到它头上；
+        // ownerDept 仅作父级解析失败时的兜底（与「任务来源分布」饼图同键）。
         if (userDept) {
           targetIndicators = indicators.filter(i => i.responsibleDept === userDept)
-          summaryGroupField = 'ownerDept'
+          summaryGroupField = 'sourceDept'
           targetIndicators.forEach(i => {
-            targetDepartments.add(i.ownerDept || '其他')
+            targetDepartments.add(resolveTaskSourceDept(i, parentIndicatorMap.value))
           })
         }
       }
@@ -202,8 +217,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
     // 统计实际指标数据
     targetIndicators.forEach(indicator => {
       const dept =
-        summaryGroupField === 'ownerDept'
-          ? indicator.ownerDept || '其他'
+        summaryGroupField === 'sourceDept'
+          ? resolveTaskSourceDept(indicator, parentIndicatorMap.value)
           : indicator.responsibleDept
       if (!dept) {
         return
@@ -351,7 +366,11 @@ export const useDashboardStore = defineStore('dashboard', () => {
     }
 
     if (filters.value.sourceOwner) {
-      indicators = indicators.filter(i => i.ownerDept === filters.value.sourceOwner)
+      // 2026-11-25（看板来源归属修复）：饼图扇区点击筛选与「任务来源分布」用同一
+      // 归组键（归口职能部门）匹配，ownerDept 不再作为筛选字段（仅随归组键兜底）。
+      indicators = indicators.filter(
+        i => resolveTaskSourceDept(i, parentIndicatorMap.value) === filters.value.sourceOwner
+      )
     }
 
     if (filters.value.collegeFilter) {
@@ -360,6 +379,47 @@ export const useDashboardStore = defineStore('dashboard', () => {
 
     return indicators
   })
+
+  // 2026-11-25（看板来源归属修复）：监听可见指标里的 parentIndicatorId，缺哪个父级
+  // 归口就拉哪个（getIndicatorById 走 fetchWithCache，同 id 不重复请求；实现与指标
+  // 填报页 hydrateParentIndicators 共享同一 fetchParentIndicatorCore，避免两处漂移）。
+  const hydrateTaskSourceParentIndicators = async () => {
+    const pendingIds = new Set<string>()
+    visibleIndicators.value.forEach(item => {
+      const pid = String(item.parentIndicatorId ?? '').trim()
+      if (pid && !(pid in parentIndicatorMap.value)) {
+        pendingIds.add(pid)
+      }
+    })
+    if (pendingIds.size === 0) {
+      return
+    }
+    await Promise.all(
+      [...pendingIds].map(async pid => {
+        try {
+          const core = await fetchParentIndicatorCore(pid)
+          if (!core) {
+            return
+          }
+          parentIndicatorMap.value = { ...parentIndicatorMap.value, [pid]: core }
+        } catch (parentError) {
+          logger.warn('[DashboardStore] 父指标归口信息拉取失败:', { pid, parentError })
+        }
+      })
+    )
+  }
+
+  watch(
+    () =>
+      visibleIndicators.value
+        .map(i => String(i.parentIndicatorId ?? '').trim())
+        .filter(Boolean)
+        .join(','),
+    () => {
+      void hydrateTaskSourceParentIndicators()
+    },
+    { immediate: true }
+  )
 
   // 辅助函数：获取指标在指定时间点的进度
   const getIndicatorProgressAtDate = (indicator: StrategicIndicator, targetDate: Date): number => {
@@ -597,7 +657,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
 
       const sourceMap = new Map<string, number>()
       indicators.forEach(i => {
-        const source = i.ownerDept || '其他'
+        // 2026-11-25（看板来源归属修复）：学院任务来源按归口职能部门（父级核心指标
+        // targetOrg）归组——战略发展部只是代发通道，ownerDept 仅作父级解析失败时的兜底。
+        const source = resolveTaskSourceDept(i, parentIndicatorMap.value)
         sourceMap.set(source, (sourceMap.get(source) || 0) + 1)
       })
 
@@ -875,6 +937,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
     filters,
     selectedDepartment,
     selectedIndicator,
+    // 2026-11-25（看板来源归属修复）：父级归口缓存（承接任务汇总/任务来源分布/导出列共用）
+    parentIndicatorMap,
     // 三级联动状态
     currentOrgLevel,
     selectedFunctionalDept,
