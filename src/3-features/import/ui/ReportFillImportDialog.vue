@@ -98,10 +98,13 @@
           <template #header>
             <div class="group-header">
               <span class="group-title">{{ group.targetOrgName || '（未填写目标部门）' }}</span>
-              <el-tag v-if="group.existingReportId" type="warning" size="small"
-                >本月已有填报</el-tag
-              >
-              <el-tag v-if="group.willSubmit" type="success" size="small">将提交</el-tag>
+              <el-tag v-if="group.existingReportId && !overwriteExisting" type="info" size="small">
+                本月已有填报（将跳过）
+              </el-tag>
+              <el-tag v-else-if="group.existingReportId" type="warning" size="small">
+                将覆盖
+              </el-tag>
+              <el-tag v-else-if="group.willSubmit" type="success" size="small">将提交</el-tag>
               <el-tag v-else-if="group.groupError" type="danger" size="small">错误组</el-tag>
               <el-tag v-else type="info" size="small">将跳过</el-tag>
               <span class="group-count">共 {{ group.rowsCount }} 行</span>
@@ -168,7 +171,7 @@
       </el-alert>
 
       <el-card
-        v-for="(group, groupIndex) in submittableGroups"
+        v-for="(group, groupIndex) in effectiveSubmittableGroups"
         :key="`confirm-${groupIndex}`"
         class="mb-12"
         shadow="never"
@@ -199,7 +202,7 @@
         </el-table>
       </el-card>
 
-      <el-empty v-if="!submittableGroups.length" description="没有可提交的上报线" />
+      <el-empty v-if="!effectiveSubmittableGroups.length" description="没有可提交的上报线" />
     </div>
 
     <!-- ============ 第 4 步：导入结果 ============ -->
@@ -236,7 +239,7 @@
           <el-button
             v-if="activeStep === 1"
             type="primary"
-            :disabled="!preview || !preview.hasSubmittableGroup"
+            :disabled="!preview || !effectiveSubmittableGroups.length"
             @click="activeStep = 2"
           >
             下一步
@@ -244,7 +247,7 @@
           <el-button
             v-if="activeStep === 2"
             type="primary"
-            :disabled="!preview || !preview.hasSubmittableGroup"
+            :disabled="!preview || !effectiveSubmittableGroups.length"
             :loading="committing"
             @click="handleCommit"
           >
@@ -355,10 +358,15 @@ const modeTip = computed(() => {
   return '一次导入本学院全部归口线的月度填报数据：按「目标部门」列自动拆线，各线独立提交、独立进入上报审批。'
 })
 
-/** 顶部「归口部门」摘要：批量入口按文件拆分，单归口入口显示实际选中的部门 */
-const targetOrgLabel = computed(() =>
-  props.variant === 'college-all' ? '按文件内「目标部门」列拆分' : props.targetOrgName || '未选择'
-)
+/** 顶部「归口部门」摘要：批量入口按文件拆分，单归口入口显示实际选中的部门，职能部门恒上报战略发展部 */
+const targetOrgLabel = computed(() => {
+  if (props.variant === 'func') {
+    return '战略发展部'
+  }
+  return props.variant === 'college-all'
+    ? '按文件内「目标部门」列拆分'
+    : props.targetOrgName || '未选择'
+})
 
 /** 左下角流程提示（对齐下发弹窗的 nextActionTip，文案改为上报口径，不写具体月份） */
 const stepTip = computed(() => {
@@ -368,25 +376,30 @@ const stepTip = computed(() => {
   if (!preview.value) {
     return '文件已选择，请先点击「解析预览」。'
   }
-  if (!preview.value.hasSubmittableGroup) {
+  if (!effectiveSubmittableGroups.value.length) {
     return '预览未通过：请按下方错误提示修正文件后重新上传。'
   }
   return '预览已通过：确认后导入数据并进入审批流程。'
 })
 
 const totalValidRows = computed(() => {
-  if (!preview.value) {
-    return 0
-  }
   // 只统计「将提交」的线：把将跳过的行也算进去会让用户误以为那些行也会导入
-  return preview.value.groups
-    .filter(group => group.willSubmit)
-    .reduce((sum, group) => sum + group.rows.filter(row => !row.errors?.length).length, 0)
+  return effectiveSubmittableGroups.value.reduce(
+    (sum, group) => sum + group.rows.filter(row => !row.errors?.length).length,
+    0
+  )
 })
 
-/** 第 3 步「确认导入」只展示将提交的线（跳过/错误组不进入最终检查） */
-const submittableGroups = computed(() =>
-  (preview.value?.groups ?? []).filter(group => group.willSubmit)
+/**
+ * 真正会提交的线：预览期合法，且不是「本月已有填报但未勾覆盖」。
+ *
+ * <p>覆盖复选框切换后实时重算——组头标签、汇总计数、第 3 步确认页、确认按钮可用性都以此为准，
+ * 避免出现「组头说将提交、行结果说将跳过」的矛盾。
+ */
+const effectiveSubmittableGroups = computed(() =>
+  (preview.value?.groups ?? []).filter(
+    group => group.willSubmit && !(group.existingReportId && !overwriteExisting.value)
+  )
 )
 
 /**
@@ -406,10 +419,10 @@ const previewSummaryType = computed<'success' | 'warning' | 'error'>(() => {
   if (!current) {
     return 'success'
   }
-  if (!current.hasSubmittableGroup) {
+  if (!effectiveSubmittableGroups.value.length) {
     return 'error'
   }
-  return current.groups.some(group => !group.willSubmit) ? 'warning' : 'success'
+  return current.groups.length > effectiveSubmittableGroups.value.length ? 'warning' : 'success'
 })
 
 const previewSummaryTitle = computed(() => {
@@ -417,9 +430,9 @@ const previewSummaryTitle = computed(() => {
   if (!current) {
     return '正在解析…'
   }
-  const submittable = current.groups.filter(group => group.willSubmit).length
-  const skipped = current.groups.filter(group => !group.willSubmit).length
-  if (!current.hasSubmittableGroup) {
+  const submittable = effectiveSubmittableGroups.value.length
+  const skipped = current.groups.length - submittable
+  if (!submittable) {
     return '没有可提交的上报线：请按下方提示修正后重新上传'
   }
   if (skipped > 0) {
@@ -521,21 +534,21 @@ async function handleDownloadTemplate() {
 async function handlePreview() {
   const raw = fileList.value[0]?.raw
   if (!raw) {
-    ElMessage.warning('请先选择要导入的 Excel 文件')
+    actionError.value = '请先选择要导入的 Excel 文件'
     return
   }
   if (!props.cycleId) {
-    ElMessage.warning('当前考核周期不可用，无法导入')
+    actionError.value = '当前考核周期不可用，无法导入'
     return
   }
   if (!pickedMonth.value) {
-    ElMessage.warning('当前填报月份不可用，请刷新页面后重试')
+    actionError.value = '当前填报月份不可用，请刷新页面后重试'
     return
   }
   // 单归口模式必须能拿到目标部门 id：拿不到就明确拦下，
   // 绝不能让后端把「mode=single 但没给 id」当成批量处理（会误提交多条线）。
   if (previewMode.value === 'single' && !props.targetOrgId) {
-    ElMessage.warning('目标部门尚未加载完成，请刷新页面后重试')
+    actionError.value = '目标部门尚未加载完成，请刷新页面后重试'
     return
   }
 
@@ -564,7 +577,7 @@ async function handleCommit() {
   if (!preview.value) {
     return
   }
-  // 第 3 步「确认导入」本身就是最后检查页：用户检查后点「确认上报」才真正写库并提交审批。
+  // 第 3 步「确认导入」本身就是最后检查页：用户检查后点「确认导入」才真正写库并提交审批。
   committing.value = true
   actionError.value = ''
   try {
