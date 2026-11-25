@@ -801,16 +801,17 @@ const handleExportIndicatorList = async () => {
           全部导出
         </el-button>
         <!-- 2026-11-25（指标填报导入式上报）：
-             学院 → 页面顶部【批量导入】（06 多归口批量，按「目标部门」列拆线）
-             职能部门 → 【导入填报】（04 职能部门上报战略发展部） -->
-        <el-button
-          v-if="canUseReportFillImport"
-          type="primary"
-          plain
-          @click="openReportFillImport(isSecondaryCollege ? 'college-all' : 'func')"
-        >
+             学院视角 →【批量导入】（06 多归口批量，按「目标部门」列拆线）
+             职能部门填报人 →【导入填报】（04 职能部门上报战略发展部）
+             按钮位置与显示口径沿用协作者 PR #145：与导出按钮并排右对齐、
+             学院视角即显示（不再要求填报人席位），避免填报人看不到入口。 -->
+        <el-button v-if="isSecondaryCollege" @click="openReportFillImport('college-all')">
           <el-icon><Upload /></el-icon>
-          {{ isSecondaryCollege ? '批量导入' : '导入填报' }}
+          批量导入
+        </el-button>
+        <el-button v-else-if="canUseReportFillImport" @click="openReportFillImport('func')">
+          <el-icon><Upload /></el-icon>
+          导入填报
         </el-button>
       </div>
     </div>
@@ -970,10 +971,10 @@ const handleExportIndicatorList = async () => {
             <!-- 职能部门/二级学院的批量操作按钮 -->
             <template v-if="showPlanBatchActions">
               <!-- 2026-11-25（指标填报导入式上报）：单归口导入（05）——
-                   仅学院视角、需先选中「归属部门」，只对该归口线做填报导入
-                   （与顶部【批量导入】06 互相独立）。 -->
+                   显示口径沿用协作者 PR #145（学院视角即显示）；
+                   仍保留「须先选归属部门」的置灰引导（单归口只提交所选那条线）。 -->
               <el-tooltip
-                v-if="canUseReportFillImport && isSecondaryCollege"
+                v-if="isSecondaryCollege"
                 :content="filterOwnerDept ? '导入本归属部门的填报数据' : '请先选择归属部门，再导入'"
                 :disabled="Boolean(filterOwnerDept)"
                 effect="dark"
