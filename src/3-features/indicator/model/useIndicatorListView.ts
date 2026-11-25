@@ -6141,6 +6141,43 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
   const currentDetailId = computed(() => currentDetail.value?.id ?? null)
 
+  // ==================== 2026-11-25（指标填报导入式上报 · 学院侧） ====================
+
+  /**
+   * 是否可用「导入式上报」：二级学院 + 填报人席位。
+   *
+   * <p>口径与既有填报按钮一致（{@code showPlanBatchActions}）：审核人只审不填。
+   */
+  const canUseReportFillImport = computed(
+    () => isSecondaryCollege.value && isCurrentUserReporter.value
+  )
+
+  /**
+   * 导入用的考核周期 id（定位「学院 × 归口」的已下发计划线）。
+   */
+  const reportFillCycleId = computed<number | null>(() => {
+    const plan = currentUserPlan.value as { cycleId?: number | string | null } | null
+    const cycleId = Number(plan?.cycleId)
+    return Number.isFinite(cycleId) && cycleId > 0 ? cycleId : null
+  })
+
+  /**
+   * 导入用的归属月份（yyyyMM）——取当前填报周期（模板不含月份列）。
+   */
+  const reportFillMonth = computed<string>(() => monthlySequenceStatusMeta.value.month ?? '')
+
+  /**
+   * 导入用的学院名称（写入模板「学院」列）。
+   *
+   * <p>放在本层而不是组件层——组件层的顶层 computed 会直接访问解构出来的字段，
+   * 页面壳测试用 mock 替换了本 composable 的返回值（缺字段即 undefined），
+   * 组件层访问会抛「Cannot read properties of undefined」。放这里则缺字段时组件拿到 undefined，
+   * 由组件侧兜底成「当前学院」。
+   */
+  const reportFillCollegeName = computed<string>(
+    () => effectiveViewingDept.value || authStore.userDepartment || ''
+  )
+
   return {
     DEFAULT_APPROVAL_STATUS,
     PLAN_APPROVAL_POLL_INTERVAL_MS,
@@ -6189,6 +6226,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     canCurrentUserHandlePlanApprovalOnPage,
     canEdit,
     canHandleIndicatorWorkflow,
+    canUseReportFillImport,
     canViewReceivedPlanContent,
     canWithdrawAny,
     canWithdrawCurrentPlan,
@@ -6371,6 +6409,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     resolveIndicatorAttachmentItems,
     resolveIndicatorType2,
     resolvePlanApprovalWorkflowCode,
+    reportFillCollegeName,
+    reportFillCycleId,
+    reportFillMonth,
     resolvePlanYear,
     restartPlanApprovalPolling,
     saveIndicatorEdit,

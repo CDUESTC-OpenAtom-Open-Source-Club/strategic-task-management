@@ -47,6 +47,9 @@ import {
   type IndicatorAttachmentSummaryMap
 } from '@/features/indicator/model/indicatorAttachmentSummary'
 import { ApprovalProgressDrawer } from '@/features/approval'
+// 2026-11-25（指标填报导入式上报 · 学院侧）：导入弹窗放在 import feature，
+// 由本页（indicator）消费——与既有 ApprovalProgressDrawer 的跨 feature 引用同构。
+import ReportFillImportDialog from '@/features/import/ui/ReportFillImportDialog.vue'
 import { useIndicatorAppraisal } from '@/features/indicator/model/useIndicatorAppraisal'
 import { getAppraisalLevelDisplay } from '@/features/indicator/lib/appraisalGate'
 // 2026-11-19 用户定案：审核进度行内下拉共享组件（三视图同构）
@@ -110,6 +113,8 @@ const {
   canCurrentUserHandlePlanApprovalOnPage,
   canEdit,
   canHandleIndicatorWorkflow,
+  // 2026-11-25（填报导入式上报）：可用性 + 模板预填 + 周期/月份上下文
+  canUseReportFillImport,
   canViewReceivedPlanContent,
   canWithdrawAny,
   canWithdrawCurrentPlan,
@@ -269,6 +274,10 @@ const {
   refreshIndicatorListAfterMutation,
   refreshIndicatorWorkflowContext,
   refreshReportIndicatorSnapshot,
+  // 2026-11-25（填报导入式上报）：周期/月份/学院名上下文
+  reportFillCollegeName,
+  reportFillCycleId,
+  reportFillMonth,
   reportAttachmentObjectUrls,
   reportDialogVisible,
   reportForm,
@@ -333,6 +342,23 @@ const indicatorListExporting = ref(false)
 const collegeExportDialogVisible = ref(false)
 const selectedCollegeExportDepartments = ref<string[]>([])
 const collegeBatchExporting = ref(false)
+
+// ==================== 2026-11-25（指标填报导入式上报 · 学院侧） ====================
+// 学院填报人用 Excel 一次完成本月填报：单归口导入（先选归属部门）/ 批量导入（页面顶部固定入口）。
+const reportFillImportVisible = ref(false)
+const reportFillImportMode = ref<'single' | 'all'>('single')
+
+const openReportFillImport = (mode: 'single' | 'all') => {
+  reportFillImportMode.value = mode
+  reportFillImportVisible.value = true
+}
+
+/** 导入完成后刷新页面数据（填报内容与审核进度都会变）。 */
+const handleReportFillImported = async () => {
+  // refreshIndicatorListAfterMutation 内部已重拉计划详情（按当前 planId），
+  // 故不重复调用需要 planId 入参的 refreshCurrentPlanDetails。
+  await refreshIndicatorListAfterMutation()
+}
 
 // 2026-10-14 用户定案：与战略任务管理/下发界面同构——同一战略任务多行在「战略任务」列合并；移除「内部ID」列
 /**
@@ -762,6 +788,17 @@ const handleExportIndicatorList = async () => {
           <el-icon><Download /></el-icon>
           全部导出
         </el-button>
+        <!-- 2026-11-25（指标填报导入式上报 · 学院侧）：页面顶部固定入口【批量导入】——
+             文件内按「归口职能部门」列自动拆线，各线独立提交、独立进入上报审批。 -->
+        <el-button
+          v-if="canUseReportFillImport"
+          type="primary"
+          plain
+          @click="openReportFillImport('all')"
+        >
+          <el-icon><Upload /></el-icon>
+          批量导入
+        </el-button>
       </div>
     </div>
 
@@ -919,6 +956,26 @@ const handleExportIndicatorList = async () => {
 
             <!-- 职能部门/二级学院的批量操作按钮 -->
             <template v-if="showPlanBatchActions">
+              <!-- 2026-11-25（指标填报导入式上报 · 学院侧）：单归口导入——
+                   需先选中「归属部门」，仅对该部门的归口线做填报导入（与顶部【批量导入】互相独立）。 -->
+              <el-tooltip
+                v-if="canUseReportFillImport"
+                :content="filterOwnerDept ? '导入本归属部门的填报数据' : '请先选择归属部门，再导入'"
+                :disabled="Boolean(filterOwnerDept)"
+                effect="dark"
+                placement="top"
+              >
+                <span style="display: inline-block">
+                  <el-button
+                    size="small"
+                    :disabled="!filterOwnerDept"
+                    @click="openReportFillImport('single')"
+                  >
+                    <el-icon><Upload /></el-icon>
+                    导入
+                  </el-button>
+                </span>
+              </el-tooltip>
               <!-- 一键提交按钮（2026-11-15 用户拍板「隐藏改主动引导」②：批量操作区内
                    **始终渲染**，草稿态/归属部门/未来月三条件从 v-if 不渲染改为原生
                    disabled + el-tooltip 说明缺什么（与一键撤回同款结构，PR#110 模式），
@@ -1613,6 +1670,16 @@ const handleExportIndicatorList = async () => {
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 2026-11-25（指标填报导入式上报 · 学院侧）：Excel 批量填报弹窗 -->
+    <ReportFillImportDialog
+      v-model:visible="reportFillImportVisible"
+      :mode="reportFillImportMode"
+      :cycle-id="reportFillCycleId"
+      :default-report-month="reportFillMonth"
+      :college-name="reportFillCollegeName || '当前学院'"
+      @committed="handleReportFillImported"
+    />
   </div>
 </template>
 
