@@ -7,6 +7,8 @@ import {
 } from '@/features/indicator/model/mutationHistory'
 import { computed, ref, watch } from 'vue'
 import ReportMaterialsCell from '@/features/indicator/ui/ReportMaterialsCell.vue'
+// 2026-11-25（二级学院填报导入）：导入 / 批量导入弹窗
+import ReportFillImportDialog from '@/features/indicator/ui/ReportFillImportDialog.vue'
 import { useLatestIndicatorFill } from '@/features/indicator/model/useLatestIndicatorFill'
 // 2026-10-28 华年定案：三个页面列宽统一，唯一来源见 tableColumns.ts
 import { TASK_TABLE_COLUMN_WIDTH } from '@/features/task/lib/tableColumns'
@@ -120,6 +122,18 @@ const {
   clearCurrentPlanReportDerivedState,
   clearPersistedIndicatorDraft,
   closeReportDialog,
+  // 2026-11-25（二级学院填报导入）：导入弹窗上下文
+  handleReportFillImported,
+  openReportFillImport,
+  reportFillImportCollegeName,
+  reportFillImportCycleId,
+  reportFillImportCycleName,
+  reportFillImportFunctionalDeptText,
+  reportFillImportMode,
+  reportFillImportMonth,
+  reportFillImportSourceDeptName,
+  reportFillImportTemplateRows,
+  reportFillImportVisible,
   collegePlanCandidates,
   collegePlanDetailsLoading,
   collegePlanDetailsMap,
@@ -762,6 +776,11 @@ const handleExportIndicatorList = async () => {
           <el-icon><Download /></el-icon>
           全部导出
         </el-button>
+        <!-- 2026-11-25（二级学院填报导入）：批量导入与两个导出按钮并排右对齐 -->
+        <el-button v-if="isSecondaryCollege" @click="openReportFillImport('batch')">
+          <el-icon><Upload /></el-icon>
+          批量导入
+        </el-button>
       </div>
     </div>
 
@@ -992,6 +1011,16 @@ const handleExportIndicatorList = async () => {
               <el-button v-else size="small" style="margin-left: 8px" @click="handleOpenApproval">
                 <el-icon><Check /></el-icon>
                 {{ approvalEntryButtonText }}
+              </el-button>
+              <!-- 2026-11-25（二级学院填报导入）：单归口导入，与「审批记录」并排右对齐 -->
+              <el-button
+                v-if="isSecondaryCollege"
+                size="small"
+                style="margin-left: 8px"
+                @click="openReportFillImport('single')"
+              >
+                <el-icon><Upload /></el-icon>
+                导入
               </el-button>
             </template>
           </div>
@@ -1613,6 +1642,20 @@ const handleExportIndicatorList = async () => {
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 2026-11-25（二级学院填报导入）：单归口 / 多归口批量导入 -->
+    <ReportFillImportDialog
+      v-model="reportFillImportVisible"
+      :mode="reportFillImportMode"
+      :cycle-id="reportFillImportCycleId"
+      :cycle-name="reportFillImportCycleName"
+      :report-month="reportFillImportMonth"
+      :college-name="reportFillImportCollegeName"
+      :source-dept-name="reportFillImportSourceDeptName"
+      :functional-dept-text="reportFillImportFunctionalDeptText"
+      :template-rows="reportFillImportTemplateRows"
+      @imported="handleReportFillImported"
+    />
   </div>
 </template>
 

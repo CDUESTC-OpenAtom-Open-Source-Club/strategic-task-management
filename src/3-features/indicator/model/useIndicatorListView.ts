@@ -44,6 +44,8 @@ import {
   resolvePlanReportEntryLock,
   type PlanReportEntryLockState
 } from '@/features/indicator/model/planReportEntryLock'
+// 2026-11-25（二级学院填报导入）：模板预填行的类型
+import type { ReportFillTemplateRow } from '@/features/indicator/lib/reportFillImportTemplate'
 import {
   buildSelfRatingGateMessage,
   collectExistingAttachmentIds,
@@ -6141,6 +6143,167 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
   const currentDetailId = computed(() => currentDetail.value?.id ?? null)
 
+  // ==================== 2026-11-25（二级学院填报导入） ====================
+  // 填报页「导入 / 批量导入」：只写「自评等级 + 进度说明」，落库是月度草稿，不发起审批。
+  // 学院取自登录身份（后端二次校验），因此这里的上下文只负责「当前学院 / 当前周期 /
+  // 当前月份 / 模板预填行」四件事。
+  const reportFillImportVisible = ref(false)
+  const reportFillImportMode = ref<'single' | 'batch'>('single')
+  const reportFillImportMonth = ref('')
+  const reportFillImportSubmitting = ref(false)
+
+  const reportFillImportCollegeName = computed(
+    () => effectiveViewingDept.value || authStore.userDepartment || ''
+  )
+
+  const reportFillImportCycleId = computed<number | null>(() => {
+    const plan = selectedCollegePlan.value as {
+      cycleId?: number | string
+      cycle?: { id?: number | string }
+    } | null
+    const cycleId = Number(plan?.cycleId ?? plan?.cycle?.id ?? 0)
+    return Number.isFinite(cycleId) && cycleId > 0 ? cycleId : 4
+  })
+
+  /** 弹窗头部上下文：来源职能部门（计划创建方）与考核周期名称，对齐「导入学院子指标表」。 */
+  const reportFillImportCycleName = computed(() => {
+    const plan = selectedCollegePlan.value as {
+      cycleName?: string
+      cycle?: { name?: string }
+    } | null
+    const direct = String(plan?.cycleName ?? plan?.cycle?.name ?? '').trim()
+    if (direct) {
+      return direct
+    }
+    // 计划实体不带周期名时，回退到时间上下文里的周期字典（cycleId → cycleName）
+    const cycles = (
+      timeContext as unknown as {
+        cycles?: Array<{ cycleId?: number | string; cycleName?: string }>
+      }
+    ).cycles
+    const cycleId = Number(reportFillImportCycleId.value ?? 0)
+    const matched = (cycles ?? []).find(item => Number(item?.cycleId) === cycleId)
+    return String(matched?.cycleName ?? '').trim()
+  })
+
+  const reportFillImportSourceDeptName = computed(() => {
+    const plan = selectedCollegePlan.value as { createdByOrgName?: string } | null
+    return plan?.createdByOrgName ?? '战略发展部'
+  })
+
+  /** 单归口 = 当前选中归口名；批量 = 全部归口的个数概览。 */
+  const reportFillImportFunctionalDeptText = computed(() => {
+    if (reportFillImportMode.value === 'single') {
+      return selectedFunctionalDeptOption.value?.name ?? ''
+    }
+    const names = new Set<string>()
+    reportFillImportTemplateRows.value.forEach(row => {
+      if (row.functionalDeptName) {
+        names.add(row.functionalDeptName)
+      }
+    })
+    return names.size > 0 ? `全部归口（${names.size} 个）` : ''
+  })
+
+  const resolveReportFillEditorNames = (row: StrategicIndicator): string => {
+    const name = getRowFunctionalDeptName(row)
+    return typeof name === 'string' ? name : ''
+  }
+
+  /**
+   * 模板预填行：
+   * - 单归口 = 当前选中归口线的指标；
+   * - 批量 = 该学院全部归口线的指标（计划详情缓存里逐线取）。
+   */
+  const reportFillImportTemplateRows = computed<ReportFillTemplateRow[]>(() => {
+    const collegeName = reportFillImportCollegeName.value
+    if (!collegeName) {
+      return []
+    }
+    const toRow = (row: StrategicIndicator, fallbackDept: string): ReportFillTemplateRow => ({
+      collegeName,
+      functionalDeptName: resolveReportFillEditorNames(row) || fallbackDept,
+      indicatorName: String(row.name ?? ''),
+      weight: Number((row as unknown as { weight?: number }).weight ?? 0)
+    })
+
+    if (reportFillImportMode.value === 'single') {
+      const fallbackDept = selectedFunctionalDeptOption.value?.name ?? ''
+      return currentPlanIndicators.value
+        .filter(row => String(row.name ?? '').trim() !== '')
+        .map(row => toRow(row, fallbackDept))
+    }
+
+    const rows: ReportFillTemplateRow[] = []
+    const seen = new Set<string>()
+    Object.values(collegePlanDetailsMap.value).forEach(plan => {
+      const planIndicators =
+        (plan as unknown as { indicators?: StrategicIndicator[] }).indicators ?? []
+      planIndicators.forEach(row => {
+        const name = String(row.name ?? '').trim()
+        if (!name) {
+          return
+        }
+        const prepared = toRow(row, '')
+        const key = `${prepared.functionalDeptName}|${name}`
+        if (seen.has(key)) {
+          return
+        }
+        seen.add(key)
+        rows.push(prepared)
+      })
+    })
+    if (rows.length > 0) {
+      return rows
+    }
+    // 计划详情未带回指标时退化为当前线，避免模板完全空白
+    const fallbackDept = selectedFunctionalDeptOption.value?.name ?? ''
+    return currentPlanIndicators.value
+      .filter(row => String(row.name ?? '').trim() !== '')
+      .map(row => toRow(row, fallbackDept))
+  })
+
+  async function openReportFillImport(mode: 'single' | 'batch'): Promise<void> {
+    if (!isSecondaryCollege.value) {
+      ElMessage.warning('填报导入仅对二级学院开放')
+      return
+    }
+    reportFillImportMode.value = mode
+    const now = new Date()
+    const fallbackMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
+    // 2026-11-25 用户反馈：弹窗的「填报月份」必须与页面「当前填报周期」一致。
+    // 页面上那枚 ReportCycleTag 用的是 monthlySequenceStatusMeta.month（最早待填月、
+    // 且封顶在当前自然月），此前用「最早未填报月」会越过封顶跑到 12 月，与页面不一致。
+    const pageMonth = String(
+      monthlySequenceStatusMeta.value.month ||
+        lockedReportMonth.value ||
+        reportForm.value.reportMonth ||
+        ''
+    ).trim()
+    if (pageMonth.length === 6) {
+      reportFillImportMonth.value = pageMonth
+    } else {
+      reportFillImportMonth.value = fallbackMonth
+      try {
+        const month = await resolveEarliestUnfilledReportMonth()
+        if (month) {
+          reportFillImportMonth.value = month
+        }
+      } catch (error) {
+        logger.warn('[IndicatorListView] 解析导入月份失败，使用当前月:', error)
+      }
+    }
+    reportFillImportVisible.value = true
+  }
+
+  function closeReportFillImport(): void {
+    reportFillImportVisible.value = false
+  }
+
+  async function handleReportFillImported(): Promise<void> {
+    await refreshIndicatorListAfterMutation()
+  }
+
   return {
     DEFAULT_APPROVAL_STATUS,
     PLAN_APPROVAL_POLL_INTERVAL_MS,
@@ -6363,6 +6526,20 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     reportDialogVisible,
     reportForm,
     currentReportMonthLabel,
+    // 2026-11-25（二级学院填报导入）：弹窗上下文与动作
+    closeReportFillImport,
+    handleReportFillImported,
+    openReportFillImport,
+    reportFillImportCollegeName,
+    reportFillImportCycleId,
+    reportFillImportCycleName,
+    reportFillImportFunctionalDeptText,
+    reportFillImportMode,
+    reportFillImportMonth,
+    reportFillImportSourceDeptName,
+    reportFillImportSubmitting,
+    reportFillImportTemplateRows,
+    reportFillImportVisible,
     reportUploadFiles,
     resetFilters,
     resolveDialogAttachments,
