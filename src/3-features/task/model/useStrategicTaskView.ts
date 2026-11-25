@@ -52,7 +52,11 @@ import {
   getStatusType as _getStatusType,
   getStatusIcon as _getStatusIcon
 } from '@/shared/lib/utils/indicatorStatus'
-import { getPlanStatusDisplay, normalizePlanStatus } from '@/features/task/lib'
+import {
+  getPlanStatusDisplay,
+  isImportPlanViewConverged,
+  normalizePlanStatus
+} from '@/features/task/lib'
 import {
   canCurrentUserHandleMutationEntry,
   normalizeWorkflowStepMatchKey
@@ -1725,6 +1729,73 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
         departmentViewLoadingRequestId.value = 0
       }
     }
+  }
+
+  /**
+   * 2026-11-25（P1 状态签自动刷新 · 收敛轮询兜底）：导入 commit 返回后的计划视图收敛。
+   *
+   * <p>缺陷链（本地真机 Playwright 实证，见测试证据 2026-11-25-P1状态签自动刷新）：
+   * commit 返回时响应已带 workflow APPROVED、DB 已 DISTRIBUTED，但紧随的 GET /plans
+   * 列表里**还没有**本次新建的 FUNC_TO_COLLEGE 线——后端列表可见性滞后约 4~5s
+   * （commit 返回后 +13ms/+130ms 采样均为旧列表，~4.8s 后才出现新线）。committed
+   * 回调的一次性 force 回源全部撞在这个窗口里拿到旧快照；此后 store 层
+   * （plans.length>0 早退）与 fetchWithCache 15s 快照都拦住回源，页头「计划状态」签
+   * （effectivePlanStatus ← planStore.plans）停在「未下发」，直到手动刷新页面。</p>
+   *
+   * <p>修法（后置轮询兜底，不 sleep 硬等）：本函数按 intervalMs 间隔重试「失效
+   * plan.list + force 回源」，每轮用 lib 纯函数 isImportPlanViewConverged 判定——
+   * 「全部导入」按逐组 SUCCESS 回执 planId 精确判定；单条导入无 planId，按页头
+   * 「计划状态」签同源状态（学院页签=子计划，职能页签=自身计划）判定。一旦收敛
+   * 立即停止（通常 1~2 轮），超时放弃并留 warn 日志（等心跳/手动兜底，不无限轮询）。
+   * 计划列表更新后，页签/下拉/徽标的既有响应式链（collegeDeptPlanWinnerByDept 等）
+   * 自动跟着收敛，无需额外刷新。</p>
+   *
+   * <p>调用方（committed 回调）fire-and-forget，不阻塞弹窗关闭。声明位置在
+   * isCollegePlanContextActive / effectivePlanStatus（本文件后部）之前，函数体运行期
+   * 取值，无 TDZ（同 refreshCurrentDepartmentView 引用后部函数的既有模式）。</p>
+   */
+  const waitPlanViewConvergedAfterImport = async (
+    options: {
+      autoDispatch?: boolean
+      expectPlanIds?: number[]
+      timeoutMs?: number
+      intervalMs?: number
+    } = {}
+  ): Promise<boolean> => {
+    const timeoutMs = options.timeoutMs ?? 20000
+    // 间隔小于 fetchWithCache dedupeWindowMs(1000) 是安全的：每轮先失效 plan.list，
+    // 上一轮请求落地后缓存已清空；仅当上一轮请求仍在途（>900ms 的异常慢网）才会
+    // 去重复用同一个 promise——那也是同一次新鲜回源，语义等价。
+    const intervalMs = options.intervalMs ?? 900
+    const evaluateConvergence = (): boolean =>
+      isImportPlanViewConverged({
+        plans: planStore.plans as Array<{ id?: unknown; status?: unknown }>,
+        expectedPlanIds: options.expectPlanIds,
+        activePlanStatus: isCollegePlanContextActive.value
+          ? effectivePlanStatus.value
+          : currentPlanStatus.value,
+        autoDispatch: options.autoDispatch === true
+      })
+
+    if (evaluateConvergence()) {
+      return true
+    }
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, intervalMs))
+      invalidateQueries(['plan.list'])
+      try {
+        await planStore.loadPlans({ force: true, background: true })
+      } catch (error) {
+        logger.warn('[StrategicTaskView] 导入后收敛轮询回源计划列表失败:', { error })
+      }
+      if (evaluateConvergence()) {
+        logger.info('[StrategicTaskView] 导入后计划视图已收敛（状态签随最新列表刷新）')
+        return true
+      }
+    }
+    logger.warn('[StrategicTaskView] 导入后计划视图收敛超时，放弃轮询（保留心跳/手动兜底）')
+    return false
   }
 
   // 职能部门下发链（STRAT_TO_FUNC）提交码，保持不变
@@ -6541,7 +6612,9 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     }
 
     for (const item of normalizedIndicators.value) {
-      if (!isDispatchOwnerVisible({ loginRole: authStore.userRole, ownerMatchesCurrentDept: true })) {
+      if (
+        !isDispatchOwnerVisible({ loginRole: authStore.userRole, ownerMatchesCurrentDept: true })
+      ) {
         continue
       }
       const candidate = item as {
@@ -9535,6 +9608,7 @@ export function useStrategicTaskView(props: StrategicTaskViewProps) {
     timeContext,
     triggerApprovalForDistribution,
     updateEditTime,
-    viewMode
+    viewMode,
+    waitPlanViewConvergedAfterImport
   }
 }

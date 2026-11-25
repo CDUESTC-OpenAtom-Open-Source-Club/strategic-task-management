@@ -104,7 +104,10 @@ import {
   canEditManualAlertLevel
 } from '@/features/task/lib/warning-level'
 import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
-import type { ImportCommitResponse } from '@/features/import/api/businessImport'
+import type {
+  ImportAllCommitResponse,
+  ImportCommitResponse
+} from '@/features/import/api/businessImport'
 import { planApi } from '@/features/plan/api/planApi'
 // 2026-11-11（学院页签按钮体系修正）：按钮分流三要素（文案/类型/动作）与实现共用同一纯函数
 // 2026-11-13（撤回入口席位显隐）：显隐判定同源下沉 lib（resolveWithdrawControlVisible）
@@ -469,6 +472,7 @@ const {
   triggerApprovalForDistribution,
   updateEditTime,
   viewMode,
+  waitPlanViewConvergedAfterImport,
   reportHistoryOpen,
   currentDetailId
 } = useStrategicTaskView(props)
@@ -1797,9 +1801,8 @@ const handleExportAllCollegeIndicators = async () => {
             getFunctionalDept: row => resolveCollegeRowFunctionalDeptName(row),
             getSelfRatingLabel: row => getExportSelfRatingLabel(row),
             getAppraisalLabel: row =>
-              getAppraisalLevelDisplay(
-                getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity)
-              ).label,
+              getAppraisalLevelDisplay(getIndicatorAppraisalLevel(row.id, row.manualAlertSeverity))
+                .label,
             getRemarkText: row => getExportRemarkText(row)
           }),
           emptyMessage: '该学院暂无可导出的指标数据'
@@ -1814,16 +1817,17 @@ const handleExportAllCollegeIndicators = async () => {
         ElMessage.warning('当前周期内暂无可导出的学院指标数据')
         return
       }
-      await exportSheetsToExcel(single.sheets, buildExportFileName('指标下发与管理', single.department))
+      await exportSheetsToExcel(
+        single.sheets,
+        buildExportFileName('指标下发与管理', single.department)
+      )
       ElMessage.success(`导出成功：${single.department}`)
       return
     }
 
-    await exportDepartmentsAsZip(
-      payloads,
-      `指标下发与管理_全部学院_${formatLocalDateTag()}.zip`,
-      { onProgress: text => ElMessage({ message: text, duration: 1200, grouping: true }) }
-    )
+    await exportDepartmentsAsZip(payloads, `指标下发与管理_全部学院_${formatLocalDateTag()}.zip`, {
+      onProgress: text => ElMessage({ message: text, duration: 1200, grouping: true })
+    })
     ElMessage.success(`导出成功：共 ${payloads.length} 个学院，每院一张表`)
   } catch {
     ElMessage.error('导出失败，请稍后重试')
@@ -2142,6 +2146,16 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
   invalidateQueries(['workflow.detail', 'workflow.todo'])
   await refreshCurrentDepartmentView({ showLoading: true, force: true, reloadIndicators: true })
 
+  // 2026-11-25（P1 状态签自动刷新 · 收敛轮询兜底）：本地真机实测 commit 返回早于
+  // 新线在 GET /plans 可见（≈4~5s，见 useStrategicTaskView.waitPlanViewConvergedAfterImport
+  // 注释）——上面的即时回源拿到的是无新线的旧快照，页头「计划状态」签停在「未下发」
+  // 直到手动刷新。fire-and-forget 启动收敛轮询：每轮失效 plan.list + force 回源，
+  // 状态签同源状态收敛（新线出现/已下发）即停，不阻塞弹窗关闭。
+  void waitPlanViewConvergedAfterImport({
+    autoDispatch:
+      result?.workflow?.autoSubmitAndApprove === true && result?.workflow?.status === 'APPROVED'
+  })
+
   if (result?.workflow?.autoSubmitAndApprove || result?.workflow?.instanceId) {
     resetApprovalWorkflowStateCache()
     await refreshApprovalWorkflowSummaries()
@@ -2155,10 +2169,24 @@ const handleStrategicImportCommitted = async (result?: ImportCommitResponse) => 
  * <p>与单条导入的刷新链一致：失效 plan.list + workflow 缓存 → 重拉当前视图。
  * 全部导入可能同时影响**多个归口**的线，故重拉必须带 force（不能命中 SWR 快照）。</p>
  */
-const handleStrategicAllImportCommitted = async () => {
+const handleStrategicAllImportCommitted = async (
+  result?: ImportAllCommitResponse,
+  autoSubmitAndApprove?: boolean
+) => {
   invalidateQueries(['plan.list'])
   invalidateQueries(['workflow.detail', 'workflow.todo'])
   await refreshCurrentDepartmentView({ showLoading: true, force: true, reloadIndicators: true })
+  // 2026-11-25（P1 状态签自动刷新 · 收敛轮询兜底）：与单条导入同款——commit 返回早于
+  // 新线在 GET /plans 可见。全部导入按逐组 SUCCESS 回执 planId 精确收敛（响应唯一带
+  // planId 的链路）；回执无 planId 的历史后端则退化为可见性判定（不要求已下发）。
+  // autoSubmitAndApprove 由弹窗 emit 第二参数带回（响应体不回显该开关）。
+  const successPlanIds = (result?.results ?? [])
+    .filter(group => group.status === 'SUCCESS' && group.planId != null)
+    .map(group => Number(group.planId))
+  void waitPlanViewConvergedAfterImport({
+    expectPlanIds: successPlanIds,
+    autoDispatch: autoSubmitAndApprove === true && successPlanIds.length > 0
+  })
   resetApprovalWorkflowStateCache()
   await refreshApprovalWorkflowSummaries()
 }
@@ -2291,7 +2319,9 @@ const handleStrategicAllImportCommitted = async () => {
             plain
             size="small"
             :loading="strategicExporting"
-            :disabled="activeTaskTabName === 'college' ? !collegeAllExportReady : !collegeTabTwoStepReady"
+            :disabled="
+              activeTaskTabName === 'college' ? !collegeAllExportReady : !collegeTabTwoStepReady
+            "
             :title="
               activeTaskTabName === 'college'
                 ? collegeAllExportReady

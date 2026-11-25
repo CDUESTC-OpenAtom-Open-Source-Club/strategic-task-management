@@ -179,6 +179,12 @@ const emit = defineEmits<{
    * 单条导入走既有的 committed 事件，两条链路互不影响。
    */
   (event: 'all-committed', value: ImportAllCommitResponse): void
+  /**
+   * 2026-11-25（P1 状态签自动刷新）：第二参数带提交时的「自动发起并完成审批」勾选态。
+   * 全部导入响应体不回显该开关（ImportAllCommitResponse 无 workflow 字段），而
+   * 收敛轮询需要它区分「要求推进到已下发」与「仅写入不下发（停在草稿是预期）」。
+   */
+  (event: 'all-committed', value: ImportAllCommitResponse, autoSubmitAndApprove: boolean): void
 }>()
 
 const dialogVisible = computed({
@@ -641,7 +647,7 @@ const handleAllCommit = async () => {
         `全部导入完成：成功 ${summary.success} 组、跳过 ${summary.skipped} 组、失败 ${summary.failed} 组`
       )
     }
-    emit('all-committed', result)
+    emit('all-committed', result, autoSubmitAndApprove.value)
   } catch (error) {
     markErrorHandled(error)
     const msg = (error as { message?: string })?.message
