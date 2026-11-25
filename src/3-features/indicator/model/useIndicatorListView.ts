@@ -6141,15 +6141,17 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
   const currentDetailId = computed(() => currentDetail.value?.id ?? null)
 
-  // ==================== 2026-11-25（指标填报导入式上报 · 学院侧） ====================
+  // ==================== 2026-11-25（指标填报导入式上报） ====================
 
   /**
-   * 是否可用「导入式上报」：二级学院 + 填报人席位。
+   * 是否可用「导入式上报」：填报人席位，且不是战略发展部（战略部是下发方，不填报）。
    *
-   * <p>口径与既有填报按钮一致（{@code showPlanBatchActions}）：审核人只审不填。
+   * <p>2026-11-25（标准模板 04/05/06）：从「仅二级学院」放宽到「二级学院 + 职能部门」——
+   * 职能部门填报人也有导入式上报（04：职能部门 → 战略发展部）。
+   * 审核人仍然只审不填（口径与 {@code showPlanBatchActions} 一致）。
    */
   const canUseReportFillImport = computed(
-    () => isSecondaryCollege.value && isCurrentUserReporter.value
+    () => !isStrategicDept.value && isCurrentUserReporter.value
   )
 
   /**

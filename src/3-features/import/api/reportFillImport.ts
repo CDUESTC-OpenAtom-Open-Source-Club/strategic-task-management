@@ -2,20 +2,31 @@ import { apiClient } from '@/shared/api/client'
 import type { ApiResponse } from '@/shared/types/api'
 
 /**
- * 2026-11-25（指标填报导入式上报 · 学院侧）：API 封装。
+ * 2026-11-25（指标填报导入式上报）：API 封装。
  *
  * <p>与 {@code features/import/api/businessImport.ts}（导入<b>下发</b>）是两条独立链路，
  * 端点路径隔离在 {@code /imports/fill/**}。
+ *
+ * <p>覆盖两条上报流向（标准模板 04/05/06）：职能部门 → 战略发展部；学院 → 归口职能部门。
  */
 
 /** 自评等级码（后端归一后的 AHEAD / NORMAL / DELAYED）。 */
 export type ReportFillLevelCode = 'AHEAD' | 'NORMAL' | 'DELAYED'
 
+/** 上报类型：FUNC_DEPT = 04 职能部门上报；COLLEGE = 05/06 学院上报。 */
+export type ReportFillReportType = 'FUNC_DEPT' | 'COLLEGE'
+
+/** 导入模式：single = 只提交所选目标部门那条线；all = 文件内出现的线全部提交。 */
+export type ReportFillPreviewMode = 'single' | 'all'
+
 /** 预览的一行（一条待填报的子指标）。 */
 export interface ReportFillRowPreview {
+  /** Excel 物理行号（1-based，含表头行） */
   rowNo: number
-  college: string
-  functionalDept: string
+  /** 责任部门（来源）——必须等于登录人所在组织 */
+  responsibleDept: string
+  /** 目标部门 / 上报目标 */
+  targetDept: string
   indicatorName: string
   weight: string
   selfRating: string
@@ -27,39 +38,41 @@ export interface ReportFillRowPreview {
   warnings: string[]
 }
 
-/** 一个归口线的分组（= 一份月报）。 */
+/** 一条上报线的分组（= 一份月报）。 */
 export interface ReportFillGroup {
-  functionalOrgId: number | null
-  functionalOrgName: string
+  /** 目标部门 org id（04 = 战略发展部；05/06 = 归口职能部门） */
+  targetOrgId: number | null
+  targetOrgName: string
   planId: number | null
   rowsCount: number
   willSubmit: boolean
-  /** 组级错误（非空 = 该组不可提交，标红） */
+  /** 组级错误（非空 = 不可提交，标红） */
   groupError: string | null
-  /** 组级跳过原因（非空且 groupError 为空 = 该组将跳过，标灰） */
+  /** 组级跳过原因（非空且 groupError 为空 = 将跳过，标灰） */
   skipReason: string | null
   rows: ReportFillRowPreview[]
 }
 
 /** 预览响应。 */
 export interface ReportFillPreviewResponse {
+  reportType: ReportFillReportType
   batchId: string
   cycleId: number
   reportMonth: string
-  targetCollegeOrgId: number
-  targetCollegeName: string
+  responsibleOrgId: number
+  responsibleOrgName: string
   groups: ReportFillGroup[]
-  /** 是否至少有一条可提交的归口线（前端据此决定「确认导入」能否点） */
+  /** 是否至少有一条可提交的线（前端据此决定「确认导入」能否点） */
   hasSubmittableGroup: boolean
-  /** 整单不可提交（= 没有任何可提交的组）；单组出错不等于整单阻断 */
+  /** 整单不可提交（= 没有任何可提交的组） */
   blocking: boolean
   confirmToken: string
 }
 
-/** 单个归口线的提交结果。 */
+/** 单条线的提交结果。 */
 export interface ReportFillGroupResult {
-  functionalOrgId: number | null
-  functionalOrgName: string
+  targetOrgId: number | null
+  targetOrgName: string
   status: 'SUCCESS' | 'SKIPPED' | 'FAILED'
   reportId: number | null
   rowsCount: number
@@ -78,27 +91,24 @@ export interface ReportFillCommitResponse {
 
 /** 预览入参。 */
 export interface ReportFillPreviewParams {
-  /** 考核周期 id（用于定位「学院 × 归口」的已下发计划线） */
+  /** 考核周期 id */
   cycleId: number
   /** 归属月份（yyyyMM）——模板不含月份列，由界面选择 */
   reportMonth: string
   /**
    * 导入模式。
    *
-   * <p>`single` = 单归口入口（必须给 functionalOrgId，后端只提交该归口线，文件内其它线标记为将跳过）；
-   * `all`（默认）= 批量入口（文件内出现的归口线全部提交）。
+   * <p>`single` = 05 单归口入口（必须给 targetOrgId，后端只提交该线，文件内其它线标记为将跳过）；
+   * `all` = 04 职能部门单点 / 06 批量入口（文件内出现的线全部提交）。
    *
-   * <p>刻意用显式 mode 而不是「functionalOrgId 是否为 null」隐式表达——
+   * <p>刻意用显式 mode 而不是「targetOrgId 是否为 null」隐式表达——
    * null 与「没传」无法区分，会让单归口静默退化成批量。
    */
-  mode: ReportFillImportModeParam
-  /** 单归口入口选中的归口部门 id（mode=single 时必填） */
-  functionalOrgId?: number | null
+  mode: ReportFillPreviewMode
+  /** 单归口入口选中的目标部门（归口职能部门）id */
+  targetOrgId?: number | null
   sheetName?: string
 }
-
-/** 导入模式参数（与后端 PreviewMode 对齐）。 */
-export type ReportFillImportModeParam = 'single' | 'all'
 
 /** 提交入参。 */
 export interface ReportFillCommitRequest {
@@ -128,7 +138,7 @@ const compactUploadParams = (params: Record<string, unknown>): Record<string, un
 }
 
 export const reportFillImportApi = {
-  /** 解析预览：学院校验 → 归口线拆分 → 指标定位 → 等级白名单校验。 */
+  /** 解析预览：责任部门校验 → 按目标部门拆线 → 指标定位 → 等级白名单校验。 */
   async preview(file: File, params: ReportFillPreviewParams) {
     const response = await apiClient.upload<ApiResponse<ReportFillPreviewResponse>>(
       '/imports/fill/preview',
@@ -138,7 +148,7 @@ export const reportFillImportApi = {
     return unwrap(response)
   },
 
-  /** 确认导入：逐归口线独立事务，落填报明细并提交该线的上报审批。 */
+  /** 确认导入：逐线独立事务，落填报明细并提交该线的上报审批。 */
   async commit(batchId: string, request: ReportFillCommitRequest) {
     const response = await apiClient.post<ApiResponse<ReportFillCommitResponse>>(
       `/imports/fill/${encodeURIComponent(batchId)}/commit`,

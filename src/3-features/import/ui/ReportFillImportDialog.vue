@@ -2,7 +2,7 @@
   <el-dialog
     v-model="dialogVisible"
     :title="dialogTitle"
-    width="980px"
+    width="1000px"
     top="6vh"
     :close-on-click-modal="false"
     @closed="handleClosed"
@@ -62,16 +62,14 @@
 
       <div v-if="preview" class="group-list">
         <el-card
-          v-for="group in preview.groups"
-          :key="group.functionalOrgName"
+          v-for="(group, groupIndex) in preview.groups"
+          :key="groupIndex"
           class="mb-12"
           shadow="never"
         >
           <template #header>
             <div class="group-header">
-              <span class="group-title">{{
-                group.functionalOrgName || '（未填写归口职能部门）'
-              }}</span>
+              <span class="group-title">{{ group.targetOrgName || '（未填写目标部门）' }}</span>
               <el-tag v-if="group.willSubmit" type="success" size="small">将提交</el-tag>
               <el-tag v-else-if="group.groupError" type="danger" size="small">错误组</el-tag>
               <el-tag v-else type="info" size="small">将跳过</el-tag>
@@ -86,7 +84,7 @@
             {{ group.skipReason }}
           </el-alert>
 
-          <el-table :data="group.rows" size="small" border max-height="260">
+          <el-table :data="group.rows" size="small" border max-height="280">
             <el-table-column prop="rowNo" label="行" width="52" align="center" />
             <el-table-column
               prop="indicatorName"
@@ -94,21 +92,16 @@
               min-width="200"
               show-overflow-tooltip
             />
-            <el-table-column
-              prop="functionalDept"
-              label="归口职能部门"
-              width="140"
-              show-overflow-tooltip
-            />
             <el-table-column prop="selfRating" label="自评等级" width="90" align="center" />
-            <el-table-column prop="remark" label="进度说明" min-width="180" show-overflow-tooltip />
-            <el-table-column label="结果" width="120" align="center">
+            <el-table-column prop="remark" label="进度说明" min-width="160" show-overflow-tooltip />
+            <el-table-column label="结果" width="96" align="center">
               <template #default="{ row }">
                 <el-tag v-if="row.errors?.length" type="danger" size="small">失败</el-tag>
+                <el-tag v-else-if="!group.willSubmit" type="info" size="small">不导入</el-tag>
                 <el-tag v-else type="success" size="small">将更新</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="提示" min-width="220">
+            <el-table-column label="提示" min-width="240">
               <template #default="{ row }">
                 <div v-for="(error, index) in row.errors" :key="`e-${index}`" class="row-error">
                   {{ error }}
@@ -134,12 +127,7 @@
       </el-alert>
 
       <el-table :data="commitResults" size="small" border>
-        <el-table-column
-          prop="functionalOrgName"
-          label="归口职能部门"
-          width="160"
-          show-overflow-tooltip
-        />
+        <el-table-column prop="targetOrgName" label="目标部门" width="180" show-overflow-tooltip />
         <el-table-column label="结果" width="100" align="center">
           <template #default="{ row }">
             <el-tag v-if="row.status === 'SUCCESS'" type="success" size="small">成功</el-tag>
@@ -148,7 +136,7 @@
           </template>
         </el-table-column>
         <el-table-column prop="rowsCount" label="行数" width="80" align="center" />
-        <el-table-column prop="message" label="说明" min-width="260" show-overflow-tooltip />
+        <el-table-column prop="message" label="说明" min-width="280" show-overflow-tooltip />
       </el-table>
     </div>
 
@@ -170,7 +158,7 @@
           :loading="committing"
           @click="handleCommit"
         >
-          {{ mode === 'all' ? '确认批量导入' : '确认导入' }}
+          {{ variant === 'college-all' ? '确认批量导入' : '确认导入' }}
         </el-button>
         <el-button v-if="activeStep === 1" @click="handleBack">上一步</el-button>
       </div>
@@ -193,33 +181,35 @@ import {
   buildReportFillGuideSheet,
   buildReportFillTemplateFileName,
   buildReportFillTemplateSheet,
-  type ReportFillImportMode
+  type ReportFillTemplateVariant
 } from '@/features/import/lib/reportFillImportTemplate'
 import { exportSheetsToExcel } from '@/shared/lib/export/excel'
 
 /**
- * 2026-11-25（指标填报导入式上报 · 学院侧）：导入弹窗。
+ * 2026-11-25（指标填报导入式上报）：导入弹窗。
  *
  * <p>UI 形态对齐既有「导入下发」弹窗（下载模板 → 解析预览 → 确认导入），
  * 但提交链路完全独立——本弹窗写的是**填报内容**（月报明细），不是下发指标。
+ *
+ * <p>三种变体对应标准模板 04/05/06：
+ * <ul>
+ *   <li>{@code func} = 04 职能部门上报（单点，目标恒为战略发展部）</li>
+ *   <li>{@code college-single} = 05 学院上报单归口（只提交所选目标部门那条线）</li>
+ *   <li>{@code college-all} = 06 学院上报多归口批量</li>
+ * </ul>
  */
 const props = defineProps<{
   visible: boolean
-  /** 导入模式：single = 单归口线；all = 本学院全部归口线（文件内按归口部门列拆线） */
-  mode: ReportFillImportMode
-  /** 考核周期 id（定位已下发计划线）；缺省时导入入口不可用 */
+  /** 模板变体（决定表头措辞、说明页文案、提交模式） */
+  variant: ReportFillTemplateVariant
+  /** 考核周期 id；缺省时导入入口不可用 */
   cycleId?: number | null
   /** 默认归属月份（yyyyMM） */
   defaultReportMonth?: string
-  /** 当前登录人所在学院名称（写入「学院」列 + 校验提示） */
-  collegeName?: string
-  /**
-   * 单归口入口选中的归口部门 id。
-   *
-   * <p>传了 → 后端只提交该归口的线，文件内其它归口线标记为「将跳过」；
-   * 不传（批量入口）→ 文件内出现的归口线全部提交。
-   */
-  functionalOrgId?: number | null
+  /** 责任部门权威名称（写入模板「责任部门」列；应等于后端 sys_org.name） */
+  responsibleOrgName?: string
+  /** 单归口（college-single）时必须给：选中的目标部门（归口职能部门）id */
+  targetOrgId?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -241,21 +231,36 @@ const preview = ref<ReportFillPreviewResponse | null>(null)
 const commitResults = ref<ReportFillGroupResult[]>([])
 const pickedMonth = ref(props.defaultReportMonth ?? '')
 
-const dialogTitle = computed(() =>
-  props.mode === 'all' ? '批量导入 · 指标填报' : '导入 · 指标填报'
+/** 单归口入口必须显式传 single，否则后端会把文件里全部线一起提交 */
+const previewMode = computed<'single' | 'all'>(() =>
+  props.variant === 'college-single' ? 'single' : 'all'
 )
 
-const modeTip = computed(() =>
-  props.mode === 'all'
-    ? '一次导入本学院全部归口线的月度填报数据：文件内按「归口职能部门」列自动拆线，各线独立提交、独立进入上报审批。'
-    : '一次导入一条归口线的月度填报数据（本学院从某一个归口职能部门收到的指标）。'
-)
+const dialogTitle = computed(() => {
+  if (props.variant === 'func') {
+    return '导入填报 · 职能部门上报战略发展部'
+  }
+  if (props.variant === 'college-single') {
+    return '导入填报 · 二级学院上报归口部门'
+  }
+  return '批量导入填报 · 二级学院上报多归口'
+})
+
+const modeTip = computed(() => {
+  if (props.variant === 'func') {
+    return '职能部门填报人上传本部门的月度填报表：责任部门 = 本部门，上报目标 = 战略发展部。'
+  }
+  if (props.variant === 'college-single') {
+    return '一次导入一条归口线的月度填报数据：只提交当前选中的目标部门那条线，文件内其它线将跳过。'
+  }
+  return '一次导入本学院全部归口线的月度填报数据：按「目标部门」列自动拆线，各线独立提交、独立进入上报审批。'
+})
 
 const totalValidRows = computed(() => {
   if (!preview.value) {
     return 0
   }
-  // 只统计「将提交」的组：把将跳过的行也算进去会让用户误以为那些行也会导入
+  // 只统计「将提交」的线：把将跳过的行也算进去会让用户误以为那些行也会导入
   return preview.value.groups
     .filter(group => group.willSubmit)
     .reduce((sum, group) => sum + group.rows.filter(row => !row.errors?.length).length, 0)
@@ -265,8 +270,7 @@ const totalValidRows = computed(() => {
  * 从错误里取后端原文。
  *
  * <p>响应拦截器 reject 的是统一错误对象（对象字面量，**不是 Error 实例**），
- * 用 `instanceof Error` 判会永远走兜底文案，把后端原文（「整单拒绝导入：第 3 行…」、
- * 「自评等级…无效」）吞掉。这里按 message 字段取，兼容 Error 与统一错误对象。
+ * 用 `instanceof Error` 判会永远走兜底文案，把后端原文（整单拒绝 + 行号点名）吞掉。
  */
 function resolveErrorMessage(error: unknown, fallback: string): string {
   const candidate = (error as { message?: unknown } | null | undefined)?.message
@@ -274,12 +278,6 @@ function resolveErrorMessage(error: unknown, fallback: string): string {
   return text || fallback
 }
 
-/**
- * 预览总览的类型/文案。
- *
- * <p>阻断下沉到组级（对齐模板「一条线失败不影响其他线」）：
- * 只有「一条可提交的线都没有」才是 error，部分线有错是 warning，全通才是 success。
- */
 const previewSummaryType = computed<'success' | 'warning' | 'error'>(() => {
   const current = preview.value
   if (!current) {
@@ -299,12 +297,12 @@ const previewSummaryTitle = computed(() => {
   const submittable = current.groups.filter(group => group.willSubmit).length
   const skipped = current.groups.filter(group => !group.willSubmit).length
   if (!current.hasSubmittableGroup) {
-    return '没有可提交的归口线：请按下方提示修正后重新上传'
+    return '没有可提交的上报线：请按下方提示修正后重新上传'
   }
   if (skipped > 0) {
-    return `解析完成：${submittable} 条归口线将提交、${skipped} 条将跳过（${totalValidRows.value} 行可导入）`
+    return `解析完成：${submittable} 条上报线将提交、${skipped} 条将跳过（${totalValidRows.value} 行可导入）`
   }
-  return `解析完成：${current.groups.length} 条归口线、${totalValidRows.value} 行可导入`
+  return `解析完成：${current.groups.length} 条上报线、${totalValidRows.value} 行可导入`
 })
 
 const commitSummaryTitle = computed(() => {
@@ -314,14 +312,14 @@ const commitSummaryTitle = computed(() => {
   const success = commitResults.value.filter(item => item.status === 'SUCCESS').length
   const failed = commitResults.value.filter(item => item.status === 'FAILED').length
   const skipped = commitResults.value.filter(item => item.status === 'SKIPPED').length
-  const parts = [`成功 ${success} 条归口线`]
+  const parts = [`成功 ${success} 条上报线`]
   if (skipped) {
     parts.push(`跳过 ${skipped} 条`)
   }
   if (failed) {
     parts.push(`失败 ${failed} 条`)
   }
-  return `导入完成：${parts.join('，')}。已提交的归口线进入上报审批流程，审批通过后数据看板生效。`
+  return `导入完成：${parts.join('，')}。已提交的上报线进入审批流程，审批通过后数据看板生效。`
 })
 
 const commitSummaryType = computed<'success' | 'warning' | 'error'>(() => {
@@ -362,7 +360,7 @@ function handleBack() {
   activeStep.value = 0
 }
 
-const handleFileChange: UploadProps['onChange'] = (uploadFile, uploadFiles) => {
+const handleFileChange: UploadProps['onChange'] = (_uploadFile, uploadFiles) => {
   fileList.value = uploadFiles.slice(-1)
   preview.value = null
 }
@@ -380,11 +378,11 @@ const handleFileExceed: UploadProps['onExceed'] = files => {
 
 async function handleDownloadTemplate() {
   try {
-    const dataSheet = buildReportFillTemplateSheet(props.mode, props.collegeName ?? '当前学院')
-    const guideSheet = buildReportFillGuideSheet(props.mode)
+    const dataSheet = buildReportFillTemplateSheet(props.variant, props.responsibleOrgName ?? '')
+    const guideSheet = buildReportFillGuideSheet(props.variant)
     await exportSheetsToExcel(
-      [dataSheet as never, guideSheet as never],
-      buildReportFillTemplateFileName(props.mode)
+      [dataSheet as unknown as never, guideSheet as unknown as never],
+      buildReportFillTemplateFileName(props.variant)
     )
     ElMessage.success('模板下载成功')
   } catch (error) {
@@ -403,14 +401,14 @@ async function handlePreview() {
     ElMessage.warning('当前考核周期不可用，无法导入')
     return
   }
-  // 单归口模式必须能拿到归口部门 id：拿不到就明确拦下，
-  // 绝不能让后端把「mode=single 但没给 orgId」当成批量处理（会误提交多条线）。
-  if (props.mode === 'single' && !props.functionalOrgId) {
-    ElMessage.warning('归属部门尚未加载完成，请刷新页面后重试')
-    return
-  }
   if (!pickedMonth.value) {
     ElMessage.warning('请选择归属月份')
+    return
+  }
+  // 单归口模式必须能拿到目标部门 id：拿不到就明确拦下，
+  // 绝不能让后端把「mode=single 但没给 id」当成批量处理（会误提交多条线）。
+  if (previewMode.value === 'single' && !props.targetOrgId) {
+    ElMessage.warning('目标部门尚未加载完成，请刷新页面后重试')
     return
   }
 
@@ -419,9 +417,8 @@ async function handlePreview() {
     preview.value = await reportFillImportApi.preview(raw, {
       cycleId: props.cycleId,
       reportMonth: pickedMonth.value,
-      // 显式模式：single = 只提交选中的这条线；all = 文件内全部提交
-      mode: props.mode,
-      functionalOrgId: props.functionalOrgId ?? null
+      mode: previewMode.value,
+      targetOrgId: props.targetOrgId ?? null
     })
     activeStep.value = 1
   } catch (error) {

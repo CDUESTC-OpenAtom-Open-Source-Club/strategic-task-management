@@ -50,6 +50,7 @@ import { ApprovalProgressDrawer } from '@/features/approval'
 // 2026-11-25（指标填报导入式上报 · 学院侧）：导入弹窗放在 import feature，
 // 由本页（indicator）消费——与既有 ApprovalProgressDrawer 的跨 feature 引用同构。
 import ReportFillImportDialog from '@/features/import/ui/ReportFillImportDialog.vue'
+import type { ReportFillTemplateVariant } from '@/features/import/lib/reportFillImportTemplate'
 import { useIndicatorAppraisal } from '@/features/indicator/model/useIndicatorAppraisal'
 import { getAppraisalLevelDisplay } from '@/features/indicator/lib/appraisalGate'
 // 2026-11-19 用户定案：审核进度行内下拉共享组件（三视图同构）
@@ -345,21 +346,22 @@ const collegeExportDialogVisible = ref(false)
 const selectedCollegeExportDepartments = ref<string[]>([])
 const collegeBatchExporting = ref(false)
 
-// ==================== 2026-11-25（指标填报导入式上报 · 学院侧） ====================
-// 学院填报人用 Excel 一次完成本月填报：单归口导入（先选归属部门）/ 批量导入（页面顶部固定入口）。
+// ==================== 2026-11-25（指标填报导入式上报） ====================
+// 三种变体对应标准模板 04/05/06：职能部门上报 / 学院单归口 / 学院多归口批量。
 const reportFillImportVisible = ref(false)
-const reportFillImportMode = ref<'single' | 'all'>('single')
+const reportFillImportVariant = ref<ReportFillTemplateVariant>('college-all')
+/** 单归口（college-single）时必须带上的目标部门 id */
+const reportFillTargetOrgId = ref<number | null>(null)
 
-const openReportFillImport = (mode: 'single' | 'all') => {
-  // 2026-11-25（防误提交）：单归口入口必须能解析出归口部门 id。
-  // 若「归属部门」已选但父级还没加载完（currentFunctionalOrgId 为空），
-  // 传给后端的就是 null —— 后端会按批量处理，把文件里所有归口线一起提交，
-  // 与「仅针对当前选中的这个职能部门」相悖。这里前置拦下。
-  if (mode === 'single' && !currentFunctionalOrgId.value) {
+const openReportFillImport = (variant: ReportFillTemplateVariant, targetOrgId?: number | null) => {
+  // 单归口入口必须能解析出目标部门 id：拿不到就明确拦下，
+  // 否则后端会按「批量」处理，把文件里所有归口线一起提交。
+  if (variant === 'college-single' && !targetOrgId) {
     ElMessage.warning('归属部门尚未加载完成，请稍候重试或刷新页面后再导入')
     return
   }
-  reportFillImportMode.value = mode
+  reportFillImportVariant.value = variant
+  reportFillTargetOrgId.value = variant === 'college-single' ? (targetOrgId ?? null) : null
   reportFillImportVisible.value = true
 }
 
@@ -798,16 +800,17 @@ const handleExportIndicatorList = async () => {
           <el-icon><Download /></el-icon>
           全部导出
         </el-button>
-        <!-- 2026-11-25（指标填报导入式上报 · 学院侧）：页面顶部固定入口【批量导入】——
-             文件内按「归口职能部门」列自动拆线，各线独立提交、独立进入上报审批。 -->
+        <!-- 2026-11-25（指标填报导入式上报）：
+             学院 → 页面顶部【批量导入】（06 多归口批量，按「目标部门」列拆线）
+             职能部门 → 【导入填报】（04 职能部门上报战略发展部） -->
         <el-button
           v-if="canUseReportFillImport"
           type="primary"
           plain
-          @click="openReportFillImport('all')"
+          @click="openReportFillImport(isSecondaryCollege ? 'college-all' : 'func')"
         >
           <el-icon><Upload /></el-icon>
-          批量导入
+          {{ isSecondaryCollege ? '批量导入' : '导入填报' }}
         </el-button>
       </div>
     </div>
@@ -966,10 +969,11 @@ const handleExportIndicatorList = async () => {
 
             <!-- 职能部门/二级学院的批量操作按钮 -->
             <template v-if="showPlanBatchActions">
-              <!-- 2026-11-25（指标填报导入式上报 · 学院侧）：单归口导入——
-                   需先选中「归属部门」，仅对该部门的归口线做填报导入（与顶部【批量导入】互相独立）。 -->
+              <!-- 2026-11-25（指标填报导入式上报）：单归口导入（05）——
+                   仅学院视角、需先选中「归属部门」，只对该归口线做填报导入
+                   （与顶部【批量导入】06 互相独立）。 -->
               <el-tooltip
-                v-if="canUseReportFillImport"
+                v-if="canUseReportFillImport && isSecondaryCollege"
                 :content="filterOwnerDept ? '导入本归属部门的填报数据' : '请先选择归属部门，再导入'"
                 :disabled="Boolean(filterOwnerDept)"
                 effect="dark"
@@ -979,7 +983,7 @@ const handleExportIndicatorList = async () => {
                   <el-button
                     size="small"
                     :disabled="!filterOwnerDept"
-                    @click="openReportFillImport('single')"
+                    @click="openReportFillImport('college-single', currentFunctionalOrgId ?? null)"
                   >
                     <el-icon><Upload /></el-icon>
                     导入
@@ -1684,13 +1688,11 @@ const handleExportIndicatorList = async () => {
     <!-- 2026-11-25（指标填报导入式上报 · 学院侧）：Excel 批量填报弹窗 -->
     <ReportFillImportDialog
       v-model:visible="reportFillImportVisible"
-      :mode="reportFillImportMode"
+      :variant="reportFillImportVariant"
       :cycle-id="reportFillCycleId"
       :default-report-month="reportFillMonth"
-      :college-name="reportFillCollegeName || '当前学院'"
-      :functional-org-id="
-        reportFillImportMode === 'single' ? (currentFunctionalOrgId ?? null) : null
-      "
+      :responsible-org-name="reportFillCollegeName || ''"
+      :target-org-id="reportFillTargetOrgId"
       @committed="handleReportFillImported"
     />
   </div>
