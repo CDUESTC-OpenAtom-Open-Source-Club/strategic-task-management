@@ -278,6 +278,7 @@ const {
   // 2026-11-25（填报导入式上报）：周期/月份/学院名上下文
   reportFillCollegeName,
   reportFillCycleId,
+  reportFillCycleName,
   reportFillMonth,
   reportAttachmentObjectUrls,
   reportDialogVisible,
@@ -1688,9 +1689,11 @@ const handleExportIndicatorList = async () => {
       v-model:visible="reportFillImportVisible"
       :variant="reportFillImportVariant"
       :cycle-id="reportFillCycleId"
+      :cycle-name="reportFillCycleName"
       :default-report-month="reportFillMonth"
       :responsible-org-name="reportFillCollegeName || ''"
       :target-org-id="reportFillTargetOrgId"
+      :target-org-name="filterOwnerDept || ''"
       @committed="handleReportFillImported"
     />
   </div>

@@ -50,6 +50,10 @@ export interface ReportFillGroup {
   groupError: string | null
   /** 组级跳过原因（非空且 groupError 为空 = 将跳过，标灰） */
   skipReason: string | null
+  /** 同月同线已有填报的 report id（无则为 null）——用于「将覆盖 / 将跳过」提示 */
+  existingReportId?: number | null
+  /** 同月同线已有填报的状态（DRAFT/SUBMITTED/APPROVED/REJECTED） */
+  existingReportStatus?: string | null
   rows: ReportFillRowPreview[]
 }
 
@@ -114,6 +118,12 @@ export interface ReportFillPreviewParams {
 export interface ReportFillCommitRequest {
   confirmToken: string
   comment?: string
+  /**
+   * 同月同线已有填报时的处理方式：
+   * OVERWRITE = 覆盖已有（复用该 report、重置草稿后重新提交审批）；SKIP = 跳过该线。
+   * 缺省按 SKIP 处理（不覆盖）。
+   */
+  conflictMode?: 'OVERWRITE' | 'SKIP'
 }
 
 function unwrap<T>(response: ApiResponse<T>): T {

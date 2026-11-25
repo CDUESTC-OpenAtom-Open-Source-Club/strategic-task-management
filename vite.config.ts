@@ -114,6 +114,11 @@ export default defineConfig(({ mode }) => {
       allowedHosts: ['strategic-tasks.blackevil217.com'],
       port: Number(env.VITE_DEV_SERVER_PORT) || 3500,
       open: env.VITE_DEV_AUTO_OPEN === 'true',
+      // 2026-11-25：编辑期间会在组件旁生成 .<name>.<pid>.<uuid>.tmpdir 临时目录，
+      // Vite 监听它会在 Windows 上抛 EBUSY 直接把 dev server 打崩，这里显式忽略。
+      watch: {
+        ignored: ['**/*.tmpdir/**']
+      },
       // 只在非 Mock 模式下配置代理
       proxy: useMock
         ? undefined

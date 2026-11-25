@@ -6169,6 +6169,27 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   const reportFillMonth = computed<string>(() => monthlySequenceStatusMeta.value.month ?? '')
 
   /**
+   * 导入弹窗顶部摘要用的考核周期名称（如「2026年度战略目标考核」）。
+   *
+   * <p>优先取当前计划上的 cycleName；缺省时按 cycleId 在时间上下文 store 的 cycles 里匹配；
+   * 仍取不到时回退「{currentYear}年度」。
+   */
+  const reportFillCycleName = computed<string>(() => {
+    const plan = currentUserPlan.value as { cycleName?: string } | null
+    const fromPlan = String(plan?.cycleName ?? '').trim()
+    if (fromPlan) {
+      return fromPlan
+    }
+    const cycleId = reportFillCycleId.value
+    const matched =
+      cycleId == null
+        ? undefined
+        : timeContext.cycles.find(cycle => Number(cycle.cycleId) === cycleId)
+    const fromStore = String(matched?.cycleName ?? '').trim()
+    return fromStore || `${timeContext.currentYear}年度`
+  })
+
+  /**
    * 导入用的学院名称（写入模板「学院」列）。
    *
    * <p>放在本层而不是组件层——组件层的顶层 computed 会直接访问解构出来的字段，
@@ -6413,6 +6434,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     resolvePlanApprovalWorkflowCode,
     reportFillCollegeName,
     reportFillCycleId,
+    reportFillCycleName,
     reportFillMonth,
     resolvePlanYear,
     restartPlanApprovalPolling,
