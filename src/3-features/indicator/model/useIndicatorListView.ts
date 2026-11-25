@@ -6151,6 +6151,66 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
   const currentDetailId = computed(() => currentDetail.value?.id ?? null)
 
+  // ==================== 2026-11-25（指标填报导入式上报） ====================
+
+  /**
+   * 是否可用「导入式上报」：填报人席位，且不是战略发展部（战略部是下发方，不填报）。
+   *
+   * <p>2026-11-25（标准模板 04/05/06）：从「仅二级学院」放宽到「二级学院 + 职能部门」——
+   * 职能部门填报人也有导入式上报（04：职能部门 → 战略发展部）。
+   * 审核人仍然只审不填（口径与 {@code showPlanBatchActions} 一致）。
+   */
+  const canUseReportFillImport = computed(
+    () => !isStrategicDept.value && isCurrentUserReporter.value
+  )
+
+  /**
+   * 导入用的考核周期 id（定位「学院 × 归口」的已下发计划线）。
+   */
+  const reportFillCycleId = computed<number | null>(() => {
+    const plan = currentUserPlan.value as { cycleId?: number | string | null } | null
+    const cycleId = Number(plan?.cycleId)
+    return Number.isFinite(cycleId) && cycleId > 0 ? cycleId : null
+  })
+
+  /**
+   * 导入用的归属月份（yyyyMM）——取当前填报周期（模板不含月份列）。
+   */
+  const reportFillMonth = computed<string>(() => monthlySequenceStatusMeta.value.month ?? '')
+
+  /**
+   * 导入弹窗顶部摘要用的考核周期名称（如「2026年度战略目标考核」）。
+   *
+   * <p>优先取当前计划上的 cycleName；缺省时按 cycleId 在时间上下文 store 的 cycles 里匹配；
+   * 仍取不到时回退「{currentYear}年度」。
+   */
+  const reportFillCycleName = computed<string>(() => {
+    const plan = currentUserPlan.value as { cycleName?: string } | null
+    const fromPlan = String(plan?.cycleName ?? '').trim()
+    if (fromPlan) {
+      return fromPlan
+    }
+    const cycleId = reportFillCycleId.value
+    const matched =
+      cycleId == null
+        ? undefined
+        : timeContext.cycles.find(cycle => Number(cycle.cycleId) === cycleId)
+    const fromStore = String(matched?.cycleName ?? '').trim()
+    return fromStore || `${timeContext.currentYear}年度`
+  })
+
+  /**
+   * 导入用的学院名称（写入模板「学院」列）。
+   *
+   * <p>放在本层而不是组件层——组件层的顶层 computed 会直接访问解构出来的字段，
+   * 页面壳测试用 mock 替换了本 composable 的返回值（缺字段即 undefined），
+   * 组件层访问会抛「Cannot read properties of undefined」。放这里则缺字段时组件拿到 undefined，
+   * 由组件侧兜底成「当前学院」。
+   */
+  const reportFillCollegeName = computed<string>(
+    () => effectiveViewingDept.value || authStore.userDepartment || ''
+  )
+
   return {
     DEFAULT_APPROVAL_STATUS,
     PLAN_APPROVAL_POLL_INTERVAL_MS,
@@ -6199,6 +6259,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     canCurrentUserHandlePlanApprovalOnPage,
     canEdit,
     canHandleIndicatorWorkflow,
+    canUseReportFillImport,
     canViewReceivedPlanContent,
     canWithdrawAny,
     canWithdrawCurrentPlan,
@@ -6381,6 +6442,10 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     resolveIndicatorAttachmentItems,
     resolveIndicatorType2,
     resolvePlanApprovalWorkflowCode,
+    reportFillCollegeName,
+    reportFillCycleId,
+    reportFillCycleName,
+    reportFillMonth,
     resolvePlanYear,
     restartPlanApprovalPolling,
     saveIndicatorEdit,
