@@ -114,8 +114,6 @@ const {
   canCurrentUserHandlePlanApprovalOnPage,
   canEdit,
   canHandleIndicatorWorkflow,
-  // 2026-11-25（填报导入式上报）：可用性 + 模板预填 + 周期/月份上下文
-  canUseReportFillImport,
   canViewReceivedPlanContent,
   canWithdrawAny,
   canWithdrawCurrentPlan,
@@ -800,16 +798,15 @@ const handleExportIndicatorList = async () => {
           <el-icon><Download /></el-icon>
           全部导出
         </el-button>
-        <!-- 2026-11-25（指标填报导入式上报）：
-             学院视角 →【批量导入】（06 多归口批量，按「目标部门」列拆线）
-             职能部门填报人 →【导入填报】（04 职能部门上报战略发展部）
-             按钮位置与显示口径沿用协作者 PR #145：与导出按钮并排右对齐、
-             学院视角即显示（不再要求填报人席位），避免填报人看不到入口。 -->
+        <!-- 2026-11-25（指标填报导入式上报）：学院与职能部门都要有导入入口。
+             学院 →【批量导入】（06 多归口批量，按「目标部门」列拆线）
+             职能部门 →【导入填报】（04 职能部门上报战略发展部）
+             显示口径：只要不是战略发展部（战略部是下发方，不填报）就显示。 -->
         <el-button v-if="isSecondaryCollege" @click="openReportFillImport('college-all')">
           <el-icon><Upload /></el-icon>
           批量导入
         </el-button>
-        <el-button v-else-if="canUseReportFillImport" @click="openReportFillImport('func')">
+        <el-button v-else-if="!isStrategicDept" @click="openReportFillImport('func')">
           <el-icon><Upload /></el-icon>
           导入填报
         </el-button>
