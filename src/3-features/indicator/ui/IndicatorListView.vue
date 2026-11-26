@@ -372,11 +372,13 @@ const openReportFillImport = (variant: ReportFillTemplateVariant, targetOrgId?: 
  * 批量入口带本学院全部归口的行。
  */
 const reportFillTemplateRows = computed(() => {
-  const rows = reportFillPrefillRows.value ?? []
+  // 页面壳测试会用 mock 替换本 composable（缺字段即 undefined），这里必须容忍 undefined，
+  // 否则 setup 阶段直接把整页挂掉（2026-11-26 CI 回归）。
+  const rows = reportFillPrefillRows?.value ?? []
   if (reportFillImportVariant.value !== 'college-single') {
     return rows
   }
-  const dept = filterOwnerDept.value
+  const dept = filterOwnerDept?.value
   if (!dept) {
     return rows
   }
