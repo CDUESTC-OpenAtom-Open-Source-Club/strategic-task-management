@@ -72,25 +72,6 @@ export async function deletePlan(planId: number | string): Promise<ApiResponse<v
 }
 
 /**
- * Submit plan for approval
- *
- * API: POST /api/plans/{id}/submit-approval
- *
- * @param planId - Plan ID
- * @param comment - Submission comment
- */
-export async function submitPlanForApproval(
-  planId: number | string,
-  comment?: string
-): Promise<ApiResponse<void>> {
-  void comment
-  const response = await api.post<ApiResponse<void>>(`/plans/${planId}/publish`)
-  invalidatePlanCaches(planId)
-  requestMessageCenterRefresh()
-  return response
-}
-
-/**
  * Approve plan
  *
  * API: POST /api/v1/workflows/tasks/{taskId}/approve

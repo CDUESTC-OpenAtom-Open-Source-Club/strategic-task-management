@@ -140,7 +140,6 @@ export const API_ENDPOINTS = {
     create: '/plans',
     update: (id: string) => `/plans/${id}`,
     delete: (id: string) => `/plans/${id}`,
-    publish: (id: string) => `/plans/${id}/publish`,
     archive: (id: string) => `/plans/${id}/archive`,
     byCycle: (cycleId: string) => `/plans/cycle/${cycleId}`
   },
