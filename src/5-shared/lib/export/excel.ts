@@ -1,5 +1,12 @@
 import type { Cell, SheetData } from 'write-excel-file/browser'
 import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
+import {
+  clearSheetExtras,
+  isEmptySheetExtras,
+  registerSheetExtras,
+  xlsxExtrasFeature,
+  type SheetDataValidation
+} from './xlsxFeatures'
 
 export type ExcelRowTone = 'default' | 'basic' | 'development' | 'draft' | 'warning' | 'template'
 
@@ -8,6 +15,45 @@ export interface ExcelExportColumn<T> {
   width?: number
   align?: 'left' | 'center' | 'right'
   getValue: (row: T, index: number) => Cell
+  /**
+   * 该列隐藏：写入 `<col ... hidden="1"/>`。
+   * 注意：隐藏列仍然写数据（例如「来源说明」这类辅助列）。
+   */
+  hidden?: boolean
+  /**
+   * 该列输出**裸值**：表头格与数据格都不套任何样式对象。
+   * 由于全局 `fontFamily/fontSize` 会让每个格子带上 `s="0"`，
+   * 真正「裸」还需要 XML 层剥离 `s` 索引（由 `xlsxFeatures` 的 plainColumns 完成）。
+   */
+  plain?: boolean
+  /** 表头底色覆盖（缺省沿用 sheet.headerBackgroundColor / 默认深蓝） */
+  headerBackgroundColor?: string
+  /** 表头文字颜色覆盖（缺省沿用 sheet.headerTextColor / 默认白色） */
+  headerTextColor?: string
+  /** 表头字号覆盖 */
+  headerFontSize?: number
+  /** 表头边框颜色覆盖 */
+  headerBorderColor?: string
+  /**
+   * 该列字体族覆盖（表头与数据格都生效）。
+   *
+   * 2026-11-26（上报模板对齐）：需求方样例（SISM-导入模板-04/05/06）正文用「微软雅黑」，
+   * 而工作簿全局默认字体是另一个字体名，故按列覆盖。
+   * 缺省不产出该字段 → 与改动前逐字节一致。
+   */
+  fontFamily?: string
+  /** 数据行底色覆盖 */
+  bodyBackgroundColor?: string
+  /** 数据行文字颜色覆盖 */
+  bodyTextColor?: string
+  /** 数据行字号覆盖 */
+  bodyFontSize?: number
+  /** 数据行垂直对齐覆盖 */
+  bodyAlignVertical?: 'top' | 'center' | 'bottom'
+  /** 数据行边框颜色覆盖 */
+  bodyBorderColor?: string
+  /** 数据行水平对齐覆盖（优先级高于 column.align） */
+  bodyAlign?: 'left' | 'center' | 'right'
 }
 
 export interface ExcelExportSheet<T> {
@@ -25,6 +71,30 @@ export interface ExcelExportSheet<T> {
   headerHeight?: number
   /** 数据行高（磅），不传则用默认 */
   bodyRowHeight?: number
+  /** 冻结行数（默认 1；0 表示不冻结） */
+  stickyRowsCount?: number
+  /** 冻结列数（默认 0） */
+  stickyColumnsCount?: number
+  /** 是否显示网格线（默认 false，与既有导出一致） */
+  showGridLines?: boolean
+  /**
+   * 不生成表头行：`rows[0]` 即第 1 行（用于「填写说明」这类无表头说明页）。
+   *
+   * <p>缺省（undefined/false）仍生成表头行——既有调用方行为零变化。
+   * 开启后表头相关的 sheet 级字段（headerHeight/headerBackgroundColor…）不生效。
+   */
+  skipHeaderRow?: boolean
+  /** 隐藏列（1-based 列号，与 columns[].hidden 取并集） */
+  hiddenColumns?: number[]
+  /** 裸值列（1-based 列号，与 columns[].plain 取并集） */
+  plainColumns?: number[]
+  /** 数据有效性（下拉）规则 */
+  dataValidations?: SheetDataValidation[]
+  /** 工作表保护（整表保护；逐格 locked 解锁属已知限制，见 xlsxFeatures 注释） */
+  sheetProtection?: {
+    /** 保护密码（明文写入 `password` 属性） */
+    password?: string
+  }
 }
 
 export interface ExportAttachment {
@@ -34,6 +104,24 @@ export interface ExportAttachment {
 }
 
 type CellObject = Exclude<Cell, string | number | boolean | Date | null | undefined>
+
+/**
+ * 单元格样式覆盖属性。
+ *
+ * 不能直接用 `Partial<CellObject>`：本仓库的 `CellObject` 别名是
+ * `Exclude<Cell, string | number | boolean | Date | null | undefined>`，
+ * 而 write-excel-file 的 `Value` 里含 `String`/`Number`/`Boolean` **构造器**类型，
+ * 它们不在 exclude 名单里 → `Partial<CellObject>` 变成联合类型，
+ * 访问 `backgroundColor` 等属性会报 TS2339。故此处显式声明本模块用到的样式字段。
+ */
+interface ExcelCellStyle {
+  backgroundColor?: string
+  textColor?: string
+  fontSize?: number
+  fontFamily?: string
+  borderColor?: string
+  alignVertical?: 'top' | 'center' | 'bottom'
+}
 
 /**
  * 2026-10-31 用户拍板（部门/学院列整列合并）：一份导入/导出锁定一个部门或学院，
@@ -103,10 +191,10 @@ function isCellObject(value: Cell): value is CellObject {
   )
 }
 
-function toStyledCell(
+function toStyledCell<T>(
   value: Cell,
-  style: Partial<CellObject>,
-  column: Pick<ExcelExportColumn<unknown>, 'align'>,
+  style: ExcelCellStyle,
+  column: Pick<ExcelExportColumn<T>, 'align' | 'bodyAlign'>,
   rowTone: ExcelRowTone,
   rowTextColor?: string
 ): Cell {
@@ -114,25 +202,103 @@ function toStyledCell(
   return {
     ...bodyStyle,
     ...toneStyleMap[rowTone],
-    align: column.align ?? 'left',
+    align: column.bodyAlign ?? column.align ?? 'left',
     ...base,
     ...(rowTextColor ? { textColor: rowTextColor } : {}),
     ...style
   }
 }
 
+/** 表头格的列级样式覆盖（缺省一律不产出，保证与改动前逐字节一致） */
+function buildHeaderCellOverride<T>(column: ExcelExportColumn<T>): ExcelCellStyle {
+  const override: ExcelCellStyle = {}
+  if (column.headerBackgroundColor !== undefined) {
+    override.backgroundColor = column.headerBackgroundColor
+  }
+  if (column.headerTextColor !== undefined) {
+    override.textColor = column.headerTextColor
+  }
+  if (column.headerFontSize !== undefined) {
+    override.fontSize = column.headerFontSize
+  }
+  if (column.headerBorderColor !== undefined) {
+    override.borderColor = column.headerBorderColor
+  }
+  if (column.fontFamily !== undefined) {
+    override.fontFamily = column.fontFamily
+  }
+  return override
+}
+
+/** 数据格的列级样式覆盖（缺省一律不产出，保证与改动前逐字节一致） */
+function buildBodyCellOverride<T>(column: ExcelExportColumn<T>): ExcelCellStyle {
+  const override: ExcelCellStyle = {}
+  if (column.bodyBackgroundColor !== undefined) {
+    override.backgroundColor = column.bodyBackgroundColor
+  }
+  if (column.bodyTextColor !== undefined) {
+    override.textColor = column.bodyTextColor
+  }
+  if (column.bodyFontSize !== undefined) {
+    override.fontSize = column.bodyFontSize
+  }
+  if (column.bodyAlignVertical !== undefined) {
+    override.alignVertical = column.bodyAlignVertical
+  }
+  if (column.bodyBorderColor !== undefined) {
+    override.borderColor = column.bodyBorderColor
+  }
+  if (column.fontFamily !== undefined) {
+    override.fontFamily = column.fontFamily
+  }
+  return override
+}
+
+/**
+ * 把单元格对象还原成「裸值」：只保留值/类型/数字格式，去掉一切样式属性。
+ * 非对象值（原样 string/number/boolean/Date）直接返回。
+ */
+function toPlainCell(value: Cell): Cell {
+  if (!isCellObject(value)) {
+    return value
+  }
+  const plain: Record<string, unknown> = {}
+  if ('value' in value) {
+    plain.value = value.value
+  }
+  const typed = value as { type?: unknown; format?: unknown }
+  if (typed.type !== undefined) {
+    plain.type = typed.type
+  }
+  if (typed.format !== undefined) {
+    plain.format = typed.format
+  }
+  return plain as Cell
+}
+
 export function buildSheetData<T>(sheet: ExcelExportSheet<T>): SheetData {
   const headerBackgroundColor = sheet.headerBackgroundColor ?? headerStyle.backgroundColor
   const headerTextColor = sheet.headerTextColor ?? headerStyle.textColor
-  const headerRow = sheet.columns.map(column => ({
-    value: column.header,
-    ...headerStyle,
-    backgroundColor: headerBackgroundColor,
-    textColor: headerTextColor,
-    ...(sheet.headerHeight ? { height: sheet.headerHeight } : {})
-  }))
+  const headerRow = sheet.columns.map(column => {
+    // `plain` 列的表头格输出裸值：不套任何样式对象。
+    if (column.plain) {
+      return column.header
+    }
+    return {
+      value: column.header,
+      ...headerStyle,
+      backgroundColor: headerBackgroundColor,
+      textColor: headerTextColor,
+      ...buildHeaderCellOverride(column),
+      ...(sheet.headerHeight ? { height: sheet.headerHeight } : {})
+    }
+  })
 
   if (sheet.rows.length === 0) {
+    if (sheet.skipHeaderRow) {
+      // 无表头页且无数据行 → 空表（不塞「暂无数据」占位行，避免与样例口径不符）
+      return []
+    }
     return [
       headerRow,
       [
@@ -160,7 +326,11 @@ export function buildSheetData<T>(sheet: ExcelExportSheet<T>): SheetData {
       if (value === null || value === undefined) {
         return null
       }
-      const cell = toStyledCell(value, {}, column, rowTone, rowTextColor)
+      // `plain` 列的数据格输出裸值：不套任何样式对象。
+      if (column.plain) {
+        return toPlainCell(value)
+      }
+      const cell = toStyledCell(value, buildBodyCellOverride(column), column, rowTone, rowTextColor)
       if (sheet.bodyRowHeight && isCellObject(cell)) {
         return { ...cell, height: sheet.bodyRowHeight }
       }
@@ -168,7 +338,7 @@ export function buildSheetData<T>(sheet: ExcelExportSheet<T>): SheetData {
     })
   })
 
-  return [headerRow, ...bodyRows]
+  return sheet.skipHeaderRow ? bodyRows : [headerRow, ...bodyRows]
 }
 
 function createUniqueSheetName(name: string, usedNames: Set<string>): string {
@@ -202,24 +372,74 @@ export async function exportSheetsToExcel(
 }
 
 /**
+ * 收集某个 sheet 的隐藏列 / 裸值列（1-based 列号）。
+ * 来源：columns[].hidden / columns[].plain（按列下标 +1）与 sheet 级 hiddenColumns / plainColumns。
+ */
+function collectColumnFlags<T>(sheet: ExcelExportSheet<T>): {
+  hiddenColumns: number[]
+  plainColumns: number[]
+} {
+  const hiddenColumns = new Set<number>(sheet.hiddenColumns ?? [])
+  const plainColumns = new Set<number>(sheet.plainColumns ?? [])
+
+  sheet.columns.forEach((column, index) => {
+    const columnNumber = index + 1
+    if (column.hidden) {
+      hiddenColumns.add(columnNumber)
+    }
+    if (column.plain) {
+      plainColumns.add(columnNumber)
+    }
+  })
+
+  return {
+    hiddenColumns: [...hiddenColumns].sort((a, b) => a - b),
+    plainColumns: [...plainColumns].sort((a, b) => a - b)
+  }
+}
+
+/**
  * 2026-10-20：把多 sheet 工作簿构建为 Blob（不触发下载），
  * 供「按部门打包 zip」等场景复用。
  */
 export async function buildExcelBlob(sheets: ExcelExportSheet<unknown>[]): Promise<Blob> {
   const { default: writeXlsxFile } = await loadExcelWriter()
   const usedSheetNames = new Set<string>()
-  const excelSheets = sheets.map(sheet => ({
-    data: buildSheetData(sheet),
-    sheet: createUniqueSheetName(sheet.sheetName, usedSheetNames),
-    columns: sheet.columns.map(column => ({ width: column.width ?? 18 })),
-    stickyRowsCount: 1,
-    showGridLines: false
-  }))
 
-  return writeXlsxFile(excelSheets, {
-    fontFamily: 'Microsoft YaHei',
-    fontSize: 11
-  }).toBlob()
+  // 先算好最终 sheet 名（重名会被加后缀），再按最终名注册附加能力，
+  // 否则 feature 里按 sheetOptions.sheet 查不到注册项。
+  const prepared = sheets.map(sheet => {
+    const sheetName = createUniqueSheetName(sheet.sheetName, usedSheetNames)
+    const flags = collectColumnFlags(sheet)
+    const extras = {
+      hiddenColumns: flags.hiddenColumns,
+      plainColumns: flags.plainColumns,
+      dataValidations: sheet.dataValidations,
+      sheetProtection: sheet.sheetProtection
+    }
+    if (!isEmptySheetExtras(extras)) {
+      registerSheetExtras(sheetName, extras)
+    }
+    return {
+      data: buildSheetData(sheet),
+      sheet: sheetName,
+      columns: sheet.columns.map(column => ({ width: column.width ?? 18 })),
+      stickyRowsCount: sheet.stickyRowsCount ?? 1,
+      stickyColumnsCount: sheet.stickyColumnsCount ?? 0,
+      showGridLines: sheet.showGridLines ?? false
+    }
+  })
+
+  try {
+    return await writeXlsxFile(prepared, {
+      fontFamily: 'Microsoft YaHei',
+      fontSize: 11,
+      features: [xlsxExtrasFeature]
+    }).toBlob()
+  } finally {
+    // 每次生成后清理注册表，避免跨次泄漏。
+    clearSheetExtras()
+  }
 }
 
 /** 触发浏览器下载（统一封装，避免各处重复写 a[download] 逻辑） */

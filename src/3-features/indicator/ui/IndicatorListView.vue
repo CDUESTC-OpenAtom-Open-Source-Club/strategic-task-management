@@ -50,7 +50,10 @@ import { ApprovalProgressDrawer } from '@/features/approval'
 // 2026-11-25（指标填报导入式上报 · 学院侧）：导入弹窗放在 import feature，
 // 由本页（indicator）消费——与既有 ApprovalProgressDrawer 的跨 feature 引用同构。
 import ReportFillImportDialog from '@/features/import/ui/ReportFillImportDialog.vue'
-import type { ReportFillTemplateVariant } from '@/features/import/lib/reportFillImportTemplate'
+import type {
+  ReportFillDynamicTemplateRow,
+  ReportFillTemplateVariant
+} from '@/features/import/lib/reportFillImportTemplate'
 import { useIndicatorAppraisal } from '@/features/indicator/model/useIndicatorAppraisal'
 import { getAppraisalLevelDisplay } from '@/features/indicator/lib/appraisalGate'
 // 2026-11-19 用户定案：审核进度行内下拉共享组件（三视图同构）
@@ -280,6 +283,8 @@ const {
   reportFillCycleId,
   reportFillCycleName,
   reportFillMonth,
+  // 2026-11-26（模板动态行）：三场景模板数据行的真实行集（模型层算，本层按变体取用）
+  reportFillTemplateRowsByVariant,
   reportAttachmentObjectUrls,
   reportDialogVisible,
   reportForm,
@@ -363,6 +368,19 @@ const openReportFillImport = (variant: ReportFillTemplateVariant, targetOrgId?: 
   reportFillTargetOrgId.value = variant === 'college-single' ? (targetOrgId ?? null) : null
   reportFillImportVisible.value = true
 }
+
+/**
+ * 2026-11-26（模板动态行）：下载模板的数据行 = 当前视角真实已下发子指标。
+ *
+ * <p>行集在模型层算好（reportFillTemplateRowsByVariant，与页面表格同源），
+ * 本层只按当前弹窗变体取用；弹窗内点「下载模板」时即取到最新行——
+ * 单归口场景切换归属部门后重新打开导入，行随所选归口重新生成。
+ * 可选链兜底页面壳测试 mock 缺字段（与 reportFillCollegeName 组件侧兜底同口径）。
+ */
+const reportFillTemplateRows = computed<ReportFillDynamicTemplateRow[]>(() => {
+  const byVariant = reportFillTemplateRowsByVariant?.value
+  return byVariant?.[reportFillImportVariant.value] ?? []
+})
 
 /** 导入完成后刷新页面数据（填报内容与审核进度都会变）。 */
 const handleReportFillImported = async () => {
@@ -1724,6 +1742,7 @@ const handleExportIndicatorList = async () => {
       :responsible-org-name="reportFillCollegeName || ''"
       :target-org-id="reportFillTargetOrgId"
       :target-org-name="filterOwnerDept || ''"
+      :template-rows="reportFillTemplateRows"
       @committed="handleReportFillImported"
     />
   </div>
