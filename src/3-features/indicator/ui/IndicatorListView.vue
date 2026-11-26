@@ -786,10 +786,8 @@ const handleExportIndicatorList = async () => {
         <p class="page-desc">管理和查看所有战略考核指标</p>
       </div>
       <div class="page-actions">
-        <el-button :loading="indicatorListExporting" @click="handleExportIndicatorList">
-          <el-icon><Download /></el-icon>
-          {{ isSecondaryCollege ? '导出当前范围' : '导出' }}
-        </el-button>
+        <!-- 2026-11-26（用户拍板）：页头原「导出当前范围/导出」按钮移入指标列表卡头
+             （审批状态签旁、与「导入」同排），页头只留「全部导出」（学院视角）。 -->
         <el-button
           v-if="isSecondaryCollege"
           type="primary"
@@ -975,6 +973,19 @@ const handleExportIndicatorList = async () => {
             >
               <el-icon><Upload /></el-icon>
               导入
+            </el-button>
+
+            <!-- 2026-11-26（用户拍板）：导出当前范围移入卡头（审批中旁），页头只留全部导出。
+                 学院文案「导出当前范围」、职能/战略文案「导出」；无条件渲染（导出入口
+                 不随批量操作区显隐），loading/点击链路原样平移，仅 size=small 与卡头
+                 其他按钮（导入/一键提交/一键撤回）保持同行协调。 -->
+            <el-button
+              size="small"
+              :loading="indicatorListExporting"
+              @click="handleExportIndicatorList"
+            >
+              <el-icon><Download /></el-icon>
+              导出
             </el-button>
 
             <!-- 职能部门/二级学院的批量操作按钮 -->
