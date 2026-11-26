@@ -67,6 +67,11 @@ import {
   type ParentFunctionalBrief
 } from '@/features/indicator/lib/functionalDeptScope'
 import { getUsersByOrgId } from '@/features/user/api/query'
+// 2026-11-25（看板来源归属修复）：父指标归口水合抽到共享 parentIndicatorCore，与数据看板同源避免两处漂移
+import {
+  fetchParentIndicatorCore,
+  type ParentIndicatorCore
+} from '@/features/indicator/model/parentIndicatorCore'
 import { ApprovalProgressDrawer } from '@/features/approval'
 import { approveTask, rejectTask } from '@/features/workflow/api'
 import { getWorkflowDefinitionPreviewByCode } from '@/features/workflow/api'
@@ -561,19 +566,9 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
   // 学院的行是职能部门下发的子指标，前面要补它所属的核心指标。
   // 计划详情接口不返回父指标名称/类型，按 parentIndicatorId 逐个拉取
   // （getIndicatorById 走 fetchWithCache，同 id 不重复请求）。
-  interface ParentIndicatorBrief {
-    name: string
-    type1?: string
-    sortOrder?: number
-    /**
-     * 2026-11-13（学院上报按归口部门分批提交）：父级核心指标的归口职能部门。
-     * 口径：父级核心指标的 targetOrg 即学院子指标的「归属部门」——与后端提交时
-     * 权威反查（报告明细指标 → 父级核心指标.target_org_id）完全同源。
-     * 字段名与后端 IndicatorResponse.targetOrgId/targetOrgName 保持一致。
-     */
-    targetOrgId?: number
-    targetOrgName?: string
-  }
+  // 2026-11-25（看板来源归属修复）：字段口径（含 2026-11-13 归口 targetOrg 注记）移入共享
+  // ParentIndicatorCore，本页保留原类型名别名，水合行为不变。
+  type ParentIndicatorBrief = ParentIndicatorCore
   const parentIndicatorMap = ref<Record<string, ParentIndicatorBrief>>({})
 
   const resolveParentIndicator = (row: {
@@ -2179,7 +2174,17 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
       return []
     }
     const planRows = hasCurrentUserPlan.value ? currentPlanIndicators.value : []
-    const base = planRows.length > 0 ? planRows : strategicStore.indicators
+    // 2026-11-25（切换器视角泄漏修复）：无计划时 store 兜底行必须按当前视角学院收口
+    // （targetOrgId == 视角学院），防止管理员切换视角后全量指标串入归口选项；
+    // 直登学院行 targetOrgId==自身，过滤为 no-op。视角学院解析失败时按空处理，
+    // 与 buildCollegeExportRowsByOwnerDept 的 null 口径一致。
+    const viewingOrgId = currentViewingOrgId.value
+    const base =
+      planRows.length > 0
+        ? planRows
+        : viewingOrgId === null
+          ? []
+          : strategicStore.indicators.filter(i => getIndicatorTargetOrgId(i) === viewingOrgId)
     const realYear = timeContext.realCurrentYear
     const currentYear = timeContext.currentYear
     return base.filter(i => resolveIndicatorYear(i, realYear) === currentYear)
@@ -3124,34 +3129,18 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     if (pendingIds.size === 0) {
       return
     }
-    const { indicatorApi } = await import('@/features/indicator/api')
     await Promise.all(
       [...pendingIds].map(async pid => {
         try {
-          const response = await indicatorApi.getIndicatorById(pid)
-          const vo = (response?.data ?? null) as Record<string, unknown> | null
-          if (!vo) {
+          // 2026-11-25（看板来源归属修复）：字段归一化抽到共享 fetchParentIndicatorCore
+          // （逐字段同口径），看板「任务来源分布/承接任务汇总」复用同一实现。
+          const core = await fetchParentIndicatorCore(pid)
+          if (!core) {
             return
           }
-          const sortOrder = Number(vo.sortOrder ?? NaN)
-          // 2026-11-13：归口字段随父指标一并缓存（targetOrgId/targetOrgName 为后端
-          // IndicatorResponse 权威字段；responsibleDept/targetDepartment 仅作旧数据兜底）
-          const functionalOrgIdRaw = Number(vo.targetOrgId ?? NaN)
-          const targetOrgName =
-            String(vo.targetOrgName ?? vo.responsibleDept ?? vo.targetDepartment ?? '').trim() ||
-            undefined
           parentIndicatorMap.value = {
             ...parentIndicatorMap.value,
-            [pid]: {
-              name: String(vo.indicatorName ?? vo.name ?? ''),
-              type1: String(vo.indicatorType ?? vo.type1 ?? '') || undefined,
-              sortOrder: Number.isFinite(sortOrder) ? sortOrder : undefined,
-              targetOrgId:
-                Number.isFinite(functionalOrgIdRaw) && functionalOrgIdRaw > 0
-                  ? functionalOrgIdRaw
-                  : undefined,
-              targetOrgName
-            }
+            [pid]: core
           }
         } catch (parentError) {
           logger.warn('[IndicatorListView] 父指标信息拉取失败:', { pid, parentError })
@@ -6141,6 +6130,66 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
 
   const currentDetailId = computed(() => currentDetail.value?.id ?? null)
 
+  // ==================== 2026-11-25（指标填报导入式上报） ====================
+
+  /**
+   * 是否可用「导入式上报」：填报人席位，且不是战略发展部（战略部是下发方，不填报）。
+   *
+   * <p>2026-11-25（标准模板 04/05/06）：从「仅二级学院」放宽到「二级学院 + 职能部门」——
+   * 职能部门填报人也有导入式上报（04：职能部门 → 战略发展部）。
+   * 审核人仍然只审不填（口径与 {@code showPlanBatchActions} 一致）。
+   */
+  const canUseReportFillImport = computed(
+    () => !isStrategicDept.value && isCurrentUserReporter.value
+  )
+
+  /**
+   * 导入用的考核周期 id（定位「学院 × 归口」的已下发计划线）。
+   */
+  const reportFillCycleId = computed<number | null>(() => {
+    const plan = currentUserPlan.value as { cycleId?: number | string | null } | null
+    const cycleId = Number(plan?.cycleId)
+    return Number.isFinite(cycleId) && cycleId > 0 ? cycleId : null
+  })
+
+  /**
+   * 导入用的归属月份（yyyyMM）——取当前填报周期（模板不含月份列）。
+   */
+  const reportFillMonth = computed<string>(() => monthlySequenceStatusMeta.value.month ?? '')
+
+  /**
+   * 导入弹窗顶部摘要用的考核周期名称（如「2026年度战略目标考核」）。
+   *
+   * <p>优先取当前计划上的 cycleName；缺省时按 cycleId 在时间上下文 store 的 cycles 里匹配；
+   * 仍取不到时回退「{currentYear}年度」。
+   */
+  const reportFillCycleName = computed<string>(() => {
+    const plan = currentUserPlan.value as { cycleName?: string } | null
+    const fromPlan = String(plan?.cycleName ?? '').trim()
+    if (fromPlan) {
+      return fromPlan
+    }
+    const cycleId = reportFillCycleId.value
+    const matched =
+      cycleId == null
+        ? undefined
+        : timeContext.cycles.find(cycle => Number(cycle.cycleId) === cycleId)
+    const fromStore = String(matched?.cycleName ?? '').trim()
+    return fromStore || `${timeContext.currentYear}年度`
+  })
+
+  /**
+   * 导入用的学院名称（写入模板「学院」列）。
+   *
+   * <p>放在本层而不是组件层——组件层的顶层 computed 会直接访问解构出来的字段，
+   * 页面壳测试用 mock 替换了本 composable 的返回值（缺字段即 undefined），
+   * 组件层访问会抛「Cannot read properties of undefined」。放这里则缺字段时组件拿到 undefined，
+   * 由组件侧兜底成「当前学院」。
+   */
+  const reportFillCollegeName = computed<string>(
+    () => effectiveViewingDept.value || authStore.userDepartment || ''
+  )
+
   return {
     DEFAULT_APPROVAL_STATUS,
     PLAN_APPROVAL_POLL_INTERVAL_MS,
@@ -6189,6 +6238,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     canCurrentUserHandlePlanApprovalOnPage,
     canEdit,
     canHandleIndicatorWorkflow,
+    canUseReportFillImport,
     canViewReceivedPlanContent,
     canWithdrawAny,
     canWithdrawCurrentPlan,
@@ -6371,6 +6421,10 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     resolveIndicatorAttachmentItems,
     resolveIndicatorType2,
     resolvePlanApprovalWorkflowCode,
+    reportFillCollegeName,
+    reportFillCycleId,
+    reportFillCycleName,
+    reportFillMonth,
     resolvePlanYear,
     restartPlanApprovalPolling,
     saveIndicatorEdit,

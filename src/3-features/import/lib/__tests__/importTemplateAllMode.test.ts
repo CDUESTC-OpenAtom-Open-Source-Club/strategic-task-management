@@ -25,17 +25,8 @@ const ALL_MODE_HEADERS = [
   WEIGHT_COLUMN_HEADER
 ]
 
-/** 单条导入模板的 8 列表头（保持不变） */
-const SINGLE_MODE_HEADERS = [
-  '序号',
-  '学院',
-  '任务类型',
-  '核心指标',
-  '核心指标类型',
-  '子指标名称',
-  '指标类型',
-  WEIGHT_COLUMN_HEADER
-]
+/** 单条导入模板的 9 列表头（2026-11-25 用户定案：与 02 样例一致，也带「归口职能部门」列） */
+const SINGLE_MODE_HEADERS = ALL_MODE_HEADERS
 
 describe('importTemplate · 全部导入模板 9 列（含「职能部门」列）', () => {
   it('全部导入模式表头为 9 列，「职能部门」列插在「学院」列之后', () => {
@@ -45,20 +36,20 @@ describe('importTemplate · 全部导入模板 9 列（含「职能部门」列�
     expect(sheet.columns).toHaveLength(9)
   })
 
-  it('单条导入模式表头保持 8 列不变（无「职能部门」列）', () => {
+  it('单条导入模式表头同为 9 列（2026-11-25 定案：单归口也带「归口职能部门」列）', () => {
     const sheet = buildImportTemplateSheet('distribution')
 
     expect(sheet.columns.map(column => column.header)).toEqual(SINGLE_MODE_HEADERS)
-    expect(sheet.columns.map(column => column.header)).not.toContain(FUNCTIONAL_DEPT_COLUMN_HEADER)
+    expect(sheet.columns.map(column => column.header)).toContain(FUNCTIONAL_DEPT_COLUMN_HEADER)
   })
 
   it('默认模式（不传 mode）= single，既有调用点零变化', () => {
     expect(getImportTemplateGuide('distribution').columns.map(column => column.label)).toEqual(
       SINGLE_MODE_HEADERS
     )
-    expect(getImportTemplateGuide('distribution', 'single').columns.map(column => column.label)).toEqual(
-      SINGLE_MODE_HEADERS
-    )
+    expect(
+      getImportTemplateGuide('distribution', 'single').columns.map(column => column.label)
+    ).toEqual(SINGLE_MODE_HEADERS)
   })
 
   it('「职能部门」列随组竖向合并（一个父级锚点 = 一个归口部门）', () => {
@@ -118,7 +109,7 @@ describe('importTemplate · 全部导入模板 9 列（含「职能部门」列�
     })
   })
 
-  it('单条导入的预填行**不带**「职能部门」键（保持 8 列键集不变）', () => {
+  it('单条导入的预填行同样带「归口职能部门」键（2026-11-25 定案）', () => {
     const sheet = buildImportTemplateSheet('distribution', [
       {
         parentIndicator: '父级指标甲',
@@ -129,19 +120,19 @@ describe('importTemplate · 全部导入模板 9 列（含「职能部门」列�
       }
     ])
 
-    expect(sheet.rows[0].functionalDept).toBeUndefined()
-    expect(Object.keys(sheet.rows[0])).not.toContain('functionalDept')
+    expect(sheet.rows[0].functionalDept).toBe('教务处')
+    expect(Object.keys(sheet.rows[0])).toContain('functionalDept')
   })
 
-  it('全部导入模板的「填写说明」追加拆分规则（按职能部门分组 / 每组基础性权重=100）', () => {
+  it('全部导入模板的「填写说明」追加拆分规则（按归口职能部门分组 / 每组基础性权重=100）', () => {
     const rules = getImportTemplateGuide('distribution', 'all').rules.join('\n')
 
-    expect(rules).toContain('「职能部门」列是本次导入的**拆分依据**')
-    expect(rules).toContain('按该列把文件拆成若干组')
-    expect(rules).toContain('每组（每个职能部门）**各自独立**做权重校验')
-    expect(rules).toContain('该组内合计须为 100')
+    expect(rules).toContain('「归口职能部门」列决定每一行归到哪个归口小组')
+    expect(rules).toContain('按该列把文件拆成若干条')
+    expect(rules).toContain('各自独立做权重校验')
+    expect(rules).toContain('该组合计须为 100')
     // 交叉校验（防呆）说明必须在
-    expect(rules).toContain('归属部门一致')
+    expect(rules).toContain('实际归属不一致会阻断')
   })
 
   it('单条导入的「填写说明」**不**含全部导入专属的拆分规则（两条链路互不污染）', () => {
