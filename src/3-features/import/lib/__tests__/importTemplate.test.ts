@@ -31,6 +31,27 @@ describe('getImportTemplateGuide 学院模板加「任务类型」列（2026-10-
     expect(guide.columns.find(column => column.key === 'taskType')?.mergeGroup).toBe(true)
   })
 
+  it('学院模板序号列（2026-11-26 序号语义改造）：不再随组合并、不再标必填（可选，留空自动补号）', () => {
+    const guide = getImportTemplateGuide('distribution')
+
+    const serialColumn = guide.columns.find(column => column.key === 'serial')!
+    expect(serialColumn.mergeGroup).toBeFalsy()
+    expect(serialColumn.required).toBeFalsy()
+    expect(serialColumn.label).toBe('序号')
+  })
+
+  it('学院模板填写说明（2026-11-26 序号语义改造）：序号=子指标行号语义，删除旧组号表述', () => {
+    const rules = getImportTemplateGuide('distribution').rules.join('\n')
+
+    // 新语义：每行一号、建议连续、留空自动补号、归属按核心指标列
+    expect(rules).toContain('「序号」为子指标行号')
+    expect(rules).toContain('留空也可以导入，系统会自动按行补号')
+    expect(rules).toContain('归属按「核心指标」列判定')
+    // 旧文案删除：序号不再表述为父级核心指标组号
+    expect(rules).not.toContain('「序号」为父级核心指标')
+    expect(rules).not.toContain('组号：按 1、2、3… 顺序给每个父级核心指标编号')
+  })
+
   it('职能部门模板合并口径：部门列整列合并（mergeAll），战略任务/任务类型随组合并', () => {
     const guide = getImportTemplateGuide('strategic-task')
 
@@ -38,6 +59,46 @@ describe('getImportTemplateGuide 学院模板加「任务类型」列（2026-10-
     expect(guide.columns.find(column => column.key === 'department')?.mergeGroup).toBeFalsy()
     expect(guide.columns.find(column => column.key === 'strategicTask')?.mergeGroup).toBe(true)
     expect(guide.columns.find(column => column.key === 'taskType')?.mergeGroup).toBe(true)
+  })
+
+  it('职能部门模板序号列不变（2026-11-26 改造不涉及 01）：仍随组合并、仍必填（组号语义）', () => {
+    const guide = getImportTemplateGuide('strategic-task')
+
+    const serialColumn = guide.columns.find(column => column.key === 'serial')!
+    expect(serialColumn.mergeGroup).toBe(true)
+    expect(serialColumn.required).toBe(true)
+  })
+})
+
+describe('buildImportTemplateSheet 序号逐行递增（2026-11-26 学院导入序号语义改造）', () => {
+  it('示例行序号逐行递增 1..N：每行一号、不再留空、不再按组合并', () => {
+    const sheet = buildImportTemplateSheet('distribution')
+
+    expect(sheet.rows.map(row => row.serial)).toEqual(['1', '2', '3', '4', '5'])
+    // 序号列每行显示各自号码（mergeGroup 已移除：无 rowSpan、无 null 从属格）
+    const serialColumn = sheet.columns.find(column => column.header === '序号')!
+    const serialValues = sheet.rows.map((row, index) => serialColumn.getValue(row, index))
+    expect(serialValues).toEqual(['1', '2', '3', '4', '5'])
+  })
+
+  it('锚点预填行（parentSeeds）序号逐行递增 1..N（N=锚点行数）', () => {
+    const sheet = buildImportTemplateSheet('distribution', [
+      { parentIndicator: '父级指标甲', college: '工学院', taskType: '基础性' },
+      { parentIndicator: '父级指标乙', college: '工学院', taskType: '发展性' },
+      { parentIndicator: '父级指标丙', college: '工学院', taskType: '发展性' }
+    ])
+
+    expect(sheet.rows).toHaveLength(3)
+    expect(sheet.rows.map(row => row.serial)).toEqual(['1', '2', '3'])
+  })
+
+  it('序号不再按组合并后，任务类型等组列仍按「核心指标列非空」锚定竖向合并（版式不回退）', () => {
+    const sheet = buildImportTemplateSheet('distribution')
+
+    const taskTypeColumn = sheet.columns.find(column => column.header === '任务类型')!
+    expect(taskTypeColumn.getValue(sheet.rows[0], 0)).toMatchObject({ value: '基础性', rowSpan: 3 })
+    expect(taskTypeColumn.getValue(sheet.rows[1], 1)).toBeNull()
+    expect(taskTypeColumn.getValue(sheet.rows[3], 3)).toMatchObject({ value: '发展性', rowSpan: 2 })
   })
 })
 
