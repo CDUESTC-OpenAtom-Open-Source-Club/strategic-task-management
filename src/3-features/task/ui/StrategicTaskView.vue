@@ -2319,9 +2319,7 @@ const handleStrategicAllImportCommitted = async (
             plain
             size="small"
             :loading="strategicExporting"
-            :disabled="
-              activeTaskTabName === 'college' ? !collegeAllExportReady : !collegeTabTwoStepReady
-            "
+            :disabled="activeTaskTabName === 'college' ? !collegeAllExportReady : !collegeTabTwoStepReady"
             :title="
               activeTaskTabName === 'college'
                 ? collegeAllExportReady
