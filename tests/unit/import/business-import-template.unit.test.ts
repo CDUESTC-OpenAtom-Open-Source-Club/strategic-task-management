@@ -135,7 +135,7 @@ describe('import/lib/importTemplate', () => {
     expect(guide.rows[6].taskType).toBe('发展性')
   })
 
-  it('学院模板示例演示「一个父级核心指标拆多个子指标」：延续行组列留空、任务类型预填', () => {
+  it('学院模板示例演示「一个父级核心指标拆多个子指标」：序号逐行递增、延续行组列留空、任务类型预填', () => {
     const guide = getImportTemplateGuide('distribution')
 
     expect(guide.rows[0].serial).toBe('1')
@@ -145,9 +145,10 @@ describe('import/lib/importTemplate', () => {
     // 2026-10-31 终版表头加列：任务类型=父级所属任务类型（系统预填、锚点只读）
     expect(guide.rows[0].taskType).toBe('基础性')
     const stickyRow = guide.rows[1]
-    // 序号/任务类型/核心指标/核心指标类型四列随组竖向合并：从属格全部留空；
+    // 2026-11-26 序号语义改造：序号=子指标行号，逐行递增（不再随组留空/合并）
+    expect(stickyRow.serial).toBe('2')
+    // 任务类型/核心指标/核心指标类型三列随组竖向合并：从属格留空；
     // 学院列整列合并：从属行留空
-    expect(stickyRow.serial).toBe('')
     expect(stickyRow.college).toBe('')
     expect(stickyRow.taskType).toBe('')
     expect(stickyRow.parentIndicator).toBe('')
@@ -156,6 +157,8 @@ describe('import/lib/importTemplate', () => {
     expect(stickyRow.indicatorName).toBeTruthy()
     // 组 2 为发展性（示例演示发展性权重不占基础性池子）
     expect(guide.rows[3].taskType).toBe('发展性')
+    // 全部示例行序号逐行递增 1..N
+    expect(guide.rows.map(row => row.serial)).toEqual(['1', '2', '3', '4', '5'])
   })
 
   it('职能部门模板按组竖向合并「序号」「战略任务」「任务类型」，部门列整列合并：锚点格携带 rowSpan、从属格为 null', () => {
@@ -179,17 +182,26 @@ describe('import/lib/importTemplate', () => {
     expect(taskTypeColumn.getValue(sheet.rows[6], 6)).toBe('发展性')
   })
 
-  it('学院模板按组竖向合并「序号」「任务类型」「核心指标」「核心指标类型」，学院列整列合并', () => {
+  it('学院模板按组竖向合并「任务类型」「核心指标」「核心指标类型」等组列（序号不再合并），学院列整列合并', () => {
     const sheet = buildImportTemplateSheet('distribution')
 
-    // 2026-11-25：第 3 列插入「归口职能部门」（随组合并），组列后移一位
-    // 组列：序号(0)、归口职能部门(2)、任务类型(3)、核心指标(4)、核心指标类型(5)
-    for (const columnIndex of [0, 2, 3, 4, 5]) {
+    // 2026-11-25：第 3 列插入「归口职能部门」（随组合并），组列后移一位。
+    // 2026-11-26 序号语义改造：序号列(0)不再随组合并，逐行显示行号；
+    // 组列：归口职能部门(2)、任务类型(3)、核心指标(4)、核心指标类型(5)，
+    // 合并锚点=「核心指标列非空」的组首行（与后端归组口径一致）
+    for (const columnIndex of [2, 3, 4, 5]) {
       const column = sheet.columns[columnIndex]
       expect(column.getValue(sheet.rows[0], 0)).toMatchObject({ rowSpan: 3 })
       expect(column.getValue(sheet.rows[1], 1)).toBeNull()
       expect(column.getValue(sheet.rows[2], 2)).toBeNull()
     }
+    // 序号列(0)逐行显示各自行号（无 rowSpan、无非 null 从属格）
+    const serialColumn = sheet.columns[0]
+    expect(serialColumn.getValue(sheet.rows[0], 0)).toBe('1')
+    expect(serialColumn.getValue(sheet.rows[1], 1)).toBe('2')
+    expect(serialColumn.getValue(sheet.rows[2], 2)).toBe('3')
+    expect(serialColumn.getValue(sheet.rows[3], 3)).toBe('4')
+    expect(serialColumn.getValue(sheet.rows[4], 4)).toBe('5')
     // 2026-10-31 用户拍板：学院列(1)整列合并——首行 rowSpan=全部数据行，从属格 null
     expect(sheet.columns[1].getValue(sheet.rows[0], 0)).toMatchObject({ rowSpan: 5 })
     expect(sheet.columns[1].getValue(sheet.rows[2], 2)).toBeNull()
@@ -197,7 +209,7 @@ describe('import/lib/importTemplate', () => {
     expect(sheet.columns[6].getValue(sheet.rows[2], 2)).toBe('建成教学质量看板')
   })
 
-  it('学院模板预填行：序号=组号、任务类型/核心指标/核心指标类型预填，不再带父级战略任务', () => {
+  it('学院模板预填行：序号=子指标行号（逐行递增）、任务类型/核心指标/核心指标类型预填，不再带父级战略任务', () => {
     const sheet = buildImportTemplateSheet('distribution', [
       {
         parentIndicator: '父级指标甲',
@@ -251,8 +263,16 @@ describe('import/lib/importTemplate', () => {
     // 2026-10-31 用户修订：模板用合并单元格，同时保留纯留空写法（两种都能导入）
     expect(rules).toContain('留空=同上')
     expect(rules).toContain('不合并单元格')
-    // 序号语义：组号
-    expect(rules).toContain('组号')
+    // 序号语义分流（2026-11-26 学院导入序号语义改造）：
+    // 职能部门模板（01）序号仍=组号；学院模板（02/03）序号=子指标行号、留空自动补号
+    if (type === 'strategic-task') {
+      expect(rules).toContain('组号')
+      expect(rules).not.toContain('子指标行号')
+    } else {
+      expect(rules).toContain('「序号」为子指标行号')
+      expect(rules).toContain('系统会自动按行补号')
+      expect(rules).not.toContain('组号：按 1、2、3… 顺序给每个父级核心指标编号')
+    }
   })
 
   it.each(importTypes)('%s 规则文案写明按名称更新/新增且改名不支持', type => {
