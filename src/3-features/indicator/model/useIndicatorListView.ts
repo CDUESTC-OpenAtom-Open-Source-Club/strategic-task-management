@@ -53,7 +53,8 @@ import {
 import {
   resolveReportSubmitLockReason,
   isReportReturnedChainAlive,
-  isReportReturnedToSubmitter
+  isReportReturnedToSubmitter,
+  isReportAtFirstApprovalStage
 } from '@/features/indicator/lib/reportSubmitGate'
 // 2026-11-13（学院上报按归口部门分批提交）：归属部门口径的纯函数（选项聚合/行过滤）
 import {
@@ -87,6 +88,11 @@ import type {
 import { useDataValidator } from '@/shared/lib/validation/dataValidator'
 import { showCriticalErrorNotice } from '@/shared/lib/criticalErrorNotice'
 import { markErrorHandled } from '@/shared/lib/utils/errorToast'
+// 2026-11-26（模板动态行）：下载填报导入模板的数据行 = 当前视角真实已下发子指标
+import type {
+  ReportFillDynamicTemplateRow,
+  ReportFillTemplateVariant
+} from '@/features/import/lib/reportFillImportTemplate'
 import { getPlanStatusDisplay, normalizePlanStatus } from '@/features/task/lib/planStatus'
 import type { StatusTagType } from '@/shared/lib/utils/formatters'
 import { formatPendingApprovalLabel } from '@/shared/lib/utils/workflowStepLabel'
@@ -3789,13 +3795,34 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     )
   })
 
+  // 2026-11-26（撤回窗口收窄，用户定调最初设计）：撤回窗口=「填报人提交之后 →
+  // 第一个审批环节审核之前」。学院线第一审批环节=学院审核人审批，职能线=职能
+  // 部门审批人审批（口径按链泛化，纯函数 isReportAtFirstApprovalStage 单一事实
+  // 源，lib/__tests__ 锁定）。环节推进（任一审批人通过）后本判定为 false——撤回
+  // 钮随之隐藏（状态签仍显示推进后的环节），与后端环节门（CancelWorkflowUseCase
+  // 撤回 409）同口径兜底。
+  const isReportAtFirstApprovalStageComputed = computed(() =>
+    isReportAtFirstApprovalStage({
+      isSecondaryCollege: isSecondaryCollege.value,
+      currentStepName: currentApprovalStepName.value
+    })
+  )
+
   const showWithdrawAllButton = computed(() => {
+    if (!showPlanBatchActions.value) {
+      return false
+    }
+    if (!usePlanReportFlow.value) {
+      return canWithdrawAny.value
+    }
+    // 2026-11-26（撤回窗口收窄，用户定调最初设计）：仅第一个审批环节（学院审核人/
+    // 职能部门审批人）审核前渲染撤回钮。pending_locked（后端 canWithdraw 显式
+    // false：环节已推进，或审批人曾通过后驳回回滚到第一环节的历史轮）不渲染——
+    // 与提交钮互斥收口：草稿只留提交、第一环节可撤只留撤回、环节推进/历史轮
+    // 双隐藏、已通过双隐藏；双隐藏时状态签仍如实显示当前环节
     return (
-      showPlanBatchActions.value &&
-      (!usePlanReportFlow.value
-        ? canWithdrawAny.value
-        : currentPlanReportActionState.value === 'pending_withdrawable' ||
-          currentPlanReportActionState.value === 'pending_locked')
+      currentPlanReportActionState.value === 'pending_withdrawable' &&
+      isReportAtFirstApprovalStageComputed.value
     )
   })
 
@@ -5663,20 +5690,20 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         return false
       }
 
-      const currentStepName = String(
-        currentPlanWorkflowDetail.value?.currentStepName ||
-          currentPlanReportSummary.value?.currentStepName ||
-          currentPlanDetails.value?.currentStepName ||
-          ''
-      ).trim()
-
-      const isPastSubmitterWithdrawWindow =
-        currentStepName.includes('终审') ||
-        currentStepName.includes('校领导') ||
-        currentStepName.includes('院长') ||
-        currentStepName.includes('战略发展部')
-
-      if (pendingPlanReportUiState.value === 'submitted' && !isPastSubmitterWithdrawWindow) {
+      // 2026-11-26（撤回窗口收窄，用户定调最初设计）：仅第一个审批环节（学院审核人/
+      // 职能部门审批人）审核前可撤——乐观分支由原「终审/校领导/院长/战略发展部」
+      // 黑名单换成第一环节白名单（isReportAtFirstApprovalStage，按链泛化）。后端
+      // canWithdraw（=canRequesterWithdraw）是环节门权威：显式 false（环节已推进/
+      // 有审批人通过过，含驳回回滚到第一环节的历史轮）时乐观分支不放行，防「钮可
+      // 见、点了 409」的前后端口径分裂
+      const withdrawFlagExplicitlyDenied =
+        currentPlanReportSummary.value?.canWithdraw === false ||
+        currentPlanWorkflowDetail.value?.canWithdraw === false
+      if (
+        pendingPlanReportUiState.value === 'submitted' &&
+        isReportAtFirstApprovalStageComputed.value &&
+        !withdrawFlagExplicitlyDenied
+      ) {
         return true
       }
 
@@ -5688,7 +5715,12 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         return currentPlanWorkflowDetail.value.canWithdraw
       }
 
-      return ['SUBMITTED', 'PENDING'].includes(currentPlanReportUiStatus.value)
+      // 2026-11-26（撤回窗口收窄，用户定调最初设计）：后端 canWithdraw 标记缺失时
+      // 的兜底也收窄到第一环节白名单——无环节信息时不再凭 UiStatus 乐观放行
+      return (
+        ['SUBMITTED', 'PENDING'].includes(currentPlanReportUiStatus.value) &&
+        isReportAtFirstApprovalStageComputed.value
+      )
     }
 
     const planStatus = normalizedCurrentPlanStatus.value
@@ -6190,6 +6222,79 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     () => effectiveViewingDept.value || authStore.userDepartment || ''
   )
 
+  /**
+   * 2026-11-26（填报导入模板动态行）：三场景模板数据行的<b>真实行集</b>（按变体取用）。
+   *
+   * <p>下载的填报导入模板（04/05/06）数据行从静态示例行换成「当前视角真实已下发子指标」，
+   * 子指标名称/权重与页面表格显示同源（{@code indicator.name} / {@code indicator.weight}）：
+   * <ul>
+   *   <li><b>04（func）</b>：本部门已下发指标逐行（上报目标恒为战略发展部）。</li>
+   *   <li><b>05（college-single）</b>：当前所选「归属部门」那条归口线的已下发子指标——
+   *       未选归口为空数组（模板回退静态示例行兜底；导入按钮本身也要求先选归属部门）。</li>
+   *   <li><b>06（college-all）</b>：全部归口线的已下发子指标（按归口分组、保持线的先后顺序）。</li>
+   * </ul>
+   *
+   * <p>放在本层而不是组件层（与 {@link reportFillCollegeName} 同理由）：组件层的顶层
+   * computed 会直接访问解构字段，页面壳测试的 mock 缺字段时会在 setup 期抛
+   * 「Cannot read properties of undefined」；本层闭包引用的都是模块内声明。
+   */
+  const reportFillTemplateRowsByVariant = computed<
+    Record<ReportFillTemplateVariant, ReportFillDynamicTemplateRow[]>
+  >(() => {
+    const toTemplateRow = (
+      row: StrategicIndicator,
+      targetDept: string | null
+    ): ReportFillDynamicTemplateRow => ({
+      targetDept,
+      name: String(row.name ?? '').trim(),
+      weight: row.weight ?? null
+    })
+
+    // 04（职能部门）：本部门已下发指标逐行（filterIndicatorsForCurrentViewer 后的
+    // 当前计划行，未套类型筛选——模板行不受页面筛选器影响）
+    const funcRows = isSecondaryCollege.value
+      ? []
+      : currentPlanIndicators.value.map(row => toTemplateRow(row, '战略发展部'))
+
+    if (isSecondaryCollege.value) {
+      // 学院行集基座（已按年份收口，与归属部门下拉选项同源）
+      const baseRows = collegeFunctionalDeptRows.value
+      // 05（学院单归口）：当前所选归属部门那条线（页面表格显示的同源行）
+      const selectedDept = filterOwnerDept.value.trim()
+      const singleRows = selectedDept
+        ? baseRows
+            .filter(row => getRowFunctionalDeptName(row) === selectedDept)
+            .map(row => toTemplateRow(row, selectedDept))
+        : []
+
+      // 06（学院多归口批量）：全部归口线子指标，按归口分组排布——
+      // 以归口名首次出现顺序稳定分组（Map 保序），父级未解析出归口的行聚到尾部空名组
+      const groups = new Map<string, ReportFillDynamicTemplateRow[]>()
+      baseRows.forEach(row => {
+        const deptName = getRowFunctionalDeptName(row)
+        const key = deptName ?? ''
+        const bucket = groups.get(key)
+        if (bucket) {
+          bucket.push(toTemplateRow(row, deptName))
+        } else {
+          groups.set(key, [toTemplateRow(row, deptName)])
+        }
+      })
+
+      return {
+        func: funcRows,
+        'college-single': singleRows,
+        'college-all': Array.from(groups.values()).flat()
+      }
+    }
+
+    return {
+      func: funcRows,
+      'college-single': [],
+      'college-all': []
+    }
+  })
+
   return {
     DEFAULT_APPROVAL_STATUS,
     PLAN_APPROVAL_POLL_INTERVAL_MS,
@@ -6425,6 +6530,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     reportFillCycleId,
     reportFillCycleName,
     reportFillMonth,
+    reportFillTemplateRowsByVariant,
     resolvePlanYear,
     restartPlanApprovalPolling,
     saveIndicatorEdit,

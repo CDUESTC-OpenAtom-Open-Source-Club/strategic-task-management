@@ -121,6 +121,30 @@ export function isReportReturnedToSubmitter(rawStatus: unknown, currentStepName:
 }
 
 /**
+ * 2026-11-26（撤回窗口收窄，用户定调最初设计）：上报撤回窗口=「填报人提交之后 →
+ * 第一个审批环节审核之前」。学院线第一审批环节=学院审核人审批，职能线=职能部门
+ * 审批人审批（口径按链泛化）。环节推进（学院审核人/职能部门审批人已通过，推进到
+ * 分管职能部门负责人审批/分管校领导审批等后续节点）后返回 false——撤回钮隐藏、
+ * 撤回判定不放行，与后端环节门（CancelWorkflowUseCase 撤回 409）同口径兜底。
+ *
+ * @param isSecondaryCollege 当前视角是否二级学院（学院线/职能线取不同第一环节名）
+ * @param currentStepName 上报实例当前待办环节名（audit_step_instance.step_name）
+ */
+export function isReportAtFirstApprovalStage(input: {
+  isSecondaryCollege: boolean
+  currentStepName: unknown
+}): boolean {
+  const stepName = String(input.currentStepName ?? '')
+    .replace(/\s+/g, '')
+    .trim()
+  if (!stepName) {
+    return false
+  }
+  const firstApprovalStageName = input.isSecondaryCollege ? '学院审核人审批' : '职能部门审批人审批'
+  return stepName.includes(firstApprovalStageName)
+}
+
+/**
  * 2026-11-17（e2e 缺陷②修复）：上报「驳回退回待重报（WITHDRAWN 活链）」判定。
  *
  * <p>2026-11-17 起驳回落点 = plan_report→DRAFT + audit_instance→WITHDRAWN

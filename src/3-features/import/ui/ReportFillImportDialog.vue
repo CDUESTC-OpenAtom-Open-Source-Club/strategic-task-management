@@ -274,6 +274,7 @@ import {
   buildReportFillGuideSheet,
   buildReportFillTemplateFileName,
   buildReportFillTemplateSheet,
+  type ReportFillDynamicTemplateRow,
   type ReportFillTemplateVariant
 } from '@/features/import/lib/reportFillImportTemplate'
 import { exportSheetsToExcel } from '@/shared/lib/export/excel'
@@ -308,6 +309,15 @@ const props = defineProps<{
   targetOrgName?: string
   /** 当前考核周期名称（顶部摘要显示） */
   cycleName?: string
+  /**
+   * 2026-11-26（模板动态行）：当前视角「真实已下发子指标」行——下载模板的数据行来源。
+   *
+   * <p>由父级按变体传（04=本部门指标 / 05=所选归口线子指标 / 06=全部归口线子指标），
+   * 名称/权重系统预填只读，等级/说明留空给用户填。响应式绑定：单归口入口切换归属部门后
+   * 重新打开/下载，模板行随所选归口重新生成。空数组/缺省 = 视角无已下发数据 →
+   * 生成器回退静态示例行兜底。
+   */
+  templateRows?: ReportFillDynamicTemplateRow[]
 }>()
 
 const emit = defineEmits<{
@@ -518,7 +528,12 @@ const handleFileExceed: UploadProps['onExceed'] = files => {
 
 async function handleDownloadTemplate() {
   try {
-    const dataSheet = buildReportFillTemplateSheet(props.variant, props.responsibleOrgName ?? '')
+    // 2026-11-26（模板动态行）：有真实行必须用真实行；空数组 = 视角无已下发数据 → 静态示例行兜底
+    const dataSheet = buildReportFillTemplateSheet(
+      props.variant,
+      props.responsibleOrgName ?? '',
+      props.templateRows?.length ? props.templateRows : undefined
+    )
     const guideSheet = buildReportFillGuideSheet(props.variant)
     await exportSheetsToExcel(
       [dataSheet as unknown as never, guideSheet as unknown as never],

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   resolveReportSubmitAllButtonVisible,
-  resolveReportSubmitLockReason
+  resolveReportSubmitLockReason,
+  isReportAtFirstApprovalStage
 } from '../reportSubmitGate'
 
 /** 全部通过基线：有指标、无异动锁、自评齐全 */
@@ -244,5 +245,112 @@ describe('reportSubmitGate 置灰门禁并入原因链（2026-11-15 契约：始
         missingSelfRatingCount: 2
       })
     ).toBe('当前部门存在进行中的异动审批，暂不能提交上报；请等异动审批结束或撤回后再操作')
+  })
+})
+
+// ============================================================================
+// 2026-11-26（撤回窗口收窄，用户定调最初设计）：撤回窗口=提交后→第一个审批环节
+// 审核前。学院线第一审批环节=学院审核人审批，职能线=职能部门审批人审批；环节
+// 推进（任一审批人通过）后判定 false——撤回钮隐藏、撤回判定不放行，与后端环节
+// 门（CancelWorkflowUseCase 撤回 409）同口径。
+// ============================================================================
+describe('isReportAtFirstApprovalStage（撤回窗口=第一审批环节审核前）', () => {
+  it('学院线：当前环节=学院审核人审批 → 窗口开（可撤）', () => {
+    expect(
+      isReportAtFirstApprovalStage({
+        isSecondaryCollege: true,
+        currentStepName: '学院审核人审批'
+      })
+    ).toBe(true)
+  })
+
+  it('学院线：环节推进到分管职能部门负责人审批 → 窗口关（不可撤）', () => {
+    expect(
+      isReportAtFirstApprovalStage({
+        isSecondaryCollege: true,
+        currentStepName: '分管职能部门负责人审批'
+      })
+    ).toBe(false)
+  })
+
+  it('学院线：环节推进到战略发展部审核人审批（终审前节点）→ 窗口关', () => {
+    expect(
+      isReportAtFirstApprovalStage({
+        isSecondaryCollege: true,
+        currentStepName: '战略发展部审核人审批'
+      })
+    ).toBe(false)
+  })
+
+  it('职能线：当前环节=职能部门审批人审批 → 窗口开（可撤，同口径泛化）', () => {
+    expect(
+      isReportAtFirstApprovalStage({
+        isSecondaryCollege: false,
+        currentStepName: '职能部门审批人审批'
+      })
+    ).toBe(true)
+  })
+
+  it('职能线：环节推进到分管校领导审批 → 窗口关（不可撤）', () => {
+    expect(
+      isReportAtFirstApprovalStage({
+        isSecondaryCollege: false,
+        currentStepName: '分管校领导审批'
+      })
+    ).toBe(false)
+  })
+
+  it('链间不串线：学院线的学院审核人审批不能放行职能线判定，反之亦然', () => {
+    // 学院线第一环节名不满足职能线口径
+    expect(
+      isReportAtFirstApprovalStage({
+        isSecondaryCollege: false,
+        currentStepName: '学院审核人审批'
+      })
+    ).toBe(false)
+    // 职能线第一环节名不满足学院线口径（「分管职能部门负责人审批」不含
+    // 「职能部门审批人审批」，审批人≠负责人）
+    expect(
+      isReportAtFirstApprovalStage({
+        isSecondaryCollege: true,
+        currentStepName: '分管职能部门负责人审批'
+      })
+    ).toBe(false)
+  })
+
+  it('环节名含「上报审批中·」等前缀/空白变体时仍按包含匹配', () => {
+    expect(
+      isReportAtFirstApprovalStage({
+        isSecondaryCollege: true,
+        currentStepName: '上报审批中·学院审核人审批'
+      })
+    ).toBe(true)
+    expect(
+      isReportAtFirstApprovalStage({
+        isSecondaryCollege: true,
+        currentStepName: ' 学院审核人审批 '
+      })
+    ).toBe(true)
+  })
+
+  it('环节名缺失（空/undefined）→ 窗口关（不放行，防误显示）', () => {
+    expect(isReportAtFirstApprovalStage({ isSecondaryCollege: true, currentStepName: '' })).toBe(
+      false
+    )
+    expect(
+      isReportAtFirstApprovalStage({ isSecondaryCollege: false, currentStepName: undefined })
+    ).toBe(false)
+    expect(
+      isReportAtFirstApprovalStage({ isSecondaryCollege: true, currentStepName: null })
+    ).toBe(false)
+  })
+
+  it('退回待重报（当前环节回到填报人提交）→ 非第一审批环节，窗口关（该态按草稿路径走提交钮）', () => {
+    expect(
+      isReportAtFirstApprovalStage({
+        isSecondaryCollege: true,
+        currentStepName: '填报人提交'
+      })
+    ).toBe(false)
   })
 })
