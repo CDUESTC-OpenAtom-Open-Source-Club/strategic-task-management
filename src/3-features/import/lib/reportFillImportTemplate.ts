@@ -4,15 +4,16 @@ import { buildExportFileName } from '@/shared/lib/export/excel'
 /**
  * 2026-11-25（指标填报导入式上报）：填报导入模板的列定义与生成。
  *
- * <p><b>标准模板以需求方「SISM-导入模板-04/05/06」为准</b>（2026-11-25 定稿）。
- * 三份上报模板共用同一套 <b>8 列</b>结构，只有第 2/3 列的措辞随流向不同：
+ * <p><b>标准模板以需求方「SISM-导入模板-04/05/06」为准</b>（2026-11-25 定稿；
+ * 2026-11-26 按需求方反馈去掉辅助列，改为 <b>7 列</b>）。三份上报模板共用同一套 7 列结构，
+ * 只有第 2/3 列的措辞随流向不同：
  * <pre>
  * 序号 ｜ 责任部门（来源·须与登录学院/部门一致） ｜ 目标部门（归口职能部门）/ 上报目标（战略发展部）
- *      ｜ 子指标名称 ｜ 权重（系统只读）｜ 自评等级（点选填写）｜ 进度说明（请填写）｜（枚举来源，勿动）
+ *      ｜ 子指标名称 ｜ 权重（系统只读）｜ 自评等级（点选填写）｜ 进度说明（请填写）
  * </pre>
  *
- * <p>第 8 列「（枚举来源，勿动）」是给 Excel 下拉当数据源的辅助列，后端解析时<b>完全忽略</b>
- * （该表头整体在括号内，归一化后为空串，自然不参与字段映射）。
+ * <p>2026-11-26（去辅助列）：不再输出「（枚举来源，勿动）」列——需求方明确不要该列；
+ * 后端解析本来就忽略它，删除后不影响导入。
  *
  * <p>2026-11-26（样例行口径修正）：示例行子指标名一律使用系统<b>真实下发的指标全名</b>——
  * 截断名/虚构名在后端按名称精确定位时会 0 命中被点名（用户直接导入下载的模板不放示例行也会挂）。
@@ -75,8 +76,18 @@ export interface ReportFillTemplateRow {
   weight: string
   selfRating: string
   remark: string
-  /** （枚举来源，勿动）——给 Excel 下拉当数据源，解析时忽略 */
-  enumSource: string
+}
+
+/**
+ * 2026-11-26（模板按真实下发数据预填）：调用方传入的预填行。
+ *
+ * <p>只预填「目标部门 / 子指标名称 / 权重」三列（均来自系统已下发数据，保证部门与子指标对得上），
+ * 「自评等级」「进度说明」两列留空并标黄，由填报人填。
+ */
+export interface ReportFillPrefillRow {
+  targetDept: string
+  indicatorName: string
+  weight: string
 }
 
 /** 数据页列定义（8 列，按变体决定第 2/3 列措辞）。 */
@@ -84,32 +95,60 @@ function buildColumns(variant: ReportFillTemplateVariant): ReadonlyArray<{
   key: keyof ReportFillTemplateRow
   label: string
   width: number
+  bodyColor: string
+  headerColor: string
 }> {
   const isFunc = variant === 'func'
-  const isAll = variant === 'college-all'
+  // 2026-11-26：与需求方 05/06 样例一致——只读列为灰底、待填两列为黄底/橙头
+  const READ_ONLY = '#EDEDED'
+  const FILLABLE = '#FFE699'
+  const HEADER_GRAY = '#595959'
+  const HEADER_ORANGE = '#BF8F00'
   return [
-    { key: 'serial', label: '序号', width: 8 },
+    { key: 'serial', label: '序号', width: 8, bodyColor: READ_ONLY, headerColor: HEADER_GRAY },
     {
       key: 'responsibleDept',
       label: isFunc ? '责任部门\n（来源·须与登录部门一致）' : '责任部门\n（来源·须与登录学院一致）',
-      width: 24
+      width: 24,
+      bodyColor: READ_ONLY,
+      headerColor: HEADER_GRAY
     },
     {
       key: 'targetDept',
       label: isFunc ? '上报目标\n（战略发展部）' : '目标部门\n（归口职能部门）',
-      width: 22
+      width: 22,
+      bodyColor: READ_ONLY,
+      headerColor: HEADER_GRAY
     },
-    { key: 'indicatorName', label: '子指标名称', width: 34 },
-    { key: 'weight', label: '权重\n（系统只读）', width: 14 },
-    { key: 'selfRating', label: '自评等级\n（点选填写）', width: 18 },
-    { key: 'remark', label: '进度说明\n（请填写）', width: 40 },
-    { key: 'enumSource', label: '（枚举来源，勿动）', width: 18 }
-    // 注：isAll 目前不影响列定义（三份结构完全相同），保留参数便于将来分化
-  ].map(column => column) as ReadonlyArray<{
-    key: keyof ReportFillTemplateRow
-    label: string
-    width: number
-  }>
+    {
+      key: 'indicatorName',
+      label: '子指标名称',
+      width: 34,
+      bodyColor: READ_ONLY,
+      headerColor: HEADER_GRAY
+    },
+    {
+      key: 'weight',
+      label: '权重\n（系统只读）',
+      width: 14,
+      bodyColor: READ_ONLY,
+      headerColor: HEADER_GRAY
+    },
+    {
+      key: 'selfRating',
+      label: '自评等级\n（点选填写）',
+      width: 18,
+      bodyColor: FILLABLE,
+      headerColor: HEADER_ORANGE
+    },
+    {
+      key: 'remark',
+      label: '进度说明\n（请填写）',
+      width: 40,
+      bodyColor: FILLABLE,
+      headerColor: HEADER_ORANGE
+    }
+  ]
 }
 
 /** 共用文案（三份模板措辞一致的两条 🔴 + 填报字段 + 权重列）。 */
@@ -129,7 +168,16 @@ const SHARED_RULES = {
  * <p>三份的条目分组与编号各不相同（04/05 是 1、2、🔴、🔴、填报字段、权重列、3、4、5、6；
  * 06 是 1、2、3拆线、🔴、🔴、填报字段、权重列、4、5、6、7），因此各自写死。
  */
-export function buildReportFillTemplateRules(variant: ReportFillTemplateVariant): string[] {
+export function buildReportFillTemplateRules(
+  variant: ReportFillTemplateVariant,
+  prefilled = true
+): string[] {
+  // 2026-11-26（Codex review）：只有真的按已下发数据预填时才能说「请勿修改」；
+  // 回退示例行（如职能部门视角还没有真实预填）必须明确提示删除示例行，否则用户会把示例指标当真实数据提交。
+  const fillHint = (issuedText: string): string =>
+    prefilled
+      ? `黄色底纹两列（自评等级、进度说明）是本次要填写的内容；${issuedText}，请勿修改。`
+      : '本表当前为示例数据：请在正式导入前删除示例行，并按本部门/学院已下发的子指标填写「目标部门 / 子指标名称 / 权重」，再填写黄色底纹两列（自评等级、进度说明）。'
   if (variant === 'func') {
     return [
       '1. 使用者：职能部门填报人登录自己账号，在「指标填报」页用「导入填报」按钮上传（需求第二步新功能）。',
@@ -141,7 +189,7 @@ export function buildReportFillTemplateRules(variant: ReportFillTemplateVariant)
       '3. 归属月份：本表不设月份列——归属月份在导入界面上选择。',
       '4. 定位规则：按「责任部门 + 子指标名称」匹配该部门已下发的子指标行；无匹配 = 该行失败点名。',
       '5. 导入流程：选择文件 → 解析预览（责任部门/目标校验 + 定位 + 数值校验）→ 确认导入 → 自动进入上报审批（审批通过后数据看板生效）。',
-      '6. 黄色底纹行为示例数据，正式导入前请删除。'
+      `6. ${fillHint('其余列已按系统已下发数据预填')}`
     ]
   }
   if (variant === 'college-single') {
@@ -155,7 +203,7 @@ export function buildReportFillTemplateRules(variant: ReportFillTemplateVariant)
       '3. 归属月份：本表不设月份列——归属月份在导入界面上选择。',
       '4. 定位规则：按「责任部门 + 目标部门 + 子指标名称」匹配该学院该归口线已下发的子指标行；无匹配 = 该行失败点名。',
       '5. 导入流程：选择文件 → 解析预览（责任部门/目标校验 + 定位 + 数值校验）→ 确认导入 → 进入该归口线的上报审批（审批通过后数据看板生效）。',
-      '6. 黄色底纹行为示例数据，正式导入前请删除。'
+      `6. ${fillHint('其余列已按当前归口线已下发数据预填')}`
     ]
   }
   return [
@@ -169,7 +217,7 @@ export function buildReportFillTemplateRules(variant: ReportFillTemplateVariant)
     '4. 归属月份：本表不设月份列——归属月份在导入界面上选择。',
     '5. 定位规则：按「责任部门 + 目标部门 + 子指标名称」匹配已下发子指标行；无匹配 = 该行失败点名。',
     '6. 导入流程：选择文件 → 解析预览（责任部门/目标校验 + 按目标部门分组展示将提交/将跳过/错误组）→ 确认批量导入 → 逐线自动提交进审批（通过后数据看板生效）。',
-    '7. 彩色底纹行为示例数据（绿=教务处线 / 黄=数字校园建设办公室线），正式导入前请删除。'
+    `7. ${fillHint('其余列已按本学院各归口线已下发数据预填')}`
   ]
 }
 
@@ -208,8 +256,7 @@ const SAMPLE_ROWS: Record<
         '推进教务处教学质量提升专项工作落地见效，围绕课堂教学改革、课程思政建设、实践教学体系优化三大主线，建立教学质量监测数据平台，形成月度调度、学期评估、年度考核的持续改进闭环',
       weight: '40',
       selfRating: '正常',
-      remark: '教学质量监测平台月度数据已汇总',
-      enumSource: '超前完成'
+      remark: '教学质量监测平台月度数据已汇总'
     },
     {
       serial: '2',
@@ -217,8 +264,7 @@ const SAMPLE_ROWS: Record<
       indicatorName: '完善课程建设与专业评估机制',
       weight: '60',
       selfRating: '正常',
-      remark: '完成本学期专业评估指标修订',
-      enumSource: '正常'
+      remark: '完成本学期专业评估指标修订'
     },
     {
       serial: '',
@@ -226,8 +272,7 @@ const SAMPLE_ROWS: Record<
       indicatorName: '',
       weight: '',
       selfRating: '',
-      remark: '',
-      enumSource: '滞后'
+      remark: ''
     }
   ],
   'college-single': [
@@ -237,8 +282,7 @@ const SAMPLE_ROWS: Record<
       indicatorName: '数字校园协同验证-统一认证与上云子项',
       weight: '55',
       selfRating: '滞后',
-      remark: '受资源到位滞后影响，部分节点未按期完成',
-      enumSource: '超前完成'
+      remark: '受资源到位滞后影响，部分节点未按期完成'
     },
     {
       serial: '2',
@@ -246,8 +290,7 @@ const SAMPLE_ROWS: Record<
       indicatorName: '数字校园协同验证-数据治理子项',
       weight: '45',
       selfRating: '正常',
-      remark: '数据治理专项月度节点按期完成',
-      enumSource: '正常'
+      remark: '数据治理专项月度节点按期完成'
     },
     {
       serial: '',
@@ -255,8 +298,7 @@ const SAMPLE_ROWS: Record<
       indicatorName: '',
       weight: '',
       selfRating: '',
-      remark: '',
-      enumSource: '滞后'
+      remark: ''
     }
   ],
   'college-all': [
@@ -266,8 +308,7 @@ const SAMPLE_ROWS: Record<
       indicatorName: '导入下发验证-基础A',
       weight: '40',
       selfRating: '正常',
-      remark: '本月阶段任务按计划完成',
-      enumSource: '超前完成'
+      remark: '本月阶段任务按计划完成'
     },
     {
       serial: '2',
@@ -276,8 +317,7 @@ const SAMPLE_ROWS: Record<
       weight: '30',
       // 需求方样例写「超前」→ 按 2026-11-25 裁定强制同步为「超前完成」
       selfRating: '超前完成',
-      remark: '关键节点提前完成，进入下一阶段',
-      enumSource: '正常'
+      remark: '关键节点提前完成，进入下一阶段'
     },
     {
       serial: '3',
@@ -285,8 +325,7 @@ const SAMPLE_ROWS: Record<
       indicatorName: '数字校园协同验证-统一认证与上云子项',
       weight: '55',
       selfRating: '正常',
-      remark: '联调完成，试运行推进正常',
-      enumSource: '滞后'
+      remark: '联调完成，试运行推进正常'
     },
     {
       serial: '4',
@@ -294,8 +333,7 @@ const SAMPLE_ROWS: Record<
       indicatorName: '数字校园协同验证-数据治理子项',
       weight: '45',
       selfRating: '滞后',
-      remark: '受资源到位滞后影响，部分节点未按期完成',
-      enumSource: ''
+      remark: '受资源到位滞后影响，部分节点未按期完成'
     }
   ]
 }
@@ -315,33 +353,63 @@ const SAMPLE_RESPONSIBLE_DEPT: Record<ReportFillTemplateVariant, string> = {
  */
 export function buildReportFillTemplateSheet(
   variant: ReportFillTemplateVariant,
-  responsibleDeptName: string
+  responsibleDeptName: string,
+  prefillRows?: ReadonlyArray<ReportFillPrefillRow>
 ): ExcelExportSheet<ReportFillTemplateRow> {
-  const rows: ReportFillTemplateRow[] = SAMPLE_ROWS[variant].map(row => ({
-    ...row,
-    responsibleDept: responsibleDeptName || SAMPLE_RESPONSIBLE_DEPT[variant]
+  // 2026-11-26（需求方 05/06 样例）：模板只预填「目标部门 / 子指标名称 / 权重」，
+  // 这三列必须来自系统里真实已下发的数据（由调用方传入），否则会出现「部门与子指标对不上」；
+  // 「自评等级 / 进度说明」留空并标黄，只让填报人填这两列。
+  const usePrefill = Array.isArray(prefillRows) && prefillRows.length > 0
+  const source = usePrefill
+    ? prefillRows.map(row => ({
+        targetDept: row.targetDept,
+        indicatorName: row.indicatorName,
+        weight: row.weight
+      }))
+    : SAMPLE_ROWS[variant]
+        .filter(row => String(row.indicatorName ?? '').trim().length > 0)
+        .map(row => ({
+          targetDept: row.targetDept,
+          indicatorName: row.indicatorName,
+          weight: row.weight
+        }))
+
+  const rows: ReportFillTemplateRow[] = source.map((row, index) => ({
+    serial: String(index + 1),
+    responsibleDept: responsibleDeptName || SAMPLE_RESPONSIBLE_DEPT[variant],
+    targetDept: row.targetDept,
+    indicatorName: row.indicatorName,
+    weight: row.weight,
+    selfRating: '',
+    remark: ''
   }))
 
   const columns: ExcelExportColumn<ReportFillTemplateRow>[] = buildColumns(variant).map(column => ({
     header: column.label,
     width: column.width,
+    backgroundColor: column.bodyColor,
+    headerBackgroundColor: column.headerColor,
     getValue: row => row[column.key] ?? ''
   }))
 
   return {
     sheetName: buildReportFillSheetName(variant),
     rows,
-    columns
+    columns,
+    headerTextColor: '#FFFFFF',
+    headerHeight: 32,
+    bodyRowHeight: 24
   }
 }
 
 /** 「填写说明」页（单列，标题 + 逐条）。 */
 export function buildReportFillGuideSheet(
-  variant: ReportFillTemplateVariant
+  variant: ReportFillTemplateVariant,
+  prefilled = true
 ): ExcelExportSheet<{ text: string }> {
   const rows = [
     { text: buildReportFillGuideTitle(variant) },
-    ...buildReportFillTemplateRules(variant).map(text => ({ text }))
+    ...buildReportFillTemplateRules(variant, prefilled).map(text => ({ text }))
   ]
   return {
     sheetName: '填写说明',

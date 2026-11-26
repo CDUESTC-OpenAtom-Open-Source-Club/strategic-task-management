@@ -277,6 +277,7 @@ const {
   refreshReportIndicatorSnapshot,
   // 2026-11-25（填报导入式上报）：周期/月份/学院名上下文
   reportFillCollegeName,
+  reportFillPrefillRows,
   reportFillCycleId,
   reportFillCycleName,
   reportFillMonth,
@@ -363,6 +364,27 @@ const openReportFillImport = (variant: ReportFillTemplateVariant, targetOrgId?: 
   reportFillTargetOrgId.value = variant === 'college-single' ? (targetOrgId ?? null) : null
   reportFillImportVisible.value = true
 }
+
+/**
+ * 2026-11-26（模板要「对得上」）：下载模板的预填行。
+ *
+ * <p>单归口入口只带当前选中归口那一线的行（避免把别的归口指标带进「单点导入」模板）；
+ * 批量入口带本学院全部归口的行。
+ */
+const reportFillTemplateRows = computed(() => {
+  // 页面壳测试会用 mock 替换本 composable（缺字段即 undefined），这里必须容忍 undefined，
+  // 否则 setup 阶段直接把整页挂掉（2026-11-26 CI 回归）。
+  const rows = reportFillPrefillRows?.value ?? []
+  if (reportFillImportVariant.value !== 'college-single') {
+    return rows
+  }
+  const dept = filterOwnerDept?.value
+  if (!dept) {
+    return rows
+  }
+  const filtered = rows.filter(row => row.targetDept === dept)
+  return filtered.length ? filtered : rows
+})
 
 /** 导入完成后刷新页面数据（填报内容与审核进度都会变）。 */
 const handleReportFillImported = async () => {
@@ -1694,6 +1716,7 @@ const handleExportIndicatorList = async () => {
       :responsible-org-name="reportFillCollegeName || ''"
       :target-org-id="reportFillTargetOrgId"
       :target-org-name="filterOwnerDept || ''"
+      :prefill-rows="reportFillTemplateRows"
       @committed="handleReportFillImported"
     />
   </div>

@@ -8,6 +8,10 @@ export interface ExcelExportColumn<T> {
   width?: number
   align?: 'left' | 'center' | 'right'
   getValue: (row: T, index: number) => Cell
+  /** 2026-11-26：整列底色（模板用——标记「只读列 / 待填写列」） */
+  backgroundColor?: string
+  /** 2026-11-26：该列表头底色（不传则用 sheet.headerBackgroundColor） */
+  headerBackgroundColor?: string
 }
 
 export interface ExcelExportSheet<T> {
@@ -127,7 +131,7 @@ export function buildSheetData<T>(sheet: ExcelExportSheet<T>): SheetData {
   const headerRow = sheet.columns.map(column => ({
     value: column.header,
     ...headerStyle,
-    backgroundColor: headerBackgroundColor,
+    backgroundColor: column.headerBackgroundColor ?? headerBackgroundColor,
     textColor: headerTextColor,
     ...(sheet.headerHeight ? { height: sheet.headerHeight } : {})
   }))
@@ -160,7 +164,13 @@ export function buildSheetData<T>(sheet: ExcelExportSheet<T>): SheetData {
       if (value === null || value === undefined) {
         return null
       }
-      const cell = toStyledCell(value, {}, column, rowTone, rowTextColor)
+      const cell = toStyledCell(
+        value,
+        column.backgroundColor ? { backgroundColor: column.backgroundColor } : {},
+        column,
+        rowTone,
+        rowTextColor
+      )
       if (sheet.bodyRowHeight && isCellObject(cell)) {
         return { ...cell, height: sheet.bodyRowHeight }
       }
