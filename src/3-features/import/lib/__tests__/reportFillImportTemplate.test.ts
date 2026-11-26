@@ -15,7 +15,8 @@ import {
  * 2026-11-25（指标填报导入式上报）：模板生成单测。
  *
  * <p>标准模板以需求方「SISM-导入模板-04/05/06」为准：8 列结构、三套说明页逐字照抄、
- * 样例数据照抄（06 第 2 行「超前」按既定裁定同步为「超前完成」）。
+ * 样例数据使用系统真实下发全名（2026-11-26 修正：截断名/虚构名 0 命中会点名；
+ * 06 第 2 行「超前」按既定裁定同步为「超前完成」）。
  */
 const VARIANTS: ReportFillTemplateVariant[] = ['func', 'college-single', 'college-all']
 
@@ -117,7 +118,7 @@ describe('reportFillImportTemplate', () => {
         '5. 定位规则：按「责任部门 + 目标部门 + 子指标名称」匹配已下发子指标行；无匹配 = 该行失败点名。'
       )
       expect(rules[10]).toBe(
-        '7. 彩色底纹行为示例数据（绿=预算部线 / 黄=什邡管委会线），正式导入前请删除。'
+        '7. 彩色底纹行为示例数据（绿=教务处线 / 黄=数字校园建设办公室线），正式导入前请删除。'
       )
     })
 
@@ -142,46 +143,76 @@ describe('reportFillImportTemplate', () => {
     })
   })
 
-  describe('样例数据逐字对齐需求方文件', () => {
-    it('04 样例：教务处 / 战略发展部 / 2 条数据行 + 1 行枚举', () => {
+  describe('样例数据使用系统真实下发全名（2026-11-26 口径修正）', () => {
+    it('04 样例：教务处 / 战略发展部 / 2 条数据行 + 1 行枚举，首行用核心指标 2005 全名', () => {
       const sheet = buildReportFillTemplateSheet('func', '教务处')
       expect(sheet.rows).toHaveLength(3)
       expect(sheet.rows[0]).toMatchObject({
         serial: '1',
         responsibleDept: '教务处',
         targetDept: '战略发展部',
-        indicatorName: '推进教务处教学质量提升专项工作落地见效',
         weight: '40',
         selfRating: '正常',
         enumSource: '超前完成'
       })
+      // 2026-11-26 修复：原名是截断的「推进教务处教学质量提升专项工作落地见效」→
+      // 换成系统下发全名（截断名在后端按名称精确定位 0 命中会点名）
+      expect(sheet.rows[0].indicatorName).toBe(
+        '推进教务处教学质量提升专项工作落地见效，围绕课堂教学改革、课程思政建设、'
+        + '实践教学体系优化三大主线，建立教学质量监测数据平台，形成月度调度、学期评估、年度考核的持续改进闭环'
+      )
+      expect(sheet.rows[0].indicatorName).toHaveLength(85)
+      expect(sheet.rows[0].indicatorName.endsWith('持续改进闭环')).toBe(true)
       expect(sheet.rows[1].indicatorName).toBe('完善课程建设与专业评估机制')
       expect(sheet.rows[2].enumSource).toBe('滞后')
     })
 
-    it('05 样例：计算机学院 / 什邡管委会 / 2 条数据行', () => {
+    it('05 样例：计算机学院 / 数字校园建设办公室线真实子指标 / 2 条数据行', () => {
       const sheet = buildReportFillTemplateSheet('college-single', '计算机学院')
       expect(sheet.rows).toHaveLength(3)
       expect(sheet.rows[0]).toMatchObject({
         responsibleDept: '计算机学院',
-        targetDept: '什邡管委会',
-        indicatorName: '计算机学院-园区智慧化服务技术支撑',
-        weight: '40',
+        targetDept: '数字校园建设办公室',
+        indicatorName: '数字校园协同验证-统一认证与上云子项',
+        weight: '55',
         selfRating: '滞后'
       })
-      expect(sheet.rows[1].indicatorName).toBe('计算机学院-信息化运维绩效管理')
+      expect(sheet.rows[1].indicatorName).toBe('数字校园协同验证-数据治理子项')
     })
 
-    it('06 样例：4 行、跨两个归口部门，第 2 行等级已同步为「超前完成」', () => {
+    it('06 样例：4 行、跨教务处/数字校园建设办公室两条真实线，第 2 行等级已同步为「超前完成」', () => {
       const sheet = buildReportFillTemplateSheet('college-all', '计算机学院')
       expect(sheet.rows).toHaveLength(4)
-      expect(sheet.rows.filter(row => row.targetDept === '预算部')).toHaveLength(2)
-      expect(sheet.rows.filter(row => row.targetDept === '什邡管委会')).toHaveLength(2)
+      expect(sheet.rows.filter(row => row.targetDept === '教务处')).toHaveLength(2)
+      expect(sheet.rows.filter(row => row.targetDept === '数字校园建设办公室')).toHaveLength(2)
+      expect(sheet.rows[0].indicatorName).toBe('导入下发验证-基础A')
       const second = sheet.rows[1]
-      expect(second.indicatorName).toBe('计算机学院-园区数字孪生联合实验室共建')
+      expect(second.indicatorName).toBe('导入下发验证-基础B')
       // 需求方样例写「超前」→ 按 2026-11-25 裁定强制同步
       expect(second.selfRating).toBe('超前完成')
       expect(sheet.rows.every(row => row.selfRating !== '超前')).toBe(true)
+      expect(sheet.rows[2].indicatorName).toBe('数字校园协同验证-统一认证与上云子项')
+      expect(sheet.rows[3].indicatorName).toBe('数字校园协同验证-数据治理子项')
+    })
+
+    it('示例行子指标名不得是截断名/虚构名：名称非空时必须以系统真实下发全名出现', () => {
+      // 本地库锚点（2026-11-26 核对）：计算机学院两条真实线 + 教务处 2005/2006 全名
+      const realNames = new Set([
+        '推进教务处教学质量提升专项工作落地见效，围绕课堂教学改革、课程思政建设、实践教学体系优化三大主线，'
+          + '建立教学质量监测数据平台，形成月度调度、学期评估、年度考核的持续改进闭环',
+        '完善课程建设与专业评估机制',
+        '导入下发验证-基础A',
+        '导入下发验证-基础B',
+        '数字校园协同验证-统一认证与上云子项',
+        '数字校园协同验证-数据治理子项'
+      ])
+      for (const variant of VARIANTS) {
+        for (const row of buildReportFillTemplateSheet(variant, 'X').rows) {
+          if (row.indicatorName) {
+            expect(realNames.has(row.indicatorName)).toBe(true)
+          }
+        }
+      }
     })
 
     it('样例行的等级全部落在白名单内（非空时）', () => {
