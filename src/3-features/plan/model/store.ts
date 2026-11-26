@@ -564,45 +564,6 @@ export const usePlanStore = defineStore('plan', () => {
   }
 
   /**
-   * 审批通过 Plan
-   * @param planId Plan ID
-   */
-  const approvePlan = async (planId: number | string) => {
-    submitting.value = true
-    error.value = null
-
-    try {
-      logger.info(`[Plan Store] Approving plan ${planId}...`)
-      const { planApi } = await import('@/features/plan/api/planApi')
-      const response = await planApi.approvePlan(planId)
-
-      if (hasApiData(response)) {
-        // 更新本地 Plan 状态
-        const index = plans.value.findIndex(p => p.id === planId)
-        if (index !== -1) {
-          plans.value[index] = { ...plans.value[index], ...response.data }
-        }
-        if (currentPlan.value?.id === planId) {
-          currentPlan.value = { ...currentPlan.value, ...response.data }
-        }
-        ElMessage.success('审批通过')
-        return response.data
-      }
-
-      throw new Error(response.message || '审批失败')
-    } catch (err) {
-      error.value = err instanceof Error ? err.message : '审批失败'
-      logger.error('[Plan Store] Failed to approve plan:', err)
-      ElMessage.error(error.value)
-      // 2026-10-30：业务层已提示，标记后响应拦截器不再重复弹同一条。
-      markErrorHandled(err)
-      throw err
-    } finally {
-      submitting.value = false
-    }
-  }
-
-  /**
    * 驳回 Plan
    * @param planId Plan ID
    * @param reason 驳回原因
@@ -672,45 +633,6 @@ export const usePlanStore = defineStore('plan', () => {
     } catch (err) {
       error.value = err instanceof Error ? err.message : '撤回失败'
       logger.error('[Plan Store] Failed to withdraw plan:', err)
-      ElMessage.error(error.value)
-      // 2026-10-30：业务层已提示，标记后响应拦截器不再重复弹同一条。
-      markErrorHandled(err)
-      throw err
-    } finally {
-      submitting.value = false
-    }
-  }
-
-  /**
-   * 下发 Plan (发布)
-   * @param planId Plan ID
-   */
-  const publishPlan = async (planId: number | string) => {
-    submitting.value = true
-    error.value = null
-
-    try {
-      logger.info(`[Plan Store] Publishing plan ${planId}...`)
-      const { planApi } = await import('@/features/plan/api/planApi')
-      const response = await planApi.publishPlan(planId)
-
-      if (hasApiData(response)) {
-        // 更新本地 Plan 状态
-        const index = plans.value.findIndex(p => p.id === planId)
-        if (index !== -1) {
-          plans.value[index] = { ...plans.value[index], ...response.data }
-        }
-        if (currentPlan.value?.id === planId) {
-          currentPlan.value = { ...currentPlan.value, ...response.data }
-        }
-        ElMessage.success('下发成功')
-        return response.data
-      }
-
-      throw new Error(response.message || '下发失败')
-    } catch (err) {
-      error.value = err instanceof Error ? err.message : '下发失败'
-      logger.error('[Plan Store] Failed to publish plan:', err)
       ElMessage.error(error.value)
       // 2026-10-30：业务层已提示，标记后响应拦截器不再重复弹同一条。
       markErrorHandled(err)
@@ -1005,10 +927,8 @@ export const usePlanStore = defineStore('plan', () => {
 
     // Plan approval workflow
     submitPlanForApproval,
-    approvePlan,
     rejectPlan,
     withdrawPlan,
-    publishPlan,
     archivePlan
   }
 })
