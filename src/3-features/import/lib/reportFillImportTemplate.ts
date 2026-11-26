@@ -168,7 +168,16 @@ const SHARED_RULES = {
  * <p>三份的条目分组与编号各不相同（04/05 是 1、2、🔴、🔴、填报字段、权重列、3、4、5、6；
  * 06 是 1、2、3拆线、🔴、🔴、填报字段、权重列、4、5、6、7），因此各自写死。
  */
-export function buildReportFillTemplateRules(variant: ReportFillTemplateVariant): string[] {
+export function buildReportFillTemplateRules(
+  variant: ReportFillTemplateVariant,
+  prefilled = true
+): string[] {
+  // 2026-11-26（Codex review）：只有真的按已下发数据预填时才能说「请勿修改」；
+  // 回退示例行（如职能部门视角还没有真实预填）必须明确提示删除示例行，否则用户会把示例指标当真实数据提交。
+  const fillHint = (issuedText: string): string =>
+    prefilled
+      ? `黄色底纹两列（自评等级、进度说明）是本次要填写的内容；${issuedText}，请勿修改。`
+      : '本表当前为示例数据：请在正式导入前删除示例行，并按本部门/学院已下发的子指标填写「目标部门 / 子指标名称 / 权重」，再填写黄色底纹两列（自评等级、进度说明）。'
   if (variant === 'func') {
     return [
       '1. 使用者：职能部门填报人登录自己账号，在「指标填报」页用「导入填报」按钮上传（需求第二步新功能）。',
@@ -180,7 +189,7 @@ export function buildReportFillTemplateRules(variant: ReportFillTemplateVariant)
       '3. 归属月份：本表不设月份列——归属月份在导入界面上选择。',
       '4. 定位规则：按「责任部门 + 子指标名称」匹配该部门已下发的子指标行；无匹配 = 该行失败点名。',
       '5. 导入流程：选择文件 → 解析预览（责任部门/目标校验 + 定位 + 数值校验）→ 确认导入 → 自动进入上报审批（审批通过后数据看板生效）。',
-      '6. 黄色底纹两列（自评等级、进度说明）是本次要填写的内容；其余列已按系统已下发数据预填，请勿修改。'
+      `6. ${fillHint('其余列已按系统已下发数据预填')}`
     ]
   }
   if (variant === 'college-single') {
@@ -194,7 +203,7 @@ export function buildReportFillTemplateRules(variant: ReportFillTemplateVariant)
       '3. 归属月份：本表不设月份列——归属月份在导入界面上选择。',
       '4. 定位规则：按「责任部门 + 目标部门 + 子指标名称」匹配该学院该归口线已下发的子指标行；无匹配 = 该行失败点名。',
       '5. 导入流程：选择文件 → 解析预览（责任部门/目标校验 + 定位 + 数值校验）→ 确认导入 → 进入该归口线的上报审批（审批通过后数据看板生效）。',
-      '6. 黄色底纹两列（自评等级、进度说明）是本次要填写的内容；其余列已按当前归口线已下发数据预填，请勿修改。'
+      `6. ${fillHint('其余列已按当前归口线已下发数据预填')}`
     ]
   }
   return [
@@ -208,7 +217,7 @@ export function buildReportFillTemplateRules(variant: ReportFillTemplateVariant)
     '4. 归属月份：本表不设月份列——归属月份在导入界面上选择。',
     '5. 定位规则：按「责任部门 + 目标部门 + 子指标名称」匹配已下发子指标行；无匹配 = 该行失败点名。',
     '6. 导入流程：选择文件 → 解析预览（责任部门/目标校验 + 按目标部门分组展示将提交/将跳过/错误组）→ 确认批量导入 → 逐线自动提交进审批（通过后数据看板生效）。',
-    '7. 黄色底纹两列（自评等级、进度说明）是本次要填写的内容；其余列已按本学院各归口线已下发数据预填，请勿修改。'
+    `7. ${fillHint('其余列已按本学院各归口线已下发数据预填')}`
   ]
 }
 
@@ -395,11 +404,12 @@ export function buildReportFillTemplateSheet(
 
 /** 「填写说明」页（单列，标题 + 逐条）。 */
 export function buildReportFillGuideSheet(
-  variant: ReportFillTemplateVariant
+  variant: ReportFillTemplateVariant,
+  prefilled = true
 ): ExcelExportSheet<{ text: string }> {
   const rows = [
     { text: buildReportFillGuideTitle(variant) },
-    ...buildReportFillTemplateRules(variant).map(text => ({ text }))
+    ...buildReportFillTemplateRules(variant, prefilled).map(text => ({ text }))
   ]
   return {
     sheetName: '填写说明',

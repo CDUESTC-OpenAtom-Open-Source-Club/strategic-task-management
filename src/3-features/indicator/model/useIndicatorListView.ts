@@ -6221,20 +6221,35 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
           return String(org.name)
         }
       }
-      const fallbackName = (plan as unknown as { functionalOrgName?: string } | undefined)
-        ?.functionalOrgName
-      return String(fallbackName ?? '')
+      // 2026-11-26（Codex review P2）：老计划的 functionalOrgId 可能缺失，
+      // planApi.transformPlan 也不保留 functionalOrgName —— 此时按行上父级核心指标的
+      // targetOrg（后端权威归口字段）兜底，避免导出「目标部门为空」的行导致预览无法分组。
+      return ''
+    }
+    const resolveRowTargetDept = (row: StrategicIndicator, planTargetDept: string): string => {
+      if (planTargetDept) {
+        return planTargetDept
+      }
+      const parent = resolveParentIndicator(row as { parentIndicatorId?: string | number | null })
+      const parentOrgId = Number(parent?.targetOrgId ?? NaN)
+      if (Number.isFinite(parentOrgId) && parentOrgId > 0) {
+        const org = orgStore.departments.find(item => Number(item.id) === parentOrgId)
+        if (org?.name) {
+          return String(org.name)
+        }
+      }
+      return String(parent?.targetOrgName ?? '')
     }
     return collegePlanLineRowsets.value
       .flatMap(line => {
-        const targetDept = resolveTargetDept(line.planId)
+        const planTargetDept = resolveTargetDept(line.planId)
         return (line.rows ?? []).map(row => ({
-          targetDept,
+          targetDept: resolveRowTargetDept(row, planTargetDept),
           indicatorName: String(row.name ?? ''),
           weight: row.weight === null || row.weight === undefined ? '' : String(row.weight)
         }))
       })
-      .filter(row => row.indicatorName.trim().length > 0)
+      .filter(row => row.indicatorName.trim().length > 0 && row.targetDept.trim().length > 0)
   })
 
   return {

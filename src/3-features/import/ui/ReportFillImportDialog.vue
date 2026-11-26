@@ -63,7 +63,11 @@
           <div class="el-upload__tip">
             仅支持 .xlsx / .xls；请使用
             <el-button link type="primary" @click="handleDownloadTemplate">下载模板</el-button>
-            填写，示例行请在正式导入前删除。
+            {{
+              hasPrefillRows
+                ? '填写：模板已按当前已下发数据预填，只需填写黄色两列，请勿删改其余列。'
+                : '填写，示例行请在正式导入前删除。'
+            }}
           </div>
         </template>
       </el-upload>
@@ -334,6 +338,11 @@ const committing = ref(false)
 const preview = ref<ReportFillPreviewResponse | null>(null)
 const commitResults = ref<ReportFillGroupResult[]>([])
 const pickedMonth = ref(props.defaultReportMonth ?? '')
+/**
+ * 2026-11-26（Codex review）：模板是否真的按已下发数据预填。
+ * <p>只有预填时才允许提示「请勿删改其余列」；否则必须提示删除示例行，避免用户把示例指标当真实数据提交。
+ */
+const hasPrefillRows = computed(() => (props.prefillRows?.length ?? 0) > 0)
 /** 同月同线已有填报时是否覆盖（默认不勾 = 跳过，与后端 conflictMode 默认值一致） */
 const overwriteExisting = ref(false)
 /** 弹窗内嵌报错（预览/提交失败时显示后端原文，成功后清空） */
@@ -529,7 +538,7 @@ async function handleDownloadTemplate() {
       props.responsibleOrgName ?? '',
       props.prefillRows
     )
-    const guideSheet = buildReportFillGuideSheet(props.variant)
+    const guideSheet = buildReportFillGuideSheet(props.variant, hasPrefillRows.value)
     await exportSheetsToExcel(
       [dataSheet as unknown as never, guideSheet as unknown as never],
       buildReportFillTemplateFileName(props.variant)
