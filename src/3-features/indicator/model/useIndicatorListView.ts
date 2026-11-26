@@ -87,6 +87,11 @@ import type {
 import { useDataValidator } from '@/shared/lib/validation/dataValidator'
 import { showCriticalErrorNotice } from '@/shared/lib/criticalErrorNotice'
 import { markErrorHandled } from '@/shared/lib/utils/errorToast'
+// 2026-11-26（模板动态行）：下载填报导入模板的数据行 = 当前视角真实已下发子指标
+import type {
+  ReportFillDynamicTemplateRow,
+  ReportFillTemplateVariant
+} from '@/features/import/lib/reportFillImportTemplate'
 import { getPlanStatusDisplay, normalizePlanStatus } from '@/features/task/lib/planStatus'
 import type { StatusTagType } from '@/shared/lib/utils/formatters'
 import { formatPendingApprovalLabel } from '@/shared/lib/utils/workflowStepLabel'
@@ -6190,6 +6195,79 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     () => effectiveViewingDept.value || authStore.userDepartment || ''
   )
 
+  /**
+   * 2026-11-26（填报导入模板动态行）：三场景模板数据行的<b>真实行集</b>（按变体取用）。
+   *
+   * <p>下载的填报导入模板（04/05/06）数据行从静态示例行换成「当前视角真实已下发子指标」，
+   * 子指标名称/权重与页面表格显示同源（{@code indicator.name} / {@code indicator.weight}）：
+   * <ul>
+   *   <li><b>04（func）</b>：本部门已下发指标逐行（上报目标恒为战略发展部）。</li>
+   *   <li><b>05（college-single）</b>：当前所选「归属部门」那条归口线的已下发子指标——
+   *       未选归口为空数组（模板回退静态示例行兜底；导入按钮本身也要求先选归属部门）。</li>
+   *   <li><b>06（college-all）</b>：全部归口线的已下发子指标（按归口分组、保持线的先后顺序）。</li>
+   * </ul>
+   *
+   * <p>放在本层而不是组件层（与 {@link reportFillCollegeName} 同理由）：组件层的顶层
+   * computed 会直接访问解构字段，页面壳测试的 mock 缺字段时会在 setup 期抛
+   * 「Cannot read properties of undefined」；本层闭包引用的都是模块内声明。
+   */
+  const reportFillTemplateRowsByVariant = computed<
+    Record<ReportFillTemplateVariant, ReportFillDynamicTemplateRow[]>
+  >(() => {
+    const toTemplateRow = (
+      row: StrategicIndicator,
+      targetDept: string | null
+    ): ReportFillDynamicTemplateRow => ({
+      targetDept,
+      name: String(row.name ?? '').trim(),
+      weight: row.weight ?? null
+    })
+
+    // 04（职能部门）：本部门已下发指标逐行（filterIndicatorsForCurrentViewer 后的
+    // 当前计划行，未套类型筛选——模板行不受页面筛选器影响）
+    const funcRows = isSecondaryCollege.value
+      ? []
+      : currentPlanIndicators.value.map(row => toTemplateRow(row, '战略发展部'))
+
+    if (isSecondaryCollege.value) {
+      // 学院行集基座（已按年份收口，与归属部门下拉选项同源）
+      const baseRows = collegeFunctionalDeptRows.value
+      // 05（学院单归口）：当前所选归属部门那条线（页面表格显示的同源行）
+      const selectedDept = filterOwnerDept.value.trim()
+      const singleRows = selectedDept
+        ? baseRows
+            .filter(row => getRowFunctionalDeptName(row) === selectedDept)
+            .map(row => toTemplateRow(row, selectedDept))
+        : []
+
+      // 06（学院多归口批量）：全部归口线子指标，按归口分组排布——
+      // 以归口名首次出现顺序稳定分组（Map 保序），父级未解析出归口的行聚到尾部空名组
+      const groups = new Map<string, ReportFillDynamicTemplateRow[]>()
+      baseRows.forEach(row => {
+        const deptName = getRowFunctionalDeptName(row)
+        const key = deptName ?? ''
+        const bucket = groups.get(key)
+        if (bucket) {
+          bucket.push(toTemplateRow(row, deptName))
+        } else {
+          groups.set(key, [toTemplateRow(row, deptName)])
+        }
+      })
+
+      return {
+        func: funcRows,
+        'college-single': singleRows,
+        'college-all': Array.from(groups.values()).flat()
+      }
+    }
+
+    return {
+      func: funcRows,
+      'college-single': [],
+      'college-all': []
+    }
+  })
+
   return {
     DEFAULT_APPROVAL_STATUS,
     PLAN_APPROVAL_POLL_INTERVAL_MS,
@@ -6425,6 +6503,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     reportFillCycleId,
     reportFillCycleName,
     reportFillMonth,
+    reportFillTemplateRowsByVariant,
     resolvePlanYear,
     restartPlanApprovalPolling,
     saveIndicatorEdit,

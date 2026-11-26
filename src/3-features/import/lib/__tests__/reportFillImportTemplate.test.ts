@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import JSZip from 'jszip'
 import {
   REPORT_FILL_LEVEL_BY_LABEL,
   REPORT_FILL_LEVEL_LABELS,
+  TEMPLATE_STYLE,
   buildReportFillGuideSheet,
   buildReportFillGuideTitle,
   buildReportFillSheetName,
@@ -10,6 +12,7 @@ import {
   resolveReportFillLevel,
   type ReportFillTemplateVariant
 } from '../reportFillImportTemplate'
+import { buildExcelBlob } from '@/shared/lib/export/excel'
 
 /**
  * 2026-11-25（指标填报导入式上报）：模板生成单测。
@@ -17,8 +20,34 @@ import {
  * <p>标准模板以需求方「SISM-导入模板-04/05/06」为准：8 列结构、三套说明页逐字照抄、
  * 样例数据使用系统真实下发全名（2026-11-26 修正：截断名/虚构名 0 命中会点名；
  * 06 第 2 行「超前」按既定裁定同步为「超前完成」）。
+ *
+ * <p>2026-11-26（样式逐格对齐）：新增 xlsx 级断言——隐藏列、裸值列、F 列下拉、
+ * 整表保护、冻结 C2、列宽/行高、微软雅黑字体，全部在生成的 xlsx XML 上核对。
  */
 const VARIANTS: ReportFillTemplateVariant[] = ['func', 'college-single', 'college-all']
+
+/** 读取 xlsx 内某个文件的 xml 文本 */
+const readPart = async (blob: Blob, path: string): Promise<string> => {
+  const zip = await JSZip.loadAsync(await blob.arrayBuffer())
+  const file = zip.file(path)
+  if (!file) {
+    throw new Error(`xlsx 内缺少文件：${path}`)
+  }
+  return file.async('string')
+}
+
+/** 取出某个 `<c r="XX" ...>` 开始标签 */
+const getCellTag = (sheetXml: string, reference: string): string => {
+  const match = sheetXml.match(new RegExp(`<c r="${reference}"[^>]*>`))
+  return match?.[0] ?? ''
+}
+
+/** 生成 04/05/06 三份上报模板的 xlsx（数据页 + 说明页） */
+const buildTemplateBlob = async (variant: ReportFillTemplateVariant): Promise<Blob> =>
+  buildExcelBlob([
+    buildReportFillTemplateSheet(variant, '教务处') as never,
+    buildReportFillGuideSheet(variant) as never
+  ])
 
 describe('reportFillImportTemplate', () => {
   describe('自评等级白名单', () => {
@@ -29,7 +58,7 @@ describe('reportFillImportTemplate', () => {
     })
 
     it('全角空格包裹的合法值也能识别', () => {
-      expect(resolveReportFillLevel('正常\u3000')).toBe('NORMAL')
+      expect(resolveReportFillLevel('正常　')).toBe('NORMAL')
     })
 
     it('「超前」与未知值 → null（不静默放过）', () => {
@@ -159,10 +188,10 @@ describe('reportFillImportTemplate', () => {
       // 换成系统下发全名（截断名在后端按名称精确定位 0 命中会点名）
       expect(sheet.rows[0].indicatorName).toBe(
         '推进教务处教学质量提升专项工作落地见效，围绕课堂教学改革、课程思政建设、'
-        + '实践教学体系优化三大主线，建立教学质量监测数据平台，形成月度调度、学期评估、年度考核的持续改进闭环'
+          + '实践教学体系优化三大主线，建立教学质量监测数据平台，形成月度调度、学期评估、年度考核的持续改进闭环'
       )
       expect(sheet.rows[0].indicatorName).toHaveLength(85)
-      expect(sheet.rows[0].indicatorName.endsWith('持续改进闭环')).toBe(true)
+      expect(sheet.rows[0].indicatorName?.endsWith('持续改进闭环')).toBe(true)
       expect(sheet.rows[1].indicatorName).toBe('完善课程建设与专业评估机制')
       expect(sheet.rows[2].enumSource).toBe('滞后')
     })
@@ -227,7 +256,327 @@ describe('reportFillImportTemplate', () => {
 
     it('「责任部门」列写当前登录组织名（不照抄他院名字）', () => {
       const other = buildReportFillTemplateSheet('college-all', '马克思主义学院')
-      expect(other.rows.every(row => row.responsibleDept === '马克思主义学院')).toBe(true)
+      expect(other.rows.filter(row => row.responsibleDept !== null).every(
+        row => row.responsibleDept === '马克思主义学院'
+      )).toBe(true)
+    })
+  })
+
+  describe('仅枚举行（04/05 末行）：整行只有第 8 列有值', () => {
+    it('04 末行：责任部门为空、其余列为空，只保留枚举第三档', () => {
+      const sheet = buildReportFillTemplateSheet('func', '教务处')
+      const last = sheet.rows[sheet.rows.length - 1]
+      expect(last.enumSource).toBe('滞后')
+      expect(last.responsibleDept).toBeNull()
+      expect(last.serial).toBeNull()
+      expect(last.targetDept).toBeNull()
+      expect(last.indicatorName).toBeNull()
+      expect(last.weight).toBeNull()
+      expect(last.selfRating).toBeNull()
+      expect(last.remark).toBeNull()
+    })
+
+    it('05 末行同样是仅枚举行', () => {
+      const sheet = buildReportFillTemplateSheet('college-single', '计算机学院')
+      const last = sheet.rows[sheet.rows.length - 1]
+      expect(last.enumSource).toBe('滞后')
+      expect(last.responsibleDept).toBeNull()
+      expect(last.selfRating).toBeNull()
+    })
+
+    it('06 末行是正常数据行（第 4 行数据行，无枚举值）', () => {
+      const sheet = buildReportFillTemplateSheet('college-all', '计算机学院')
+      const last = sheet.rows[sheet.rows.length - 1]
+      expect(last.serial).toBe('4')
+      expect(last.enumSource).toBeNull()
+      expect(last.responsibleDept).toBe('计算机学院')
+    })
+  })
+
+  describe('模板动态行（2026-11-26：真实已下发子指标替换静态示例行）', () => {
+    /** 计算机学院×教务处线（700067）的 4 条真实子指标（名称/权重以本地库为准） */
+    const dynamicRows = [
+      { targetDept: '教务处', name: '导入下发验证-基础A', weight: 40 },
+      { targetDept: '教务处', name: '导入下发验证-基础B', weight: 30 },
+      { targetDept: '教务处', name: '导入下发验证-基础C', weight: 30 },
+      { targetDept: '教务处', name: '导入下发验证-发展D', weight: 100 }
+    ]
+
+    it('05 单归口：数据行 = 传入的真实子指标逐行——名称/权重预填、等级/说明留空、序号逐行递增', () => {
+      const sheet = buildReportFillTemplateSheet('college-single', '计算机学院', dynamicRows)
+      expect(sheet.rows).toHaveLength(4)
+      expect(sheet.rows[0]).toMatchObject({
+        serial: '1',
+        responsibleDept: '计算机学院',
+        targetDept: '教务处',
+        indicatorName: '导入下发验证-基础A',
+        weight: '40',
+        selfRating: null,
+        remark: null
+      })
+      expect(sheet.rows[3]).toMatchObject({
+        serial: '4',
+        indicatorName: '导入下发验证-发展D',
+        weight: '100'
+      })
+      expect(sheet.rows.map(row => row.serial)).toEqual(['1', '2', '3', '4'])
+    })
+
+    it('动态行 H2:H4 补齐三档枚举（F 列下拉源），第 4 行起不落格；责任部门逐行写登录组织', () => {
+      const sheet = buildReportFillTemplateSheet('college-single', '计算机学院', dynamicRows)
+      expect(sheet.rows.map(row => row.enumSource)).toEqual(['超前完成', '正常', '滞后', null])
+      expect(sheet.rows.every(row => row.responsibleDept === '计算机学院')).toBe(true)
+      expect(sheet.dataValidations?.[0]?.formula1).toBe('=$H$2:$H$4')
+    })
+
+    it('真实行不足 3 行：补「仅枚举行」凑齐 H2:H4（不落责任部门/序号）', () => {
+      const sheet = buildReportFillTemplateSheet('college-single', '计算机学院', [dynamicRows[0]])
+      expect(sheet.rows).toHaveLength(3)
+      expect(sheet.rows[0]).toMatchObject({ serial: '1', indicatorName: '导入下发验证-基础A' })
+      expect(sheet.rows[1]).toMatchObject({
+        serial: null,
+        responsibleDept: null,
+        indicatorName: null,
+        enumSource: '正常'
+      })
+      expect(sheet.rows[2]).toMatchObject({ serial: null, responsibleDept: null, enumSource: '滞后' })
+    })
+
+    it('04 职能：目标部门未传时补「战略发展部」', () => {
+      const sheet = buildReportFillTemplateSheet('func', '教务处', [
+        { targetDept: null, name: '完善课程建设与专业评估机制', weight: 60 }
+      ])
+      expect(sheet.rows[0].targetDept).toBe('战略发展部')
+      expect(sheet.rows[0].responsibleDept).toBe('教务处')
+    })
+
+    it('06 批量：多归口行逐行落格（归口分组排布由调用方定序），等级/说明全部留空', () => {
+      const sheet = buildReportFillTemplateSheet('college-all', '计算机学院', [
+        { targetDept: '教务处', name: '导入下发验证-基础A', weight: 40 },
+        { targetDept: '教务处', name: '导入下发验证-基础B', weight: 30 },
+        { targetDept: '党委办公室', name: '党委办协同验证-A', weight: 50 },
+        { targetDept: '党委办公室', name: '党委办协同验证-B', weight: 50 }
+      ])
+      expect(sheet.rows.map(row => row.targetDept)).toEqual([
+        '教务处',
+        '教务处',
+        '党委办公室',
+        '党委办公室'
+      ])
+      expect(sheet.rows.every(row => row.selfRating === null && row.remark === null)).toBe(true)
+    })
+
+    it('空数组/缺参回退静态示例行（兜底口径不变；静态样例既有断言即回归）', () => {
+      const fallback = buildReportFillTemplateSheet('college-single', '计算机学院')
+      const empty = buildReportFillTemplateSheet('college-single', '计算机学院', [])
+      expect(empty.rows).toEqual(fallback.rows)
+      expect(empty.rows[0].indicatorName).toBe('数字校园协同验证-统一认证与上云子项')
+    })
+
+    it('生成的 xlsx：数据页落真实行（静态示例名不再出现），样式/保护/下拉口径不变', async () => {
+      const blob = await buildExcelBlob([
+        buildReportFillTemplateSheet('college-single', '计算机学院', dynamicRows) as never,
+        buildReportFillGuideSheet('college-single') as never
+      ])
+      const sheetXml = await readPart(blob, 'xl/worksheets/sheet1.xml')
+      const sharedStrings = await readPart(blob, 'xl/sharedStrings.xml')
+      // 数据行是真实子指标，静态示例名不再出现
+      expect(sharedStrings).toContain('导入下发验证-基础A')
+      expect(sharedStrings).not.toContain('数字校园协同验证')
+      // 冻结 C2、下拉、保护、列宽与静态路径同一套口径
+      expect(sheetXml).toContain('topLeftCell="C2"')
+      expect(sheetXml).toContain('<formula1>=$H$2:$H$4</formula1>')
+      expect(sheetXml).toMatch(/<sheetProtection[^>]*sheet="1"/)
+      expect(sheetXml).toContain('<row r="2" ht="36" customHeight="1">')
+    })
+  })
+
+  describe('样式参数（与需求方样例逐格对齐）', () => {
+    it('列宽为 A6 B16 C16 D44 E13 F14 G36 H13', () => {
+      const sheet = buildReportFillTemplateSheet('func', '教务处')
+      expect(sheet.columns.map(column => column.width)).toEqual([6, 16, 16, 44, 13, 14, 36, 13])
+    })
+
+    it('行高：表头 34、数据行 36', () => {
+      const sheet = buildReportFillTemplateSheet('func', '教务处')
+      expect(sheet.headerHeight).toBe(34)
+      expect(sheet.bodyRowHeight).toBe(36)
+    })
+
+    it('冻结 C2 + 网格线可见 + 第 8 列隐藏/裸值 + 整表保护', () => {
+      const sheet = buildReportFillTemplateSheet('func', '教务处')
+      expect(sheet.stickyRowsCount).toBe(1)
+      expect(sheet.stickyColumnsCount).toBe(2)
+      expect(sheet.showGridLines).toBe(true)
+      expect(sheet.hiddenColumns).toEqual([8])
+      expect(sheet.plainColumns).toEqual([8])
+      expect(sheet.sheetProtection).toEqual({})
+    })
+
+    it('第 8 列列级 plain + hidden', () => {
+      const sheet = buildReportFillTemplateSheet('func', '教务处')
+      expect(sheet.columns[7].plain).toBe(true)
+      expect(sheet.columns[7].hidden).toBe(true)
+      // 其余 7 列不隐藏、不裸值
+      for (let i = 0; i < 7; i += 1) {
+        expect(sheet.columns[i].plain).toBeUndefined()
+        expect(sheet.columns[i].hidden).toBeUndefined()
+      }
+    })
+
+    it('A-E 列灰底、F-G 列金底，且都带 #BBBBBB 边框与微软雅黑', () => {
+      const sheet = buildReportFillTemplateSheet('func', '教务处')
+      for (let i = 0; i < 5; i += 1) {
+        expect(sheet.columns[i].headerBackgroundColor).toBe('#595959')
+        expect(sheet.columns[i].bodyBackgroundColor).toBe('#EDEDED')
+      }
+      expect(sheet.columns[5].headerBackgroundColor).toBe('#BF8F00')
+      expect(sheet.columns[5].bodyBackgroundColor).toBe('#FFE699')
+      expect(sheet.columns[6].headerBackgroundColor).toBe('#BF8F00')
+      expect(sheet.columns[6].bodyBackgroundColor).toBe('#FFE699')
+      for (let i = 0; i < 7; i += 1) {
+        expect(sheet.columns[i].headerBorderColor).toBe('#BBBBBB')
+        expect(sheet.columns[i].bodyBorderColor).toBe('#BBBBBB')
+        expect(sheet.columns[i].fontFamily).toBe('微软雅黑')
+        expect(sheet.columns[i].headerFontSize).toBe(11)
+        expect(sheet.columns[i].bodyFontSize).toBe(10)
+        expect(sheet.columns[i].bodyAlign).toBe('center')
+        expect(sheet.columns[i].bodyAlignVertical).toBe('center')
+      }
+    })
+
+    it('F 列下拉规则参数与需求方一致', () => {
+      const sheet = buildReportFillTemplateSheet('func', '教务处')
+      expect(sheet.dataValidations).toEqual([
+        {
+          sqref: 'F2:F1000',
+          formula1: '=$H$2:$H$4',
+          errorTitle: '自评等级填写错误',
+          error: '自评等级只能从下拉中选择：超前完成 / 正常 / 滞后（三选一）',
+          promptTitle: '自评等级',
+          prompt: '点击单元格右侧箭头，从下拉中选择：超前完成 / 正常 / 滞后',
+          allowBlank: false
+        }
+      ])
+    })
+
+    it('说明页：无表头行、列宽 114、行高 26、不冻结、白底无边框', () => {
+      const guide = buildReportFillGuideSheet('func')
+      expect(guide.skipHeaderRow).toBe(true)
+      expect(guide.columns[0].width).toBe(114)
+      expect(guide.bodyRowHeight).toBe(26)
+      expect(guide.stickyRowsCount).toBe(0)
+      expect(guide.showGridLines).toBe(true)
+      // 第 1 行是标题、第 2 行空行
+      expect(guide.rows[0].text).toBe(buildReportFillGuideTitle('func'))
+      expect(guide.rows[1].text).toBe('')
+      expect(guide.rows).toHaveLength(buildReportFillTemplateRules('func').length + 2)
+    })
+  })
+
+  describe('生成的 xlsx（XML 级核对）', () => {
+    it('数据页：隐藏第 8 列、H 列无 s 样式索引、冻结 C2、下拉与保护齐备', async () => {
+      const blob = await buildTemplateBlob('func')
+      const sheetXml = await readPart(blob, 'xl/worksheets/sheet1.xml')
+
+      // 第 8 列隐藏
+      expect(sheetXml).toMatch(/<col[^>]*min="8"[^>]*hidden="1"/)
+      // H 列单元格不带 s 属性（裸值）
+      expect(getCellTag(sheetXml, 'H1')).not.toMatch(/\ss="/)
+      expect(getCellTag(sheetXml, 'H2')).not.toMatch(/\ss="/)
+      expect(getCellTag(sheetXml, 'H4')).not.toMatch(/\ss="/)
+      // A 列仍带 s 属性
+      expect(getCellTag(sheetXml, 'A1')).toMatch(/\ss="/)
+      // 冻结 C2
+      expect(sheetXml).toContain('topLeftCell="C2"')
+      expect(sheetXml).toContain('xSplit="2"')
+      expect(sheetXml).toContain('ySplit="1"')
+      // 网格线可见
+      expect(sheetXml).not.toContain('showGridLines="false"')
+      // 下拉 + 保护
+      expect(sheetXml).toContain('sqref="F2:F1000"')
+      expect(sheetXml).toContain('<formula1>=$H$2:$H$4</formula1>')
+      expect(sheetXml).toContain('allowBlank="0"')
+      expect(sheetXml).toMatch(/<sheetProtection[^>]*sheet="1"/)
+      // 表头行高 34、数据行高 36
+      expect(sheetXml).toContain('<row r="1" ht="34" customHeight="1">')
+      expect(sheetXml).toContain('<row r="2" ht="36" customHeight="1">')
+      // 仅枚举行（04 第 4 行）不设行高
+      expect(sheetXml).toContain('<row r="4">')
+    })
+
+    it('数据页：列宽与样例一致（6/16/16/44/13/14/36/13）', async () => {
+      const blob = await buildTemplateBlob('func')
+      const sheetXml = await readPart(blob, 'xl/worksheets/sheet1.xml')
+      const widths = [...sheetXml.matchAll(/<col[^>]*min="(\d+)"[^>]*width="([\d.]+)"/g)].map(m => ({
+        col: Number(m[1]),
+        width: Number(m[2])
+      }))
+      expect(widths).toEqual([
+        { col: 1, width: 6 },
+        { col: 2, width: 16 },
+        { col: 3, width: 16 },
+        { col: 4, width: 44 },
+        { col: 5, width: 13 },
+        { col: 6, width: 14 },
+        { col: 7, width: 36 },
+        { col: 8, width: 13 }
+      ])
+    })
+
+    it('说明页：无表头行、A1 是标题、行高 26、列宽 114、不冻结', async () => {
+      const blob = await buildTemplateBlob('func')
+      const sheetXml = await readPart(blob, 'xl/worksheets/sheet2.xml')
+      const sharedStrings = await readPart(blob, 'xl/sharedStrings.xml')
+
+      // A1 是标题行（没有独立表头行）
+      expect(sheetXml).toContain('<row r="1"')
+      expect(sharedStrings).toContain('填写说明（04 · 职能部门上报战略发展部 · 单点导入）')
+      // 行高 26
+      expect(sheetXml).toContain('<row r="1" ht="26" customHeight="1">')
+      expect(sheetXml).toContain('<row r="2" ht="26" customHeight="1">')
+      // 列宽 114
+      expect(sheetXml).toContain('<col min="1" max="1" width="114" customWidth="1"/>')
+      // 不冻结
+      expect(sheetXml).not.toContain('state="frozen"')
+      // 网格线可见
+      expect(sheetXml).not.toContain('showGridLines="false"')
+    })
+
+    it('样式表：字体为微软雅黑、边框 #BBBBBB、底色齐全', async () => {
+      const blob = await buildTemplateBlob('func')
+      const stylesXml = await readPart(blob, 'xl/styles.xml')
+
+      expect(stylesXml).toContain('<name val="微软雅黑"/>')
+      expect(stylesXml).toContain('rgb="FF595959"')
+      expect(stylesXml).toContain('rgb="FFBF8F00"')
+      expect(stylesXml).toContain('rgb="FFEDEDED"')
+      expect(stylesXml).toContain('rgb="FFFFE699"')
+      expect(stylesXml).toContain('rgb="FFBBBBBB"')
+    })
+
+    it('三份变体都生成成功且 sheet 名正确', async () => {
+      for (const variant of VARIANTS) {
+        const blob = await buildTemplateBlob(variant)
+        const workbookXml = await readPart(blob, 'xl/workbook.xml')
+        expect(workbookXml).toContain(buildReportFillSheetName(variant))
+        expect(workbookXml).toContain('填写说明')
+      }
+    })
+  })
+
+  describe('TEMPLATE_STYLE 常量与样例口径一致', () => {
+    it('关键样式常量', () => {
+      expect(TEMPLATE_STYLE.fontFamily).toBe('微软雅黑')
+      expect(TEMPLATE_STYLE.headerBackground).toBe('#595959')
+      expect(TEMPLATE_STYLE.headerBackgroundFillable).toBe('#BF8F00')
+      expect(TEMPLATE_STYLE.bodyBackground).toBe('#EDEDED')
+      expect(TEMPLATE_STYLE.bodyBackgroundFillable).toBe('#FFE699')
+      expect(TEMPLATE_STYLE.borderColor).toBe('#BBBBBB')
+      expect(TEMPLATE_STYLE.headerHeight).toBe(34)
+      expect(TEMPLATE_STYLE.bodyRowHeight).toBe(36)
+      expect(TEMPLATE_STYLE.guideColumnWidth).toBe(114)
+      expect(TEMPLATE_STYLE.guideRowHeight).toBe(26)
     })
   })
 })
