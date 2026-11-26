@@ -45,7 +45,7 @@ describe('reportFillImportTemplate', () => {
     })
   })
 
-  describe('数据页 8 列表头（以需求方 04/05/06 为准）', () => {
+  describe('数据页 7 列表头（以需求方 04/05/06 为准，2026-11-26 去掉枚举辅助列）', () => {
     it('04 职能部门：第 2 列「责任部门（登录部门）」、第 3 列「上报目标（战略发展部）」', () => {
       const sheet = buildReportFillTemplateSheet('func', '教务处')
       expect(sheet.columns.map(column => column.header)).toEqual([
@@ -55,8 +55,7 @@ describe('reportFillImportTemplate', () => {
         '子指标名称',
         '权重\n（系统只读）',
         '自评等级\n（点选填写）',
-        '进度说明\n（请填写）',
-        '（枚举来源，勿动）'
+        '进度说明\n（请填写）'
       ])
     })
 
@@ -67,7 +66,7 @@ describe('reportFillImportTemplate', () => {
       expect(single.columns[2].header).toBe('目标部门\n（归口职能部门）')
       expect(all.columns[1].header).toBe(single.columns[1].header)
       expect(all.columns[2].header).toBe(single.columns[2].header)
-      expect(single.columns).toHaveLength(8)
+      expect(single.columns).toHaveLength(7)
     })
 
     it('三份 sheet 名与需求方一致', () => {
@@ -89,7 +88,7 @@ describe('reportFillImportTemplate', () => {
         '3. 归属月份：本表不设月份列——归属月份在导入界面上选择。',
         '4. 定位规则：按「责任部门 + 子指标名称」匹配该部门已下发的子指标行；无匹配 = 该行失败点名。',
         '5. 导入流程：选择文件 → 解析预览（责任部门/目标校验 + 定位 + 数值校验）→ 确认导入 → 自动进入上报审批（审批通过后数据看板生效）。',
-        '6. 黄色底纹行为示例数据，正式导入前请删除。'
+        '6. 黄色底纹两列（自评等级、进度说明）是本次要填写的内容；其余列已按系统已下发数据预填，请勿修改。'
       ])
     })
 
@@ -118,7 +117,7 @@ describe('reportFillImportTemplate', () => {
         '5. 定位规则：按「责任部门 + 目标部门 + 子指标名称」匹配已下发子指标行；无匹配 = 该行失败点名。'
       )
       expect(rules[10]).toBe(
-        '7. 彩色底纹行为示例数据（绿=教务处线 / 黄=数字校园建设办公室线），正式导入前请删除。'
+        '7. 黄色底纹两列（自评等级、进度说明）是本次要填写的内容；其余列已按本学院各归口线已下发数据预填，请勿修改。'
       )
     })
 
@@ -143,86 +142,81 @@ describe('reportFillImportTemplate', () => {
     })
   })
 
-  describe('样例数据使用系统真实下发全名（2026-11-26 口径修正）', () => {
-    it('04 样例：教务处 / 战略发展部 / 2 条数据行 + 1 行枚举，首行用核心指标 2005 全名', () => {
-      const sheet = buildReportFillTemplateSheet('func', '教务处')
-      expect(sheet.rows).toHaveLength(3)
-      expect(sheet.rows[0]).toMatchObject({
+  describe('数据行：只预填系统真实下发数据，自评等级/进度说明留空（2026-11-26 口径）', () => {
+    it('未传预填行时回退示例：行数与部门/子指标/权重取自示例，三列填写区为空', () => {
+      const func = buildReportFillTemplateSheet('func', '教务处')
+      expect(func.rows).toHaveLength(2)
+      expect(func.rows[0]).toMatchObject({
         serial: '1',
         responsibleDept: '教务处',
         targetDept: '战略发展部',
         weight: '40',
-        selfRating: '正常',
-        enumSource: '超前完成'
+        selfRating: '',
+        remark: ''
       })
-      // 2026-11-26 修复：原名是截断的「推进教务处教学质量提升专项工作落地见效」→
-      // 换成系统下发全名（截断名在后端按名称精确定位 0 命中会点名）
-      expect(sheet.rows[0].indicatorName).toBe(
-        '推进教务处教学质量提升专项工作落地见效，围绕课堂教学改革、课程思政建设、'
-        + '实践教学体系优化三大主线，建立教学质量监测数据平台，形成月度调度、学期评估、年度考核的持续改进闭环'
+      expect(func.rows[0].indicatorName).toBe(
+        '推进教务处教学质量提升专项工作落地见效，围绕课堂教学改革、课程思政建设、' +
+          '实践教学体系优化三大主线，建立教学质量监测数据平台，形成月度调度、学期评估、年度考核的持续改进闭环'
       )
-      expect(sheet.rows[0].indicatorName).toHaveLength(85)
-      expect(sheet.rows[0].indicatorName.endsWith('持续改进闭环')).toBe(true)
-      expect(sheet.rows[1].indicatorName).toBe('完善课程建设与专业评估机制')
-      expect(sheet.rows[2].enumSource).toBe('滞后')
-    })
 
-    it('05 样例：计算机学院 / 数字校园建设办公室线真实子指标 / 2 条数据行', () => {
-      const sheet = buildReportFillTemplateSheet('college-single', '计算机学院')
-      expect(sheet.rows).toHaveLength(3)
-      expect(sheet.rows[0]).toMatchObject({
-        responsibleDept: '计算机学院',
+      const single = buildReportFillTemplateSheet('college-single', '计算机学院')
+      expect(single.rows).toHaveLength(2)
+      expect(single.rows[0]).toMatchObject({
         targetDept: '数字校园建设办公室',
         indicatorName: '数字校园协同验证-统一认证与上云子项',
         weight: '55',
-        selfRating: '滞后'
+        selfRating: '',
+        remark: ''
       })
-      expect(sheet.rows[1].indicatorName).toBe('数字校园协同验证-数据治理子项')
+
+      const all = buildReportFillTemplateSheet('college-all', '计算机学院')
+      expect(all.rows).toHaveLength(4)
+      expect(all.rows.filter(row => row.targetDept === '教务处')).toHaveLength(2)
+      expect(all.rows.filter(row => row.targetDept === '数字校园建设办公室')).toHaveLength(2)
+      expect(all.rows.every(row => row.selfRating === '' && row.remark === '')).toBe(true)
     })
 
-    it('06 样例：4 行、跨教务处/数字校园建设办公室两条真实线，第 2 行等级已同步为「超前完成」', () => {
+    it('传入预填行时逐行映射（部门与子指标对得上），序号重排、填报区留空', () => {
+      const prefill = [
+        { targetDept: '人力资源部', indicatorName: 'ffff', weight: '40' },
+        { targetDept: '人力资源部', indicatorName: 'www', weight: '60' },
+        { targetDept: '保卫处', indicatorName: 'ggg', weight: '30' }
+      ]
+      const sheet = buildReportFillTemplateSheet('college-all', '文理学院', prefill)
+      expect(sheet.rows).toHaveLength(3)
+      expect(sheet.rows.map(row => row.serial)).toEqual(['1', '2', '3'])
+      expect(sheet.rows.map(row => row.targetDept)).toEqual(['人力资源部', '人力资源部', '保卫处'])
+      expect(sheet.rows.map(row => row.indicatorName)).toEqual(['ffff', 'www', 'ggg'])
+      expect(sheet.rows.map(row => row.weight)).toEqual(['40', '60', '30'])
+      expect(sheet.rows.every(row => row.responsibleDept === '文理学院')).toBe(true)
+      expect(sheet.rows.every(row => row.selfRating === '' && row.remark === '')).toBe(true)
+    })
+
+    it('空预填行数组视同未传，仍走示例兜底', () => {
+      const sheet = buildReportFillTemplateSheet('college-single', '计算机学院', [])
+      expect(sheet.rows).toHaveLength(2)
+    })
+
+    it('列底色：只读列灰底/灰头，自评等级与进度说明黄底/橙头', () => {
       const sheet = buildReportFillTemplateSheet('college-all', '计算机学院')
-      expect(sheet.rows).toHaveLength(4)
-      expect(sheet.rows.filter(row => row.targetDept === '教务处')).toHaveLength(2)
-      expect(sheet.rows.filter(row => row.targetDept === '数字校园建设办公室')).toHaveLength(2)
-      expect(sheet.rows[0].indicatorName).toBe('导入下发验证-基础A')
-      const second = sheet.rows[1]
-      expect(second.indicatorName).toBe('导入下发验证-基础B')
-      // 需求方样例写「超前」→ 按 2026-11-25 裁定强制同步
-      expect(second.selfRating).toBe('超前完成')
-      expect(sheet.rows.every(row => row.selfRating !== '超前')).toBe(true)
-      expect(sheet.rows[2].indicatorName).toBe('数字校园协同验证-统一认证与上云子项')
-      expect(sheet.rows[3].indicatorName).toBe('数字校园协同验证-数据治理子项')
-    })
-
-    it('示例行子指标名不得是截断名/虚构名：名称非空时必须以系统真实下发全名出现', () => {
-      // 本地库锚点（2026-11-26 核对）：计算机学院两条真实线 + 教务处 2005/2006 全名
-      const realNames = new Set([
-        '推进教务处教学质量提升专项工作落地见效，围绕课堂教学改革、课程思政建设、实践教学体系优化三大主线，'
-          + '建立教学质量监测数据平台，形成月度调度、学期评估、年度考核的持续改进闭环',
-        '完善课程建设与专业评估机制',
-        '导入下发验证-基础A',
-        '导入下发验证-基础B',
-        '数字校园协同验证-统一认证与上云子项',
-        '数字校园协同验证-数据治理子项'
+      expect(sheet.columns.map(column => column.backgroundColor)).toEqual([
+        '#EDEDED',
+        '#EDEDED',
+        '#EDEDED',
+        '#EDEDED',
+        '#EDEDED',
+        '#FFE699',
+        '#FFE699'
       ])
-      for (const variant of VARIANTS) {
-        for (const row of buildReportFillTemplateSheet(variant, 'X').rows) {
-          if (row.indicatorName) {
-            expect(realNames.has(row.indicatorName)).toBe(true)
-          }
-        }
-      }
-    })
-
-    it('样例行的等级全部落在白名单内（非空时）', () => {
-      for (const variant of VARIANTS) {
-        for (const row of buildReportFillTemplateSheet(variant, 'X').rows) {
-          if (row.selfRating) {
-            expect(resolveReportFillLevel(row.selfRating)).not.toBeNull()
-          }
-        }
-      }
+      expect(sheet.columns.map(column => column.headerBackgroundColor)).toEqual([
+        '#595959',
+        '#595959',
+        '#595959',
+        '#595959',
+        '#595959',
+        '#BF8F00',
+        '#BF8F00'
+      ])
     })
 
     it('「责任部门」列写当前登录组织名（不照抄他院名字）', () => {

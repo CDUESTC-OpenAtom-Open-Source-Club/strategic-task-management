@@ -6190,6 +6190,53 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     () => effectiveViewingDept.value || authStore.userDepartment || ''
   )
 
+  /**
+   * 2026-11-26（填报导入模板要「部门与子指标对得上」）：
+   * 按本学院各归口线的真实已下发指标生成模板预填行。
+   *
+   * <p>目标部门取计划上的 `functionalOrgId` 反查组织名（`sys_org.name`），
+   * 子指标名与权重取该线行集——保证下载模板里每一行都是「该归口真实下发的子指标」，
+   * 而不是硬编码示例。自评等级 / 进度说明不在此返回，由模板留空。
+   */
+  const reportFillPrefillRows = computed<
+    Array<{
+      targetDept: string
+      indicatorName: string
+      weight: string
+    }>
+  >(() => {
+    if (!isSecondaryCollege.value) {
+      return []
+    }
+    const resolveTargetDept = (planId: string): string => {
+      const plan = collegePlanCandidates.value.find(item => String(item.id) === planId)
+      const rawOrgId = Number(
+        (plan as unknown as { functionalOrgId?: number; functional_org_id?: number } | undefined)
+          ?.functionalOrgId ??
+          (plan as unknown as { functional_org_id?: number } | undefined)?.functional_org_id
+      )
+      if (Number.isFinite(rawOrgId) && rawOrgId > 0) {
+        const org = orgStore.departments.find(item => Number(item.id) === rawOrgId)
+        if (org?.name) {
+          return String(org.name)
+        }
+      }
+      const fallbackName = (plan as unknown as { functionalOrgName?: string } | undefined)
+        ?.functionalOrgName
+      return String(fallbackName ?? '')
+    }
+    return collegePlanLineRowsets.value
+      .flatMap(line => {
+        const targetDept = resolveTargetDept(line.planId)
+        return (line.rows ?? []).map(row => ({
+          targetDept,
+          indicatorName: String(row.name ?? ''),
+          weight: row.weight === null || row.weight === undefined ? '' : String(row.weight)
+        }))
+      })
+      .filter(row => row.indicatorName.trim().length > 0)
+  })
+
   return {
     DEFAULT_APPROVAL_STATUS,
     PLAN_APPROVAL_POLL_INTERVAL_MS,
@@ -6422,6 +6469,7 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     resolveIndicatorType2,
     resolvePlanApprovalWorkflowCode,
     reportFillCollegeName,
+    reportFillPrefillRows,
     reportFillCycleId,
     reportFillCycleName,
     reportFillMonth,

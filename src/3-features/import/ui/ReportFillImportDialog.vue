@@ -274,6 +274,7 @@ import {
   buildReportFillGuideSheet,
   buildReportFillTemplateFileName,
   buildReportFillTemplateSheet,
+  type ReportFillPrefillRow,
   type ReportFillTemplateVariant
 } from '@/features/import/lib/reportFillImportTemplate'
 import { exportSheetsToExcel } from '@/shared/lib/export/excel'
@@ -308,6 +309,11 @@ const props = defineProps<{
   targetOrgName?: string
   /** 当前考核周期名称（顶部摘要显示） */
   cycleName?: string
+  /**
+   * 2026-11-26（模板要「对得上」）：按系统真实已下发数据预填的模板行
+   * —— 目标部门 / 子指标名称 / 权重，自评等级与进度说明留空由填报人填。
+   */
+  prefillRows?: ReadonlyArray<ReportFillPrefillRow>
 }>()
 
 const emit = defineEmits<{
@@ -518,7 +524,11 @@ const handleFileExceed: UploadProps['onExceed'] = files => {
 
 async function handleDownloadTemplate() {
   try {
-    const dataSheet = buildReportFillTemplateSheet(props.variant, props.responsibleOrgName ?? '')
+    const dataSheet = buildReportFillTemplateSheet(
+      props.variant,
+      props.responsibleOrgName ?? '',
+      props.prefillRows
+    )
     const guideSheet = buildReportFillGuideSheet(props.variant)
     await exportSheetsToExcel(
       [dataSheet as unknown as never, guideSheet as unknown as never],
