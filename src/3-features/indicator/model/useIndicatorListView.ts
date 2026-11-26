@@ -53,7 +53,8 @@ import {
 import {
   resolveReportSubmitLockReason,
   isReportReturnedChainAlive,
-  isReportReturnedToSubmitter
+  isReportReturnedToSubmitter,
+  isReportAtFirstApprovalStage
 } from '@/features/indicator/lib/reportSubmitGate'
 // 2026-11-13（学院上报按归口部门分批提交）：归属部门口径的纯函数（选项聚合/行过滤）
 import {
@@ -3789,13 +3790,34 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     )
   })
 
+  // 2026-11-26（撤回窗口收窄，用户定调最初设计）：撤回窗口=「填报人提交之后 →
+  // 第一个审批环节审核之前」。学院线第一审批环节=学院审核人审批，职能线=职能
+  // 部门审批人审批（口径按链泛化，纯函数 isReportAtFirstApprovalStage 单一事实
+  // 源，lib/__tests__ 锁定）。环节推进（任一审批人通过）后本判定为 false——撤回
+  // 钮随之隐藏（状态签仍显示推进后的环节），与后端环节门（CancelWorkflowUseCase
+  // 撤回 409）同口径兜底。
+  const isReportAtFirstApprovalStageComputed = computed(() =>
+    isReportAtFirstApprovalStage({
+      isSecondaryCollege: isSecondaryCollege.value,
+      currentStepName: currentApprovalStepName.value
+    })
+  )
+
   const showWithdrawAllButton = computed(() => {
+    if (!showPlanBatchActions.value) {
+      return false
+    }
+    if (!usePlanReportFlow.value) {
+      return canWithdrawAny.value
+    }
+    // 2026-11-26（撤回窗口收窄，用户定调最初设计）：仅第一个审批环节（学院审核人/
+    // 职能部门审批人）审核前渲染撤回钮。pending_locked（后端 canWithdraw 显式
+    // false：环节已推进，或审批人曾通过后驳回回滚到第一环节的历史轮）不渲染——
+    // 与提交钮互斥收口：草稿只留提交、第一环节可撤只留撤回、环节推进/历史轮
+    // 双隐藏、已通过双隐藏；双隐藏时状态签仍如实显示当前环节
     return (
-      showPlanBatchActions.value &&
-      (!usePlanReportFlow.value
-        ? canWithdrawAny.value
-        : currentPlanReportActionState.value === 'pending_withdrawable' ||
-          currentPlanReportActionState.value === 'pending_locked')
+      currentPlanReportActionState.value === 'pending_withdrawable' &&
+      isReportAtFirstApprovalStageComputed.value
     )
   })
 
@@ -5663,20 +5685,20 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         return false
       }
 
-      const currentStepName = String(
-        currentPlanWorkflowDetail.value?.currentStepName ||
-          currentPlanReportSummary.value?.currentStepName ||
-          currentPlanDetails.value?.currentStepName ||
-          ''
-      ).trim()
-
-      const isPastSubmitterWithdrawWindow =
-        currentStepName.includes('终审') ||
-        currentStepName.includes('校领导') ||
-        currentStepName.includes('院长') ||
-        currentStepName.includes('战略发展部')
-
-      if (pendingPlanReportUiState.value === 'submitted' && !isPastSubmitterWithdrawWindow) {
+      // 2026-11-26（撤回窗口收窄，用户定调最初设计）：仅第一个审批环节（学院审核人/
+      // 职能部门审批人）审核前可撤——乐观分支由原「终审/校领导/院长/战略发展部」
+      // 黑名单换成第一环节白名单（isReportAtFirstApprovalStage，按链泛化）。后端
+      // canWithdraw（=canRequesterWithdraw）是环节门权威：显式 false（环节已推进/
+      // 有审批人通过过，含驳回回滚到第一环节的历史轮）时乐观分支不放行，防「钮可
+      // 见、点了 409」的前后端口径分裂
+      const withdrawFlagExplicitlyDenied =
+        currentPlanReportSummary.value?.canWithdraw === false ||
+        currentPlanWorkflowDetail.value?.canWithdraw === false
+      if (
+        pendingPlanReportUiState.value === 'submitted' &&
+        isReportAtFirstApprovalStageComputed.value &&
+        !withdrawFlagExplicitlyDenied
+      ) {
         return true
       }
 
@@ -5688,7 +5710,12 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
         return currentPlanWorkflowDetail.value.canWithdraw
       }
 
-      return ['SUBMITTED', 'PENDING'].includes(currentPlanReportUiStatus.value)
+      // 2026-11-26（撤回窗口收窄，用户定调最初设计）：后端 canWithdraw 标记缺失时
+      // 的兜底也收窄到第一环节白名单——无环节信息时不再凭 UiStatus 乐观放行
+      return (
+        ['SUBMITTED', 'PENDING'].includes(currentPlanReportUiStatus.value) &&
+        isReportAtFirstApprovalStageComputed.value
+      )
     }
 
     const planStatus = normalizedCurrentPlanStatus.value

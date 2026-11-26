@@ -799,18 +799,8 @@ const handleExportIndicatorList = async () => {
           <el-icon><Download /></el-icon>
           全部导出
         </el-button>
-        <!-- 2026-11-25（指标填报导入式上报）：学院与职能部门都要有导入入口。
-             学院 →【批量导入】（06 多归口批量，按「目标部门」列拆线）
-             职能部门 →【导入填报】（04 职能部门上报战略发展部）
-             显示口径：只要不是战略发展部（战略部是下发方，不填报）就显示。 -->
-        <el-button v-if="isSecondaryCollege" @click="openReportFillImport('college-all')">
-          <el-icon><Upload /></el-icon>
-          批量导入
-        </el-button>
-        <el-button v-else-if="!isStrategicDept" @click="openReportFillImport('func')">
-          <el-icon><Upload /></el-icon>
-          导入填报
-        </el-button>
+        <!-- 2026-11-26（用户拍板）：【批量导入/导入填报】移入指标列表卡头
+             （header-actions，见下方 table-card），页头只留导出类按钮。 -->
       </div>
     </div>
 
@@ -966,6 +956,29 @@ const handleExportIndicatorList = async () => {
             </el-popover>
             <span class="indicator-count">共 {{ indicators.length }} 条记录</span>
 
+            <!-- 2026-11-25（指标填报导入式上报）：学院与职能部门都要有导入入口。
+                 学院 →【批量导入】（06 多归口批量，按「目标部门」列拆线）
+                 职能部门 →【导入填报】（04 职能部门上报战略发展部）
+                 显示口径：只要不是战略发展部（战略部是下发方，不填报）就显示。
+                 2026-11-26（用户拍板）：从页头工具栏移入本卡头（审批状态签旁、
+                 与一键提交/一键撤回同一行），页头只留导出类按钮；显隐口径不变。 -->
+            <el-button
+              v-if="isSecondaryCollege"
+              size="small"
+              @click="openReportFillImport('college-all')"
+            >
+              <el-icon><Upload /></el-icon>
+              批量导入
+            </el-button>
+            <el-button
+              v-else-if="!isStrategicDept"
+              size="small"
+              @click="openReportFillImport('func')"
+            >
+              <el-icon><Upload /></el-icon>
+              导入填报
+            </el-button>
+
             <!-- 职能部门/二级学院的批量操作按钮 -->
             <template v-if="showPlanBatchActions">
               <!-- 2026-11-25（指标填报导入式上报）：单归口导入（05）——
@@ -995,8 +1008,16 @@ const handleExportIndicatorList = async () => {
                    tooltip 文案 = submitAllButtonDisabledReason（单一事实源，优先级
                    部门 > 未来月 > 草稿，见 lib/reportSubmitGate.ts）；条件满足即恢复
                    可点，点击链路不变（handleSubmitAllGate → handleSubmitAll，内部守卫
-                   保留作双保险）；服务端提交门禁照旧兜底（409 不变） -->
+                   保留作双保险）；服务端提交门禁照旧兜底（409 不变）。
+                   2026-11-26（提交/撤回切换式，用户拍板）：审批中隐藏提交、只留撤回，
+                   两钮互斥——本钮只在「可填报路径」（草稿/退回待重报，即
+                   currentPlanReportActionState==='draft'）渲染；进入审批流（pending_*）
+                   即隐藏让位给一键撤回（showWithdrawAllButton 与之天然互补），已通过
+                   （approved）两钮都不出现。同日拍板：职能部门与学院同一套切换式，
+                   不留「始终渲染+置灰引导」的视角特例（置灰引导口径仅在可填报场景
+                   保留，如未选归属部门/未来月）。 -->
               <el-tooltip
+                v-if="currentPlanReportActionState === 'draft'"
                 :content="submitAllDisabledTitle"
                 :disabled="!submitAllButtonDisabledReason"
                 effect="dark"
