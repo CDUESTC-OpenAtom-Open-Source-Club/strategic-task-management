@@ -13,6 +13,11 @@ import { buildExportFileName } from '@/shared/lib/export/excel'
  *
  * <p>第 8 列「（枚举来源，勿动）」是给 Excel 下拉当数据源的辅助列，后端解析时<b>完全忽略</b>
  * （该表头整体在括号内，归一化后为空串，自然不参与字段映射）。
+ *
+ * <p>2026-11-26（样例行口径修正）：示例行子指标名一律使用系统<b>真实下发的指标全名</b>——
+ * 截断名/虚构名在后端按名称精确定位时会 0 命中被点名（用户直接导入下载的模板不放示例行也会挂）。
+ * 示例行锚定本地系统已下发数据：教务处核心指标 2005 全名、计算机学院教务处线（导入下发验证-基础A/B）
+ * 与数字校园建设办公室线（数字校园协同验证-统一认证与上云子项/数据治理子项）。
  */
 
 /** 上报类型：职能部门上报（04） / 学院上报（05 单点、06 批量）。 */
@@ -164,7 +169,7 @@ export function buildReportFillTemplateRules(variant: ReportFillTemplateVariant)
     '4. 归属月份：本表不设月份列——归属月份在导入界面上选择。',
     '5. 定位规则：按「责任部门 + 目标部门 + 子指标名称」匹配已下发子指标行；无匹配 = 该行失败点名。',
     '6. 导入流程：选择文件 → 解析预览（责任部门/目标校验 + 按目标部门分组展示将提交/将跳过/错误组）→ 确认批量导入 → 逐线自动提交进审批（通过后数据看板生效）。',
-    '7. 彩色底纹行为示例数据（绿=预算部线 / 黄=什邡管委会线），正式导入前请删除。'
+    '7. 彩色底纹行为示例数据（绿=教务处线 / 黄=数字校园建设办公室线），正式导入前请删除。'
   ]
 }
 
@@ -184,7 +189,13 @@ export function buildReportFillGuideTitle(variant: ReportFillTemplateVariant): s
   return '填写说明（06 · 二级学院上报多归口部门 · 批量导入）'
 }
 
-/** 样例行（照抄需求方文件；06 第 2 行「超前」按既定裁定同步为「超前完成」）。 */
+/**
+ * 样例行（2026-11-26 口径修正：子指标名一律用系统真实下发全名，修复截断名/虚构名 0 命中）。
+ *
+ * <p>锚定本地系统已下发数据：教务处核心指标 2005 全名（85 字）、计算机学院教务处线
+ * 「导入下发验证-基础A/B」、数字校园建设办公室线「数字校园协同验证-统一认证与上云子项/数据治理子项」。
+ * 06 第 2 行「超前」按既定裁定同步为「超前完成」。
+ */
 const SAMPLE_ROWS: Record<
   ReportFillTemplateVariant,
   ReadonlyArray<Omit<ReportFillTemplateRow, 'responsibleDept'>>
@@ -193,7 +204,8 @@ const SAMPLE_ROWS: Record<
     {
       serial: '1',
       targetDept: '战略发展部',
-      indicatorName: '推进教务处教学质量提升专项工作落地见效',
+      indicatorName:
+        '推进教务处教学质量提升专项工作落地见效，围绕课堂教学改革、课程思政建设、实践教学体系优化三大主线，建立教学质量监测数据平台，形成月度调度、学期评估、年度考核的持续改进闭环',
       weight: '40',
       selfRating: '正常',
       remark: '教学质量监测平台月度数据已汇总',
@@ -221,20 +233,20 @@ const SAMPLE_ROWS: Record<
   'college-single': [
     {
       serial: '1',
-      targetDept: '什邡管委会',
-      indicatorName: '计算机学院-园区智慧化服务技术支撑',
-      weight: '40',
+      targetDept: '数字校园建设办公室',
+      indicatorName: '数字校园协同验证-统一认证与上云子项',
+      weight: '55',
       selfRating: '滞后',
       remark: '受资源到位滞后影响，部分节点未按期完成',
       enumSource: '超前完成'
     },
     {
       serial: '2',
-      targetDept: '什邡管委会',
-      indicatorName: '计算机学院-信息化运维绩效管理',
-      weight: '60',
+      targetDept: '数字校园建设办公室',
+      indicatorName: '数字校园协同验证-数据治理子项',
+      weight: '45',
       selfRating: '正常',
-      remark: '运维工单响应时效达标率 96%',
+      remark: '数据治理专项月度节点按期完成',
       enumSource: '正常'
     },
     {
@@ -250,37 +262,37 @@ const SAMPLE_ROWS: Record<
   'college-all': [
     {
       serial: '1',
-      targetDept: '预算部',
-      indicatorName: '计算机学院-产业学院订单式人才培养项目',
-      weight: '30',
+      targetDept: '教务处',
+      indicatorName: '导入下发验证-基础A',
+      weight: '40',
       selfRating: '正常',
-      remark: '订单班已开班，课程体系按企业需求调整完毕',
+      remark: '本月阶段任务按计划完成',
       enumSource: '超前完成'
     },
     {
       serial: '2',
-      targetDept: '预算部',
-      indicatorName: '计算机学院-园区数字孪生联合实验室共建',
-      weight: '70',
+      targetDept: '教务处',
+      indicatorName: '导入下发验证-基础B',
+      weight: '30',
       // 需求方样例写「超前」→ 按 2026-11-25 裁定强制同步为「超前完成」
       selfRating: '超前完成',
-      remark: '联合实验室设备安装调试完成，进入试运行',
+      remark: '关键节点提前完成，进入下一阶段',
       enumSource: '正常'
     },
     {
       serial: '3',
-      targetDept: '什邡管委会',
-      indicatorName: '计算机学院-信息化运维绩效管理',
-      weight: '60',
+      targetDept: '数字校园建设办公室',
+      indicatorName: '数字校园协同验证-统一认证与上云子项',
+      weight: '55',
       selfRating: '正常',
-      remark: '运维工单响应时效达标率 96%',
+      remark: '联调完成，试运行推进正常',
       enumSource: '滞后'
     },
     {
       serial: '4',
-      targetDept: '什邡管委会',
-      indicatorName: '计算机学院-园区智慧化服务技术支撑',
-      weight: '40',
+      targetDept: '数字校园建设办公室',
+      indicatorName: '数字校园协同验证-数据治理子项',
+      weight: '45',
       selfRating: '滞后',
       remark: '受资源到位滞后影响，部分节点未按期完成',
       enumSource: ''
