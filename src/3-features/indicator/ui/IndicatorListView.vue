@@ -799,8 +799,13 @@ const handleExportIndicatorList = async () => {
           <el-icon><Download /></el-icon>
           全部导出
         </el-button>
-        <!-- 2026-11-26（用户拍板）：【批量导入/导入填报】移入指标列表卡头
-             （header-actions，见下方 table-card），页头只留导出类按钮。 -->
+        <!-- 2026-11-26（用户拍板）：批量导入（06 学院多归口批量）恢复到页头
+             工具栏原位（「全部导出」旁）——特殊场景按钮，不进卡头；
+             职能部门的「导入」（04）在指标列表卡头（审批状态签旁）。 -->
+        <el-button v-if="isSecondaryCollege" @click="openReportFillImport('college-all')">
+          <el-icon><Upload /></el-icon>
+          批量导入
+        </el-button>
       </div>
     </div>
 
@@ -956,27 +961,20 @@ const handleExportIndicatorList = async () => {
             </el-popover>
             <span class="indicator-count">共 {{ indicators.length }} 条记录</span>
 
-            <!-- 2026-11-25（指标填报导入式上报）：学院与职能部门都要有导入入口。
-                 学院 →【批量导入】（06 多归口批量，按「目标部门」列拆线）
-                 职能部门 →【导入填报】（04 职能部门上报战略发展部）
-                 显示口径：只要不是战略发展部（战略部是下发方，不填报）就显示。
-                 2026-11-26（用户拍板）：从页头工具栏移入本卡头（审批状态签旁、
-                 与一键提交/一键撤回同一行），页头只留导出类按钮；显隐口径不变。 -->
+            <!-- 2026-11-25（指标填报导入式上报）：职能部门导入入口
+                 （04 职能部门上报战略发展部）。显示口径：仅职能部门视角
+                 （学院走卡头 05 单归口导入 + 页头 06 批量导入；战略部是下发方，
+                 不填报、不显示）。
+                 2026-11-26（用户拍板）：职能卡头标签「导入填报」→「导入」，
+                 与学院卡头「导入」同款结构（small + Upload 图标）；
+                 批量导入（06）恢复页头工具栏原位。 -->
             <el-button
-              v-if="isSecondaryCollege"
-              size="small"
-              @click="openReportFillImport('college-all')"
-            >
-              <el-icon><Upload /></el-icon>
-              批量导入
-            </el-button>
-            <el-button
-              v-else-if="!isStrategicDept"
+              v-if="!isSecondaryCollege && !isStrategicDept"
               size="small"
               @click="openReportFillImport('func')"
             >
               <el-icon><Upload /></el-icon>
-              导入填报
+              导入
             </el-button>
 
             <!-- 职能部门/二级学院的批量操作按钮 -->
