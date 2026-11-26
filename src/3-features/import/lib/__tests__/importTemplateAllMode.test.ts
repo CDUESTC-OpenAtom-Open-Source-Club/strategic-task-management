@@ -161,4 +161,50 @@ describe('importTemplate · 全部导入模板 9 列（含「职能部门」列�
 
     expect(new Set(depts).size).toBeGreaterThanOrEqual(2)
   })
+
+  it('全部导入模板序号逐行递增（2026-11-26 序号语义改造）：示例行每行一号、不再留空', () => {
+    const sheet = buildImportTemplateSheet('distribution', undefined, 'all')
+
+    expect(sheet.rows.map(row => row.serial)).toEqual(['1', '2', '3'])
+    // 序号列不再随组合并：每行显示各自号码
+    const serialColumn = sheet.columns.find(column => column.header === '序号')!
+    expect(sheet.rows.map((row, index) => serialColumn.getValue(row, index))).toEqual([
+      '1',
+      '2',
+      '3'
+    ])
+  })
+
+  it('全部导入模板填写说明含序号行号语义（2026-11-26）：每行一号、留空自动补号、归属按核心指标列', () => {
+    const rules = getImportTemplateGuide('distribution', 'all').rules.join('\n')
+
+    expect(rules).toContain('「序号」为子指标行号')
+    expect(rules).toContain('留空时系统自动按行补号')
+    expect(rules).toContain('归属按「核心指标」列判定')
+  })
+
+  it('全部导入模板锚点预填行序号逐行递增 1..N（N=锚点行数）', () => {
+    const sheet = buildImportTemplateSheet(
+      'distribution',
+      [
+        {
+          parentIndicator: '推进课堂教学改革与课程思政建设',
+          college: '文理学院',
+          parentIndicatorType: '定量',
+          taskType: '基础性',
+          functionalDept: '教务处'
+        },
+        {
+          parentIndicator: '建设数字化校园管理平台',
+          college: '文理学院',
+          parentIndicatorType: '定量',
+          taskType: '发展性',
+          functionalDept: '数字校园建设办公室'
+        }
+      ],
+      'all'
+    )
+
+    expect(sheet.rows.map(row => row.serial)).toEqual(['1', '2'])
+  })
 })

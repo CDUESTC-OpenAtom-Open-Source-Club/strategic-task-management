@@ -122,6 +122,14 @@ import {
   type ImportGroupView
 } from '@/features/import/lib/allImportPreview'
 import { buildPreviewGroupSpans } from '@/features/import/lib/previewGroupSpan'
+// 2026-11-25（预览跳过行显示修复）：「指标/类型/权重/父级指标」四列取值纯函数——
+// normalized 优先、空则回退文件原始单元格（source），文件里有值就显示真值（只改显示）
+import {
+  previewIndicatorNameText,
+  previewIndicatorTypeText,
+  previewParentIndicatorText,
+  previewWeightText
+} from '@/features/import/lib/previewRowDisplay'
 import { exportSheetsToExcel, type ExcelExportSheet } from '@/shared/lib/export/excel'
 import { showCriticalErrorNotice } from '@/shared/lib/criticalErrorNotice'
 import { markErrorHandled } from '@/shared/lib/utils/errorToast'
@@ -1042,17 +1050,20 @@ watch(
                     </el-tag>
                   </template>
                 </el-table-column>
+                <!-- 2026-11-25（预览跳过行显示修复）：四列改走 preview*Text 取值——
+                     normalized 优先、空则回退 source 原始单元格，跳过组里文件有值的行回显真值；
+                     动作/跳过语义与执行清单计数不变 -->
                 <el-table-column label="父级指标" min-width="180" show-overflow-tooltip>
-                  <template #default="{ row }">{{ row.normalized.parentIndicator }}</template>
+                  <template #default="{ row }">{{ previewParentIndicatorText(row) }}</template>
                 </el-table-column>
                 <el-table-column label="指标" min-width="180" show-overflow-tooltip>
-                  <template #default="{ row }">{{ row.normalized.indicatorName }}</template>
+                  <template #default="{ row }">{{ previewIndicatorNameText(row) }}</template>
                 </el-table-column>
                 <el-table-column label="类型" width="90">
-                  <template #default="{ row }">{{ row.normalized.indicatorType }}</template>
+                  <template #default="{ row }">{{ previewIndicatorTypeText(row) }}</template>
                 </el-table-column>
                 <el-table-column label="权重" width="90">
-                  <template #default="{ row }">{{ row.normalized.weight || '-' }}</template>
+                  <template #default="{ row }">{{ previewWeightText(row) }}</template>
                 </el-table-column>
                 <el-table-column label="问题" min-width="220" show-overflow-tooltip>
                   <template #default="{ row }">
@@ -1091,11 +1102,12 @@ watch(
               class="preview-table"
             >
               <el-table-column prop="rowNo" label="序号" width="70" />
+              <!-- 2026-11-25（预览跳过行显示修复）：同款取值口径（normalized 优先回退 source） -->
               <el-table-column label="父级指标" min-width="180" show-overflow-tooltip>
-                <template #default="{ row }">{{ row.normalized.parentIndicator }}</template>
+                <template #default="{ row }">{{ previewParentIndicatorText(row) }}</template>
               </el-table-column>
               <el-table-column label="指标" min-width="180" show-overflow-tooltip>
-                <template #default="{ row }">{{ row.normalized.indicatorName }}</template>
+                <template #default="{ row }">{{ previewIndicatorNameText(row) }}</template>
               </el-table-column>
               <el-table-column label="问题" min-width="220" show-overflow-tooltip>
                 <template #default="{ row }">

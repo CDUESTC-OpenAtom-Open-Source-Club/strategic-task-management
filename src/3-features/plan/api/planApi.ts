@@ -2126,37 +2126,6 @@ export const planApi = {
   },
 
   /**
-   * 审批通过 Plan
-   * 将 Plan 状态从 PENDING 变为 ACTIVE（已下发）
-   */
-  async approvePlan(planId: number | string): Promise<ApiResponse<Plan>> {
-    if (this.useMockData) {
-      const planVO = mockPlans.find(p => p.planId === Number(planId))
-      if (!planVO) {
-        return {
-          code: 1002,
-          data: null as never,
-          message: 'Plan not found',
-          timestamp: new Date().toISOString()
-        }
-      }
-      planVO.status = 'ACTIVE'
-      return {
-        code: 200,
-        data: convertPlanVOToPlan(planVO, []),
-        message: '审批通过',
-        timestamp: new Date().toISOString()
-      }
-    }
-
-    return withRetry(async () => {
-      const response = await apiClient.post<ApiResponse<Plan>>(`/plans/${planId}/publish`)
-      invalidatePlanCaches(planId)
-      return response
-    })
-  },
-
-  /**
    * 驳回 Plan
    * 将 Plan 状态从 PENDING 变为 REJECTED
    */
@@ -2252,37 +2221,6 @@ export const planApi = {
       data: null,
       message: '当前 OpenAPI 未提供按 taskId 反查计划的接口',
       timestamp: new Date().toISOString()
-    })
-  },
-
-  /**
-   * 发布 Plan（下发）
-   * 将 Plan 状态变为 ACTIVE
-   */
-  async publishPlan(planId: number | string): Promise<ApiResponse<Plan>> {
-    if (this.useMockData) {
-      const planVO = mockPlans.find(p => p.planId === Number(planId))
-      if (!planVO) {
-        return {
-          code: 1002,
-          data: null as never,
-          message: 'Plan not found',
-          timestamp: new Date().toISOString()
-        }
-      }
-      planVO.status = 'ACTIVE'
-      return {
-        code: 200,
-        data: convertPlanVOToPlan(planVO, []),
-        message: '发布成功',
-        timestamp: new Date().toISOString()
-      }
-    }
-
-    return withRetry(async () => {
-      const response = await apiClient.post<ApiResponse<Plan>>(`/plans/${planId}/publish`)
-      invalidatePlanCaches(planId)
-      return response
     })
   },
 
