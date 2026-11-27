@@ -3,9 +3,9 @@
 > Strategic Indicator Management System - Vue 3 前端应用
 
 [![Vue 3](https://img.shields.io/badge/Vue-3.5-green)](https://vuejs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue)](https://www.typescriptlang.org/)
-[![Vite](https://img.shields.io/badge/Vite-7.2-purple)](https://vitejs.dev/)
-[![Element Plus](https://img.shields.io/badge/Element_Plus-2.9-409eff)](https://element-plus.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue)](https://www.typescriptlang.org/)
+[![Vite](https://img.shields.io/badge/Vite-7.3-purple)](https://vitejs.dev/)
+[![Element Plus](https://img.shields.io/badge/Element_Plus-2.12-409eff)](https://element-plus.org/)
 
 ---
 
@@ -41,13 +41,13 @@
 | 类别        | 技术                | 说明                               |
 | ----------- | ------------------- | ---------------------------------- |
 | 前端框架    | Vue 3.5             | Composition API + `<script setup>` |
-| 开发语言    | TypeScript 5.7      | 类型安全                           |
-| 构建工具    | Vite 7.2            | 快速开发体验                       |
-| UI 组件库   | Element Plus 2.9    | 企业级组件库                       |
-| 图表库      | ECharts 5.6         | 数据可视化                         |
-| 状态管理    | Pinia 3.0           | Vue 官方状态管理                   |
+| 开发语言    | TypeScript 5.9      | 类型安全                           |
+| 构建工具    | Vite 7.3            | 快速开发体验                       |
+| UI 组件库   | Element Plus 2.12   | 企业级组件库                       |
+| 图表库      | ECharts 5.5         | 数据可视化                         |
+| 状态管理    | Pinia 2.2           | Vue 官方状态管理                   |
 | 路由        | Vue Router 4.5      | 客户端路由                         |
-| HTTP 客户端 | Axios 1.7           | API 请求                           |
+| HTTP 客户端 | Axios 1.16          | API 请求                           |
 | 测试框架    | Vitest + fast-check | 单元测试 + 属性测试                |
 | 代码规范    | ESLint + Prettier   | 代码质量保证                       |
 
@@ -65,7 +65,7 @@
 ### 1. 安装依赖
 
 ```bash
-# 推荐使用 .nvmrc 中锁定的 Node 25，也可使用 Node 22 - 25
+# 推荐使用 .nvmrc 中锁定的 Node 22，也可使用 Node 22 - 25
 nvm use
 npm install
 ```
@@ -89,7 +89,7 @@ cp .env.example .env
 ### 3. 启动开发服务器
 
 ```bash
-# 推荐使用 .nvmrc 中锁定的 Node 25，也可使用 Node 22 - 25
+# 推荐使用 .nvmrc 中锁定的 Node 22，也可使用 Node 22 - 25
 nvm use
 npm run dev
 ```
@@ -117,7 +117,7 @@ src/
 tests/                      # Vitest / Playwright 测试
 public/                     # 静态资源
 scripts/                    # 构建、检查与开发辅助脚本
-docs/                       # 文档中心（当前文档 / 生成产物 / 历史归档）
+docs/                       # 文档中心（当前文档 / 历史归档）
 ```
 
 ---
