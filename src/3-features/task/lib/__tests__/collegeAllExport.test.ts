@@ -77,10 +77,7 @@ describe('collegeAllExport · 按学院分组（一学院一张表）', () => {
   })
 
   it('解析不出学院的行被丢弃（不混进任何学院的表）', () => {
-    const rows: Row[] = [
-      buildRow({ id: 1, college: '文理学院' }),
-      buildRow({ id: 2, college: '' })
-    ]
+    const rows: Row[] = [buildRow({ id: 1, college: '文理学院' }), buildRow({ id: 2, college: '' })]
 
     const groups = groupCollegeExportRows(rows, getCollege, getDept)
 
@@ -166,11 +163,14 @@ describe('StrategicTaskView · 学院页签「全部导出」改造（源码契�
   })
 
   it('学院页签「全部导出」不再受「先选职能部门」两步门槛限制', () => {
-    expect(viewSource).toContain(
-      ":disabled=\"activeTaskTabName === 'college' ? !collegeAllExportReady : !collegeTabTwoStepReady\""
+    // 2026-11-28：断言对折行容错——prettier 会把超长属性折成多行（提交时 lint-staged 实证），
+    // 契约本身只锁「表达式接线」不锁排版，故先把源码空白归一再断言。
+    const normalizedSource = viewSource.replace(/\s+/g, ' ')
+    expect(normalizedSource).toContain(
+      ':disabled="activeTaskTabName === \'college\' ? !collegeAllExportReady : !collegeTabTwoStepReady"'
     )
-    expect(viewSource).toContain('const collegeAllExportReady = computed')
-    expect(viewSource).toContain('const collegeAllExportDisabledReason = computed')
+    expect(normalizedSource).toContain('const collegeAllExportReady = computed')
+    expect(normalizedSource).toContain('const collegeAllExportDisabledReason = computed')
   })
 
   it('单条「导出」按钮行为不变（仍复用 handleExportCollegeIndicators + 两步门槛）', () => {
