@@ -17,6 +17,7 @@ import type { StrategicIndicator } from '@/shared/types'
 import type { ManualAlertSeverity } from '@/shared/api/monitoringApi'
 import type { Cell } from 'write-excel-file/browser'
 import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
+import { PROGRESS_REMARK_MAX_LENGTH, truncateText } from '@/shared/lib/utils/formatters'
 import FullTextPanel from '@/shared/ui/display/FullTextPanel.vue'
 import ReportCycleTag from '@/shared/ui/display/ReportCycleTag.vue'
 import {
@@ -773,7 +774,8 @@ const currentDistributionImportCycleId = computed(() => {
   }
 
   const cycle = timeContext.cycles.find(item => Number(item.year) === timeContext.currentYear) as
-    { cycleId?: number | string; id?: number | string } | undefined
+    | { cycleId?: number | string; id?: number | string }
+    | undefined
   const numericCycleId = Number(cycle?.cycleId ?? cycle?.id)
   return Number.isFinite(numericCycleId) && numericCycleId > 0 ? numericCycleId : null
 })
@@ -1295,12 +1297,19 @@ const handleDistributionImportCommitted = async () => {
                 <el-table-column label="进度说明" min-width="92">
                   <template #default="{ row }">
                     <template v-if="row.type === 'child'">
+                      <!-- 2026-11-28（用户拍板）：单元格内最多显示 100 字，超长截断加省略号，
+                           悬浮气泡看全文；悬浮启用阈值与截断阈值统一为 PROGRESS_REMARK_MAX_LENGTH -->
                       <el-tooltip
                         :content="row.child?.pendingRemark || ''"
-                        :disabled="(row.child?.pendingRemark || '').length <= 50"
+                        :disabled="
+                          (row.child?.pendingRemark || '').length <= PROGRESS_REMARK_MAX_LENGTH
+                        "
                         placement="top"
+                        popper-class="pending-remark-tooltip"
                       >
-                        <span>{{ row.child?.pendingRemark || '—' }}</span>
+                        <span>{{
+                          truncateText(row.child?.pendingRemark || '', PROGRESS_REMARK_MAX_LENGTH)
+                        }}</span>
                       </el-tooltip>
                     </template>
                     <template v-else>

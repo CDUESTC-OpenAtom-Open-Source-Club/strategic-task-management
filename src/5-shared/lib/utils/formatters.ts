@@ -260,6 +260,11 @@ export const validateRequired = (value: unknown): boolean => {
 // 字符串工具
 // ============================================================================
 
+// 2026-11-28（用户拍板）：表格「进度说明」列单元格内最多显示 100 字，超长截断加省略号，
+// 悬浮气泡展示全文；悬浮启用阈值与截断阈值统一用本常量。详情弹窗/审批抽屉/上报记录/导出
+// 等全量展示位不受影响。
+export const PROGRESS_REMARK_MAX_LENGTH = 100
+
 export const truncateText = (text: string, maxLength: number): string => {
   if (text.length <= maxLength) {
     return text

@@ -63,6 +63,7 @@ import BusinessImportDialog from '@/features/import/ui/BusinessImportDialog.vue'
 import { invalidateQueries } from '@/shared/lib/utils/cache'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
 import { formatLocalDateTag } from '@/shared/lib/utils/localDateTag'
+import { PROGRESS_REMARK_MAX_LENGTH, truncateText } from '@/shared/lib/utils/formatters'
 import type { StrategicIndicator } from '@/shared/types'
 import type { Cell } from 'write-excel-file/browser'
 import {
@@ -2319,7 +2320,9 @@ const handleStrategicAllImportCommitted = async (
             plain
             size="small"
             :loading="strategicExporting"
-            :disabled="activeTaskTabName === 'college' ? !collegeAllExportReady : !collegeTabTwoStepReady"
+            :disabled="
+              activeTaskTabName === 'college' ? !collegeAllExportReady : !collegeTabTwoStepReady
+            "
             :title="
               activeTaskTabName === 'college'
                 ? collegeAllExportReady
@@ -3010,12 +3013,17 @@ const handleStrategicAllImportCommitted = async (
                     :min-width="TASK_TABLE_COLUMN_WIDTH.progressNoteMin"
                   >
                     <template #default="{ row }">
+                      <!-- 2026-11-28（用户拍板）：单元格内最多显示 100 字，超长截断加省略号，
+                           悬浮气泡看全文；悬浮启用阈值与截断阈值统一为 PROGRESS_REMARK_MAX_LENGTH -->
                       <el-tooltip
                         :content="row.pendingRemark || ''"
-                        :disabled="(row.pendingRemark || '').length <= 50"
+                        :disabled="(row.pendingRemark || '').length <= PROGRESS_REMARK_MAX_LENGTH"
                         placement="top"
+                        popper-class="pending-remark-tooltip"
                       >
-                        <span>{{ row.pendingRemark || '—' }}</span>
+                        <span>{{
+                          truncateText(row.pendingRemark || '', PROGRESS_REMARK_MAX_LENGTH)
+                        }}</span>
                       </el-tooltip>
                     </template>
                   </el-table-column>
@@ -3690,12 +3698,17 @@ const handleStrategicAllImportCommitted = async (
                     :min-width="TASK_TABLE_COLUMN_WIDTH.progressNoteMin"
                   >
                     <template #default="{ row }">
+                      <!-- 2026-11-28（用户拍板）：单元格内最多显示 100 字，超长截断加省略号，
+                           悬浮气泡看全文；悬浮启用阈值与截断阈值统一为 PROGRESS_REMARK_MAX_LENGTH -->
                       <el-tooltip
                         :content="row.pendingRemark || ''"
-                        :disabled="(row.pendingRemark || '').length <= 50"
+                        :disabled="(row.pendingRemark || '').length <= PROGRESS_REMARK_MAX_LENGTH"
                         placement="top"
+                        popper-class="pending-remark-tooltip"
                       >
-                        <span>{{ row.pendingRemark || '—' }}</span>
+                        <span>{{
+                          truncateText(row.pendingRemark || '', PROGRESS_REMARK_MAX_LENGTH)
+                        }}</span>
                       </el-tooltip>
                     </template>
                   </el-table-column>
@@ -4499,5 +4512,18 @@ const handleStrategicAllImportCommitted = async (
   color: #909399;
   background: #f4f4f5;
   border: 1px solid #e9e9eb;
+}
+
+/* 进度说明悬浮气泡（2026-11-28 用户拍板：表格内超 100 字截断、悬浮看全文）：
+   popper 挂在 body 下、非本模板节点，必须放全局（非 scoped）才能命中；
+   类名 pending-remark-tooltip 专用于进度说明 tooltip，全局作用域安全。 */
+.pending-remark-tooltip {
+  max-width: 480px;
+  /* 超长全文在气泡内可换行、纵向滚动可读 */
+  white-space: normal;
+  word-break: break-all;
+  line-height: 1.6;
+  max-height: 320px;
+  overflow: hidden auto;
 }
 </style>
