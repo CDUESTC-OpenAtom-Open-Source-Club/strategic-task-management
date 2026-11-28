@@ -27,6 +27,7 @@ import {
   validatePhone,
   validatePercentage,
   truncateText,
+  PROGRESS_REMARK_MAX_LENGTH,
   groupBy,
   sortBy
 } from '@/shared/lib/utils/formatters'
@@ -357,6 +358,27 @@ describe('Formatters - String Functions', () => {
 
     it('should handle exact length', () => {
       expect(truncateText('Hello', 5)).toBe('Hello')
+    })
+
+    // 2026-11-28（用户拍板）：表格进度说明超 100 字截断加省略号——100 字边界用例
+    it('should not truncate 100-char text (progress remark boundary)', () => {
+      const text100 = '进'.repeat(100)
+      expect(text100).toHaveLength(100)
+      expect(truncateText(text100, PROGRESS_REMARK_MAX_LENGTH)).toBe(text100)
+      // 悬浮启用阈值与截断阈值统一：100 字不启用悬浮（disabled=true）
+      expect(text100.length <= PROGRESS_REMARK_MAX_LENGTH).toBe(true)
+    })
+
+    it('should truncate 101-char text with ellipsis (progress remark boundary)', () => {
+      const text101 = '进'.repeat(101)
+      expect(text101).toHaveLength(101)
+      expect(truncateText(text101, PROGRESS_REMARK_MAX_LENGTH)).toBe('进'.repeat(100) + '...')
+      // 101 字启用悬浮看全文（disabled=false）
+      expect(text101.length <= PROGRESS_REMARK_MAX_LENGTH).toBe(false)
+    })
+
+    it('should expose PROGRESS_REMARK_MAX_LENGTH as 100', () => {
+      expect(PROGRESS_REMARK_MAX_LENGTH).toBe(100)
     })
   })
 })

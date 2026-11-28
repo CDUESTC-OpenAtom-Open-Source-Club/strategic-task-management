@@ -46,3 +46,16 @@
   background: #f4f4f5;
   border: 1px solid #e9e9eb;
 }
+
+/* 进度说明悬浮气泡（2026-11-28 用户拍板：表格内超 100 字截断、悬浮看全文）：
+   popper 挂在 body 下，非组件模板节点，须放本全局样式文件才能命中；
+   类名 pending-remark-tooltip 专用于进度说明 tooltip，全局作用域安全。 */
+.pending-remark-tooltip {
+  max-width: 480px;
+  /* 超长全文在气泡内可换行、纵向滚动可读 */
+  white-space: normal;
+  word-break: break-all;
+  line-height: 1.6;
+  max-height: 320px;
+  overflow: hidden auto;
+}
