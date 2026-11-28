@@ -164,13 +164,13 @@ describe('StrategicTaskView · 学院页签「全部导出」改造（源码契�
 
   it('学院页签「全部导出」不再受「先选职能部门」两步门槛限制', () => {
     // 2026-11-28：断言对折行容错——prettier 会把超长属性折成多行（提交时 lint-staged 实证），
-    // 契约本身只锁「表达式接线」不锁排版，故先把源码空白归一再断言。
-    const normalizedSource = viewSource.replace(/\s+/g, ' ')
-    expect(normalizedSource).toContain(
-      ':disabled="activeTaskTabName === \'college\' ? !collegeAllExportReady : !collegeTabTwoStepReady"'
+    // 契约本身只锁「表达式接线」不锁排版，故去掉全部空白后断言（含引号内侧的折行空白）。
+    const condensedSource = viewSource.replace(/\s+/g, '')
+    expect(condensedSource).toContain(
+      ':disabled="activeTaskTabName===\'college\'?!collegeAllExportReady:!collegeTabTwoStepReady"'
     )
-    expect(normalizedSource).toContain('const collegeAllExportReady = computed')
-    expect(normalizedSource).toContain('const collegeAllExportDisabledReason = computed')
+    expect(viewSource).toContain('const collegeAllExportReady = computed')
+    expect(viewSource).toContain('const collegeAllExportDisabledReason = computed')
   })
 
   it('单条「导出」按钮行为不变（仍复用 handleExportCollegeIndicators + 两步门槛）', () => {
