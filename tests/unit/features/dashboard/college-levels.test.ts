@@ -12,6 +12,8 @@
  *      ⑤完成率/排名分母 = 已下发指标数
  *      ⑥按月快照：行带 monthState（APPROVED/IN_REVIEW/NOT_REPORTED），
  *        只有 APPROVED 出鉴定值，非 APPROVED 前端一律置灰（行级 > 月级 > reported 兜底）
+ *      ⑦切月等价（2026-11-27）：部门卡 / 学院卡 / 排名卡三条切月路径共用 watch(selectedMonth)，
+ *        college-levels / appraisal-summary / delayed-indicators 各请求一次
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
@@ -538,16 +540,29 @@ describe('useDashboardView 学院等级/滞后任务数据流（API 供数 + 切
     })
 
     // 切月 → 重新请求该月数据；该月无数据 → 空数组（不造假柱）
+    // 2026-11-27（切月等价）：数据重拉统一由 watch(selectedMonth) 发起，学院卡 handler 不再自己发请求；
+    // 目标月不硬编码，只要求与当前选中月不同（同月不构成切月，不会触发重拉）
+    const switchMonth = view.selectedMonth.value === 10 ? 11 : 10
     mockedGet.mockClear()
-    mockedGet.mockResolvedValue({ year: 2026, month: 11, items: [] })
-    view.collegeSelectedMonth.value = 11
+    mockedGet.mockResolvedValue({ year: 2026, month: switchMonth, items: [] })
+    view.collegeSelectedMonth.value = switchMonth
     view.handleCollegeMonthChange()
     await flushPromises()
 
     expect(mockedGet).toHaveBeenCalledWith('/dashboard/college-levels', {
-      year: 2026,
-      month: 11
+      year: view.timeContext.currentYear,
+      month: switchMonth
     })
+    // 新契约：一次切月三个接口各请求一次（原学院卡路径滞后清单会被 watch 与 handler 各打一次）
+    expect(
+      mockedGet.mock.calls.filter(call => call[0] === '/dashboard/college-levels')
+    ).toHaveLength(1)
+    expect(
+      mockedGet.mock.calls.filter(call => call[0] === '/dashboard/appraisal-summary')
+    ).toHaveLength(1)
+    expect(
+      mockedGet.mock.calls.filter(call => call[0] === '/dashboard/delayed-indicators')
+    ).toHaveLength(1)
     expect(view.collegeBarData.value).toEqual([])
     expect(view.collegeChartHasData.value).toBe(false)
     expect(view.collegeChartEmptyText.value).toBe('该月暂无学院上报数据')

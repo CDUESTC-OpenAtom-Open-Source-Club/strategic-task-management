@@ -42,7 +42,10 @@ const compatibilityWhitelist = [
   { method: 'get', path: '/api/v1/dashboard/delayed-indicators' },
   // 2026-11-18 部门分布图改吃审核鉴定汇总（后端 appraisal-summary 已合入 develop，
   // 此处兜底 CI checkout 的 openapi 基线尚未覆盖本条的场景）
-  { method: 'get', path: '/api/v1/dashboard/appraisal-summary' }
+  { method: 'get', path: '/api/v1/dashboard/appraisal-summary' },
+  // 2026-11-27 下钻明细面板 / 下钻趋势的行级鉴定明细（后端 openapi 基线尚未覆盖，
+  // 兜底 CI checkout 旧基线的场景）
+  { method: 'get', path: '/api/v1/dashboard/indicator-levels' }
 ] as const
 
 function normalizePathLiteral(rawPath: string): string | null {
