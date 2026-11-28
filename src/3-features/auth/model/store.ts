@@ -8,12 +8,102 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { apiClient as api } from '@/shared/api/client'
+import { formatErrorMessage } from '@/shared/api/errorHandler'
 import type { User, UserRole } from '@/shared/types'
 import { logger } from '@/shared/lib/utils/logger'
 import { tokenManager, TokenRefreshError } from '@/shared/lib/utils/tokenManager'
 import { parseLoginResponse, mapBackendUser, isKnownUserRole } from '@/shared/lib/utils/authHelpers'
 import { useTimeContextStore } from '@/shared/lib/timeContext'
 import { buildQueryKey, fetchWithCache, invalidateQueries } from '@/shared/lib/utils/cache'
+import { authApi } from '../api/auth'
+import type { IdentityDTO } from '../api/types'
+import {
+  extractIdentityContext,
+  resolveCurrentIdentity,
+  sortIdentities,
+  type IdentityContext
+} from '../lib/identity'
+import { resetIdentityRuntimeState } from '../lib/identityReset'
+
+/** 切换身份后统一落地数据看板（已拍板：不同角色首页不一致，不保留当前页） */
+const IDENTITY_SWITCH_LANDING_ROUTE = '/dashboard'
+
+/**
+ * 过场节奏（毫秒，自过场开始的绝对时刻）：四个步骤逐步点亮，每步「展示满对应时刻」
+ * 且「该步实际工作完成」才推进下一步。接口慢时所在步自动延长，接口快时也不快进，
+ * 两种耗时不叠加。总时长约 3s，保证步骤动画有过程感（演示场景本地接口秒回，不加会连跳）。
+ */
+const SWITCH_STEP_REQUEST_END_MS = 800
+const SWITCH_STEP_APPLY_END_MS = 1700
+const SWITCH_STEP_RESET_END_MS = 2400
+const SWITCH_STEP_NAVIGATE_END_MS = 3000
+/** 失败收尾：过场至少停到该时刻，让失败提示与回滚过程可见，不闪退 */
+const SWITCH_FAILURE_HOLD_MS = 1000
+
+/** 补足到 startedAt + targetMs 的剩余等待；已超过则立即返回，等待不叠加 */
+const sleepUntil = (startedAt: number, targetMs: number): Promise<void> =>
+  new Promise(resolve => {
+    const remaining = startedAt + targetMs - Date.now()
+    if (remaining <= 0) {
+      resolve()
+      return
+    }
+    setTimeout(resolve, remaining)
+  })
+
+/** 身份列表与钉钉用户 ID 的本地持久化 key（与 currentUser 同生命周期） */
+const IDENTITY_CONTEXT_STORAGE_KEY = 'identityContext'
+
+const EMPTY_IDENTITY_CONTEXT: IdentityContext = { identities: [], dingTalkUserId: null }
+
+/** 切换身份过场的阶段；reset / navigate 两步期间应用壳层整体卸载，完成后在数据看板重挂 */
+export type IdentitySwitchPhase = 'idle' | 'request' | 'apply' | 'reset' | 'navigate'
+
+export interface SwitchIdentityResult {
+  success: boolean
+  error?: string
+  /** 失败时的原始错误对象，供调用方标记已提示（避免响应拦截器重复弹兜底提示） */
+  cause?: unknown
+}
+
+/** 切换接口返回的响应不是登录态结构（没有 token / 用户），不落地 */
+export const SWITCH_ERROR_BAD_RESPONSE = '切换身份失败：服务器响应格式错误，请稍后重试'
+
+interface IdentitySnapshot {
+  token: string | null
+  user: User | null
+  identities: IdentityDTO[]
+  dingTalkUserId: string | null
+  refreshToken: string | null
+}
+
+const readRefreshToken = (): string | null => {
+  return typeof localStorage !== 'undefined' ? localStorage.getItem('refreshToken') : null
+}
+
+const writeRefreshToken = (refreshToken: string | null): void => {
+  if (refreshToken) {
+    localStorage.setItem('refreshToken', refreshToken)
+  } else {
+    localStorage.removeItem('refreshToken')
+  }
+}
+
+const resolveSwitchErrorMessage = (error: unknown): string => {
+  const record = error as { message?: unknown; response?: { data?: { message?: unknown } } } | null
+  // 优先后端返回的业务原文
+  const serverMessage = record?.response?.data?.message
+  if (typeof serverMessage === 'string' && serverMessage.trim()) {
+    return serverMessage.trim()
+  }
+  const rawMessage = typeof record?.message === 'string' ? record.message.trim() : ''
+  // axios 原始错误只有「Request failed with status code 401」这类英文，换成按状态码的中文文案
+  if (rawMessage && !/^Request failed with status code \d+$/.test(rawMessage)) {
+    return rawMessage
+  }
+  const formattedMessage = formatErrorMessage(error)
+  return formattedMessage && formattedMessage !== '未知错误' ? formattedMessage : '请稍后重试'
+}
 
 export const useAuthStore = defineStore('auth', () => {
   // ============ State ============
@@ -27,6 +117,65 @@ export const useAuthStore = defineStore('auth', () => {
   // 视角切换状态（用于战略发展部查看其他部门视角）
   const viewingAsRole = ref<UserRole | null>(null)
   const viewingAsDepartment = ref<string | null>(null)
+
+  // 多身份：同一钉钉账号绑定的全部部门席位。钉钉登录 / 切换身份的响应填充，
+  // 账号密码登录与旧版后端不下发，保持为空（单身份用户不展示多身份 UI）。
+  const identities = ref<IdentityDTO[]>([])
+  const dingTalkUserId = ref<string | null>(null)
+
+  // 切换身份过场：switching 期间界面全屏遮罩、禁止重复点击
+  const switching = ref(false)
+  const switchingPhase = ref<IdentitySwitchPhase>('idle')
+  const switchingTarget = ref<IdentityDTO | null>(null)
+
+  const persistIdentityContext = () => {
+    try {
+      if (identities.value.length === 0 && !dingTalkUserId.value) {
+        localStorage.removeItem(IDENTITY_CONTEXT_STORAGE_KEY)
+        return
+      }
+      localStorage.setItem(
+        IDENTITY_CONTEXT_STORAGE_KEY,
+        JSON.stringify({ identities: identities.value, dingTalkUserId: dingTalkUserId.value })
+      )
+    } catch (error) {
+      logger.warn('[Auth] 身份列表持久化失败:', error)
+    }
+  }
+
+  const applyIdentityContext = (context: IdentityContext) => {
+    identities.value = sortIdentities(context.identities)
+    dingTalkUserId.value = context.dingTalkUserId
+    persistIdentityContext()
+  }
+
+  /**
+   * 会话恢复时从本地取回身份列表。
+   * 当前账号不在列表里（本地缓存串了别的会话）时视为单身份，避免展示切换不过去的身份。
+   */
+  const restoreIdentityContextFor = (restoredUser: User | null): IdentityContext => {
+    let context = EMPTY_IDENTITY_CONTEXT
+    try {
+      const raw = localStorage.getItem(IDENTITY_CONTEXT_STORAGE_KEY)
+      context = raw ? extractIdentityContext(JSON.parse(raw)) : EMPTY_IDENTITY_CONTEXT
+    } catch (error) {
+      logger.warn('[Auth] 解析本地身份列表失败:', error)
+    }
+    if (!resolveCurrentIdentity(context.identities, restoredUser)) {
+      context = EMPTY_IDENTITY_CONTEXT
+    }
+    applyIdentityContext(context)
+    return context
+  }
+
+  const clearIdentityContext = () => {
+    identities.value = []
+    dingTalkUserId.value = null
+    switching.value = false
+    switchingPhase.value = 'idle'
+    switchingTarget.value = null
+    localStorage.removeItem(IDENTITY_CONTEXT_STORAGE_KEY)
+  }
 
   const persistUser = (value: User | null) => {
     if (value) {
@@ -127,6 +276,17 @@ export const useAuthStore = defineStore('auth', () => {
     () => viewingAsDepartment.value || user.value?.department || ''
   )
 
+  // 多身份：绑定 2 个及以上席位才展示角标 / 身份列表 / 上下文条
+  const hasMultipleIdentities = computed(() => identities.value.length > 1)
+  const currentIdentity = computed(() => resolveCurrentIdentity(identities.value, user.value))
+  /**
+   * 切换过场进入「清状态 / 跳转」两步后，应用壳层整体卸载（App.vue 据此 v-if 掉根 router-view）：
+   * 带旧身份状态的组件不再渲染，完成后再在新身份下重新挂载。
+   */
+  const identityShellSuspended = computed(
+    () => switchingPhase.value === 'reset' || switchingPhase.value === 'navigate'
+  )
+
   const enrichUserWithOrganization = async (
     userData: Record<string, unknown>
   ): Promise<Record<string, unknown>> => {
@@ -216,10 +376,14 @@ export const useAuthStore = defineStore('auth', () => {
 
   /**
    * 登录响应落地：解析 token/用户、补全组织信息、恢复持久化状态。
-   * 账号密码登录与钉钉免登共用。
+   * 账号密码登录、钉钉免登、切换身份共用。
+   *
+   * @param options.reloadStrategicData 登录后是否顺带重载指标数据；切换身份时关闭
+   *   （过场结束应用壳层重挂，各视图自行重新加载）。
    */
   const applyLoginResponse = async (
-    response: Record<string, unknown>
+    response: Record<string, unknown>,
+    options: { reloadStrategicData?: boolean } = {}
   ): Promise<{ success: boolean; error?: string }> => {
     const parseResult = parseLoginResponse(response)
 
@@ -257,11 +421,13 @@ export const useAuthStore = defineStore('auth', () => {
 
     user.value = mappedUser
     persistUser(mappedUser)
+    // 多身份：钉钉登录 / 切换身份的响应带 identities 与 dingTalkUserId（可选字段，缺失即为单身份）
+    applyIdentityContext(extractIdentityContext(response))
     invalidateQueries(['auth.user'])
     authInitialized.value = true
 
     // 登录成功后，触发数据重新加载
-    if (mappedUser.role === 'strategic_dept') {
+    if (options.reloadStrategicData !== false && mappedUser.role === 'strategic_dept') {
       import('@/features/task/model/strategic')
         .then(({ useStrategicStore }) => {
           const strategicStore = useStrategicStore()
@@ -335,6 +501,198 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  /**
+   * 切换身份：换到同一钉钉账号绑定的另一个部门席位。
+   *
+   * 等价于「退出旧账号 + 登录新账号」，但不调用 logout()、不跳 /login、不重新免登——
+   * 否则路由守卫会静默免登并取回默认身份，造成回弹。
+   *
+   * 流程：校验入参 → 调切换接口 → 纯解析校验（不改登录态）→ 壳层挂起（旧页面卸载）
+   * 后落地登录响应并清上一身份的前端状态 → router.push('/dashboard')。
+   * 接口失败与解析失败时不改动任何登录状态；落地失败时（壳层已挂起）回滚到
+   * 切换前的登录状态，收尾后重挂旧身份页面。
+   *
+   * 过场按「顺序节奏器」推进：每步展示满 SWITCH_STEP_*_END_MS 且该步实际工作完成
+   * 才点亮下一步，全部完成后才跳转；失败时停在当前失败步、足展后再收尾，不闪退。
+   */
+  const switchIdentity = async (targetSysUserId: number): Promise<SwitchIdentityResult> => {
+    if (switching.value) {
+      return { success: false, error: '身份切换进行中，请稍候' }
+    }
+
+    const target = identities.value.find(identity => identity.sysUserId === targetSysUserId)
+    if (!target) {
+      return { success: false, error: '目标身份不在当前账号的可切换身份列表内' }
+    }
+    if (currentIdentity.value?.sysUserId === target.sysUserId) {
+      return { success: true }
+    }
+    const currentDingTalkUserId = dingTalkUserId.value
+    // 过场计时起点：上面 early return 的路径（进行中 / 目标不存在 / 目标=当前）不显示过场
+    // （switching 未置 true），不参与计时、不做等待
+    const startedAt = Date.now()
+
+    const finish = () => {
+      switching.value = false
+      switchingPhase.value = 'idle'
+      switchingTarget.value = null
+    }
+
+    switching.value = true
+    switchingPhase.value = 'request'
+    switchingTarget.value = target
+
+    // 第 1 步「校验目标身份归属」：接口立即发起，与步骤展示并行；
+    // 接口慢时该步自动延长（Promise.all 等两边都完成），接口快时也不快进
+    let response: Record<string, unknown>
+    try {
+      const [, switchResponse] = await Promise.all([
+        sleepUntil(startedAt, SWITCH_STEP_REQUEST_END_MS),
+        // 后端以令牌里的当前账号为准；dingTalkUserId 仅作一致性核对，可选携带
+        authApi.switchIdentity({
+          ...(currentDingTalkUserId ? { dingTalkUserId: currentDingTalkUserId } : {}),
+          targetSysUserId: target.sysUserId
+        })
+      ])
+      response = switchResponse as unknown as Record<string, unknown>
+    } catch (error) {
+      logger.warn('[Auth] 切换身份失败:', error)
+      // 过场停在第 1 步，停留满 1s 再收尾，让失败过程可见
+      await sleepUntil(startedAt, SWITCH_FAILURE_HOLD_MS)
+      finish()
+      return {
+        success: false,
+        error: `切换身份失败：${resolveSwitchErrorMessage(error)}`,
+        cause: error
+      }
+    }
+
+    if (!response || typeof response !== 'object') {
+      logger.warn('[Auth] 切换身份响应格式异常:', response)
+      // 仍是第 1 步的失败，同样足展后收尾
+      await sleepUntil(startedAt, SWITCH_FAILURE_HOLD_MS)
+      finish()
+      return { success: false, error: SWITCH_ERROR_BAD_RESPONSE }
+    }
+
+    switchingPhase.value = 'apply'
+    // 快照备份旧登录态，供落地失败时回滚；此刻尚未改动任何登录态
+    const snapshot: IdentitySnapshot = {
+      token: token.value,
+      user: user.value,
+      identities: identities.value.map(identity => ({ ...identity, roles: [...identity.roles] })),
+      dingTalkUserId: currentDingTalkUserId,
+      refreshToken: readRefreshToken()
+    }
+
+    /** 回滚到切换前的登录态（内存 + 持久化同步还原） */
+    const rollbackToSnapshot = () => {
+      token.value = snapshot.token
+      if (snapshot.token) {
+        tokenManager.setAccessToken(snapshot.token)
+      } else {
+        tokenManager.clearAccessToken()
+      }
+      user.value = snapshot.user
+      identities.value = snapshot.identities
+      dingTalkUserId.value = snapshot.dingTalkUserId
+      persistUser(snapshot.user)
+      persistIdentityContext()
+      writeRefreshToken(snapshot.refreshToken)
+    }
+
+    // 第 2 步「签发新身份登录凭证」：只做纯解析校验（凭证已在接口响应里），
+    // 不落地、不改任何 store 登录态——真正落地推迟到第 3 步壳层挂起之后，
+    // 保证旧页面在第 2 步期间仍以旧身份渲染，不在遮罩下提前变成新身份
+    let parseError: string | null = null
+    try {
+      const parseResult = parseLoginResponse(response)
+      if (!parseResult.success || !parseResult.data) {
+        parseError = parseResult.error || '登录失败：服务器响应格式错误'
+      }
+    } catch (error) {
+      logger.error('[Auth] 切换身份响应解析异常:', error)
+      parseError = ''
+    }
+    // 第 2 步足展到 apply 时刻（解析快时不快进，保持步骤节奏）
+    await sleepUntil(startedAt, SWITCH_STEP_APPLY_END_MS)
+
+    if (parseError !== null) {
+      // 解析未过：登录态从未改动，仍按快照收尾（壳层未挂起，正常关闭过场）
+      rollbackToSnapshot()
+      // 解析失败的文案带「登录失败：」前缀，这里换成切换语境
+      const applyError = parseError.replace(/^登录失败：/, '')
+      logger.warn('[Auth] 切换身份响应解析失败，已回滚到原身份:', parseError)
+      finish()
+      return {
+        success: false,
+        error: applyError ? `切换身份失败：${applyError}` : SWITCH_ERROR_BAD_RESPONSE
+      }
+    }
+
+    // 第 3 步「落地新身份并清除上一身份的页面数据」：先置阶段——壳层此刻挂起
+    // （App.vue 卸载 router-view，旧页面不再渲染），登录态落地、清缓存、清 store
+    // 全部在遮罩下进行。置位与落地之间无需等一帧：v-if 卸载与 store 写入同批
+    // 渲染，最终 DOM 一致。
+    switchingPhase.value = 'reset'
+
+    // ---- 以下开始改动登录状态，失败需回滚 ----
+    let applied: { success: boolean; error?: string }
+    try {
+      applied = await applyLoginResponse(response, { reloadStrategicData: false })
+    } catch (error) {
+      logger.error('[Auth] 切换身份响应落地异常:', error)
+      applied = { success: false }
+    }
+
+    if (!applied.success) {
+      // 壳层已挂起：回滚快照后收尾，App.vue 随 phase='idle' 重挂旧身份页面。
+      // 此时查询缓存与各 store 尚未清理（resetIdentityRuntimeState 在落地成功
+      // 后才执行），旧页面带着原有数据完整恢复。
+      rollbackToSnapshot()
+      // applyLoginResponse 的错误文案带「登录失败：」前缀，这里换成切换语境
+      const applyError = (applied.error || '').replace(/^登录失败：/, '')
+      logger.warn('[Auth] 切换身份响应落地失败，已回滚到原身份:', applied.error)
+      finish()
+      return {
+        success: false,
+        error: applyError ? `切换身份失败：${applyError}` : SWITCH_ERROR_BAD_RESPONSE
+      }
+    }
+
+    // 响应未带 identities / dingTalkUserId 时沿用切换前的（同一钉钉账号，绑定关系不变）
+    if (identities.value.length === 0) {
+      identities.value = snapshot.identities
+    }
+    if (!dingTalkUserId.value) {
+      dingTalkUserId.value = snapshot.dingTalkUserId
+    }
+    persistIdentityContext()
+
+    // 部门视角是上一身份的查看状态，新身份从自己的默认视角开始
+    resetViewingAs()
+
+    // 清掉上一身份的查询缓存、各 store 数据与通知列表（旧组件树已卸载）
+    resetIdentityRuntimeState()
+    await sleepUntil(startedAt, SWITCH_STEP_RESET_END_MS)
+
+    // 第 4 步「进入数据看板」：点亮后停留到 navigate 时刻再跳转，跳转完成才收过场
+    switchingPhase.value = 'navigate'
+    await sleepUntil(startedAt, SWITCH_STEP_NAVIGATE_END_MS)
+    try {
+      const { default: router } = await import('@/app/providers/router')
+      await router.push(IDENTITY_SWITCH_LANDING_ROUTE)
+      if (typeof window !== 'undefined') {
+        window.scrollTo(0, 0)
+      }
+    } catch (error) {
+      logger.error('[Auth] 切换身份后跳转数据看板失败:', error)
+    } finally {
+      finish()
+    }
+    return { success: true }
+  }
+
   const logout = (options: { redirect?: boolean } = {}) => {
     const shouldRedirect = options.redirect !== false
     user.value = null
@@ -343,6 +701,7 @@ export const useAuthStore = defineStore('auth', () => {
     persistUser(null)
     clearLegacyAccessTokenStorage()
     localStorage.removeItem('refreshToken')
+    clearIdentityContext()
     invalidateQueries(['auth.user'])
     authInitialized.value = true
 
@@ -431,6 +790,7 @@ export const useAuthStore = defineStore('auth', () => {
           user.value = parsedUser
           token.value = memoryToken
           localStorage.setItem('user', JSON.stringify(parsedUser))
+          restoreIdentityContextFor(parsedUser)
           logger.debug('[Auth] 从内存恢复会?', parsedUser.name, parsedUser.role)
           if (!String(parsedUser.orgType ?? '').trim() || !hasRoleCodes(parsedUser)) {
             logger.debug('[Auth] 本地缓存缺少 orgType 或 roles，主动刷新当前用户')
@@ -465,6 +825,7 @@ export const useAuthStore = defineStore('auth', () => {
             user.value = parsedUser
             token.value = newToken
             persistUser(parsedUser)
+            restoreIdentityContextFor(parsedUser)
             logger.debug('[Auth] 会话恢复成功:', parsedUser.name)
             if (!String(parsedUser.orgType ?? '').trim() || !hasRoleCodes(parsedUser)) {
               logger.debug('[Auth] 恢复会话后缺少 orgType 或 roles，主动刷新当前用户')
@@ -547,6 +908,11 @@ export const useAuthStore = defineStore('auth', () => {
     authInitialized,
     viewingAsRole,
     viewingAsDepartment,
+    identities,
+    dingTalkUserId,
+    switching,
+    switchingPhase,
+    switchingTarget,
 
     // Getters
     isAuthenticated,
@@ -555,10 +921,14 @@ export const useAuthStore = defineStore('auth', () => {
     userDepartment,
     effectiveRole,
     effectiveDepartment,
+    hasMultipleIdentities,
+    currentIdentity,
+    identityShellSuspended,
 
     // Actions
     login,
     loginWithDingTalk,
+    switchIdentity,
     logout,
     fetchUser,
     initializeAuth,

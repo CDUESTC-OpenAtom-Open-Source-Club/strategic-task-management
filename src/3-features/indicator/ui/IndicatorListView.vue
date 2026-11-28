@@ -1121,14 +1121,13 @@ const handleExportIndicatorList = async () => {
               <el-skeleton :rows="8" animated />
             </div>
 
-            <!-- 2026-11-17 领导界面优化（截图批注「滚动窗口竖直拉长」）：表格滚动区
-                 竖直拉长到占满视口剩余高度——高度链 = 页面容器 calc(100vh - 264px)
-                 （与战略任务管理页同一常量，见 IndicatorListView.css 顶部注释）→
-                 table-card / table-body / table-container 逐级 flex:1 传下来，
-                 el-table 用 height="100%" 吃满容器（Element Plus 对百分比字符串
-                 原样落到根元素 style.height，再由内部 ResizeObserver 量 offsetHeight
-                 切分表头/表体），表体内部滚动、表头钉住。窗口缩放自适应（纯 CSS
-                 视口计算 + el-table 自身 observer，无 JS 参与高度）。 -->
+            <!-- 2026-11-28 用户拍板：不做内嵌滚动，表格内容全部展开、页面整体下滑。
+                 el-table 不设 height——Element Plus 按数据行数自然撑开表格高度，
+                 表体内部不再出现竖直滚动条，纵向滚动交给整页（body）。
+                 代价：表头不再钉住，随页面一起滚（用户要的就是这个）。
+                 横向滚动不受影响：列宽超出视口时仍由表格内部横向滚动条处理，
+                 外层 .table-container 保留 overflow-x: auto 兜底。
+                 详见 IndicatorListView.css 顶部的高度链沿革说明。 -->
             <el-table
               v-else-if="indicators.length > 0"
               ref="tableRef"
@@ -1138,7 +1137,6 @@ const handleExportIndicatorList = async () => {
               border
               highlight-current-row
               class="unified-table"
-              height="100%"
               @selection-change="handleSelectionChange"
             >
               <!-- 2026-10-28 华年定案：三个页面列宽/顺序必须与「战略任务管理」页面完全一致。

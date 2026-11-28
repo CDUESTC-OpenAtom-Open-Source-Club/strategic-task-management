@@ -246,6 +246,8 @@ export interface User {
   permissions?: string[]
   /** 前端兼容头像 */
   avatar?: string
+  /** 头像 URL (后端: avatar_url) */
+  avatarUrl?: string
 }
 
 /**

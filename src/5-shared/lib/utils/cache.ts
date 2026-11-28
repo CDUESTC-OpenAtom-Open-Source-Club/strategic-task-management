@@ -51,6 +51,8 @@ export interface CacheEntry<T = unknown> {
 type PendingRequest<T = unknown> = {
   promise: Promise<T>
   startedAt: number
+  /** 发起请求时的缓存世代（见 CacheManager.getEpoch） */
+  epoch: number
 }
 
 type QueryStoragePayload<T = unknown> = Omit<QueryCacheEntry<T>, 'source'>
@@ -310,6 +312,13 @@ export class CacheManager {
   private pendingRequests = new Map<string, PendingRequest>()
   private cleanupInterval: ReturnType<typeof setInterval> | null = null
   private stats: QueryCacheStats = defaultStats()
+  /**
+   * 缓存世代：每次 clear() 递增。
+   *
+   * clear() 之后，清空前已在途的请求仍可能带着旧数据返回并回写缓存；
+   * 在途请求记下发起时的世代，回写 / 复用前比对世代，过期的一律丢弃。
+   */
+  private epoch = 0
 
   constructor() {
     Object.entries(DEFAULT_CACHE_CONFIGS).forEach(([serializedKey, policy]) => {
@@ -522,7 +531,10 @@ export class CacheManager {
 
   public clear(): void {
     const size = this.memory.size
+    this.epoch += 1
     this.memory.clear()
+    // 清空前的在途请求一并作废：既不复用其结果，也不让它们回写
+    this.pendingRequests.clear()
     ;(['session', 'local'] as const).forEach(scope => {
       const storage = getStorage(scope)
       if (!storage) {
@@ -538,6 +550,11 @@ export class CacheManager {
       keys.forEach(key => storage.removeItem(key))
     })
     logger.debug(`[Cache] Cleared all ${size} memory entries`)
+  }
+
+  /** 当前缓存世代；clear() 之后会变，用于识别清空前发起的在途请求 */
+  public getEpoch(): number {
+    return this.epoch
   }
 
   public cleanupExpired(): void {
@@ -612,12 +629,25 @@ export class CacheManager {
   public setPendingRequest<T>(key: QueryKey | string, promise: Promise<T>): void {
     this.pendingRequests.set(serializeQueryKey(key), {
       promise,
-      startedAt: Date.now()
+      startedAt: Date.now(),
+      epoch: this.epoch
     })
   }
 
-  public clearPendingRequest(key: QueryKey | string): void {
-    this.pendingRequests.delete(serializeQueryKey(key))
+  /**
+   * 清除在途请求标记。
+   * 传入 promise 时只清除同一个请求的标记——clear() 之后同名 key 可能已被新请求占用，
+   * 旧请求收尾时不能误删新请求的去重标记。
+   */
+  public clearPendingRequest(key: QueryKey | string, promise?: Promise<unknown>): void {
+    const serializedKey = serializeQueryKey(key)
+    if (promise) {
+      if (this.pendingRequests.get(serializedKey)?.promise === promise) {
+        this.pendingRequests.delete(serializedKey)
+      }
+      return
+    }
+    this.pendingRequests.delete(serializedKey)
   }
 
   public markDedupedRequest(): void {
@@ -858,19 +888,23 @@ export async function fetchWithCache<T>({
     return pending.promise
   }
 
-  const promise = (async () => {
-    try {
-      const data = await fetcher()
+  const epoch = cacheManager.getEpoch()
+  const run = async () => {
+    const data = await fetcher()
+    // 请求在途期间缓存被 clear() 过（如切换身份）：结果属于上一份缓存，不回写
+    if (cacheManager.getEpoch() === epoch) {
       cacheManager.set(serializedKey, data, {
         policy,
         tags,
         source: 'network'
       })
-      return data
-    } finally {
-      cacheManager.clearPendingRequest(serializedKey)
     }
-  })()
+    return data
+  }
+  // promise 初始化完成后再挂收尾回调（收尾要引用 promise 本身，不能写进初始化器）
+  const promise = run().finally(() => {
+    cacheManager.clearPendingRequest(serializedKey, promise)
+  })
 
   cacheManager.setPendingRequest(serializedKey, promise)
   return promise

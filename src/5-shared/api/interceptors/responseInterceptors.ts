@@ -366,11 +366,25 @@ export function createResponseErrorInterceptor(config: ResponseInterceptorConfig
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean }
     const isLoginRequest = originalRequest?.url?.includes('/auth/login')
     const isRefreshRequest = originalRequest?.url?.includes('/auth/refresh')
+    // 切换身份接口的 401 是业务拒绝（目标账号停用 / 身份不属于当前钉钉账号），
+    // 不是登录态失效：不能走「刷新 Token 后重试」的链路——重试的失败会连带触发
+    // 清登录态跳登录页，钉钉容器内再静默免登取回默认身份。
+    // access token 仍在有效期内时直接交回认证层提示，并保留当前身份的登录态。
+    const isIdentitySwitchRequest = Boolean(originalRequest?.url?.includes('/auth/dingtalk/switch'))
 
     const tryRefreshAndRetry = async (): Promise<never> => {
       // 登录和刷新请求失败，直接返回错误（不尝试刷新）
       if (isLoginRequest || isRefreshRequest) {
         logger.debug('🔒 [API Auth] 登录/刷新请求失败，不尝试刷新')
+        return Promise.reject(error)
+      }
+
+      // 切换身份：access token 仍在有效期内时的 401 就是业务拒绝，不做刷新重试
+      if (
+        isIdentitySwitchRequest &&
+        !(tokenManager.getAccessToken() && tokenManager.isTokenExpiring())
+      ) {
+        logger.debug('🔒 [API Auth] 切换身份被拒绝，保留当前登录态')
         return Promise.reject(error)
       }
 

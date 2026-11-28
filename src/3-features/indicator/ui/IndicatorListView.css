@@ -2,33 +2,30 @@
    页面容器 - 统一页面布局样式
    Requirements: 2.1, 3.1
 
-   2026-11-17 领导界面优化（截图批注）：「滚动窗口在整个页面的占比太小，
-   竖直拉长整个滚动界面，一次性看到更多指标」。
+   历史沿革：
+   - 2026-11-17 领导界面优化（截图批注）：「滚动窗口在整个页面的占比太小，
+     竖直拉长整个滚动界面，一次性看到更多指标」。当时按战略任务管理页
+     （StrategicTaskView.css）同构做了一整套视口高度链：容器固定
+     height: calc(100vh - 264px)，表格卡片吃满剩余高度，
+     el-table（height="100%"）内部滚动、表头钉住。
+   - 2026-11-28 用户拍板：改成「不做内嵌滚动，表格内容全部展开，
+     页面整体下滑」——固定高度链整条拆掉，容器高度随内容自然撑开，
+     纵向滚动交回 body（整页下滑），表格内部不再出竖直滚动条；
+     代价是表头不再钉住，随页面一起滚（本次按用户要求照做）。
 
-   高度链与战略任务管理页（StrategicTaskView.css）同构：
-   - 264px = 页头(app-header 92) + 页签导航(tab-nav 52+间距 20) +
-     app-main 上下留白(40) + 页脚(约 46) + 余量，是该页已验证过的同款常量；
-   - 容器占满视口剩余高度后内部不再滚动，表格卡片吃满剩余空间，
-     el-table（height="100%"）内部滚动、表头钉住，一屏可视行数最大化；
-   - 本页面专属规则放本文件，不动共享布局组件——对 AppLayout 里
-     `.content-area { min-height: calc(100vh - 180px) }` 的豁免，
-     复用 AppLayout 为 strategic-task-container 已开先例的 :has() 写法，
-     仅命中本页容器。
+   因此本页不再需要 AppLayout 里 `.content-area { min-height: calc(100vh - 180px) }`
+   的 :has() 豁免——那条豁免只服务于旧的固定视口高度设计，现已删除，
+   本页恢复与其他页面一致的内容区默认行为。
    ======================================== */
-:global(.content-area:has(.indicator-list-container)) {
-  min-height: 0;
-}
 
 .indicator-list-container {
   display: flex;
   flex-direction: column;
-  /* 竖向留白 24→16（横向 24 不动，保持与战略任务管理页的表格对齐宽度），
-     让出来的高度全部给表格滚动区 */
+  /* 竖向留白 24→16（横向 24 不动，保持与战略任务管理页的表格对齐宽度） */
   padding: var(--spacing-lg) var(--spacing-2xl);
   background: var(--bg-page);
-  height: calc(100vh - 264px);
-  min-height: 0;
-  overflow: hidden;
+  /* 2026-11-28：整页下滑——高度由内容撑开，不再固定视口剩余高度、不再内部滚动 */
+  height: auto;
 }
 
 /* ========================================
@@ -41,7 +38,7 @@
   justify-content: space-between;
   align-items: flex-start;
   margin-bottom: var(--spacing-md);
-  /* 视口高度布局下头部不参与压缩 */
+  /* 头部保持自然高度，不参与压缩 */
   flex-shrink: 0;
 }
 
@@ -78,9 +75,8 @@
   display: flex;
   flex-direction: column;
   gap: var(--spacing-md);
-  /* 吃掉页面容器剩余高度，让表格卡片贴住视口底部 */
-  flex: 1;
-  min-height: 0;
+  /* 2026-11-28 整页下滑：不再吃掉视口剩余高度，高度随内容自然撑开 */
+  flex: none;
 }
 
 /* ========================================
@@ -91,7 +87,7 @@
   background: var(--bg-white);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
-  /* 高度链里保持自然高度，压缩全让给表格 */
+  /* 保持自然高度 */
   flex-shrink: 0;
 }
 
@@ -144,11 +140,9 @@
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
   overflow: hidden;
-  /* 2026-11-17 领导批注：表格卡片吃满内容区剩余高度（卡片头之外全是表格滚动区） */
+  /* 2026-11-28 整页下滑：卡片高度由内容决定（表格全部展开），不再吃满剩余高度 */
   display: flex;
   flex-direction: column;
-  flex: 1;
-  min-height: 0;
 }
 
 .table-card .card-header {
@@ -252,41 +246,33 @@
   padding: 0;
 }
 
-/* 卡片体把剩余高度全部让给表格容器（el-table height="100%" 在此容器内滚动） */
+/* 2026-11-28 整页下滑：卡片体高度随内容自然撑开，不再把剩余高度分给表格容器 */
 .table-card .card-body.table-body {
   display: flex;
   flex-direction: column;
-  flex: 1;
-  min-height: 0;
 }
 
 .table-container {
   width: 100%;
+  /* 横向滚动保留（列多，宽度超出视口时仍需左右滑动）；
+     纵向不再由容器承担——表格按行数撑开，页面整体下滑 */
   overflow-x: auto;
-  /* 2026-11-17 领导批注：滚动区竖直拉长——表格容器吃满卡片剩余高度，
-     竖直滚动交给 el-table 内部（表头钉住），容器自身不重复出竖直滚动条 */
-  flex: 1;
-  min-height: 0;
+  overflow-y: hidden;
   display: flex;
   flex-direction: column;
+  /* 覆盖 unified-styles.css 里全局的 .table-container { flex: 1; overflow: auto }：
+     旧的视口高度链靠它吃满剩余高度，本页改为内容撑开后必须解掉 */
+  flex: none;
 }
 
-/* el-table 以百分比高度吃满 .table-container（height="100%" 属性会把
-   inline style height 落在根元素上；这里只是等值兜底，不改它的内部 flex 结构——
-   Element Plus 自带 .el-table__inner-wrapper { height: 100%; flex column }。 */
+/* el-table 不设 height：Element Plus 按内容行数自然撑开，表格内部不产生竖直滚动条 */
 .table-container .unified-table {
   width: 100%;
-  height: 100%;
 }
 
-/* 加载骨架 / 空状态在高度链里保持自然高度 */
+/* 加载骨架 / 空状态保持自然高度 */
 .loading-state {
   flex-shrink: 0;
-}
-
-/* 确保表头不换行，列宽自适应 */
-.table-container .unified-table {
-  width: 100%;
 }
 
 /* ========================================
@@ -779,23 +765,10 @@
    响应式适配
    ======================================== */
 @media (max-width: 768px) {
-  /* 窄屏回退：视口高度布局在竖屏小窗里会挤死表格，恢复自然高度整页滚动 */
+  /* 窄屏：内边距收窄 + 头部/筛选条改为竖排。
+     2026-11-28 起本页统一为整页下滑，旧的「窄屏回退固定高度」规则已随高度链一同删除。 */
   .indicator-list-container {
     padding: var(--spacing-lg);
-    height: auto;
-    overflow: visible;
-  }
-
-  .content-wrapper,
-  .table-card,
-  .table-card .card-body.table-body,
-  .table-container {
-    flex: none;
-    min-height: 0;
-  }
-
-  .table-container .unified-table {
-    height: auto;
   }
 
   .page-header {

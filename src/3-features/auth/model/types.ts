@@ -73,3 +73,8 @@ export interface UserProfileFormState {
  * Re-export entity types for convenience
  */
 export type { User, UserRole, LoginCredentials, LoginResponse }
+
+/**
+ * 多身份切换契约（定义见 ../api/types）
+ */
+export type { IdentityDTO, SwitchIdentityRequest, SwitchIdentityResponse } from '../api/types'

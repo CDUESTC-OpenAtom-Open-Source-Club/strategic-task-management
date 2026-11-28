@@ -1,7 +1,12 @@
 import { apiClient as api } from '@/shared/api/client'
 import type { LoginCredentials, LoginResponse } from '@/entities/user/model/types'
 import type { User } from '@/shared/types'
-import type { ApiResponse, LoginRequest } from './types'
+import type {
+  ApiResponse,
+  LoginRequest,
+  SwitchIdentityRequest,
+  SwitchIdentityResponse
+} from './types'
 
 export interface UpdateContactInfoRequest {
   email?: string | null
@@ -64,6 +69,21 @@ export const authApi = {
   },
 
   /**
+   * 切换身份：换到同一钉钉账号绑定的另一个部门席位
+   * POST /api/v1/auth/dingtalk/switch
+   *
+   * 响应与登录响应同构，含目标身份的新 token 和 identities。
+   * 失败：目标身份不属于当前钉钉账号 → IDENTITY_NOT_ALLOWED；目标账号停用 → 拒绝。
+   *
+   * @param payload 当前钉钉用户 ID + 目标系统账号 ID
+   */
+  async switchIdentity(
+    payload: SwitchIdentityRequest
+  ): Promise<ApiResponse<SwitchIdentityResponse>> {
+    return api.post('/auth/dingtalk/switch', payload satisfies SwitchIdentityRequest)
+  },
+
+  /**
    * Get current user info
    * GET /api/v1/auth/me
    *
@@ -91,15 +111,11 @@ export const authApi = {
     return api.post('/auth/register', userData)
   },
 
-  async updateContactInfo(
-    data: UpdateContactInfoRequest
-  ): Promise<ApiResponse<User>> {
+  async updateContactInfo(data: UpdateContactInfoRequest): Promise<ApiResponse<User>> {
     return api.put('/auth/users/me/contact', data)
   },
 
-  async sendResetCode(
-    email: string
-  ): Promise<ApiResponse<{ message: string; expiresIn: number }>> {
+  async sendResetCode(email: string): Promise<ApiResponse<{ message: string; expiresIn: number }>> {
     return api.post('/auth/password-reset/send', { email } satisfies PasswordResetSendRequest)
   },
 
@@ -107,7 +123,10 @@ export const authApi = {
     email: string,
     code: string
   ): Promise<ApiResponse<{ valid: boolean; message: string }>> {
-    return api.post('/auth/password-reset/verify', { email, code } satisfies PasswordResetVerifyRequest)
+    return api.post('/auth/password-reset/verify', {
+      email,
+      code
+    } satisfies PasswordResetVerifyRequest)
   },
 
   async confirmResetPassword(

@@ -11,7 +11,7 @@
 import { watch, onMounted, onUnmounted, computed, ref, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { Switch, Monitor, Lock, SwitchButton } from '@element-plus/icons-vue'
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { ApprovalProgressDrawer, useApprovalCenter } from '@/features/approval'
 import { usePlanStore } from '@/features/plan/model/store'
 import YearSelector from '@/shared/ui/form/YearSelector.vue'
@@ -19,6 +19,7 @@ import CacheDebugPanel from '@/shared/ui/dev/CacheDebugPanel.vue'
 import AppAvatar from '@/shared/ui/avatar/AppAvatar.vue'
 import { AppFooter } from '@/shared/ui/layout'
 import { useNavigation } from '@/shared/lib/layout'
+import { markErrorHandled } from '@/shared/lib/utils/errorToast'
 import { useAppLayout, useDepartmentSwitcher, useNotificationCenter } from './lib'
 import {
   initApprovalNotifications,
@@ -28,9 +29,38 @@ import { disconnectWebSocket } from '@/shared/api/websocket'
 import { useTimeContextStore } from '@/shared/lib/timeContext'
 import { useIndicatorRouteFocus } from '@/shared/lib/indicatorRouteFocus'
 import { useAuthStore } from '@/features/auth/model/store'
+import { formatIdentityTitle } from '@/features/auth/lib/identity'
+import type { IdentityDTO } from '@/features/auth/api/types'
 
 const router = useRouter()
 const authStore = useAuthStore()
+
+// 多身份：同一钉钉账号绑定 2 个及以上席位时才展示身份列表 / 角标
+const identities = computed(() => authStore.identities)
+const hasMultipleIdentities = computed(() => authStore.hasMultipleIdentities)
+const identityMenuVisible = ref(false)
+
+const isCurrentIdentity = (identity: IdentityDTO) =>
+  authStore.currentIdentity?.sysUserId === identity.sysUserId
+
+/**
+ * 切换到指定身份。成功后 authStore 完成跳转，应用壳层随之重挂；
+ * 失败时登录态未变（接口失败）或已回滚（响应落地失败），这里只负责提示。
+ */
+const handleSwitchIdentity = async (identity: IdentityDTO) => {
+  identityMenuVisible.value = false
+  const result = await authStore.switchIdentity(identity.sysUserId)
+  if (!result.success) {
+    // 认证层已提示，响应拦截器不再弹兜底提示
+    markErrorHandled(result.cause)
+    ElMessage.error(result.error || '切换身份失败，请稍后重试')
+  }
+}
+
+const handleIdentityMenuCommand = (command: 'console' | 'profile' | 'logout') => {
+  identityMenuVisible.value = false
+  void handleDropdownCommand(command)
+}
 
 // 2026-11-20 消息中心催办/告警跳转修复：消费工作台深链 ?indicatorId= 定位参数，
 // 滚动/高亮到对应指标行（催办/告警通知跳转不再丢上下文）
@@ -42,6 +72,23 @@ const isDev = import.meta.env.DEV
 // 使用 Layout Composables
 const { currentUser, isStrategicDept, strategicDeptName, canAccessAdminConsole, handleLogout } =
   useAppLayout()
+
+const currentUserAvatar = computed(
+  () =>
+    (currentUser.value as { avatar?: string; avatarUrl?: string } | null)?.avatar ||
+    (currentUser.value as { avatar?: string; avatarUrl?: string } | null)?.avatarUrl ||
+    ''
+)
+const currentUserDisplayName = computed(
+  () =>
+    currentUser.value?.name || currentUser.value?.realName || currentUser.value?.username || '用户'
+)
+
+// 2026-11-28（身份菜单显示各身份自己的姓名）：头像字与姓名行取 IdentityDTO.realName
+// （该席位账号的姓名，后端按 sysUserId 带出），不再全部显示当前登录人；
+// 旧版后端不下发 realName 时回退当前登录用户。头像字由 AppAvatar 取 name 首字符。
+const identityDisplayName = (identity: IdentityDTO) =>
+  identity.realName || currentUserDisplayName.value
 
 const { viewingDept, viewingRole, viewingDeptName, deptOptions } = useDepartmentSwitcher()
 const planStore = usePlanStore()
@@ -185,7 +232,7 @@ watch(approvalCenterVisible, isVisible => {
 })
 
 /**
- * Handle dropdown menu commands
+ * Handle menu commands（控制台 / 个人中心 / 退出）
  */
 const handleDropdownCommand = async (command: string) => {
   switch (command) {
@@ -199,11 +246,17 @@ const handleDropdownCommand = async (command: string) => {
       break
     case 'logout':
       try {
-        await ElMessageBox.confirm('确定要退出登录吗?', '退出确认', {
-          confirmButtonText: '确定',
-          cancelButtonText: '取消',
-          type: 'warning'
-        })
+        // 多身份用户退出的是全部身份（本系统每个标签页只保留一份登录态，退出口径与单身份一致）
+        const isMultiIdentity = hasMultipleIdentities.value
+        await ElMessageBox.confirm(
+          isMultiIdentity ? '确定要退出全部身份吗?' : '确定要退出登录吗?',
+          isMultiIdentity ? '退出全部身份' : '退出确认',
+          {
+            confirmButtonText: '确定',
+            cancelButtonText: '取消',
+            type: 'warning'
+          }
+        )
         handleLogout()
         disconnectWebSocket()
         router.push('/login')
@@ -212,11 +265,6 @@ const handleDropdownCommand = async (command: string) => {
       }
       break
   }
-}
-
-/** 点击头像 = 进入个人中心（基本信息），与下拉里的「个人中心」一致 */
-const goToProfile = () => {
-  router.push('/profile')
 }
 </script>
 
@@ -275,12 +323,6 @@ const goToProfile = () => {
             >
               查看中: {{ viewingDeptName }}
             </el-tag>
-          </div>
-
-          <!-- User info -->
-          <div class="user-info">
-            <span class="dept-name">{{ currentUser?.department }}</span>
-            <span class="user-name">{{ currentUser?.name }}</span>
           </div>
 
           <!-- Notification badge -->
@@ -371,41 +413,130 @@ const goToProfile = () => {
             </div>
           </el-popover>
 
-          <!-- User dropdown menu -->
-          <!-- 2026-10-30 用户定案：头像本身点击 = 个人中心（基本信息），
-               悬停仍展开下拉（退出登录等入口不受影响） -->
-          <el-dropdown trigger="hover" @command="handleDropdownCommand">
-            <AppAvatar
-              class="user-avatar"
-              :size="32"
-              :src="
-                (currentUser as { avatar?: string; avatarUrl?: string } | null)?.avatar ||
-                (currentUser as { avatar?: string; avatarUrl?: string } | null)?.avatarUrl
-              "
-              :name="currentUser?.name || currentUser?.realName || currentUser?.username || '用户'"
-              @click="goToProfile"
-            />
-            <template #dropdown>
-              <el-dropdown-menu>
-                <!-- Admin exclusive menu -->
-                <el-dropdown-item v-if="canAccessAdminConsole" command="console">
-                  <el-icon><Monitor /></el-icon>
-                  控制台
-                </el-dropdown-item>
-
-                <!-- All users visible -->
-                <el-dropdown-item command="profile">
-                  <el-icon><Lock /></el-icon>
-                  个人中心
-                </el-dropdown-item>
-
-                <el-dropdown-item command="logout" :divided="canAccessAdminConsole">
-                  <el-icon><SwitchButton /></el-icon>
-                  退出登录
-                </el-dropdown-item>
-              </el-dropdown-menu>
+          <!-- Account & identity menu -->
+          <!-- 2026-11-28 多身份切换：用户区（部门 + 姓名 + 头像）整体可点击，展开身份菜单。
+               多身份时列出同一钉钉账号绑定的全部席位，点非当前身份触发切换；
+               单身份时只有控制台 / 个人中心 / 退出三个入口（与改造前的下拉一致）。
+               原先「点头像 = 个人中心」的入口并入菜单底部。 -->
+          <el-popover
+            v-model:visible="identityMenuVisible"
+            trigger="click"
+            placement="bottom-end"
+            :width="320"
+            popper-class="identity-menu-popper"
+          >
+            <template #reference>
+              <button
+                type="button"
+                class="user-entry"
+                :disabled="authStore.switching"
+                aria-haspopup="menu"
+                :aria-expanded="identityMenuVisible"
+                aria-label="账号与身份菜单"
+              >
+                <span class="user-info">
+                  <span class="dept-name">{{ currentUser?.department }}</span>
+                  <span class="user-name">{{ currentUser?.name }}</span>
+                </span>
+                <el-badge
+                  v-if="hasMultipleIdentities"
+                  :value="identities.length"
+                  class="identity-count-badge"
+                  :aria-label="`已绑定 ${identities.length} 个身份`"
+                >
+                  <AppAvatar
+                    class="user-avatar"
+                    :size="32"
+                    :src="currentUserAvatar"
+                    :name="currentUserDisplayName"
+                  />
+                </el-badge>
+                <AppAvatar
+                  v-else
+                  class="user-avatar"
+                  :size="32"
+                  :src="currentUserAvatar"
+                  :name="currentUserDisplayName"
+                />
+              </button>
             </template>
-          </el-dropdown>
+
+            <div class="identity-menu">
+              <template v-if="hasMultipleIdentities">
+                <div class="identity-menu__head">
+                  <div class="identity-menu__title">切换身份</div>
+                  <div class="identity-menu__subtitle">同一钉钉账号绑定的部门席位</div>
+                </div>
+
+                <div class="identity-menu__list">
+                  <button
+                    v-for="identity in identities"
+                    :key="identity.sysUserId"
+                    type="button"
+                    class="identity-menu__item"
+                    :class="{ 'is-current': isCurrentIdentity(identity) }"
+                    role="menuitem"
+                    :disabled="authStore.switching || isCurrentIdentity(identity)"
+                    :aria-current="isCurrentIdentity(identity) ? 'true' : undefined"
+                    :data-identity-sys-user-id="identity.sysUserId"
+                    @click="handleSwitchIdentity(identity)"
+                  >
+                    <AppAvatar
+                      class="identity-menu__avatar"
+                      :size="32"
+                      :src="currentUserAvatar"
+                      :name="identityDisplayName(identity)"
+                    />
+                    <span class="identity-menu__main">
+                      <span class="identity-menu__name">{{ identityDisplayName(identity) }}</span>
+                      <span class="identity-menu__desc">{{ formatIdentityTitle(identity) }}</span>
+                    </span>
+                    <el-tag
+                      v-if="isCurrentIdentity(identity)"
+                      size="small"
+                      class="identity-menu__current"
+                    >
+                      当前
+                    </el-tag>
+                  </button>
+                </div>
+              </template>
+
+              <div class="identity-menu__foot">
+                <button
+                  v-if="canAccessAdminConsole"
+                  type="button"
+                  role="menuitem"
+                  class="identity-menu__action"
+                  @click="handleIdentityMenuCommand('console')"
+                >
+                  <el-icon><Monitor /></el-icon>
+                  <span>控制台</span>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="identity-menu__action"
+                  @click="handleIdentityMenuCommand('profile')"
+                >
+                  <el-icon><Lock /></el-icon>
+                  <span>个人中心</span>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="identity-menu__action"
+                  :class="{ 'is-divided': canAccessAdminConsole }"
+                  @click="handleIdentityMenuCommand('logout')"
+                >
+                  <el-icon><SwitchButton /></el-icon>
+                  <span>{{ hasMultipleIdentities ? '退出全部身份' : '退出登录' }}</span>
+                </button>
+              </div>
+            </div>
+          </el-popover>
         </div>
       </div>
     </header>
@@ -619,13 +750,37 @@ const goToProfile = () => {
   color: var(--primary);
 }
 
+/* User entry：部门 + 姓名 + 头像整体可点击，展开身份菜单 */
+.user-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  transition: background var(--transition-fast);
+}
+
+.user-entry:hover,
+.user-entry[aria-expanded='true'] {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: transparent;
+  color: inherit;
+}
+
+.user-entry:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
 /* User info */
 .user-info {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 2px;
-  margin-right: 8px;
 }
 
 .dept-name {
@@ -878,6 +1033,168 @@ const goToProfile = () => {
   font-weight: 700;
   cursor: pointer;
   border: 2px solid rgba(255, 255, 255, 0.3);
+}
+
+/* 身份数量角标（绑定 2 个及以上席位才显示），配色沿用顶栏的 accent */
+.identity-count-badge {
+  display: inline-flex;
+  flex: none;
+}
+
+.identity-count-badge :deep(.el-badge__content) {
+  background: var(--accent);
+  color: var(--primary-dark);
+  font-weight: 700;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  pointer-events: none;
+}
+
+.identity-count-badge :deep(.el-badge__content.is-fixed) {
+  top: 0;
+  right: 0;
+  transform: translate(35%, -35%);
+  transform-origin: center;
+}
+
+/* 身份菜单弹层：尺寸与阴影对齐通知弹层 */
+:global(.identity-menu-popper) {
+  padding: 0;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 6px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+}
+
+.identity-menu {
+  overflow: hidden;
+  background: var(--bg-white);
+  border-radius: 6px;
+  color: var(--text-main);
+}
+
+.identity-menu__head {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.identity-menu__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.identity-menu__subtitle {
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+.identity-menu__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  padding: 6px;
+  overflow-y: auto;
+}
+
+.identity-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-main);
+  text-align: left;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.identity-menu__item:not(:disabled):hover {
+  background: var(--bg-page);
+  border-color: var(--color-primary);
+  color: var(--text-main);
+}
+
+/* 当前身份：高亮 + 不可点击 */
+.identity-menu__item.is-current,
+.identity-menu__item.is-current:hover {
+  background: var(--color-primary-light);
+  border-color: var(--color-primary);
+  color: var(--text-main);
+  cursor: default;
+}
+
+.identity-menu__item:disabled:not(.is-current) {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.identity-menu__main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.identity-menu__name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.identity-menu__desc {
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--text-regular);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.identity-menu__current {
+  flex: none;
+  font-weight: 600;
+}
+
+.identity-menu__foot {
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-light);
+}
+
+.identity-menu__action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-regular);
+  font-size: 13px;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.identity-menu__action:hover {
+  background: var(--color-primary-light);
+  border-color: transparent;
+  color: var(--color-primary);
+}
+
+.identity-menu__action.is-divided {
+  margin-top: 6px;
+  border-top-color: var(--border-color);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
 }
 
 /* ========== Main content area ========== */

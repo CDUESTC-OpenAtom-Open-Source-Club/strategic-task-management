@@ -45,7 +45,9 @@ const compatibilityWhitelist = [
   { method: 'get', path: '/api/v1/dashboard/appraisal-summary' },
   // 2026-11-27 下钻明细面板 / 下钻趋势的行级鉴定明细（后端 openapi 基线尚未覆盖，
   // 兜底 CI checkout 旧基线的场景）
-  { method: 'get', path: '/api/v1/dashboard/indicator-levels' }
+  { method: 'get', path: '/api/v1/dashboard/indicator-levels' },
+  // 2026-11-28 多身份切换（后端并行开发中，契约已钉死；openapi 基线落地前先挂白名单）
+  { method: 'post', path: '/api/v1/auth/dingtalk/switch' }
 ] as const
 
 function normalizePathLiteral(rawPath: string): string | null {

@@ -28,6 +28,7 @@ import App from './App.vue'
 import { autoHealthCheck } from '@/shared/lib/utils/apiHealth'
 import { performanceMonitor } from '@/shared/lib/utils/performance'
 import { registerSharedDirectives } from '@/shared/lib/directives'
+import { identityStateResetPlugin } from '@/shared/lib/store'
 import { APP_COMMIT_HASH, APP_VERSION } from '@/shared/config/app-version'
 
 /**
@@ -35,6 +36,10 @@ import { APP_COMMIT_HASH, APP_VERSION } from '@/shared/config/app-version'
  */
 const app = createApp(App)
 const pinia = createPinia()
+
+// 身份级状态重置（切换身份用）：必须在任何 store 创建之前注册，
+// 否则先创建的 store 不会进入登记表、切换后不会被还原。
+pinia.use(identityStateResetPlugin)
 
 /**
  * Register global directives

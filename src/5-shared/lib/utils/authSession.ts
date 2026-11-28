@@ -17,6 +17,8 @@ export function clearPersistedAuthState(): void {
   localStorage.removeItem('access_token')
   localStorage.removeItem('accessToken')
   localStorage.removeItem('refreshToken')
+  // 多身份列表与登录态同生命周期，会话清掉后不能留着别的会话的身份
+  localStorage.removeItem('identityContext')
 }
 
 export function redirectToLogin(): void {

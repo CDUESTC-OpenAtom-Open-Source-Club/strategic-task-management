@@ -11,3 +11,8 @@ export type {
   ListState,
   CrudStoreConfig
 } from './createCrudStore'
+export {
+  identityStateResetPlugin,
+  resetIdentityScopedStores,
+  resetIdentityStateResetRegistryForTests
+} from './identityStateReset'
