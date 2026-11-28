@@ -164,6 +164,43 @@ export interface DashboardAppraisalSummaryResponse {
   departments: DashboardDepartmentLevelStat[]
   /** 1..选中月份的月度快照 */
   departmentMonths: DashboardDepartmentLevelMonth[]
+  /**
+   * 鉴定等级汇总（后端契约字段，随选中月快照走：只统计当月 APPROVED 鉴定，
+   * total = 三档合计，completionRate =（超前 + 正常）/ total × 100 四舍五入）。
+   * 全校视角简报（学院 + 职能部门自身）的对照口径；旧响应可能缺省。
+   */
+  annual?: {
+    ahead: number
+    normal: number
+    delayed: number
+    total: number
+    completionRate: number
+  }
+}
+
+/** GET /api/v1/dashboard/indicator-levels 行结构：单指标行级鉴定明细 */
+export interface DashboardIndicatorLevelItem {
+  /** 指标ID */
+  indicatorId: number
+  /** 指标描述 */
+  indicatorName: string | null
+  /** 上报月份（1-12） */
+  month: number
+  /** 自评等级 AHEAD/NORMAL/DELAYED（可能为空） */
+  selfRating: string | null
+  /** 上级鉴定等级 AHEAD/NORMAL/DELAYED（可能为空） */
+  appraisalLevel: string | null
+  /** 有效等级（鉴定优先自评：COALESCE(appraisal_level, self_rating)，可能为空） */
+  level: string | null
+}
+
+/** GET /api/v1/dashboard/indicator-levels?year=&month=&orgId= 响应（month=null 为年度模式） */
+export interface DashboardIndicatorLevelsResponse {
+  year: number
+  month: number | null
+  /** 责任单位组织 ID（null = 全量视角未指定组织） */
+  orgId: number | null
+  items: DashboardIndicatorLevelItem[]
 }
 
 /**
@@ -376,6 +413,35 @@ export const dashboardApi = {
       return data
     } catch (error) {
       logger.error('[dashboardApi] Failed to fetch delayed indicators:', error)
+      throw error
+    }
+  },
+
+  /**
+   * 行级鉴定明细（按责任单位与月份）
+   * GET /api/v1/dashboard/indicator-levels?year=&month=&orgId=
+   * 口径与聚合一致：只有 APPROVED 月报计入，鉴定优先自评；
+   * month 不传 = 年度模式（全年各月一次取回，避免逐月 N+1 请求）
+   */
+  async getIndicatorLevels(params: {
+    year: number
+    month?: number
+    orgId?: number
+  }): Promise<DashboardIndicatorLevelsResponse> {
+    try {
+      logger.debug('[dashboardApi] Fetching indicator levels:', params)
+      const payload = await apiClient.get<unknown>('/dashboard/indicator-levels', {
+        year: params.year,
+        ...(params.month !== undefined ? { month: params.month } : {}),
+        ...(params.orgId !== undefined ? { orgId: params.orgId } : {})
+      })
+      const data = unwrapDashboardPayload<DashboardIndicatorLevelsResponse>(payload)
+      if (!data || !Array.isArray(data.items)) {
+        throw new Error('行级鉴定明细接口返回格式异常')
+      }
+      return data
+    } catch (error) {
+      logger.error('[dashboardApi] Failed to fetch indicator levels:', error)
       throw error
     }
   },

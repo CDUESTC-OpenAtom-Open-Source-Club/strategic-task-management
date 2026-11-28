@@ -70,7 +70,7 @@ import {
 import { getUsersByOrgId } from '@/features/user/api/query'
 // 2026-11-25（看板来源归属修复）：父指标归口水合抽到共享 parentIndicatorCore，与数据看板同源避免两处漂移
 import {
-  fetchParentIndicatorCore,
+  fetchParentIndicatorCores,
   type ParentIndicatorCore
 } from '@/features/indicator/model/parentIndicatorCore'
 import { ApprovalProgressDrawer } from '@/features/approval'
@@ -3135,24 +3135,23 @@ export function useIndicatorListView(props: IndicatorListViewProps) {
     if (pendingIds.size === 0) {
       return
     }
-    await Promise.all(
-      [...pendingIds].map(async pid => {
-        try {
-          // 2026-11-25（看板来源归属修复）：字段归一化抽到共享 fetchParentIndicatorCore
-          // （逐字段同口径），看板「任务来源分布/承接任务汇总」复用同一实现。
-          const core = await fetchParentIndicatorCore(pid)
-          if (!core) {
-            return
-          }
-          parentIndicatorMap.value = {
-            ...parentIndicatorMap.value,
-            [pid]: core
-          }
-        } catch (parentError) {
-          logger.warn('[IndicatorListView] 父指标信息拉取失败:', { pid, parentError })
+    // 2026-11-27（生产看板 500 根治）：此前是无上限并发拉取（`Promise.all(ids.map)`），
+    // 指标 94 → 561 后单次要拉 50 个父指标详情，几十个并发请求打满 Hikari 连接池
+    // → 后端 500 → 前端弹红色「服务器内部错误」。现改为分批限流（任一时刻在途 ≤ 6），
+    // 批与批之间让出事件循环；单条失败仍只记 warn 并跳过（语义不变）。
+    await fetchParentIndicatorCores([...pendingIds], {
+      onResolved: (pid, core) => {
+        parentIndicatorMap.value = {
+          ...parentIndicatorMap.value,
+          [pid]: core
         }
-      })
-    )
+      },
+      onError: (pid, parentError) => {
+        // 父指标取不到只降级（核心指标列留空），不该弹全局错误提示
+        markErrorHandled(parentError)
+        logger.warn('[IndicatorListView] 父指标信息拉取失败:', { pid, parentError })
+      }
+    })
   }
 
   watch(

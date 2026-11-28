@@ -14,9 +14,12 @@ import { useLoadingState } from '@/shared/lib/loading/useLoadingState'
 import { logger } from '@/shared/lib/utils/logger'
 import {
   aggregateCollegeLevels,
+  aggregateDeptOwnLevels,
   collegeGraySegmentCount,
   collegeTooltipCountsLine,
+  emptyDeptOwnAggregate,
   isGrayMonth,
+  mergeLevelAggregates,
   monthStateDeptTooltip,
   monthStateGrayLabel,
   resolveMonthState,
@@ -24,12 +27,14 @@ import {
   toCollegeRankingRows,
   toCollegeTrendRows
 } from '@/features/dashboard/lib'
+import type { DashboardOverviewAggregate, DeptOwnLevelAggregate } from '@/features/dashboard/lib'
 import type {
   DashboardAppraisalSummaryResponse,
   DashboardCollegeLevelStat,
   DashboardCollegeLevelsMonth,
   DashboardDelayedIndicatorItem,
   DashboardDepartmentLevelStat,
+  DashboardIndicatorLevelItem,
   DashboardMonthState
 } from '@/features/dashboard/api/dashboardApi'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
@@ -468,17 +473,27 @@ export function useDashboardView(props: DashboardViewProps) {
     return indexByMonth
   })
 
+  /**
+   * 月份口径请求的过期保护（2026-11-27 切月等价）：记下发起时的口径（年 + 月），
+   * 响应回来后返回口径是否仍然一致；不一致就丢弃。
+   * 快速切月、切年不改月号、auto-jump 跳月时，旧口径的响应都不会覆盖当前口径的数据。
+   */
+  const captureMonthScope = () => {
+    const scopeKey = `${timeContext.currentYear}-${selectedMonth.value}`
+    return () => scopeKey === `${timeContext.currentYear}-${selectedMonth.value}`
+  }
+
   const loadAppraisalSummary = async () => {
-    const requestedMonth = selectedMonth.value
+    const isCurrentScope = captureMonthScope()
     appraisalSummaryLoading.value = true
     try {
       const summary = await dashboardApi.getAppraisalSummary({
         year: timeContext.currentYear,
-        month: requestedMonth
+        month: selectedMonth.value
       })
       // 2026-11-25：与学院等级同源的过期响应保护——月份已变则丢弃，
       // 否则旧月份的鉴定汇总会覆盖当前月份（分布图与总览统计口径不一致）。
-      if (selectedMonth.value !== requestedMonth) {
+      if (!isCurrentScope()) {
         return
       }
       appraisalSummary.value = summary
@@ -493,22 +508,123 @@ export function useDashboardView(props: DashboardViewProps) {
       ) {
         appraisalMonthAutoJumped.value = true
         selectedMonth.value = summary.latestMonth
-        // 2026-11-25：auto-jump 这条改月路径不经 handleCollegeMonthChange，
-        // 学院等级数据需在此显式重拉，否则总览统计（完成率·等级分布·状态卡）
-        // 与简报「未填报学院」仍停留在跳月前的月份。
-        void loadCollegeLevels()
+        // 2026-11-27（切月等价）：跳月后的数据重拉统一由 watch(selectedMonth) 发起
+        // （学院等级 / 鉴定汇总 / 滞后清单各一次），这里不再单独补拉学院等级。
         return
       }
       appraisalMonthAutoJumped.value = true
     } catch (error) {
+      // 口径已变：失败的是旧月份的请求，数据与提示交给新月份的请求，不覆盖也不重复报错
+      if (!isCurrentScope()) {
+        return
+      }
       // 接口失败：置空走空态，不回退前端启发式（否则又会画出于鉴定无关的结果）
       appraisalSummary.value = null
       logger.error('[Dashboard] Failed to load appraisal summary:', error)
       ElMessage.error('审核鉴定分布加载失败，请稍后重试')
     } finally {
-      appraisalSummaryLoading.value = false
+      // 口径已变说明新月份的请求在途，loading 交给它收尾
+      if (isCurrentScope()) {
+        appraisalSummaryLoading.value = false
+      }
     }
   }
+
+  // ============ 行级鉴定明细（2026-11-27 下钻明细面板/下钻趋势的唯一等级数据源）============
+  // 口径与聚合一致：只有 APPROVED 月报计入，鉴定优先自评（appraisal_level > self_rating）。
+  // 进入部门下钻时按年一次取回本院/本部门明细（月度切片由前端完成，避免逐月 N+1 请求），
+  // 行主体 = 指标 target 组织（责任单位），即「部门自身」口径（不含归口学院线）。
+  const drillIndicatorLevels = ref<DashboardIndicatorLevelItem[]>([])
+  const drillIndicatorLevelsLoading = ref(false)
+
+  /** 行级鉴定明细的三档映射（与聚合同口径；无等级不造「正常」以外的判定） */
+  const levelToIndicatorStatus = (level: string | null): IndicatorStatus => {
+    if (level === 'AHEAD') {
+      return 'ahead'
+    }
+    if (level === 'DELAYED') {
+      return 'delayed'
+    }
+    return 'normal'
+  }
+
+  const loadDrillIndicatorLevels = async () => {
+    if (!isDrillDown.value || !drilledDept.value) {
+      return
+    }
+    const deptId = Number(
+      orgStore.functionalDepartments.find(item => item.name === drilledDept.value)?.id
+    )
+    if (!Number.isFinite(deptId) || deptId <= 0) {
+      drillIndicatorLevels.value = []
+      return
+    }
+    drillIndicatorLevelsLoading.value = true
+    try {
+      const response = await dashboardApi.getIndicatorLevels({
+        year: timeContext.currentYear,
+        orgId: deptId
+      })
+      drillIndicatorLevels.value = response.items
+    } catch (error) {
+      // 接口失败置空走空态：明细面板与下钻趋势宁缺不造假数据
+      drillIndicatorLevels.value = []
+      logger.error('[Dashboard] Failed to load drill indicator levels:', error)
+    } finally {
+      drillIndicatorLevelsLoading.value = false
+    }
+  }
+
+  /** 某月份的行级鉴定明细（indicatorId 升序，与接口排序一致） */
+  const drillLevelsOfMonth = (month: number): DashboardIndicatorLevelItem[] =>
+    drillIndicatorLevels.value
+      .filter(item => item.month === month)
+      .sort((a, b) => a.indicatorId - b.indicatorId)
+
+  // ============ 学院下钻的行级鉴定明细（2026-11-27 学院下钻明细面板数据源）============
+  // 与部门下钻 drillIndicatorLevels 同款：进入学院下钻时按年一次取回该学院明细
+  // （月度切片由前端完成），行主体 = 指标 target 组织（学院视角正好匹配本院）。
+  const collegeDrillIndicatorLevels = ref<DashboardIndicatorLevelItem[]>([])
+  const collegeDrillIndicatorLevelsLoading = ref(false)
+
+  const loadCollegeDrillIndicatorLevels = async () => {
+    // 职能部门视角不发这个请求：indicator-levels 对职能角色查其他组织返回 403，
+    // 明细面板走本地「只看自己下发」的口径（见 collegeMonthIndicators）
+    if (
+      !isCollegeDrillDown.value ||
+      !drilledCollege.value ||
+      currentRole.value === 'functional_dept'
+    ) {
+      return
+    }
+    const collegeId = Number(
+      orgStore.colleges.find(college => college.name === drilledCollege.value)?.id
+    )
+    if (!Number.isFinite(collegeId) || collegeId <= 0) {
+      collegeDrillIndicatorLevels.value = []
+      return
+    }
+    collegeDrillIndicatorLevelsLoading.value = true
+    try {
+      const response = await dashboardApi.getIndicatorLevels({
+        year: timeContext.currentYear,
+        orgId: collegeId
+      })
+      collegeDrillIndicatorLevels.value = response.items
+    } catch (error) {
+      // 接口失败置空走空态：明细面板宁缺不造假数据
+      collegeDrillIndicatorLevels.value = []
+      logger.error('[Dashboard] Failed to load college drill indicator levels:', error)
+    } finally {
+      collegeDrillIndicatorLevelsLoading.value = false
+    }
+  }
+
+  /** 某月份的学院下钻行级鉴定明细（indicatorId 升序，与接口排序一致） */
+  const collegeDrillLevelsOfMonth = (month: number): DashboardIndicatorLevelItem[] =>
+    collegeDrillIndicatorLevels.value
+      .filter(item => item.month === month)
+      .sort((a, b) => a.indicatorId - b.indicatorId)
 
   // 计算堆叠柱状图数据（部门视图 - 第一层）
   // 2026-11-18（PR #127 评审意见 A）：删除 getDeptStatsAtMonth 启发式回退——
@@ -542,13 +658,12 @@ export function useDashboardView(props: DashboardViewProps) {
   })
 
   // 计算下钻后的月度堆叠数据（部门月度视图 - 第二层）
+  // 2026-11-27（#14 口径统一）：下钻趋势与明细面板同源——等级计数改由行级鉴定明细
+  // （indicator-levels，部门自身口径）聚合（当时 appraisal-summary 部门行含归口到本部门的
+  // 学院线指标，与本部门明细对不上；该部门行同日已改为部门自身口径，与一级图同屏一致）；
+  // monthState/dispatchedCount 仍取自 appraisal-summary（非 APPROVED 月份置灰、灰柱高度）。
   const monthlyStackedData = computed(() => {
     if (!isDrillDown.value || !drilledDept.value) {
-      return []
-    }
-
-    // 2026-11-18（PR #127 评审意见 A）：接口失败一律空态，不回退启发式
-    if (appraisalSummary.value === null) {
       return []
     }
 
@@ -569,15 +684,28 @@ export function useDashboardView(props: DashboardViewProps) {
         drilledDeptId,
         drilledDept.value
       )
+      // 行级鉴定明细聚合（部门自身口径）：同指标多轮上报后端已去重
+      const levels = drillLevelsOfMonth(month)
+      const ahead = levels.filter(i => i.level === 'AHEAD').length
+      const normal = levels.filter(i => i.level === 'NORMAL').length
+      const delayed = levels.filter(i => i.level === 'DELAYED').length
       return {
         name: `${month}月`,
         month,
-        ...stats
+        ahead,
+        normal,
+        delayed,
+        warning: 0,
+        total: ahead + normal + delayed,
+        monthState: stats.monthState,
+        dispatchedCount: stats.dispatchedCount
       }
     })
   })
 
-  // 下钻后选中月份的指标列表
+  // 下钻后选中月份的指标列表（2026-11-27 鉴定口径：行状态 = 行级鉴定明细的
+  // COALESCE(appraisal_level, self_rating)，与同页趋势/聚合同源；
+  // 数据库预警快照降级为辅助标记 alertHint，不再决定行状态）
   const monthIndicators = computed(() => {
     if (!isDrillDown.value || !drilledDept.value || selectedMonthInDrillDown.value === null) {
       return []
@@ -588,16 +716,29 @@ export function useDashboardView(props: DashboardViewProps) {
     const currentYear = timeContext.currentYear
     const realYear = timeContext.realCurrentYear
 
-    return strategicStore.indicators
-      .filter(i => {
-        const indicatorYear = resolveIndicatorYear(i, realYear)
-        return indicatorYear === currentYear && i.responsibleDept === drilledDept.value
-      })
-      .map(i => ({
-        ...i,
-        status: getIndicatorStatus(i),
-        targetProgress: getCurrentTargetProgress(i)
-      }))
+    const indicatorByIndicatorId = new Map<string, Indicator>()
+    strategicStore.indicators.forEach(i => {
+      const id = getIndicatorIdentity(i)
+      if (id !== null) {
+        indicatorByIndicatorId.set(String(id), i)
+      }
+    })
+
+    return drillLevelsOfMonth(selectedMonthInDrillDown.value).map(item => {
+      const indicatorId = String(item.indicatorId)
+      const base = indicatorByIndicatorId.get(indicatorId)
+      const indicatorYear = base ? resolveIndicatorYear(base, realYear) : currentYear
+      const matched = base && indicatorYear === currentYear ? base : undefined
+      return {
+        ...(matched ?? ({} as Indicator)),
+        id: matched?.id ?? indicatorId,
+        name: matched?.name ?? item.indicatorName ?? `指标 #${indicatorId}`,
+        status: levelToIndicatorStatus(item.level),
+        targetProgress: null,
+        // 辅助标记：数据库仍有未关闭预警时在状态 tag 旁提示（不改变鉴定口径）
+        alertHint: getDatabaseAlertStatus(matched ?? { indicatorId })
+      }
+    })
   })
 
   // 月份指标筛选后的列表（三档口径：选「滞后」时包含原预警状态）
@@ -656,7 +797,11 @@ export function useDashboardView(props: DashboardViewProps) {
     return toCollegeTrendRows(collegeTrendMonths.value, drilledCollege.value)
   })
 
-  // 学院下钻后的月份指标列表
+  // 学院下钻后的月份指标列表（2026-11-27 鉴定口径：行状态 = 行级鉴定明细的
+  // COALESCE(appraisal_level, self_rating) 三档映射，与部门下钻面板同源同款；
+  // 数据库预警快照降级为辅助标记 alertHint，不再决定行状态。
+  // 职能部门视角保留既有「只看自己下发」的本地口径——indicator-levels 端点对
+  // 职能角色查他组织返回 403，不发该请求）
   const collegeMonthIndicators = computed(() => {
     if (
       !isCollegeDrillDown.value ||
@@ -671,24 +816,48 @@ export function useDashboardView(props: DashboardViewProps) {
     const currentYear = timeContext.currentYear
     const realYear = timeContext.realCurrentYear
 
-    let indicators = strategicStore.indicators
-      .filter(i => {
-        const indicatorYear = resolveIndicatorYear(i, realYear)
-        return indicatorYear === currentYear && i.responsibleDept === drilledCollege.value
-      })
-      .map(i => ({
-        ...i,
-        status: getIndicatorStatus(i),
-        targetProgress: getCurrentTargetProgress(i)
-      }))
-
-    // 职能部门视角：只看自己下发的
+    // 职能部门视角：本地过滤当年本部门下发、责任单位=被下钻学院的指标
     if (currentRole.value === 'functional_dept') {
       const ownerDept = currentDepartment.value
-      indicators = indicators.filter(i => i.ownerDept === ownerDept)
+      return strategicStore.indicators
+        .filter(i => {
+          const indicatorYear = resolveIndicatorYear(i, realYear)
+          return (
+            indicatorYear === currentYear &&
+            i.responsibleDept === drilledCollege.value &&
+            i.ownerDept === ownerDept
+          )
+        })
+        .map(i => ({
+          ...i,
+          status: getIndicatorStatus(i),
+          targetProgress: getCurrentTargetProgress(i)
+        }))
     }
 
-    return indicators
+    const indicatorByIndicatorId = new Map<string, Indicator>()
+    strategicStore.indicators.forEach(i => {
+      const id = getIndicatorIdentity(i)
+      if (id !== null) {
+        indicatorByIndicatorId.set(String(id), i)
+      }
+    })
+
+    return collegeDrillLevelsOfMonth(selectedMonthInCollegeDrillDown.value).map(item => {
+      const indicatorId = String(item.indicatorId)
+      const base = indicatorByIndicatorId.get(indicatorId)
+      const indicatorYear = base ? resolveIndicatorYear(base, realYear) : currentYear
+      const matched = base && indicatorYear === currentYear ? base : undefined
+      return {
+        ...(matched ?? ({} as Indicator)),
+        id: matched?.id ?? indicatorId,
+        name: matched?.name ?? item.indicatorName ?? `指标 #${indicatorId}`,
+        status: levelToIndicatorStatus(item.level),
+        targetProgress: null,
+        // 辅助标记：数据库仍有未关闭预警时在状态 tag 旁提示（不改变鉴定口径）
+        alertHint: getDatabaseAlertStatus(matched ?? { indicatorId })
+      }
+    })
   })
 
   // 学院月份指标筛选后的列表
@@ -782,20 +951,24 @@ export function useDashboardView(props: DashboardViewProps) {
 
   /** 加载当前选中月份的学院等级（月份切换 / 挂载 / 切年时触发重新请求） */
   const loadCollegeLevels = async () => {
-    const requestedMonth = collegeSelectedMonth.value
+    const isCurrentScope = captureMonthScope()
     collegeLevelsLoading.value = true
     try {
       const response = await dashboardApi.getCollegeLevels({
         year: timeContext.currentYear,
-        month: requestedMonth
+        month: selectedMonth.value
       })
       // 2026-11-25：请求返回前月份可能已变（auto-jump / 快速切月），
       // 过期响应直接丢弃，避免旧月份数据覆盖当前月份、造成统计口径错位。
-      if (collegeSelectedMonth.value !== requestedMonth) {
+      if (!isCurrentScope()) {
         return
       }
       collegeLevels.value = response.colleges
     } catch (error) {
+      // 口径已变：失败的是旧月份的请求，数据与提示交给新月份的请求
+      if (!isCurrentScope()) {
+        return
+      }
       // 接口失败：清空数据走空态 + 既有错误提示，不静默回退本地计算
       collegeLevels.value = []
       logger.error('[Dashboard] Failed to load college levels:', error)
@@ -805,7 +978,10 @@ export function useDashboardView(props: DashboardViewProps) {
           : '学院等级数据加载失败，请稍后重试'
       )
     } finally {
-      collegeLevelsLoading.value = false
+      // 口径已变说明新月份的请求在途，loading 交给它收尾
+      if (isCurrentScope()) {
+        collegeLevelsLoading.value = false
+      }
     }
   }
 
@@ -1023,53 +1199,82 @@ export function useDashboardView(props: DashboardViewProps) {
     return [currentDepartment.value]
   })
 
+  // 职能部门自身口径合计（2026-11-27 简报口径）：只算部门分布图实际画出的职能部门行
+  // （orgStore.functionalDepartments 逐个查鉴定汇总），与分布图同一份数据、同一套查找。
+  // 仅全校视角（战略部 / 系统管理员）并入总览；其他视角恒为空合计，口径不变。
+  const functionalDeptOwnAggregate = computed<DeptOwnLevelAggregate>(() => {
+    if (currentRole.value !== 'strategic_dept') {
+      return emptyDeptOwnAggregate()
+    }
+    const statsIndex = currentDeptStatsIndex.value
+    return aggregateDeptOwnLevels(
+      orgStore.functionalDepartments
+        .filter(item => Boolean(item.name))
+        .map(item => lookupDeptStats(statsIndex, item.id, item.name))
+    )
+  })
+
+  // 总览合计（2026-11-27 简报口径）：学院等级 + 职能部门自身。
+  // 全校视角原只合计 7 个学院（344 项），漏掉 21 个职能部门自身的 217 项；
+  // 简报 / 完成情况卡 / 进度等级分布三处都从这里取数，不会一处变了两处没变。
+  // 完成率分母仍是已下发指标总数（2026-11-17 口径：未填报的计入分母、不计入完成）。
+  const overviewAggregate = computed<DashboardOverviewAggregate>(() =>
+    mergeLevelAggregates(
+      aggregateCollegeLevels(collegeLevels.value),
+      functionalDeptOwnAggregate.value
+    )
+  )
+
   // 总览统计（2026-11-17 新口径）：等级分布 / 完成率改由 college-levels 接口供数
   // （只算已提交/已审批月报 + 鉴定三档；alert_event/manualAlertSeverity 退出统计；
   // 完成率分母改为已下发指标总数——未填报学院不再把分母悄悄变小虚高完成率）
   const dashboardData = computed<DashboardData>(() => {
-    const aggregate = aggregateCollegeLevels(collegeLevels.value)
-    const completedIndicators = aggregate.ahead + aggregate.normal
-    const denominator = aggregate.dispatchedTotal > 0 ? aggregate.dispatchedTotal : aggregate.total
+    const overview = overviewAggregate.value
 
     return {
       totalScore: 0,
       basicScore: 0,
       developmentScore: 0,
       levelDistribution: {
-        ahead: aggregate.ahead,
-        normal: aggregate.normal,
-        delayed: aggregate.delayed
+        ahead: overview.ahead,
+        normal: overview.normal,
+        delayed: overview.delayed
       },
-      completionRate: denominator > 0 ? Math.round((completedIndicators / denominator) * 100) : 0,
-      warningCount: aggregate.delayed,
-      totalIndicators: denominator,
-      completedIndicators,
+      completionRate: overview.completionRate,
+      warningCount: overview.delayed,
+      totalIndicators: overview.dispatchedTotal,
+      completedIndicators: overview.completed,
       alertIndicators: {
-        severe: aggregate.delayed,
+        severe: overview.delayed,
         moderate: 0,
-        normal: completedIndicators
+        normal: overview.completed
       }
     }
   })
 
   // 督办统计（2026-11-17 新口径）：任务完成简报 / 未填报学院提示供数
+  // （2026-11-27：三档 / 已下发 / 完成率改取 overviewAggregate，与完成情况卡、等级分布同源；
+  // 未填报学院提示仍只看学院行）
   const collegeSupervision = computed(() => {
-    const aggregate = aggregateCollegeLevels(collegeLevels.value)
-    const denominator = aggregate.dispatchedTotal > 0 ? aggregate.dispatchedTotal : aggregate.total
-    const completed = aggregate.ahead + aggregate.normal
+    const overview = overviewAggregate.value
     return {
-      ahead: aggregate.ahead,
-      normal: aggregate.normal,
-      delayed: aggregate.delayed,
-      dispatchedTotal: denominator,
-      appraisedTotal: aggregate.total,
-      completionRate: denominator > 0 ? Math.round((completed / denominator) * 100) : 0,
-      unreportedColleges: aggregate.unreportedColleges,
+      ahead: overview.ahead,
+      normal: overview.normal,
+      delayed: overview.delayed,
+      dispatchedTotal: overview.dispatchedTotal,
+      appraisedTotal: overview.appraisedTotal,
+      completionRate: overview.completionRate,
+      unreportedColleges: aggregateCollegeLevels(collegeLevels.value).unreportedColleges,
       unreportedNames: collegeLevels.value
         .filter(college => college.reported === false)
         .map(college => college.orgName)
     }
   })
+
+  // 学院视角「指标承接汇总」行数据（2026-11-27 用户拍板改造）：
+  // 数据源 = 任务 1 的本院 appraisal-summary（学院角色后端已分流：departments 只含本院归口部门），
+  // 行展示 =「N 项指标 + 等级占比（正常×26 滞后×1 格式）」；职能部门/战略部视角卡片保留现状
+  const collegeIndicatorSummary = computed(() => appraisalSummary.value?.departments ?? [])
 
   // 任务完成简报空态判定（2026-11-18 折中方案，PR #131 采纳内核）：
   // 选中月快照无 APPROVED 鉴定内容时，简报正文替换为「当月简报尚未审定」空态文案
@@ -1081,6 +1286,11 @@ export function useDashboardView(props: DashboardViewProps) {
   // ③ 兼容旧响应（无 monthState 字段）：鉴定三档全 0 且无未填报督办 → 无审定内容，空态。
   const briefMonthApproved = computed(() => {
     const rows = collegeLevels.value
+    // 2026-11-27（简报口径）：全校视角下职能部门自身已出鉴定同样算审定月——
+    // 学院线整月未审定、部门线已鉴定时，简报若仍判「尚未审定」就会和完成情况卡对不上
+    if (functionalDeptOwnAggregate.value.total > 0) {
+      return true
+    }
     if (rows.length === 0) {
       return false
     }
@@ -1116,11 +1326,7 @@ export function useDashboardView(props: DashboardViewProps) {
     showFilterPanel.value = false
   }
 
-  // 预警级别点击
-  const handleAlertClick = (level: 'severe' | 'moderate' | 'normal') => {
-    filterForm.value.alertLevel = level
-    applyFilters()
-  }
+  // 2026-11-27（#3d）：「进度等级分布」卡改纯展示，点击筛选交互（handleAlertClick）移除
 
   const handleSummaryDrillClick = () => {
     window.scrollTo({
@@ -1555,6 +1761,7 @@ export function useDashboardView(props: DashboardViewProps) {
   const DELAYED_TASKS_LIMIT = 5
 
   const loadDelayedTasks = async () => {
+    const isCurrentScope = captureMonthScope()
     delayedTasksLoading.value = true
     try {
       const response = await dashboardApi.getDelayedIndicators({
@@ -1563,13 +1770,25 @@ export function useDashboardView(props: DashboardViewProps) {
         // 两处月份不一致导致「分布图已切到 11 月、滞后清单却按 10 月查询而显示 No Data」
         month: selectedMonth.value
       })
+      // 2026-11-27（切月等价）：补上与学院等级 / 鉴定汇总同款的过期响应保护——
+      // 快速切月时先发出的旧月份请求若后返回，会把新月份的滞后清单覆盖掉。
+      if (!isCurrentScope()) {
+        return
+      }
       delayedTaskItems.value = response.items
     } catch (error) {
+      // 口径已变：失败的是旧月份的请求，数据交给新月份的请求
+      if (!isCurrentScope()) {
+        return
+      }
       // 接口失败：清空走空态，不打断看板（学院等级加载失败已有独立提示）
       delayedTaskItems.value = []
       logger.error('[Dashboard] Failed to load delayed indicators:', error)
     } finally {
-      delayedTasksLoading.value = false
+      // 口径已变说明新月份的请求在途，loading 交给它收尾
+      if (isCurrentScope()) {
+        delayedTasksLoading.value = false
+      }
     }
   }
 
@@ -1877,15 +2096,13 @@ export function useDashboardView(props: DashboardViewProps) {
           }
 
           if (isDrillDown.value) {
-            // 月度视图显示该月的统计
-            tooltip += `${params[0].name}<br/>`
+            // 月度视图显示该月的统计（#15 修复：月份名已在标题行，不再重复一行）
             tooltip += `<span style="color: ${statusColors.ahead}">●</span> 超前: ${dataItem?.ahead || 0}<br/>`
             tooltip += `<span style="color: ${statusColors.normal}">●</span> 正常: ${dataItem?.normal || 0}<br/>`
             tooltip += `<span style="color: ${statusColors.delayed}">●</span> 滞后: ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}<br/>`
             tooltip += `总计: ${dataItem?.total || 0}`
           } else {
-            // 部门视图显示统计
-            tooltip += `${selectedMonth.value}月完成情况<br/>`
+            // 部门视图显示统计（月份已在卡片副标题渲染，tooltip 不重复）
             tooltip += `<span style="color: ${statusColors.ahead}">■</span> 超前: ${dataItem?.ahead || 0}<br/>`
             tooltip += `<span style="color: ${statusColors.normal}">■</span> 正常: ${dataItem?.normal || 0}<br/>`
             tooltip += `<span style="color: ${statusColors.delayed}">■</span> 滞后: ${(dataItem?.warning || 0) + (dataItem?.delayed || 0)}<br/>`
@@ -2061,14 +2278,32 @@ export function useDashboardView(props: DashboardViewProps) {
     nextTick(() => {
       initBenchmarkChart()
     })
+    // 下钻进入部门时拉取该部门全年行级鉴定明细（明细面板与下钻趋势的等级数据源）
+    if (isDrillDown.value) {
+      void loadDrillIndicatorLevels()
+    }
+  })
+
+  // 行级鉴定明细到达后重绘下钻趋势（首屏图表与数据并行加载）
+  watch(drillIndicatorLevels, () => {
+    if (isDrillDown.value) {
+      nextTick(() => {
+        initBenchmarkChart()
+      })
+    }
   })
 
   // 2026-11-18：分布图与滞后清单同源跟随 selectedMonth 重新取数
   // （原滞后清单跟的是 collegeSelectedMonth，两处月份不同步）
-  // 2026-11-25：学院卡月份已并入 selectedMonth，用户切月时的数据重拉仍由
-  // handleCollegeMonthChange 同步发起（保持既有调用时序与单测契约）；
-  // auto-jump 这条不经 handler 的改月路径，在跳月处显式补拉学院等级。
+  // 2026-11-27（切月等价）：部门卡 / 学院卡 / 排名卡三个月份下拉写的是同一个 selectedMonth，
+  // 切月后的数据重拉统一收敛到这里，三个接口各请求一次：
+  //   学院等级 = 简报 / 完成情况卡 / 进度等级分布 / 学院图 / 排名图的同一数据源；
+  //   鉴定汇总 = 部门分布图与下钻趋势；滞后清单 = TOP 滞后任务卡。
+  // 原先只有学院卡的 change handler 重拉学院等级，从部门卡 / 排名卡切月后
+  // 简报、完成情况、等级分布仍停在上个月；学院卡路径的滞后清单还被重复请求两次。
+  // 现在 change handler 只收起下钻与重绘，不再发请求。
   watch(selectedMonth, () => {
+    void loadCollegeLevels()
     void loadAppraisalSummary()
     void loadDelayedTasks()
   })
@@ -2089,6 +2324,8 @@ export function useDashboardView(props: DashboardViewProps) {
       void loadCollegeLevelsTrend()
       void loadDelayedTasks()
       void loadAppraisalSummary()
+      void loadDrillIndicatorLevels()
+      void loadCollegeDrillIndicatorLevels()
       nextTick(() => {
         initBenchmarkChart()
         initCollegeChart()
@@ -2150,6 +2387,10 @@ export function useDashboardView(props: DashboardViewProps) {
     nextTick(() => {
       initCollegeChart()
     })
+    // 下钻进入学院时拉取该学院全年行级鉴定明细（明细面板的等级数据源）
+    if (isCollegeDrillDown.value) {
+      void loadCollegeDrillIndicatorLevels()
+    }
   })
 
   // 监听分院排名月份变化（排名与趋势同源，切月无需重新请求）
@@ -2225,9 +2466,7 @@ export function useDashboardView(props: DashboardViewProps) {
           }
 
           let tooltip = `<strong>${name}</strong><br/>`
-          if (isCollegeDrillDown.value) {
-            tooltip += `${params[0].name}<br/>`
-          }
+          // 2026-11-27：下钻态不再重复渲染「N月」行——悬浮的柱本身就是该月，卡片标题已含月份
           tooltip += countsLine
           if (!isCollegeDrillDown.value) {
             tooltip += `<br/><span style="color: #409eff; font-size: 11px;">点击查看月度趋势</span>`
@@ -2372,9 +2611,10 @@ export function useDashboardView(props: DashboardViewProps) {
     })
   }
 
-  // 处理学院看板月份变化（2026-10-31 新口径：切月触发重新请求；2026-11-17 增滞后清单同步）
-  // 2026-11-25：学院卡月份已并入 selectedMonth，本 handler 仍是「用户切月」这条路径的
-  // 数据重拉入口（同步发起，保持既有调用时序与单测契约）。
+  // 处理学院看板月份变化：只收起学院下钻 / 月份指标卡并重绘学院图。
+  // 2026-11-27（切月等价）：切月后的数据重拉统一由 watch(selectedMonth) 发起（每个接口一次），
+  // 本 handler 不再发请求——原先这里的学院等级 / 滞后清单与 watch 重复（滞后清单请求两次），
+  // 而部门卡、排名卡路径又完全不重拉学院等级。
   const handleCollegeMonthChange = () => {
     showCollegeMonthIndicatorCard.value = false
     selectedMonthInCollegeDrillDown.value = null
@@ -2382,8 +2622,6 @@ export function useDashboardView(props: DashboardViewProps) {
       isCollegeDrillDown.value = false
       drilledCollege.value = ''
     }
-    void loadCollegeLevels()
-    void loadDelayedTasks()
     nextTick(() => {
       initCollegeChart()
     })
@@ -2544,7 +2782,7 @@ export function useDashboardView(props: DashboardViewProps) {
     })
   }
 
-  // 处理分院排名月份变化（排名与趋势同源，切月仅重绘）
+  // 处理分院排名月份变化（排名与趋势同源，切月仅重绘；数据重拉统一见 watch(selectedMonth)）
   const handleCollegeRankingMonthChange = () => {
     nextTick(() => {
       initCollegeRankingChart()
@@ -2632,6 +2870,8 @@ export function useDashboardView(props: DashboardViewProps) {
     void loadCollegeLevelsTrend()
     void loadDelayedTasks()
     void loadAppraisalSummary()
+    // 2026-11-27：指标异动汇总首屏就取数（原只在 5 分钟兜底刷新里取，首屏 5 分钟内恒为空）
+    void loadMutationSummary()
 
     await nextTick()
     await initRadarChart()
@@ -2678,6 +2918,10 @@ export function useDashboardView(props: DashboardViewProps) {
       void loadDelayedTasks()
       void loadAppraisalSummary()
       void loadMutationSummary()
+      // 2026-11-27：下钻态的行级鉴定明细同拍兜底刷新（下钻趋势与明细面板的等级数据源，
+      // 不在下钻态时各自直接返回），否则审批终态后下钻趋势与明细仍停在旧数据
+      void loadDrillIndicatorLevels()
+      void loadCollegeDrillIndicatorLevels()
     }, DASHBOARD_AUTO_REFRESH_INTERVAL)
   }
 
@@ -2713,7 +2957,10 @@ export function useDashboardView(props: DashboardViewProps) {
         loadCollegeLevels(),
         loadCollegeLevelsTrend(),
         loadDelayedTasks(),
-        loadAppraisalSummary()
+        loadAppraisalSummary(),
+        // 2026-11-27：下钻态的行级鉴定明细随审批终态一起重拉（不在下钻态时各自直接返回）
+        loadDrillIndicatorLevels(),
+        loadCollegeDrillIndicatorLevels()
       ])
     })().finally(() => {
       globalDataRefreshPromise = null
@@ -2737,6 +2984,7 @@ export function useDashboardView(props: DashboardViewProps) {
     applyFilters,
     appraisalSummary,
     appraisalSummaryLoading,
+    collegeIndicatorSummary,
     authStore,
     benchmarkChartRef,
     benchmarkSectionRef,
@@ -2781,7 +3029,6 @@ export function useDashboardView(props: DashboardViewProps) {
     getIndicatorStatus,
     getStatusClass,
     getStatusText,
-    handleAlertClick,
     handleSummaryDrillClick,
     handleBackToColleges,
     handleBackToDepts,
@@ -2821,6 +3068,7 @@ export function useDashboardView(props: DashboardViewProps) {
     monthIndicators,
     monthlyStackedData,
     orgStore,
+    overviewAggregate,
     radarChartRef,
     radarData,
     reloadData,

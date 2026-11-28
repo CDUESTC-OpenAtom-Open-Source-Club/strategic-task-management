@@ -1358,3 +1358,75 @@
   text-align: right;
   word-break: break-all;
 }
+
+/* ============ 指标承接汇总（2026-11-27 学院视角改造） ============ */
+.college-summary-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.college-summary-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: rgba(64, 158, 255, 0.04);
+}
+.college-summary-name {
+  flex: 0 0 140px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.college-summary-total {
+  flex: 0 0 70px;
+  font-size: 13px;
+  color: #409eff;
+  font-weight: 600;
+}
+.college-summary-levels {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.level-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 16px;
+}
+.level-chip--ahead {
+  color: #1a7f37;
+  background: rgba(26, 127, 55, 0.1);
+}
+.level-chip--normal {
+  color: #409eff;
+  background: rgba(64, 158, 255, 0.1);
+}
+.level-chip--delayed {
+  color: #f56c6c;
+  background: rgba(245, 108, 108, 0.1);
+}
+.level-chip--empty {
+  color: #909399;
+  background: rgba(144, 147, 153, 0.1);
+}
+/* 下钻明细面板的预警辅助小标（鉴定口径不变） */
+.alert-hint-tag {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 14px;
+  color: #e6a23c;
+  background: rgba(230, 162, 61, 0.15);
+}

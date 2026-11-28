@@ -11,7 +11,6 @@ import type {
   StrategicIndicator,
   ComparisonItem,
   SankeyData,
-  SankeyLink,
   SankeyNode as _SankeyNode,
   SourcePieData,
   OrgLevel,
@@ -23,16 +22,18 @@ import { useTimeContextStore } from '@/shared/lib/timeContext'
 import { getProgressStatus, isSecondaryCollege } from '@/shared/lib/utils/colors'
 import { useOrgStore } from '@/features/organization/model/store'
 import { logger } from '@/shared/lib/utils/logger'
+import { markErrorHandled } from '@/shared/lib/utils/errorToast'
 import { alertApi, type AlertStats, type AlertEvent } from '@/shared/api/monitoringApi'
 import { dashboardApi } from '@/features/dashboard/api/dashboardApi'
 import { resolveIndicatorYear } from '@/shared/lib/utils/indicatorYear'
 import { USE_MOCK } from '@/shared/config/api'
 // 2026-11-25（看板来源归属修复）：父指标归口水合 + 任务来源归组键，与指标填报页共享同一实现
 import {
-  fetchParentIndicatorCore,
+  fetchParentIndicatorCores,
   resolveTaskSourceDept,
   type ParentIndicatorCore
 } from '@/features/indicator/model/parentIndicatorCore'
+import { generateSankeyData } from '@/features/dashboard/lib/helpers'
 
 function isPersistedIndicatorId(value: unknown): boolean {
   return /^\d+$/.test(String(value ?? '').trim())
@@ -303,15 +304,10 @@ export const useDashboardStore = defineStore('dashboard', () => {
 
   // 三级联动 Computed Getters
 
-  // 根据角色和下钻层级动态过滤数据
-  const visibleIndicators = computed<StrategicIndicator[]>(() => {
-    const authStore = useAuthStore()
+  // 已落库 + 当前年份的指标（角色、下钻、用户筛选之前的基础集合）
+  const yearScopedIndicators = computed<StrategicIndicator[]>(() => {
     const strategicStore = useStrategicStore()
     const timeContext = useTimeContextStore()
-    const _orgStore = useOrgStore()
-    // 使用有效角色（考虑视角切换）
-    const role = authStore.effectiveRole
-    const dept = authStore.effectiveDepartment
     let indicators = [...strategicStore.indicators]
 
     if (!USE_MOCK) {
@@ -322,21 +318,17 @@ export const useDashboardStore = defineStore('dashboard', () => {
     // 没有 year 字段的指标默认为当前真实年份（2025）
     const currentYear = timeContext.currentYear
     const realYear = timeContext.realCurrentYear
-    indicators = indicators.filter(i => {
+    return indicators.filter(i => {
       const indicatorYear = resolveIndicatorYear(i, realYear)
       return indicatorYear === currentYear
     })
+  })
 
-    // 角色过滤
-    if (role === 'functional_dept') {
-      // 职能部门看本部门发布的指标或本部门负责的指标
-      indicators = indicators.filter(i => i.ownerDept === dept || i.responsibleDept === dept)
-    } else if (role === 'secondary_college') {
-      // 二级学院只看承接的指标
-      indicators = indicators.filter(i => i.responsibleDept === dept)
-    }
+  // 下钻层级 + 用户筛选（visibleIndicators 与任务流转图的指标范围共用）
+  const applyViewFilters = (source: StrategicIndicator[]): StrategicIndicator[] => {
+    let indicators = [...source]
 
-    // 下钻层级过滤
+    // 按当前下钻层级筛选
     if (currentOrgLevel.value === 'functional' && selectedFunctionalDept.value) {
       // 查看某个职能部门的详情：该部门下发的指标
       indicators = indicators.filter(
@@ -378,14 +370,52 @@ export const useDashboardStore = defineStore('dashboard', () => {
     }
 
     return indicators
+  }
+
+  // 根据角色和下钻层级动态过滤数据
+  const visibleIndicators = computed<StrategicIndicator[]>(() => {
+    const authStore = useAuthStore()
+    const _orgStore = useOrgStore()
+    // 使用有效角色（考虑视角切换）
+    const role = authStore.effectiveRole
+    const dept = authStore.effectiveDepartment
+    let indicators = yearScopedIndicators.value
+
+    // 角色过滤
+    if (role === 'functional_dept') {
+      // 职能部门看本部门发布的指标或本部门负责的指标
+      indicators = indicators.filter(i => i.ownerDept === dept || i.responsibleDept === dept)
+    } else if (role === 'secondary_college') {
+      // 二级学院只看承接的指标
+      indicators = indicators.filter(i => i.responsibleDept === dept)
+    }
+
+    return applyViewFilters(indicators)
   })
 
-  // 2026-11-25（看板来源归属修复）：监听可见指标里的 parentIndicatorId，缺哪个父级
+  // 任务流转图的指标范围（下钻/用户筛选之前的角色全集 + 下钻/用户筛选）
+  //
+  // 2026-11-27（流转图归属修复）：职能部门视角的流转图要画「战略发展部 → 本部门 → 学院」，
+  // 而学院线指标的 ownerDept 是代发方「战略发展部」，被 visibleIndicators 的角色过滤
+  // （ownerDept === 本部门）排除在外。流转图因此不经 visibleIndicators，直接取本账号
+  // 当前年份的指标全集再套下钻/用户筛选：后端按归口范围下发，职能部门账号的列表里
+  // 只有本部门自身指标 + 本部门归口的学院线指标；战略发展部 / 学院账号下与
+  // visibleIndicators 逐条一致。归口水合也按这个范围取父指标。
+  const taskFlowIndicators = computed<StrategicIndicator[]>(() =>
+    applyViewFilters(yearScopedIndicators.value)
+  )
+
+  // 2026-11-25（看板来源归属修复）：监听指标里的 parentIndicatorId，缺哪个父级
   // 归口就拉哪个（getIndicatorById 走 fetchWithCache，同 id 不重复请求；实现与指标
   // 填报页 hydrateParentIndicators 共享同一 fetchParentIndicatorCore，避免两处漂移）。
+  //
+  // 2026-11-27（生产看板 500 根治）：此前是 `Promise.all(ids.map(fetch))` 无上限并发，
+  // 生产指标 94 → 561 后单学院一次要拉 50 个父指标详情 → 几十个并发请求打满 Hikari
+  // 连接池 → 后端 500 → 前端弹红色「服务器内部错误」。现改为分批限流
+  // （任一时刻在途 ≤ 6），批与批之间让出事件循环；单条失败仍只记 warn 并跳过。
   const hydrateTaskSourceParentIndicators = async () => {
     const pendingIds = new Set<string>()
-    visibleIndicators.value.forEach(item => {
+    taskFlowIndicators.value.forEach(item => {
       const pid = String(item.parentIndicatorId ?? '').trim()
       if (pid && !(pid in parentIndicatorMap.value)) {
         pendingIds.add(pid)
@@ -394,24 +424,21 @@ export const useDashboardStore = defineStore('dashboard', () => {
     if (pendingIds.size === 0) {
       return
     }
-    await Promise.all(
-      [...pendingIds].map(async pid => {
-        try {
-          const core = await fetchParentIndicatorCore(pid)
-          if (!core) {
-            return
-          }
-          parentIndicatorMap.value = { ...parentIndicatorMap.value, [pid]: core }
-        } catch (parentError) {
-          logger.warn('[DashboardStore] 父指标归口信息拉取失败:', { pid, parentError })
-        }
-      })
-    )
+    await fetchParentIndicatorCores([...pendingIds], {
+      onResolved: (pid, core) => {
+        parentIndicatorMap.value = { ...parentIndicatorMap.value, [pid]: core }
+      },
+      onError: (pid, parentError) => {
+        // 父指标归口取不到只降级（回退 ownerDept），不该弹全局错误提示
+        markErrorHandled(parentError)
+        logger.warn('[DashboardStore] 父指标归口信息拉取失败:', { pid, parentError })
+      }
+    })
   }
 
   watch(
     () =>
-      visibleIndicators.value
+      taskFlowIndicators.value
         .map(i => String(i.parentIndicatorId ?? '').trim())
         .filter(Boolean)
         .join(','),
@@ -572,75 +599,26 @@ export const useDashboardStore = defineStore('dashboard', () => {
     }
   })
 
-  // 辅助函数：生成桑基图数据
-  const generateSankeyData = (indicators: StrategicIndicator[]): SankeyData => {
-    const nodes = new Set<string>()
-    const linkMap = new Map<string, number>()
-
-    // 统计实际任务流转
-    indicators.forEach(indicator => {
-      const source = indicator.ownerDept || '战略发展部'
-      const target = indicator.responsibleDept
-
-      if (!source || !target || source === target) {
-        return
-      } // Skip incomplete or self-loop entries
-
-      nodes.add(source)
-      nodes.add(target)
-
-      const key = `${source}->${target}`
-      linkMap.set(key, (linkMap.get(key) || 0) + 1)
-    })
-
-    // 为节点分配明确的层级（depth），确保职能部门和学院分层显示
-    const depthMap = new Map<string, number>()
-    nodes.forEach(name => {
-      if (name === '战略发展部') {
-        depthMap.set(name, 0)
-      } else if (isSecondaryCollege(name)) {
-        depthMap.set(name, 2)
-      } else {
-        depthMap.set(name, 1)
-      }
-    })
-
-    // 过滤链接：只保留从低层级流向高层级的链接（避免循环）
-    const links: SankeyLink[] = []
-    linkMap.forEach((count, key) => {
-      const [source, target] = key.split('->')
-      const sourceDepth = depthMap.get(source) ?? 1
-      const targetDepth = depthMap.get(target) ?? 1
-      if (sourceDepth < targetDepth) {
-        links.push({ source, target, value: count })
-      }
-    })
-
-    // 只保留在链接中出现的节点
-    const usedNodes = new Set<string>()
-    links.forEach(link => {
-      usedNodes.add(link.source)
-      usedNodes.add(link.target)
-    })
-
-    const nodeList = Array.from(usedNodes).map(name => ({
-      name,
-      depth: depthMap.get(name) ?? 1
-    }))
-
-    return {
-      nodes: nodeList,
-      links
-    }
-  }
-
   // 任务流转数据（用于 TaskSankeyChart）
+  //
+  // 2026-11-27（流转图归属修复）：流转关系 = 战略发展部 → 职能部门 → 二级学院。学院线
+  // 指标由战略发展部代发（ownerDept 恒为战略发展部），源头是归口职能部门，归组键与
+  // 「任务来源分布」饼图同为 resolveTaskSourceDept；节点层级按组织 id / 类型判定。
+  // 实现见 lib/helpers.ts 的 generateSankeyData（唯一的桑基图数据实现，本文件不再另留一份）。
+  // 视角取有效角色（考虑视角切换）：卡片渲染按有效角色选「全校任务流转图」/「本部门任务下发流向」，
+  // 图数据必须与实际渲染的卡片同一视角。
   const sankeyData = computed<SankeyData>(() => {
     const authStore = useAuthStore()
-    const role = authStore.user?.role
+    const orgStore = useOrgStore()
+    const role = authStore.effectiveRole
 
     if (role === 'strategic_dept' || role === 'functional_dept') {
-      return generateSankeyData(visibleIndicators.value)
+      return generateSankeyData(taskFlowIndicators.value, {
+        organizations: orgStore.departments,
+        parentIndicatorMap: parentIndicatorMap.value,
+        role,
+        department: authStore.effectiveDepartment
+      })
     }
 
     return { nodes: [], links: [] }

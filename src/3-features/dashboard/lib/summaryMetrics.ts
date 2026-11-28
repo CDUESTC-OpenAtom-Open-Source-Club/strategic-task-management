@@ -260,3 +260,91 @@ export const aggregateCollegeLevels = (
   })
   return aggregate
 }
+
+// ============================================================================
+// 看板总览合计（2026-11-27 简报口径：全校视角 = 职能部门自身 + 学院）
+// 全校视角原只合计学院行（7 个学院），漏掉职能部门自身的指标；职能部门 / 学院视角不变。
+// 注意：全量视角 appraisal-summary.departments 里除部门自身行外，还混着学院的
+// 「未填报」置灰行（等级全 0），所以部门侧只合计部门分布图实际画出的职能部门行，
+// 不能把整个 departments 数组加进来（学院会被重复计一遍）。
+// ============================================================================
+
+/** 职能部门自身口径的等级行（appraisal-summary 部门行 / 看板内部门统计的数值字段） */
+export interface DeptOwnLevelRow {
+  ahead: number
+  normal: number
+  delayed: number
+  total: number
+  dispatchedCount?: number
+}
+
+/** 职能部门自身口径合计 */
+export interface DeptOwnLevelAggregate {
+  ahead: number
+  normal: number
+  delayed: number
+  /** 已鉴定等级合计（= ahead + normal + delayed） */
+  total: number
+  /** 职能部门当年已下发指标数合计 */
+  dispatchedTotal: number
+}
+
+export const emptyDeptOwnAggregate = (): DeptOwnLevelAggregate => ({
+  ahead: 0,
+  normal: 0,
+  delayed: 0,
+  total: 0,
+  dispatchedTotal: 0
+})
+
+export const aggregateDeptOwnLevels = (rows: DeptOwnLevelRow[]): DeptOwnLevelAggregate => {
+  const aggregate = emptyDeptOwnAggregate()
+  rows.forEach(row => {
+    aggregate.ahead += row.ahead
+    aggregate.normal += row.normal
+    aggregate.delayed += row.delayed
+    aggregate.total += row.total
+    aggregate.dispatchedTotal += row.dispatchedCount ?? 0
+  })
+  return aggregate
+}
+
+/** 看板总览合计（简报 / 完成情况 / 等级分布三处同源） */
+export interface DashboardOverviewAggregate {
+  ahead: number
+  normal: number
+  delayed: number
+  /** 已鉴定等级合计（学院 + 职能部门自身） */
+  appraisedTotal: number
+  /** 完成率分母：已下发指标总数；已下发数为 0 时退回已鉴定数（沿用学院口径） */
+  dispatchedTotal: number
+  /** 已完成 = 超前 + 正常 */
+  completed: number
+  completionRate: number
+}
+
+/**
+ * 学院合计 + 职能部门自身合计 → 总览。
+ * 完成率分母沿用既有学院口径：已下发指标总数（未填报的计入分母、不计入完成，不缩小分母）。
+ */
+export const mergeLevelAggregates = (
+  college: CollegeLevelAggregate,
+  deptOwn: DeptOwnLevelAggregate
+): DashboardOverviewAggregate => {
+  const ahead = college.ahead + deptOwn.ahead
+  const normal = college.normal + deptOwn.normal
+  const delayed = college.delayed + deptOwn.delayed
+  const appraisedTotal = college.total + deptOwn.total
+  const dispatched = college.dispatchedTotal + deptOwn.dispatchedTotal
+  const denominator = dispatched > 0 ? dispatched : appraisedTotal
+  const completed = ahead + normal
+  return {
+    ahead,
+    normal,
+    delayed,
+    appraisedTotal,
+    dispatchedTotal: denominator,
+    completed,
+    completionRate: denominator > 0 ? Math.round((completed / denominator) * 100) : 0
+  }
+}

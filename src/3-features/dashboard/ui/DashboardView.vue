@@ -11,7 +11,6 @@ import {
 import { useApprovalCenter } from '@/features/approval/lib/useApprovalCenter'
 import BreadcrumbNav from '@/shared/ui/layout/BreadcrumbNav.vue'
 import AlertDistributionChart from '@/shared/ui/charts/AlertDistributionChart.vue'
-import DepartmentProgressChart from './DepartmentProgressChart.vue'
 import TaskSankeyChart from '@/shared/ui/charts/TaskSankeyChart.vue'
 import SourcePieChart from '@/shared/ui/charts/SourcePieChart.vue'
 import {
@@ -48,6 +47,7 @@ const {
   collegeChartHasData,
   collegeChartEmptyText,
   collegeChartRef,
+  collegeIndicatorSummary,
   collegeLevelsLoading,
   collegeSupervision,
   collegeTrendLoading,
@@ -75,7 +75,6 @@ const {
   getIndicatorStatus,
   getStatusClass,
   getStatusText,
-  handleAlertClick,
   handleSummaryDrillClick,
   handleBackToColleges,
   handleBackToDepts,
@@ -115,6 +114,8 @@ const {
   monthIndicatorStats,
   monthIndicators,
   monthlyStackedData,
+  // 2026-11-27：指标异动汇总的数据源此前没有接进模板（模板取不到该绑定，卡片恒为空态）
+  mutationSummary,
   orgStore,
   radarChartRef,
   radarData,
@@ -388,7 +389,7 @@ function openApprovalCenterFromDashboard() {
                 <div class="header-left">
                   <div style="display: flex; align-items: center; gap: 4px">
                     <span class="card-title benchmark-title">
-                      {{ isDrillDown ? `${drilledDept} - 月度趋势` : '指标完成情况分布' }}
+                      {{ isDrillDown ? `${drilledDept} - 月度趋势` : '部门指标完成情况' }}
                       <span class="title-tag-italic">{{
                         isDrillDown ? 'TREND' : 'DISTRIBUTION'
                       }}</span>
@@ -397,7 +398,7 @@ function openApprovalCenterFromDashboard() {
                       :content="
                         isDrillDown
                           ? '显示该部门每月的指标完成情况'
-                          : '显示各职能部门的指标完成情况分布'
+                          : '显示各职能部门各自上报的指标完成情况，不含下发给学院的指标'
                       "
                       placement="top"
                       effect="light"
@@ -405,12 +406,8 @@ function openApprovalCenterFromDashboard() {
                       <el-icon class="help-icon"><QuestionFilled /></el-icon>
                     </el-tooltip>
                   </div>
-                  <span class="card-subtitle">
-                    {{
-                      isDrillDown
-                        ? '1月 - 当前月度趋势分析'
-                        : `${selectedMonth}月 · 按状态统计 · 点击柱形查看趋势`
-                    }}
+                  <span v-if="!isDrillDown" class="card-subtitle">
+                    {{ `${selectedMonth}月 · 职能部门指标 · 点击柱形查看趋势` }}
                   </span>
                 </div>
                 <div class="header-right">
@@ -455,7 +452,11 @@ function openApprovalCenterFromDashboard() {
           </el-card>
         </div>
 
-        <!-- 指标完成情况卡片（选中部门后显示，下钻时隐藏） -->
+        <!-- 指标完成情况卡片（选中部门后显示，下钻时隐藏）
+             2026-11-27：未选部门时整卡不渲染。原先是 v-show（只是 display:none），
+             「· 0 项指标」「该部门暂无接收的指标」仍留在 DOM 里，按页面文字抓取会被当成缺陷。
+             展开 / 收起动画由外层 .indicator-col 与 .indicator-card-wrapper 的过渡负责，不受影响：
+             关闭时先播 400ms 退出动画，之后 selectedBenchmarkDept 置空、卡片才移出 DOM -->
         <div
           v-if="currentRole !== 'secondary_college' && !isDrillDown"
           class="indicator-col"
@@ -463,7 +464,7 @@ function openApprovalCenterFromDashboard() {
         >
           <div class="indicator-card-wrapper">
             <el-card
-              v-show="selectedBenchmarkDept"
+              v-if="selectedBenchmarkDept"
               shadow="hover"
               class="chart-card glass-card indicator-status-card"
             >
@@ -602,7 +603,9 @@ function openApprovalCenterFromDashboard() {
           </div>
         </div>
 
-        <!-- 下钻后月份指标卡片（点击月份柱子后显示） -->
+        <!-- 下钻后月份指标卡片（点击月份柱子后显示）
+             2026-11-27：同「指标完成情况」卡，未选月份时整卡不渲染（原 v-show 会把
+             「该月份暂无指标数据」留在 DOM 里），展开 / 收起动画同样由外层过渡负责 -->
         <div
           v-if="currentRole === 'strategic_dept' && isDrillDown"
           class="indicator-col"
@@ -610,7 +613,7 @@ function openApprovalCenterFromDashboard() {
         >
           <div class="indicator-card-wrapper">
             <el-card
-              v-show="selectedMonthInDrillDown !== null"
+              v-if="selectedMonthInDrillDown !== null"
               shadow="hover"
               class="chart-card glass-card indicator-status-card"
             >
@@ -630,9 +633,6 @@ function openApprovalCenterFromDashboard() {
                         <el-icon class="help-icon"><QuestionFilled /></el-icon>
                       </el-tooltip>
                     </div>
-                    <span class="card-subtitle">
-                      {{ selectedMonthInDrillDown }}月完成情况 · {{ monthIndicators.length }} 项指标
-                    </span>
                   </div>
                   <div class="header-right">
                     <el-button
@@ -719,6 +719,13 @@ function openApprovalCenterFromDashboard() {
                           :class="getStatusClass(indicator.status)"
                         >
                           {{ getStatusText(indicator.status) }}
+                          <!-- 2026-11-27 鉴定口径落地：预警快照降级为辅助小标（不改变行状态） -->
+                          <span
+                            v-if="indicator.alertHint"
+                            class="alert-hint-tag"
+                            title="该指标仍有未关闭的数据库预警"
+                            >预警</span
+                          >
                         </div>
                       </div>
                     </template>
@@ -789,12 +796,8 @@ function openApprovalCenterFromDashboard() {
                       <el-icon class="help-icon"><QuestionFilled /></el-icon>
                     </el-tooltip>
                   </div>
-                  <span class="card-subtitle">
-                    {{
-                      isCollegeDrillDown
-                        ? '1月 - 当前月度趋势分析'
-                        : `${collegeSelectedMonth}月 · 按状态统计 · 点击柱形查看趋势`
-                    }}
+                  <span v-if="!isCollegeDrillDown" class="card-subtitle">
+                    {{ `${collegeSelectedMonth}月 · 按状态统计 · 点击柱形查看趋势` }}
                   </span>
                 </div>
                 <div class="header-right">
@@ -835,7 +838,8 @@ function openApprovalCenterFromDashboard() {
           </el-card>
         </div>
 
-        <!-- 学院月份指标卡片（点击月份柱子后显示） -->
+        <!-- 学院月份指标卡片（点击月份柱子后显示）
+             2026-11-27：同「指标完成情况」卡，未选月份时整卡不渲染 -->
         <div
           v-if="isCollegeDrillDown"
           class="indicator-col"
@@ -843,7 +847,7 @@ function openApprovalCenterFromDashboard() {
         >
           <div class="indicator-card-wrapper">
             <el-card
-              v-show="selectedMonthInCollegeDrillDown !== null"
+              v-if="selectedMonthInCollegeDrillDown !== null"
               shadow="hover"
               class="chart-card glass-card indicator-status-card"
             >
@@ -863,10 +867,6 @@ function openApprovalCenterFromDashboard() {
                         <el-icon class="help-icon"><QuestionFilled /></el-icon>
                       </el-tooltip>
                     </div>
-                    <span class="card-subtitle">
-                      {{ selectedMonthInCollegeDrillDown }}月完成情况 ·
-                      {{ collegeMonthIndicators.length }} 项指标
-                    </span>
                   </div>
                   <div class="header-right">
                     <el-button
@@ -956,6 +956,13 @@ function openApprovalCenterFromDashboard() {
                           :class="getStatusClass(indicator.status)"
                         >
                           {{ getStatusText(indicator.status) }}
+                          <!-- 2026-11-27 学院下钻同款：预警快照降级为辅助小标（不改变行状态） -->
+                          <span
+                            v-if="indicator.alertHint"
+                            class="alert-hint-tag"
+                            title="该指标仍有未关闭的数据库预警"
+                            >预警</span
+                          >
                         </div>
                       </div>
                     </template>
@@ -1096,14 +1103,12 @@ function openApprovalCenterFromDashboard() {
                 </div>
               </div>
             </template>
+            <!-- 2026-11-27（#3d）：改纯展示（移除点击筛选）；delayed 档数据源从预警口径
+                 （alertIndicators.severe+moderate）改为鉴定口径 levelDistribution.delayed，与趋势图同源 -->
             <AlertDistributionChart
               :ahead="dashboardData.levelDistribution?.ahead ?? 0"
               :normal="dashboardData.levelDistribution?.normal ?? 0"
-              :delayed="
-                (dashboardData.alertIndicators.severe || 0) +
-                (dashboardData.alertIndicators.moderate || 0)
-              "
-              @click="handleAlertClick"
+              :delayed="dashboardData.levelDistribution?.delayed ?? 0"
             />
           </el-card>
         </el-col>
@@ -1328,15 +1333,15 @@ function openApprovalCenterFromDashboard() {
             </el-card>
           </el-col>
 
-          <!-- 承接任务汇总 -->
+          <!-- 指标承接汇总（2026-11-27 学院视角改造：按归口部门显示本院指标数+等级占比） -->
           <el-col :xs="24" :md="14">
             <el-card shadow="hover" class="chart-card card-animate">
               <template #header>
                 <div class="card-header">
                   <div style="display: flex; align-items: center; gap: 4px">
-                    <span class="card-title">承接任务汇总</span>
+                    <span class="card-title">指标承接汇总</span>
                     <el-tooltip
-                      content="本学院承接的所有任务进度汇总"
+                      content="本院承接的各归口部门指标分布"
                       placement="top"
                       effect="light"
                     >
@@ -1345,7 +1350,33 @@ function openApprovalCenterFromDashboard() {
                   </div>
                 </div>
               </template>
-              <DepartmentProgressChart :departments="dashboardStore.departmentSummary" />
+              <div v-if="collegeIndicatorSummary.length === 0" class="empty-indicator-list">
+                <el-empty description="暂无本院指标鉴定数据" :image-size="80" />
+              </div>
+              <div v-else class="college-summary-list">
+                <div
+                  v-for="dept in collegeIndicatorSummary"
+                  :key="dept.orgId"
+                  class="college-summary-row"
+                >
+                  <span class="college-summary-name" :title="dept.orgName">{{ dept.orgName }}</span>
+                  <span class="college-summary-total">{{ dept.total }} 项指标</span>
+                  <span class="college-summary-levels">
+                    <template v-if="dept.total > 0">
+                      <span v-if="dept.ahead > 0" class="level-chip level-chip--ahead"
+                        >超前×{{ dept.ahead }}</span
+                      >
+                      <span v-if="dept.normal > 0" class="level-chip level-chip--normal"
+                        >正常×{{ dept.normal }}</span
+                      >
+                      <span v-if="dept.delayed > 0" class="level-chip level-chip--delayed"
+                        >滞后×{{ dept.delayed }}</span
+                      >
+                    </template>
+                    <span v-else class="level-chip level-chip--empty">暂无鉴定数据</span>
+                  </span>
+                </div>
+              </div>
             </el-card>
           </el-col>
         </el-row>

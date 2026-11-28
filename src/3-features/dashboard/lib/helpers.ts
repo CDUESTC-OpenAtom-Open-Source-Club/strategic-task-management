@@ -4,9 +4,13 @@
  * Internal helper functions for dashboard feature.
  */
 
-import type { ComparisonItem, StrategicIndicator } from '@/shared/types'
+import type { ComparisonItem, SankeyData, SankeyLink, StrategicIndicator } from '@/shared/types'
 import { getProgressStatus } from '@/shared/lib/utils/colors'
 import { ALERT_THRESHOLDS, COLLEGE_SUFFIXES } from '../model/constants'
+import {
+  resolveTaskSourceDept,
+  type ParentIndicatorCore
+} from '@/features/indicator/model/parentIndicatorCore'
 
 /**
  * Get alert level based on progress
@@ -161,63 +165,149 @@ export function calculateAlertDistribution(indicators: StrategicIndicator[]) {
 }
 
 /**
- * Generate Sankey data from indicators
+ * 总部（战略发展部）的组织 ID。
+ *
+ * 流转图的层级按组织 id / 组织类型判定，不按名称字符串：系统里另有一个职能部门
+ * 「战略发展·部」（org 66），名字只差一个中点，必须落在中间列。
  */
-export function generateSankeyData(indicators: StrategicIndicator[]) {
-  const nodes = new Set<string>()
-  const linkMap = new Map<string, number>()
+export const STRATEGIC_DEPT_ORG_ID = '35'
 
-  // Count actual task flows
-  indicators.forEach(indicator => {
-    const source = indicator.ownerDept || '战略发展部'
-    const target = indicator.responsibleDept
+/** 流转图层级判定用的组织记录（与组织 store 的 departments 同构） */
+export interface SankeyOrganization {
+  id: string
+  name: string
+  type: 'strategic_dept' | 'functional_dept' | 'secondary_college'
+}
 
-    if (!source || !target || source === target) {
-      return
-    } // Skip incomplete or self-loop entries
+/** generateSankeyData 的上下文 */
+export interface GenerateSankeyOptions {
+  /** 组织清单（取组织 store 的 departments） */
+  organizations: readonly SankeyOrganization[]
+  /** 父级核心指标归口缓存，与 resolveTaskSourceDept 同口径 */
+  parentIndicatorMap: Record<string, ParentIndicatorCore | undefined>
+  /** 视角：strategic_dept = 全校图；functional_dept = 只画本部门 */
+  role: 'strategic_dept' | 'functional_dept'
+  /** 职能部门视角的本部门名称 */
+  department?: string
+}
 
-    nodes.add(source)
-    nodes.add(target)
+/**
+ * 按组织记录判定流转图层级：战略发展部（org 35）= 0，职能部门 = 1，二级学院 = 2。
+ * 组织清单里查不到的名称返回 null（不进图）。
+ */
+function resolveSankeyDepth(org: SankeyOrganization | undefined): 0 | 1 | 2 | null {
+  if (!org) {
+    return null
+  }
+  if (org.id === STRATEGIC_DEPT_ORG_ID || org.type === 'strategic_dept') {
+    return 0
+  }
+  if (org.type === 'secondary_college') {
+    return 2
+  }
+  if (org.type === 'functional_dept') {
+    return 1
+  }
+  return null
+}
 
-    const key = `${source}->${target}`
-    linkMap.set(key, (linkMap.get(key) || 0) + 1)
-  })
-
-  // Assign explicit levels to nodes
-  const depthMap = new Map<string, number>()
-  nodes.forEach(name => {
-    if (name === '战略发展部') {
-      depthMap.set(name, 0)
-    } else if (isSecondaryCollege(name)) {
-      depthMap.set(name, 2)
-    } else {
-      depthMap.set(name, 1)
+/**
+ * 生成任务流转图（桑基图）数据：战略发展部 → 职能部门 → 二级学院。
+ *
+ * 2026-11-27（流转图归属修复）：流转关系按业务口径是「战略发展部 → 职能部门 → 学院」——
+ * 战略发展部不直接向学院下发，学院线指标由它代发，源头是归口职能部门。
+ * 旧实现拿 ownerDept 当起点，而学院线指标的 ownerDept 恒为代发方「战略发展部」，
+ * 于是画成了「战略发展部 → 学院」直连，职能部门与学院之间没有连线。
+ *
+ * 现行规则（每条指标按责任单位的组织类型归位）：
+ * - 责任单位是职能部门：该部门自身指标，边 = 战略发展部 → 该职能部门
+ * - 责任单位是二级学院：学院线指标，归口部门 = resolveTaskSourceDept（父级核心指标的
+ *   targetOrg，与「任务来源分布」饼图同键），边 = 战略发展部 → 归口职能部门、
+ *   归口职能部门 → 该学院。所以「战略发展部 → 职能部门」每条边的 value 是该部门
+ *   自身指标数 + 它归口下发给学院的指标数，中间列节点进出可以不相等。
+ * - 归口没解析出来（父指标缺失，回退成 ownerDept「战略发展部」）的学院线指标不画：
+ *   绝不连成「战略发展部 → 学院」。出现这种指标说明父指标归口水合没拿到数据，要查原因。
+ *
+ * 节点层级按组织 id / 类型判定（见 resolveSankeyDepth），不按名称猜：名称像学院的
+ * 职能部门（如「国际教育学院」）落在中间列，「战略发展·部」不会被当成总部。
+ *
+ * @param indicators 进图的指标
+ * @param options 组织清单、归口缓存、视角
+ */
+export function generateSankeyData(
+  indicators: StrategicIndicator[],
+  options: GenerateSankeyOptions
+): SankeyData {
+  const { organizations, parentIndicatorMap, role, department } = options
+  const orgByName = new Map<string, SankeyOrganization>()
+  organizations.forEach(org => {
+    if (!orgByName.has(org.name)) {
+      orgByName.set(org.name, org)
     }
   })
+  const depthOf = (name: string): 0 | 1 | 2 | null => resolveSankeyDepth(orgByName.get(name))
 
-  // Filter links: only keep forward-flowing links (lower depth → higher depth) to avoid cycles
-  const links = Array.from(linkMap.entries())
-    .map(([key, count]) => {
-      const [source, target] = key.split('->')
-      return { source, target, value: count }
-    })
-    .filter(link => {
-      const sourceDepth = depthMap.get(link.source) ?? 1
-      const targetDepth = depthMap.get(link.target) ?? 1
-      return sourceDepth < targetDepth
-    })
+  const headquarters = organizations.find(org => resolveSankeyDepth(org) === 0)
+  // 组织清单没就绪（或没有总部记录）时层级无从判定，宁可不画也不按名称猜
+  if (!headquarters || (role === 'functional_dept' && !department)) {
+    return { nodes: [], links: [] }
+  }
 
-  // Only include nodes that appear in valid links
+  const linkMap = new Map<string, SankeyLink>()
+  const addLink = (source: string, target: string) => {
+    const key = `${source}->${target}`
+    const link = linkMap.get(key)
+    if (link) {
+      link.value += 1
+    } else {
+      linkMap.set(key, { source, target, value: 1 })
+    }
+  }
+  // 职能部门视角只画与本部门有关的部分
+  const isOwnDept = (dept: string): boolean => role !== 'functional_dept' || dept === department
+
+  indicators.forEach(indicator => {
+    const target = indicator.responsibleDept
+    const targetDepth = target ? depthOf(target) : null
+    // 没有责任单位、责任单位是总部自身、或组织清单里查不到：没有可画的流转
+    if (!target || targetDepth === null || targetDepth === 0) {
+      return
+    }
+
+    if (targetDepth === 1) {
+      // 职能部门自身指标：战略发展部 → 该职能部门
+      if (isOwnDept(target)) {
+        addLink(headquarters.name, target)
+      }
+      return
+    }
+
+    // 学院线指标：归口职能部门 → 该学院；代发方战略发展部只作为归口线的上游
+    const owner = resolveTaskSourceDept(indicator, parentIndicatorMap)
+    if (depthOf(owner) !== 1 || !isOwnDept(owner)) {
+      return
+    }
+    addLink(headquarters.name, owner)
+    addLink(owner, target)
+  })
+
+  // 只保留在链接中出现的节点，顺序沿用组织清单
   const usedNodes = new Set<string>()
-  links.forEach(link => {
+  linkMap.forEach(link => {
     usedNodes.add(link.source)
     usedNodes.add(link.target)
   })
 
-  const nodeList = Array.from(usedNodes).map(name => ({
-    name,
-    depth: depthMap.get(name) ?? 1
-  }))
+  const nodeList = Array.from(orgByName.values())
+    .filter(org => usedNodes.has(org.name))
+    .map(org => ({ name: org.name, depth: resolveSankeyDepth(org) ?? 1 }))
+
+  const nodeOrder = new Map(nodeList.map((node, index) => [node.name, index]))
+  const links = Array.from(linkMap.values()).sort(
+    (a, b) =>
+      (nodeOrder.get(a.source) ?? 0) - (nodeOrder.get(b.source) ?? 0) ||
+      (nodeOrder.get(a.target) ?? 0) - (nodeOrder.get(b.target) ?? 0)
+  )
 
   return {
     nodes: nodeList,

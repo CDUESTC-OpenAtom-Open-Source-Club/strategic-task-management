@@ -53,7 +53,17 @@ export interface ApiClientConfig {
   timeout?: number
 }
 
-export type RequestOptions = AxiosRequestConfig
+/**
+ * 单请求配置。
+ *
+ * `silentErrorToast`：该请求失败时**不弹**全局兜底错误提示。
+ * 仅用于「失败可降级」的后台水合 / 预取请求（如看板父指标归口批量水合）——
+ * 这类请求的失败由调用方 logger.warn 兜底，不该把红色「服务器内部错误」
+ * 弹给用户；用户主动操作失败的真实 500 仍照常提示。
+ */
+export interface RequestOptions extends AxiosRequestConfig {
+  silentErrorToast?: boolean
+}
 
 function summarizeResponsePayload(payload: unknown): unknown {
   if (Array.isArray(payload)) {
@@ -238,15 +248,23 @@ export class ApiClient {
 
   /**
    * GET 请求
+   *
+   * @param url 请求路径
+   * @param params 查询参数
+   * @param options 单请求配置（如 `silentErrorToast`——失败时不弹全局错误提示）
    */
-  async get<T>(url: string, params?: Record<string, unknown>): Promise<T> {
+  async get<T>(
+    url: string,
+    params?: Record<string, unknown>,
+    options?: RequestOptions
+  ): Promise<T> {
     // Backward compatibility: some legacy callers still pass Axios-style { params }.
     const normalizedParams =
       params && typeof params === 'object' && 'params' in params && Object.keys(params).length === 1
         ? (params as { params?: Record<string, unknown> }).params
         : params
 
-    return this.client.get(url, { params: normalizedParams })
+    return this.client.get(url, { params: normalizedParams, ...options })
   }
 
   /**

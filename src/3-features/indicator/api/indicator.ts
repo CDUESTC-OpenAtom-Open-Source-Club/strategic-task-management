@@ -90,8 +90,16 @@ export const indicatorApi = {
 
   /**
    * 获取指标详情
+   *
+   * @param indicatorId 指标 ID
+   * @param options.silentErrorToast 该请求失败时不弹全局兜底错误提示。
+   *   仅用于「失败可降级」的后台水合（如看板父指标归口批量水合）——
+   *   用户主动操作的真实 500 仍照常提示。
    */
-  async getIndicatorById(indicatorId: string): Promise<ApiResponse<IndicatorVO>> {
+  async getIndicatorById(
+    indicatorId: string,
+    options: { silentErrorToast?: boolean } = {}
+  ): Promise<ApiResponse<IndicatorVO>> {
     return fetchWithCache({
       key: buildQueryKey(
         'indicator',
@@ -104,7 +112,10 @@ export const indicatorApi = {
         dedupeWindowMs: 1000,
         tags: ['indicator.detail', `indicator.detail.${indicatorId}`]
       },
-      fetcher: () => apiClient.get<ApiResponse<IndicatorVO>>(`/indicators/${indicatorId}`)
+      fetcher: () =>
+        apiClient.get<ApiResponse<IndicatorVO>>(`/indicators/${indicatorId}`, undefined, {
+          silentErrorToast: options.silentErrorToast === true
+        })
     })
   },
 

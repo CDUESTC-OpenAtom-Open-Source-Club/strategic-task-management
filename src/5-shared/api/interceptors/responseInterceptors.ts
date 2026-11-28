@@ -304,6 +304,20 @@ export function createResponseErrorInterceptor(config: ResponseInterceptorConfig
       )
     }
 
+    // ------------------------------------------------------------------
+    // 静默错误请求（silentErrorToast）
+    //
+    // 2026-11-27（生产看板 500）：看板打开时批量水合父指标归口，单条详情
+    // 取父指标失败属于「可降级」场景——调用方有 logger.warn 兜底、界面可继续
+    // 用 ownerDept 兜底归组。此前这类 500 会走下面的兜底分支弹红色
+    // 「服务器内部错误」，把一次后台水合失败升级成用户可见故障。
+    //
+    // 静默只对**显式标记**的请求生效：用户主动操作失败的真实 500 照常提示。
+    // ========================================================================
+    const isSilentRequest = Boolean(
+      (error.config as { silentErrorToast?: boolean } | undefined)?.silentErrorToast
+    )
+
     // 调试日志：响应错误
     logger.error('❌ [API Response Error]', {
       method: error.config?.method?.toUpperCase(),
@@ -318,7 +332,7 @@ export function createResponseErrorInterceptor(config: ResponseInterceptorConfig
     // BACKEND CONNECTION ERROR HANDLING
     // ========================================================================
     // 检查是否为后端连接错误（无响应）
-    if (!error.response && error.request) {
+    if (!error.response && error.request && !isSilentRequest) {
       logger.error('🔌 [Backend Connection] 无法连接到后端服务')
       logger.error('🔍 [Backend Connection] 请检查:')
       logger.error(`   1. 后端服务是否运行在 ${backendDisplayTarget}`)
@@ -338,7 +352,7 @@ export function createResponseErrorInterceptor(config: ResponseInterceptorConfig
     // NETWORK TIMEOUT ERROR HANDLING
     // ========================================================================
     // 检查是否为超时错误
-    if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+    if ((error.code === 'ECONNABORTED' || error.message?.includes('timeout')) && !isSilentRequest) {
       logger.error('⏱️ [Network Timeout] 请求超时')
 
       const { ElMessage } = await import('element-plus')
@@ -504,7 +518,7 @@ export function createResponseErrorInterceptor(config: ResponseInterceptorConfig
       retryable: extendedError.retryable
     })
 
-    if (fallbackToast) {
+    if (fallbackToast && !isSilentRequest) {
       scheduleFallbackErrorToast(extendedError, fallbackToast.message, fallbackToast.duration)
     }
 
